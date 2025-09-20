@@ -6,7 +6,7 @@ use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use crate::{
     context,
     scheme::{self, SchemeId},
-    sync::WaitQueue,
+    sync::{CleanLockToken, WaitQueue},
     syscall::{
         data::Event,
         error::{Error, Result, EBADF},
@@ -30,11 +30,12 @@ impl EventQueue {
         }
     }
 
-    pub fn read(&self, buf: UserSliceWo, block: bool) -> Result<usize> {
-        self.queue.receive_into_user(buf, block, "EventQueue::read")
+    pub fn read(&self, buf: UserSliceWo, block: bool, token: &mut CleanLockToken) -> Result<usize> {
+        self.queue
+            .receive_into_user(buf, block, "EventQueue::read", token)
     }
 
-    pub fn write(&self, events: &[Event]) -> Result<usize> {
+    pub fn write(&self, events: &[Event], token: &mut CleanLockToken) -> Result<usize> {
         for event in events {
             let file = {
                 let context_ref = context::current();
@@ -62,7 +63,7 @@ impl EventQueue {
                 event.flags,
             );
 
-            let flags = sync(RegKey { scheme, number })?;
+            let flags = sync(RegKey { scheme, number }, token)?;
             if !flags.is_empty() {
                 trigger(scheme, number, flags);
             }
@@ -144,7 +145,7 @@ pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: EventFlags) {
     }
 }
 
-pub fn sync(reg_key: RegKey) -> Result<EventFlags> {
+pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
     let mut flags = EventFlags::empty();
 
     {
@@ -157,12 +158,12 @@ pub fn sync(reg_key: RegKey) -> Result<EventFlags> {
         }
     }
 
-    let scheme = scheme::schemes()
+    let scheme = scheme::schemes(token.token())
         .get(reg_key.scheme)
         .ok_or(Error::new(EBADF))?
         .clone();
 
-    scheme.fevent(reg_key.number, flags)
+    scheme.fevent(reg_key.number, flags, token)
 }
 
 pub fn unregister_file(scheme: SchemeId, number: usize) {

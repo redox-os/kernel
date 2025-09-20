@@ -5,6 +5,7 @@ use crate::{
     },
     paging::PAGE_SIZE,
     scheme,
+    sync::CleanLockToken,
     syscall::{
         error::Result,
         flag::MapFlags,
@@ -14,14 +15,14 @@ use crate::{
 use alloc::{string::String, sync::Arc, vec::Vec};
 use core::{fmt::Write, num::NonZeroUsize, str};
 
-fn inner(fpath_user: UserSliceRw) -> Result<Vec<u8>> {
+fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();
     let mut fpath_kernel = [0; PAGE_SIZE];
 
     {
         let mut rows = Vec::new();
         {
-            let contexts = context::contexts();
+            let contexts = context::contexts(token.token());
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
                 let context = context_ref.read();
                 rows.push((
@@ -54,7 +55,7 @@ fn inner(fpath_user: UserSliceRw) -> Result<Vec<u8>> {
                 );
 
                 let scheme = {
-                    let schemes = scheme::schemes();
+                    let schemes = scheme::schemes(token.token());
                     match schemes.get(description.scheme) {
                         Some(scheme) => scheme.clone(),
                         None => {
@@ -64,7 +65,11 @@ fn inner(fpath_user: UserSliceRw) -> Result<Vec<u8>> {
                     }
                 };
 
-                match scheme.kfpath(description.number, fpath_user.reinterpret_unchecked()) {
+                match scheme.kfpath(
+                    description.number,
+                    fpath_user.reinterpret_unchecked(),
+                    token,
+                ) {
                     Ok(path_len) => {
                         fpath_user.copy_to_slice(&mut fpath_kernel)?;
                         let fname = str::from_utf8(&fpath_kernel[..path_len]).unwrap_or("?");
@@ -81,7 +86,7 @@ fn inner(fpath_user: UserSliceRw) -> Result<Vec<u8>> {
     Ok(string.into_bytes())
 }
 
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let page_count = NonZeroUsize::new(1).unwrap();
     let fpath_page = {
         let addr_space = Arc::clone(context::current().read().addr_space()?);
@@ -104,7 +109,8 @@ pub fn resource() -> Result<Vec<u8>> {
         )?
     };
 
-    let res = UserSlice::rw(fpath_page.start_address().data(), PAGE_SIZE).and_then(inner);
+    let res = UserSlice::rw(fpath_page.start_address().data(), PAGE_SIZE)
+        .and_then(|fpath_user| inner(fpath_user, token));
 
     {
         let addr_space = Arc::clone(context::current().read().addr_space()?);

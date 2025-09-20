@@ -17,7 +17,7 @@ use crate::{
     acpi::{RxsdtEnum, RXSDT_ENUM},
     context::file::InternalFlags,
     event,
-    sync::WaitCondition,
+    sync::{CleanLockToken, WaitCondition},
 };
 
 use crate::syscall::{
@@ -109,7 +109,13 @@ impl AcpiScheme {
 }
 
 impl KernelScheme for AcpiScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
         if ctx.uid != 0 {
@@ -161,7 +167,7 @@ impl KernelScheme for AcpiScheme {
 
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
-    fn fsize(&self, id: usize) -> Result<u64> {
+    fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -176,7 +182,12 @@ impl KernelScheme for AcpiScheme {
         })
     }
     // TODO
-    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        id: usize,
+        _flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -186,7 +197,7 @@ impl KernelScheme for AcpiScheme {
 
         Ok(EventFlags::empty())
     }
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         if HANDLES.write().remove(&id).is_none() {
             return Err(Error::new(EBADF));
         }
@@ -199,6 +210,7 @@ impl KernelScheme for AcpiScheme {
         offset: u64,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let Ok(offset) = usize::try_from(offset) else {
             return Ok(0);
@@ -222,7 +234,7 @@ impl KernelScheme for AcpiScheme {
 
                     if *flag_guard {
                         break;
-                    } else if !KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop") {
+                    } else if !KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop", token) {
                         return Err(Error::new(EINTR));
                     }
                 }
@@ -246,6 +258,7 @@ impl KernelScheme for AcpiScheme {
         buf: UserSliceWo,
         header_size: u16,
         opaque: u64,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let Some(Handle {
             kind: HandleKind::TopLevel,
@@ -274,7 +287,7 @@ impl KernelScheme for AcpiScheme {
         }
         Ok(buf.finalize())
     }
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 

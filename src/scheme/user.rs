@@ -35,7 +35,7 @@ use crate::{
     memory::Frame,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
-    sync::WaitQueue,
+    sync::{CleanLockToken, WaitQueue},
     syscall::{
         data::{Map, Packet},
         error::*,
@@ -256,9 +256,10 @@ impl UserInner {
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let ctx = { context::current().read().caller_ctx() };
-        match self.call_extended(ctx, None, opcode, args, caller_responsible)? {
+        match self.call_extended(ctx, None, opcode, args, caller_responsible, token)? {
             Response::Regular(code, _) => Error::demux(code),
             Response::Fd(_) => Err(Error::new(EIO)),
             Response::MultipleFds(_) => Err(Error::new(EIO)),
@@ -272,6 +273,7 @@ impl UserInner {
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
+        token: &mut CleanLockToken,
     ) -> Result<Response> {
         let next_id = self.next_id()?;
         self.call_extended_inner(
@@ -289,6 +291,7 @@ impl UserInner {
                 },
             },
             caller_responsible,
+            token,
         )
     }
 
@@ -297,6 +300,7 @@ impl UserInner {
         fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
+        token: &mut CleanLockToken,
     ) -> Result<Response> {
         if self.unmounting.load(Ordering::SeqCst) {
             return Err(Error::new(ENODEV));
@@ -326,7 +330,7 @@ impl UserInner {
         event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
         loop {
-            context::switch();
+            context::switch(token);
 
             {
                 let mut eintr_if_sigkill = |callee_responsible: &mut PageSpan| {
@@ -725,7 +729,7 @@ impl UserInner {
         })
     }
 
-    pub fn read(&self, buf: UserSliceWo, flags: u32) -> Result<usize> {
+    pub fn read(&self, buf: UserSliceWo, flags: u32, token: &mut CleanLockToken) -> Result<usize> {
         // If O_NONBLOCK is used, do not block
         let nonblock = flags & O_NONBLOCK as u32 != 0;
 
@@ -735,7 +739,7 @@ impl UserInner {
         if self.v2 {
             return match self
                 .todo
-                .receive_into_user(buf, block, "UserInner::read (v2)")
+                .receive_into_user(buf, block, "UserInner::read (v2)", token)
             {
                 // If we received requests, return them to the scheme handler
                 Ok(byte_count) => Ok(byte_count),
@@ -751,7 +755,7 @@ impl UserInner {
             for dst in buf.in_exact_chunks(size_of::<Packet>()) {
                 match self
                     .todo
-                    .receive(block && bytes_read == 0, "UserInner::read (legacy)")
+                    .receive(block && bytes_read == 0, "UserInner::read (legacy)", token)
                 {
                     Ok(sqe) => {
                         dst.copy_exactly(&self.translate_sqe_to_packet(&sqe)?)?;
@@ -876,12 +880,12 @@ impl UserInner {
         })
     }
 
-    pub fn write(&self, buf: UserSliceRo) -> Result<usize> {
+    pub fn write(&self, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
         let mut bytes_read = 0;
         if self.v2 {
             for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
                 match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
-                    .and_then(|p| self.handle_parsed(&p))
+                    .and_then(|p| self.handle_parsed(&p, token))
                 {
                     Ok(()) => bytes_read += size_of::<Cqe>(),
                     Err(_) if bytes_read > 0 => break,
@@ -891,7 +895,7 @@ impl UserInner {
         } else {
             for chunk in buf.in_exact_chunks(size_of::<Packet>()) {
                 match ParsedCqe::parse_packet(&unsafe { chunk.read_exact::<Packet>()? })
-                    .and_then(|p| self.handle_parsed(&p))
+                    .and_then(|p| self.handle_parsed(&p, token))
                 {
                     Ok(()) => bytes_read += size_of::<Packet>(),
                     Err(_) if bytes_read > 0 => break,
@@ -945,10 +949,10 @@ impl UserInner {
 
         Ok(())
     }
-    fn handle_parsed(&self, cqe: &ParsedCqe) -> Result<()> {
+    fn handle_parsed(&self, cqe: &ParsedCqe, token: &mut CleanLockToken) -> Result<()> {
         match *cqe {
             ParsedCqe::RegularResponse { tag, code, extra0 } => {
-                self.respond(tag, Response::Regular(code, extra0))?
+                self.respond(tag, Response::Regular(code, extra0), token)?
             }
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
@@ -959,9 +963,10 @@ impl UserInner {
                         .ok_or(Error::new(EINVAL))?
                         .description
                 }),
+                token,
             )?,
             ParsedCqe::ResponseWithMultipleFds { tag, num_fds } => {
-                self.respond(tag, Response::MultipleFds(None))?;
+                self.respond(tag, Response::MultipleFds(None), token)?;
             }
             ParsedCqe::ObtainFd {
                 tag,
@@ -1074,7 +1079,7 @@ impl UserInner {
         }
         Ok(())
     }
-    fn respond(&self, tag: u32, mut response: Response) -> Result<()> {
+    fn respond(&self, tag: u32, mut response: Response, token: &mut CleanLockToken) -> Result<()> {
         let to_close: Vec<FileDescription>;
 
         {
@@ -1147,7 +1152,7 @@ impl UserInner {
         }
 
         for fd in to_close {
-            let _ = fd.try_close();
+            let _ = fd.try_close(token);
         }
         Ok(())
     }
@@ -1171,6 +1176,7 @@ impl UserInner {
         dst_addr_space: Arc<AddrSpaceWrapper>,
         file: usize,
         map: &Map,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let unaligned_size = map.size;
 
@@ -1244,6 +1250,7 @@ impl UserInner {
                 caller: pid as u64,
             },
             &mut PageSpan::empty(),
+            token,
         )?;
 
         // TODO: I've previously tested that this works, but because the scheme trait all of
@@ -1306,13 +1313,14 @@ impl UserInner {
                         &dst_addr_space,
                         mapper,
                         flusher,
+                        token,
                     )
                 },
             )?
         };
 
         for map in notify_files {
-            let _ = map.unmap();
+            let _ = map.unmap(token);
         }
 
         Ok(dst_base.start_address().data())
@@ -1600,7 +1608,13 @@ impl UserScheme {
 }
 
 impl KernelScheme for UserScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         match inner.call_extended(
@@ -1609,6 +1623,7 @@ impl KernelScheme for UserScheme {
             Opcode::Open,
             [address.base(), address.len(), flags],
             address.span(),
+            token,
         )? {
             Response::Regular(code, fl) => Ok({
                 let _ = Error::demux(code)?;
@@ -1629,6 +1644,7 @@ impl KernelScheme for UserScheme {
         flags: usize,
         fcntl_flags: u32,
         ctx: CallerCtx,
+        token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
@@ -1638,6 +1654,7 @@ impl KernelScheme for UserScheme {
             Opcode::OpenAt,
             [file, address.base(), address.len(), flags, fcntl_flags as _],
             address.span(),
+            token,
         );
 
         address.release()?;
@@ -1655,49 +1672,52 @@ impl KernelScheme for UserScheme {
         }
     }
 
-    fn rmdir(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
+    fn rmdir(&self, path: &str, _ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Rmdir,
             [address.base(), address.len()],
             address.span(),
+            token,
         )?;
         Ok(())
     }
 
-    fn unlink(&self, path: &str, _ctx: CallerCtx) -> Result<()> {
+    fn unlink(&self, path: &str, _ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Unlink,
             [address.base(), address.len()],
             address.span(),
+            token,
         )?;
         Ok(())
     }
 
-    fn fsize(&self, file: usize) -> Result<u64> {
+    fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if !inner.v2 {
             return Err(Error::new(ESPIPE));
         }
         inner
-            .call(Opcode::Fsize, [file], &mut PageSpan::empty())
+            .call(Opcode::Fsize, [file], &mut PageSpan::empty(), token)
             .map(|o| o as u64)
     }
 
-    fn fchmod(&self, file: usize, mode: u16) -> Result<()> {
+    fn fchmod(&self, file: usize, mode: u16, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner.call(
             Opcode::Fchmod,
             [file, mode as usize],
             &mut PageSpan::empty(),
+            token,
         )?;
         Ok(())
     }
 
-    fn fchown(&self, file: usize, uid: u32, gid: u32) -> Result<()> {
+    fn fchown(&self, file: usize, uid: u32, gid: u32, token: &mut CleanLockToken) -> Result<()> {
         {
             match context::current().read() {
                 ref cx => {
@@ -1713,61 +1733,102 @@ impl KernelScheme for UserScheme {
             Opcode::Fchown,
             [file, uid as usize, gid as usize],
             &mut PageSpan::empty(),
+            token,
         )?;
         Ok(())
     }
 
-    fn fcntl(&self, file: usize, cmd: usize, arg: usize) -> Result<usize> {
+    fn fcntl(
+        &self,
+        file: usize,
+        cmd: usize,
+        arg: usize,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fcntl, [file, cmd, arg], &mut PageSpan::empty())
+        inner.call(
+            Opcode::Fcntl,
+            [file, cmd, arg],
+            &mut PageSpan::empty(),
+            token,
+        )
     }
 
-    fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        file: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner
-            .call(Opcode::Fevent, [file, flags.bits()], &mut PageSpan::empty())
+            .call(
+                Opcode::Fevent,
+                [file, flags.bits()],
+                &mut PageSpan::empty(),
+                token,
+            )
             .map(EventFlags::from_bits_truncate)
     }
 
-    fn flink(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
+    fn flink(
+        &self,
+        file: usize,
+        path: &str,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Flink,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         )?;
         Ok(())
     }
 
-    fn frename(&self, file: usize, path: &str, _ctx: CallerCtx) -> Result<()> {
+    fn frename(
+        &self,
+        file: usize,
+        path: &str,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes())?;
         inner.call(
             Opcode::Frename,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         )?;
         Ok(())
     }
 
-    fn fsync(&self, file: usize) -> Result<()> {
+    fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fsync, [file], &mut PageSpan::empty())?;
+        inner.call(Opcode::Fsync, [file], &mut PageSpan::empty(), token)?;
         Ok(())
     }
 
-    fn ftruncate(&self, file: usize, len: usize) -> Result<()> {
+    fn ftruncate(&self, file: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Ftruncate, [file, len], &mut PageSpan::empty())?;
+        inner.call(
+            Opcode::Ftruncate,
+            [file, len],
+            &mut PageSpan::empty(),
+            token,
+        )?;
         Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if !inner.supports_on_close {
             let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-            inner.call(Opcode::Close, [id], &mut PageSpan::empty())?;
+            inner.call(Opcode::Close, [id], &mut PageSpan::empty(), token)?;
             return Ok(());
         }
 
@@ -1784,7 +1845,13 @@ impl KernelScheme for UserScheme {
 
         Ok(())
     }
-    fn kdup(&self, file: usize, buf: UserSliceRo, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kdup(
+        &self,
+        file: usize,
+        buf: UserSliceRo,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(buf)?;
         let result = inner.call_extended(
@@ -1793,6 +1860,7 @@ impl KernelScheme for UserScheme {
             Opcode::Dup,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         );
 
         address.release()?;
@@ -1809,13 +1877,14 @@ impl KernelScheme for UserScheme {
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
-    fn kfpath(&self, file: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(&self, file: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Fpath,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         );
         address.release()?;
         result
@@ -1828,11 +1897,12 @@ impl KernelScheme for UserScheme {
         offset: u64,
         call_flags: u32,
         stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, call_flags as usize)?;
+            self.fcntl(file, F_SETFL, call_flags as usize, token)?;
         }
 
         let mut address = inner.capture_user(buf)?;
@@ -1846,11 +1916,12 @@ impl KernelScheme for UserScheme {
                 u64::from(call_flags),
             ],
             address.span(),
+            token,
         );
         address.release()?;
 
         if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, stored_flags as usize)?;
+            self.fcntl(file, F_SETFL, stored_flags as usize, token)?;
         }
 
         result
@@ -1863,10 +1934,11 @@ impl KernelScheme for UserScheme {
         offset: u64,
         call_flags: u32,
         stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, call_flags as usize)?;
+            self.fcntl(file, F_SETFL, call_flags as usize, token)?;
         }
 
         let mut address = inner.capture_user(buf)?;
@@ -1880,16 +1952,23 @@ impl KernelScheme for UserScheme {
                 u64::from(call_flags),
             ],
             address.span(),
+            token,
         );
         address.release()?;
 
         if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, stored_flags as usize)?;
+            self.fcntl(file, F_SETFL, stored_flags as usize, token)?;
         }
 
         result
     }
-    fn legacy_seek(&self, id: usize, pos: isize, whence: usize) -> Option<Result<usize>> {
+    fn legacy_seek(
+        &self,
+        id: usize,
+        pos: isize,
+        whence: usize,
+        token: &mut CleanLockToken,
+    ) -> Option<Result<usize>> {
         let inner = self.inner.upgrade()?;
         if inner.v2 {
             return None;
@@ -1898,15 +1977,22 @@ impl KernelScheme for UserScheme {
             Opcode::Fsize,
             [id, pos as usize, whence],
             &mut PageSpan::empty(),
+            token,
         ))
     }
-    fn kfutimens(&self, file: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kfutimens(
+        &self,
+        file: usize,
+        buf: UserSliceRo,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(buf)?;
         let result = inner.call(
             Opcode::Futimens,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         );
         address.release()?;
         result
@@ -1917,6 +2003,7 @@ impl KernelScheme for UserScheme {
         buf: UserSliceWo,
         header_size: u16,
         opaque_id_start: u64,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(buf)?;
@@ -1934,28 +2021,31 @@ impl KernelScheme for UserScheme {
                 opaque_id_start as usize,
             ],
             address.span(),
+            token,
         );
         address.release()?;
         result
     }
-    fn kfstat(&self, file: usize, stat: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(stat)?;
         let result = inner.call(
             Opcode::Fstat,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         );
         address.release()?;
         result.map(|_| ())
     }
-    fn kfstatvfs(&self, file: usize, stat: UserSliceWo) -> Result<()> {
+    fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.capture_user(stat)?;
         let result = inner.call(
             Opcode::Fstatvfs,
             [file, address.base(), address.len()],
             address.span(),
+            token,
         );
         address.release()?;
         result.map(|_| ())
@@ -1966,12 +2056,20 @@ impl KernelScheme for UserScheme {
         addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         _consume: bool,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
-        inner.fmap_inner(Arc::clone(addr_space), file, map)
+        inner.fmap_inner(Arc::clone(addr_space), file, map, token)
     }
-    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
+    fn kfunmap(
+        &self,
+        number: usize,
+        offset: usize,
+        size: usize,
+        flags: MunmapFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
         let ctx = { context::current().read().caller_ctx() };
@@ -1981,6 +2079,7 @@ impl KernelScheme for UserScheme {
             Opcode::Munmap,
             [number, size, flags.bits(), offset],
             &mut PageSpan::empty(),
+            token,
         )?;
 
         match res {
@@ -1995,6 +2094,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
@@ -2021,7 +2121,7 @@ impl KernelScheme for UserScheme {
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
         }
-        let res = inner.call_extended_inner(None, sqe, &mut address.span())?;
+        let res = inner.call_extended_inner(None, sqe, &mut address.span(), token)?;
 
         match res {
             Response::Regular(res, _) => Error::demux(res),
@@ -2036,6 +2136,7 @@ impl KernelScheme for UserScheme {
         flags: CallFlags,
         arg: u64,
         _metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
 
@@ -2052,6 +2153,7 @@ impl KernelScheme for UserScheme {
             Opcode::Sendfd,
             [number, sendfd_flags.bits(), arg as usize, len],
             &mut PageSpan::empty(),
+            token,
         )?;
 
         match res {
@@ -2066,6 +2168,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         _metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         if payload.len() % mem::size_of::<usize>() != 0 {
@@ -2085,6 +2188,7 @@ impl KernelScheme for UserScheme {
             Opcode::Recvfd,
             [id, recvfd_flags.bits(), len],
             &mut PageSpan::empty(),
+            token,
         )?;
 
         let descriptions_opt = match res {

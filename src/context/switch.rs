@@ -17,7 +17,9 @@ use crate::{
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
-    ptrace, time,
+    ptrace,
+    sync::CleanLockToken,
+    time,
 };
 
 use super::ContextRef;
@@ -81,7 +83,7 @@ struct SwitchResultInner {
 /// switch if the counter reaches a set threshold (e.g., every 3 ticks).
 ///
 /// The function also calls the signal handler after switching contexts.
-pub fn tick() {
+pub fn tick(token: &mut CleanLockToken) {
     let ticks_cell = &PercpuBlock::current().switch_internals.pit_ticks;
 
     let new_ticks = ticks_cell.get() + 1;
@@ -89,8 +91,8 @@ pub fn tick() {
 
     // Trigger a context switch after every 3 ticks (approx. 6.75 ms).
     if new_ticks >= 3 {
-        switch();
-        crate::context::signal::signal_handler();
+        switch(token);
+        crate::context::signal::signal_handler(token);
     }
 }
 
@@ -136,7 +138,7 @@ pub enum SwitchResult {
 /// - `SwitchResult::Switched`: Indicates a successful switch to a new context.
 /// - `SwitchResult::AllContextsIdle`: Indicates all contexts are idle, and the CPU will switch
 ///   to an idle context.
-pub fn switch() -> SwitchResult {
+pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let percpu = PercpuBlock::current();
     cpu_stats::add_context_switch();
     percpu
@@ -161,7 +163,7 @@ pub fn switch() -> SwitchResult {
 
     let mut switch_context_opt = None;
     {
-        let contexts = contexts();
+        let contexts = contexts(token.token());
 
         // Lock the previous context.
         let prev_context_lock = crate::context::current();

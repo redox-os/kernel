@@ -8,6 +8,7 @@ use super::{CallerCtx, KernelScheme, OpenResult};
 use crate::{
     dtb::DTB_BINARY,
     scheme::InternalFlags,
+    sync::CleanLockToken,
     syscall::{
         data::Stat,
         error::*,
@@ -50,7 +51,13 @@ impl DtbScheme {
 }
 
 impl KernelScheme for DtbScheme {
-    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let path = path.trim_matches('/');
 
         if path.is_empty() {
@@ -71,7 +78,7 @@ impl KernelScheme for DtbScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn fsize(&self, id: usize) -> Result<u64> {
+    fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
@@ -86,7 +93,7 @@ impl KernelScheme for DtbScheme {
         Ok(file_len as u64)
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         if HANDLES.write().remove(&id).is_none() {
             return Err(Error::new(EBADF));
         }
@@ -100,6 +107,7 @@ impl KernelScheme for DtbScheme {
         offset: u64,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let mut handles = HANDLES.write();
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -120,7 +128,7 @@ impl KernelScheme for DtbScheme {
         dst_buf.copy_common_bytes_from_slice(src_buf)
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         buf.copy_exactly(&match handle.kind {

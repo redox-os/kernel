@@ -2,11 +2,8 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use core::num::NonZeroUsize;
-
 use alloc::{collections::BTreeSet, sync::Arc};
-
-use spin::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use core::num::NonZeroUsize;
 use spinning_top::RwSpinlock;
 use syscall::ENOMEM;
 
@@ -15,6 +12,7 @@ use crate::{
     cpu_set::LogicalCpuSet,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
+    sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L0, L1},
     syscall::error::{Error, Result},
 };
 
@@ -67,9 +65,21 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: RwLock<BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
+static CONTEXTS: RwLock<L1, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
-pub fn init() {
+/// Get the global schemes list, const
+pub fn contexts<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, BTreeSet<ContextRef>> {
+    CONTEXTS.read(token)
+}
+
+/// Get the global schemes list, mutable
+pub fn contexts_mut<'a>(
+    token: LockToken<'a, L0>,
+) -> RwLockWriteGuard<'a, L1, BTreeSet<ContextRef>> {
+    CONTEXTS.write(token)
+}
+
+pub fn init(token: &mut CleanLockToken) {
     let owner = None; // kmain not owned by any fd
     let mut context = Context::new(owner).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
@@ -86,9 +96,7 @@ pub fn init() {
 
     let context_lock = Arc::new(RwSpinlock::new(context));
 
-    CONTEXTS
-        .write()
-        .insert(ContextRef(Arc::clone(&context_lock)));
+    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -97,16 +105,6 @@ pub fn init() {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
-}
-
-/// Get the global schemes list, const
-pub fn contexts() -> RwLockReadGuard<'static, BTreeSet<ContextRef>> {
-    CONTEXTS.read()
-}
-
-/// Get the global schemes list, mutable
-pub fn contexts_mut() -> RwLockWriteGuard<'static, BTreeSet<ContextRef>> {
-    CONTEXTS.write()
 }
 
 pub fn current() -> Arc<RwSpinlock<Context>> {
@@ -154,15 +152,14 @@ pub fn spawn(
     userspace_allowed: bool,
     owner_proc_id: Option<NonZeroUsize>,
     func: extern "C" fn(),
+    token: &mut CleanLockToken,
 ) -> Result<Arc<RwSpinlock<Context>>> {
     let stack = Kstack::new()?;
 
     let context_lock = Arc::try_new(RwSpinlock::new(Context::new(owner_proc_id)?))
         .map_err(|_| Error::new(ENOMEM))?;
 
-    CONTEXTS
-        .write()
-        .insert(ContextRef(Arc::clone(&context_lock)));
+    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
 
     {
         let mut context = context_lock.write();

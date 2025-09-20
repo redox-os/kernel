@@ -6,7 +6,7 @@ use crate::{
     event,
     log::Writer,
     scheme::*,
-    sync::WaitQueue,
+    sync::{CleanLockToken, WaitQueue},
     syscall::{
         flag::{EventFlags, EVENT_READ, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceWo},
@@ -51,7 +51,13 @@ enum SpecialFds {
 }
 
 impl KernelScheme for DebugScheme {
-    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -80,7 +86,12 @@ impl KernelScheme for DebugScheme {
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
-    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        id: usize,
+        _flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let _handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -89,7 +100,7 @@ impl KernelScheme for DebugScheme {
         Ok(EventFlags::empty())
     }
 
-    fn fsync(&self, id: usize) -> Result<()> {
+    fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let _handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -98,7 +109,7 @@ impl KernelScheme for DebugScheme {
         Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let _handle = {
             let mut handles = HANDLES.write();
             handles.remove(&id).ok_or(Error::new(EBADF))?
@@ -106,7 +117,14 @@ impl KernelScheme for DebugScheme {
 
         Ok(())
     }
-    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kread(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        flags: u32,
+        _stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?
@@ -129,7 +147,12 @@ impl KernelScheme for DebugScheme {
             );
         }
 
-        INPUT.receive_into_user(buf, flags & O_NONBLOCK as u32 == 0, "DebugScheme::read")
+        INPUT.receive_into_user(
+            buf,
+            flags & O_NONBLOCK as u32 == 0,
+            "DebugScheme::read",
+            token,
+        )
     }
 
     fn kwrite(
@@ -138,6 +161,7 @@ impl KernelScheme for DebugScheme {
         buf: UserSliceRo,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
@@ -186,7 +210,7 @@ impl KernelScheme for DebugScheme {
 
         Ok(buf.len())
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let handle = {
             let handles = HANDLES.read();
             *handles.get(&id).ok_or(Error::new(EBADF))?

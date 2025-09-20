@@ -23,6 +23,7 @@ use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_res
 use crate::{
     cpu_set::LogicalCpuId,
     event,
+    sync::CleanLockToken,
     syscall::{
         data::Stat,
         error::*,
@@ -207,7 +208,13 @@ const fn vector_to_irq(vector: u8) -> u8 {
 }
 
 impl crate::scheme::KernelScheme for IrqScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -306,6 +313,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         buf: UserSliceWo,
         header_size: u16,
         opaque_id_start: u64,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let Ok(opaque) = usize::try_from(opaque_id_start) else {
             return Ok(0);
@@ -362,19 +370,30 @@ impl crate::scheme::KernelScheme for IrqScheme {
         Ok(buf.finalize())
     }
 
-    fn fcntl(&self, _id: usize, _cmd: usize, _arg: usize) -> Result<usize> {
+    fn fcntl(
+        &self,
+        _id: usize,
+        _cmd: usize,
+        _arg: usize,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         Ok(0)
     }
 
-    fn fevent(&self, _id: usize, _flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        _id: usize,
+        _flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
 
-    fn fsync(&self, _file: usize) -> Result<()> {
+    fn fsync(&self, _file: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -394,6 +413,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         buffer: UserSliceRo,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
@@ -422,7 +442,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         }
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -472,7 +492,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         Ok(())
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
@@ -494,6 +514,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _offset: u64,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handles_guard = HANDLES.read();
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;

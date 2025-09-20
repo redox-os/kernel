@@ -5,7 +5,10 @@ use alloc::{
 use spin::Mutex;
 use spinning_top::RwSpinlock;
 
-use crate::context::{self, Context};
+use crate::{
+    context::{self, Context},
+    sync::CleanLockToken,
+};
 
 #[derive(Debug)]
 pub struct WaitCondition {
@@ -44,7 +47,7 @@ impl WaitCondition {
     }
 
     // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
-    pub fn wait<T>(&self, guard: T, reason: &'static str) -> bool {
+    pub fn wait<T>(&self, guard: T, reason: &'static str, token: &mut CleanLockToken) -> bool {
         let current_context_ref = context::current();
         {
             {
@@ -64,7 +67,7 @@ impl WaitCondition {
             drop(guard);
         }
 
-        context::switch();
+        context::switch(token);
 
         let mut waited = true;
 

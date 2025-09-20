@@ -6,7 +6,7 @@ use crate::{
     event,
     percpu::PercpuBlock,
     scheme::GlobalSchemes,
-    sync::WaitCondition,
+    sync::{CleanLockToken, WaitCondition},
     syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };
 
@@ -165,7 +165,7 @@ pub(crate) struct Breakpoint {
 ///
 /// Note: Don't call while holding any locks or allocated data, this will
 /// switch contexts and may in fact just never terminate.
-pub fn wait(session: Arc<Session>) -> Result<()> {
+pub fn wait(session: Arc<Session>, token: &mut CleanLockToken) -> Result<()> {
     loop {
         // Lock the data, to make sure we're reading the final value before going
         // to sleep.
@@ -178,7 +178,7 @@ pub fn wait(session: Arc<Session>) -> Result<()> {
 
         // Go to sleep, and drop the lock on our data, which will allow other the
         // tracer to wake us up.
-        if session.tracer.wait(data, "ptrace::wait") {
+        if session.tracer.wait(data, "ptrace::wait", token) {
             // We successfully waited, wake up!
             break;
         }
@@ -196,6 +196,7 @@ pub fn wait(session: Arc<Session>) -> Result<()> {
 pub fn breakpoint_callback(
     match_flags: PtraceFlags,
     event: Option<PtraceEvent>,
+    token: &mut CleanLockToken,
 ) -> Option<PtraceFlags> {
     loop {
         let percpu = PercpuBlock::current();
@@ -223,7 +224,10 @@ pub fn breakpoint_callback(
         // Wake up sleeping tracer
         session.tracer.notify();
 
-        if session.tracee.wait(data, "ptrace::breakpoint_callback") {
+        if session
+            .tracee
+            .wait(data, "ptrace::breakpoint_callback", token)
+        {
             // We successfully waited, wake up!
             break Some(breakpoint.flags);
         }

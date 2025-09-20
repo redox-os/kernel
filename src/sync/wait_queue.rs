@@ -3,7 +3,7 @@ use spin::Mutex;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    sync::WaitCondition,
+    sync::{CleanLockToken, WaitCondition},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -27,7 +27,12 @@ impl<T> WaitQueue<T> {
         self.inner.lock().is_empty()
     }
 
-    pub fn receive(&self, block: bool, reason: &'static str) -> Result<T> {
+    pub fn receive(
+        &self,
+        block: bool,
+        reason: &'static str,
+        token: &mut CleanLockToken,
+    ) -> Result<T> {
         loop {
             let mut inner = self.inner.lock();
 
@@ -37,7 +42,7 @@ impl<T> WaitQueue<T> {
                 }
                 _ => {
                     if block {
-                        if !self.condition.wait(inner, reason) {
+                        if !self.condition.wait(inner, reason, token) {
                             return Err(Error::new(EINTR));
                         }
                         continue;
@@ -54,13 +59,14 @@ impl<T> WaitQueue<T> {
         buf: UserSliceWo,
         block: bool,
         reason: &'static str,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         loop {
             let mut inner = self.inner.lock();
 
             if inner.is_empty() {
                 if block {
-                    if !self.condition.wait(inner, reason) {
+                    if !self.condition.wait(inner, reason, token) {
                         return Err(Error::new(EINTR));
                     }
                     continue;

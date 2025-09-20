@@ -8,7 +8,7 @@ use spin::{Mutex, RwLock};
 use crate::{
     context::file::InternalFlags,
     event,
-    sync::WaitCondition,
+    sync::{CleanLockToken, WaitCondition},
     syscall::{
         data::Stat,
         error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
@@ -58,7 +58,12 @@ pub fn pipe() -> Result<(usize, usize)> {
 pub struct PipeScheme;
 
 impl KernelScheme for PipeScheme {
-    fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        id: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let (is_writer_not_reader, key) = from_raw_id(id);
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
 
@@ -81,7 +86,7 @@ impl KernelScheme for PipeScheme {
         Ok(ready)
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let (is_write_not_read, key) = from_raw_id(id);
 
         let pipe = Arc::clone(PIPES.read().get(&key).ok_or(Error::new(EBADF))?);
@@ -110,7 +115,13 @@ impl KernelScheme for PipeScheme {
         Ok(())
     }
 
-    fn kdup(&self, old_id: usize, user_buf: UserSliceRo, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kdup(
+        &self,
+        old_id: usize,
+        user_buf: UserSliceRo,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let (is_writer_not_reader, key) = from_raw_id(old_id);
 
         if is_writer_not_reader {
@@ -134,7 +145,13 @@ impl KernelScheme for PipeScheme {
             InternalFlags::empty(),
         ))
     }
-    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         if !path.trim_start_matches('/').is_empty() {
             return Err(Error::new(ENOENT));
         }
@@ -151,6 +168,7 @@ impl KernelScheme for PipeScheme {
         _flags: usize,
         _fcntl_flags: u32,
         _ctx: CallerCtx,
+        token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
 
@@ -177,6 +195,7 @@ impl KernelScheme for PipeScheme {
         user_buf: UserSliceWo,
         fcntl_flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
 
@@ -222,7 +241,7 @@ impl KernelScheme for PipeScheme {
                 return Ok(0);
             } else if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
-            } else if !pipe.read_condition.wait(vec, "PipeRead::read") {
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
                 return Err(Error::new(EINTR));
             }
         }
@@ -233,6 +252,7 @@ impl KernelScheme for PipeScheme {
         user_buf: UserSliceRo,
         fcntl_flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
 
@@ -281,12 +301,12 @@ impl KernelScheme for PipeScheme {
 
             if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
-            } else if !pipe.write_condition.wait(vec, "PipeWrite::write") {
+            } else if !pipe.write_condition.wait(vec, "PipeWrite::write", token) {
                 return Err(Error::new(EINTR));
             }
         }
     }
-    fn kfstat(&self, _id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, _id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         buf.copy_exactly(&Stat {
             st_mode: MODE_FIFO | 0o666,
             ..Default::default()

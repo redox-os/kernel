@@ -181,8 +181,10 @@ static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 fn kmain(bootstrap: Bootstrap) -> ! {
+    let mut token = unsafe { sync::CleanLockToken::new() };
+
     //Initialize the first context, stored in kernel/src/context/mod.rs
-    context::init();
+    context::init(&mut token);
 
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
@@ -196,7 +198,7 @@ fn kmain(bootstrap: Bootstrap) -> ! {
     profiling::ready_for_profiling();
 
     let owner = None; // kmain not owned by any fd
-    match context::spawn(true, owner, userspace_init) {
+    match context::spawn(true, owner, userspace_init, &mut token) {
         Ok(context_lock) => {
             let mut context = context_lock.write();
             context.status = context::Status::Runnable;
@@ -213,12 +215,14 @@ fn kmain(bootstrap: Bootstrap) -> ! {
         }
     }
 
-    run_userspace()
+    run_userspace(&mut token)
 }
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables, dead_code)]
 fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
+    let mut token = unsafe { sync::CleanLockToken::new() };
+
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
@@ -232,20 +236,21 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
             }
         }
     }
-    context::init();
+
+    context::init(&mut token);
 
     info!("AP {}", cpu_id);
 
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    run_userspace();
+    run_userspace(&mut token);
 }
-fn run_userspace() -> ! {
+fn run_userspace(token: &mut sync::CleanLockToken) -> ! {
     loop {
         unsafe {
             interrupt::disable();
-            match context::switch() {
+            match context::switch(token) {
                 SwitchResult::Switched => {
                     interrupt::enable_and_nop();
                 }

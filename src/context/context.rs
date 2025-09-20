@@ -19,6 +19,7 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
+    sync::CleanLockToken,
 };
 
 use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
@@ -871,10 +872,10 @@ impl FdTbl {
         FileHandle::from(start | UPPER_FDTBL_TAG)
     }
 
-    pub fn force_close_all(&mut self) {
+    pub fn force_close_all(&mut self, token: &mut CleanLockToken) {
         for file_opt in self.iter_mut() {
             if let Some(file) = file_opt.take() {
-                let _ = file.close();
+                let _ = file.close(token);
             }
         }
         self.active_count = 0;

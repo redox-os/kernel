@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 
-use crate::{context, scheme, syscall::error::*};
+use crate::{context, scheme, sync::CleanLockToken, syscall::error::*};
 
 use super::{
     copy_path_to_buf,
     usercopy::{UserSlice, UserSliceRo},
 };
 
-pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
+pub fn mkns(mut user_buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
     let (uid, from) = match context::current().read() {
         ref cx => (cx.euid, cx.ens),
     };
@@ -36,6 +36,6 @@ pub fn mkns(mut user_buf: UserSliceRo) -> Result<usize> {
         user_buf = next_part;
     }
 
-    let to = scheme::schemes_mut().make_ns(from, names)?;
+    let to = scheme::schemes_mut(token.token()).make_ns(from, names)?;
     Ok(to.into())
 }

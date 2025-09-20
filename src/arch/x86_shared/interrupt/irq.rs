@@ -12,6 +12,7 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},
+    sync::CleanLockToken,
     time,
 };
 
@@ -34,7 +35,7 @@ pub fn spurious_count_irq15() -> usize {
 pub fn spurious_count() -> usize {
     spurious_count_irq7() + spurious_count_irq15()
 }
-pub fn spurious_irq_resource() -> syscall::Result<Vec<u8>> {
+pub fn spurious_irq_resource(token: &mut CleanLockToken) -> syscall::Result<Vec<u8>> {
     match irq_method() {
         IrqMethod::Apic => Ok(Vec::from(&b"(not implemented for APIC yet)"[..])),
         IrqMethod::Pic => Ok(format!(
@@ -179,7 +180,8 @@ interrupt_stack!(pit_stack, |_stack| {
     timeout::trigger();
 
     // Switch after a sufficient amount of time since the last switch.
-    context::switch::tick();
+    let mut token = unsafe { CleanLockToken::new() };
+    context::switch::tick(&mut token);
 });
 
 interrupt!(keyboard, || {
@@ -188,7 +190,8 @@ interrupt!(keyboard, || {
 
     unsafe { eoi(1) };
 
-    serio_input(0, data);
+    let mut token = unsafe { CleanLockToken::new() };
+    serio_input(0, data, &mut token);
 });
 
 interrupt!(cascade, || {
@@ -266,7 +269,8 @@ interrupt!(mouse, || {
 
     unsafe { eoi(12) };
 
-    serio_input(1, data);
+    let mut token = unsafe { CleanLockToken::new() };
+    serio_input(1, data, &mut token);
 });
 
 interrupt!(fpu, || {

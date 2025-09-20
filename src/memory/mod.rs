@@ -21,6 +21,7 @@ use crate::{
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     paging::{entry::EntryFlags, Page, PageFlags},
+    sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
 use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress};
@@ -1014,7 +1015,8 @@ pub fn page_fault_handler(
     }
 
     if address_is_user && (caused_by_user || is_usercopy) {
-        match context::memory::try_correcting_page_tables(faulting_page, mode) {
+        let mut token = unsafe { CleanLockToken::new() };
+        match context::memory::try_correcting_page_tables(faulting_page, mode, &mut token) {
             Ok(()) => return Ok(()),
             Err(PfError::Oom) => todo!("oom"),
             Err(PfError::Segv | PfError::RecursionLimitExceeded) => (),
