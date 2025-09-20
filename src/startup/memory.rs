@@ -1,7 +1,7 @@
 use crate::{
     arch::{consts::KERNEL_OFFSET, paging::entry::EntryFlags, rmm::page_flags, CurrentRmmArch},
     memory::PAGE_SIZE,
-    startup::memory::BootloaderMemoryKind::Null,
+    startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };
 use core::{
     cell::SyncUnsafeCell,
@@ -144,6 +144,39 @@ fn align_down(x: usize) -> usize {
     x / PAGE_SIZE * PAGE_SIZE
 }
 
+fn register_memory_from_kernel_args(args: &KernelArgs) {
+    register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
+    #[cfg(dtb)]
+    if let Some(dt) = args.dtb() {
+        crate::dtb::register_dev_memory_ranges(&dt);
+    }
+    register_memory_region(
+        args.kernel_base as usize,
+        args.kernel_size as usize,
+        BootloaderMemoryKind::Kernel,
+    );
+    register_memory_region(
+        args.stack_base as usize,
+        args.stack_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+    register_memory_region(
+        args.env_base as usize,
+        args.env_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+    register_memory_region(
+        args.hwdesc_base as usize,
+        args.hwdesc_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+    register_memory_region(
+        args.bootstrap_base as usize,
+        args.bootstrap_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+}
+
 pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKind) {
     if kind != Null && size != 0 {
         debug!("Registering {:?} memory {:X} size {:X}", kind, base, size);
@@ -151,7 +184,7 @@ pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKi
     }
 }
 
-pub fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
+fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
     let bootloader_areas = unsafe {
         slice::from_raw_parts(
             areas_base as *const BootloaderMemoryEntry,
@@ -379,7 +412,9 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
     }
 }
 
-pub unsafe fn init(low_limit: Option<usize>, high_limit: Option<usize>) {
+pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Option<usize>) {
+    register_memory_from_kernel_args(args);
+
     unsafe {
         let physmem_limit = MemoryEntry {
             start: align_up(low_limit.unwrap_or(0)),

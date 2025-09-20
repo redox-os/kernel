@@ -15,11 +15,7 @@ use crate::{
     arch::{device::serial::init_early, interrupt, paging},
     device,
     devices::graphical_debug,
-    dtb::register_dev_memory_ranges,
-    startup::{
-        memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
-        KernelArgs,
-    },
+    startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -54,18 +50,13 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
         );
 
         let bootstrap = {
-            let args = &*args_ptr;
+            let args = args_ptr.read();
 
             // BSS should already be zero
             {
                 assert_eq!(BSS_TEST_ZERO, 0);
                 assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
             }
-
-            let env = slice::from_raw_parts(
-                (crate::PHYS_OFFSET + args.env_base as usize) as *const u8,
-                args.env_size as usize,
-            );
 
             let dtb_data = if args.hwdesc_base != 0 {
                 Some((
@@ -75,11 +66,9 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             } else {
                 None
             };
-            let dtb = dtb_data
-                .map(|(base, size)| unsafe { slice::from_raw_parts(base as *const u8, size) })
-                .and_then(|data| Fdt::new(data).ok());
+            let dtb = args.dtb();
 
-            graphical_debug::init(env);
+            graphical_debug::init(args.env());
 
             if let Some(dtb) = &dtb {
                 init_early(dtb);
@@ -94,48 +83,11 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             interrupt::init();
 
-            let bootstrap = crate::Bootstrap {
-                base: Frame::containing(PhysicalAddress::new(args.bootstrap_base as usize)),
-                page_count: args.bootstrap_size as usize / PAGE_SIZE,
-                env,
-            };
-
             // Initialize RMM
-            register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
-            if let Some(dt) = &dtb {
-                register_dev_memory_ranges(dt);
-            }
-
-            register_memory_region(
-                args.kernel_base as usize,
-                args.kernel_size as usize,
-                BootloaderMemoryKind::Kernel,
-            );
-            register_memory_region(
-                args.stack_base as usize,
-                args.stack_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.env_base as usize,
-                args.env_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.hwdesc_base as usize,
-                args.hwdesc_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.bootstrap_base as usize,
-                args.bootstrap_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-
-            crate::startup::memory::init(None, None);
+            crate::startup::memory::init(&args, None, None);
 
             let boot_hart_id =
-                get_boot_hart_id(env).expect("Didn't get boot HART id from bootloader");
+                get_boot_hart_id(args.env()).expect("Didn't get boot HART id from bootloader");
             info!("Booting on HART {}", boot_hart_id);
             BOOT_HART_ID.store(boot_hart_id, Ordering::Relaxed);
 
@@ -159,7 +111,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             // FIXME bringup AP HARTs
 
-            bootstrap
+            args.bootstrap()
         };
 
         crate::kmain(bootstrap);

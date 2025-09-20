@@ -10,17 +10,7 @@ use core::{
 use fdt::Fdt;
 
 use crate::{
-    allocator,
-    arch::interrupt,
-    device,
-    devices::graphical_debug,
-    dtb,
-    dtb::register_dev_memory_ranges,
-    paging,
-    startup::{
-        memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
-        KernelArgs,
-    },
+    allocator, arch::interrupt, device, devices::graphical_debug, dtb, paging, startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -44,14 +34,8 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
             }
 
-            // Convert env to slice
-            let env = slice::from_raw_parts(
-                (crate::PHYS_OFFSET + args.env_base as usize) as *const u8,
-                args.env_size as usize,
-            );
-
             // Set up graphical debug
-            graphical_debug::init(env);
+            graphical_debug::init(args.env());
 
             // Get hardware descriptor data
             //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
@@ -70,14 +54,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 .ok_or(fdt::FdtError::BadPtr)
                 .and_then(|data| Fdt::new(data));
 
-            let rsdp_opt = hwdesc_data.and_then(|data| {
-                if data.starts_with(b"RSD PTR ") {
-                    Some(data.as_ptr())
-                } else {
-                    None
-                }
-            });
-
             // Try to find serial port prior to logging
             if let Ok(dtb) = &dtb_res {
                 device::serial::init_early(dtb);
@@ -89,37 +65,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             interrupt::init();
 
             // Initialize RMM
-            register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
-            if let Ok(dtb) = &dtb_res {
-                register_dev_memory_ranges(dtb);
-            }
-
-            register_memory_region(
-                args.kernel_base as usize,
-                args.kernel_size as usize,
-                BootloaderMemoryKind::Kernel,
-            );
-            register_memory_region(
-                args.stack_base as usize,
-                args.stack_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.env_base as usize,
-                args.env_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.hwdesc_base as usize,
-                args.hwdesc_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.bootstrap_base as usize,
-                args.bootstrap_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            crate::startup::memory::init(None, None);
+            crate::startup::memory::init(&args, None, None);
 
             // Initialize paging
             paging::init();
@@ -148,20 +94,14 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
                     #[cfg(feature = "acpi")]
                     {
-                        crate::acpi::init(rsdp_opt);
+                        crate::acpi::init(args.acpi_rsdp());
                     }
                 }
             }
 
             BSP_READY.store(true, Ordering::SeqCst);
 
-            crate::Bootstrap {
-                base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
-                    args.bootstrap_base as usize,
-                )),
-                page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
-                env,
-            }
+            args.bootstrap()
         };
 
         crate::kmain(bootstrap);

@@ -4,7 +4,7 @@
 //! defined in other files inside of the `arch` module
 use core::{
     cell::SyncUnsafeCell,
-    hint, slice,
+    hint,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -18,10 +18,7 @@ use crate::{
     devices::graphical_debug,
     gdt, idt, interrupt,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
-    startup::{
-        memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
-        KernelArgs,
-    },
+    startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -45,17 +42,11 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
                 assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
             }
 
-            // Convert env to slice
-            let env = slice::from_raw_parts(
-                (args.env_base as usize + crate::PHYS_OFFSET) as *const u8,
-                args.env_size as usize,
-            );
-
             // Set up serial debug
             device::serial::init();
 
             // Set up graphical debug
-            graphical_debug::init(env);
+            graphical_debug::init(args.env());
 
             info!("Redox OS starting...");
             args.print();
@@ -67,36 +58,10 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             idt::init_bsp();
 
             // Initialize RMM
-            register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
-            register_memory_region(
-                args.kernel_base as usize,
-                args.kernel_size as usize,
-                BootloaderMemoryKind::Kernel,
-            );
-            register_memory_region(
-                args.stack_base as usize,
-                args.stack_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.env_base as usize,
-                args.env_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.hwdesc_base as usize,
-                args.hwdesc_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
-            register_memory_region(
-                args.bootstrap_base as usize,
-                args.bootstrap_size as usize,
-                BootloaderMemoryKind::IdentityMap,
-            );
             #[cfg(target_arch = "x86")]
-            crate::startup::memory::init(Some(0x100000), Some(0x40000000));
+            crate::startup::memory::init(&args, Some(0x100000), Some(0x40000000));
             #[cfg(target_arch = "x86_64")]
-            crate::startup::memory::init(Some(0x100000), None);
+            crate::startup::memory::init(&args, Some(0x100000), None);
 
             // Initialize paging
             paging::init();
@@ -130,11 +95,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             // Read ACPI tables, starts APs
             #[cfg(feature = "acpi")]
             {
-                acpi::init(if args.hwdesc_base != 0 {
-                    Some((args.hwdesc_base as usize + crate::PHYS_OFFSET) as *const u8)
-                } else {
-                    None
-                });
+                acpi::init(args.acpi_rsdp());
                 device::init_after_acpi();
             }
 
@@ -143,13 +104,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             BSP_READY.store(true, Ordering::SeqCst);
 
-            crate::Bootstrap {
-                base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
-                    args.bootstrap_base as usize,
-                )),
-                page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
-                env,
-            }
+            args.bootstrap()
         };
 
         crate::kmain(bootstrap);

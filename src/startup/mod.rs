@@ -1,15 +1,17 @@
+use core::slice;
+
 pub mod memory;
 
 #[repr(C, packed(8))]
 pub(crate) struct KernelArgs {
-    pub(crate) kernel_base: u64,
-    pub(crate) kernel_size: u64,
+    kernel_base: u64,
+    kernel_size: u64,
 
     pub(crate) stack_base: u64,
     pub(crate) stack_size: u64,
 
-    pub(crate) env_base: u64,
-    pub(crate) env_size: u64,
+    env_base: u64,
+    env_size: u64,
 
     /// The base pointer to the saved RSDP or device tree blob.
     ///
@@ -22,13 +24,13 @@ pub(crate) struct KernelArgs {
     pub(crate) hwdesc_base: u64,
     pub(crate) hwdesc_size: u64,
 
-    pub(crate) areas_base: u64,
-    pub(crate) areas_size: u64,
+    areas_base: u64,
+    areas_size: u64,
 
     /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
-    pub(crate) bootstrap_base: u64,
+    bootstrap_base: u64,
     /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
-    pub(crate) bootstrap_size: u64,
+    bootstrap_size: u64,
 }
 
 impl KernelArgs {
@@ -63,5 +65,58 @@ impl KernelArgs {
             { self.bootstrap_base },
             self.bootstrap_base + self.bootstrap_size
         );
+    }
+
+    pub(crate) fn bootstrap(&self) -> crate::Bootstrap {
+        crate::Bootstrap {
+            base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
+                self.bootstrap_base as usize,
+            )),
+            page_count: (self.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
+            env: self.env(),
+        }
+    }
+
+    pub(crate) fn env(&self) -> &'static [u8] {
+        unsafe {
+            slice::from_raw_parts(
+                (crate::PHYS_OFFSET + self.env_base as usize) as *const u8,
+                self.env_size as usize,
+            )
+        }
+    }
+
+    #[cfg(feature = "acpi")]
+    pub(crate) fn acpi_rsdp(&self) -> Option<*const u8> {
+        if self.hwdesc_base != 0 {
+            let data = unsafe {
+                slice::from_raw_parts(
+                    (crate::PHYS_OFFSET + self.hwdesc_base as usize) as *const u8,
+                    self.hwdesc_size as usize,
+                )
+            };
+            if data.starts_with(b"RSD PTR ") {
+                Some(data.as_ptr())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    #[cfg(dtb)]
+    pub(crate) fn dtb(&self) -> Option<fdt::Fdt<'static>> {
+        if self.hwdesc_base != 0 {
+            let data = unsafe {
+                slice::from_raw_parts(
+                    (crate::PHYS_OFFSET + self.hwdesc_base as usize) as *const u8,
+                    self.hwdesc_size as usize,
+                )
+            };
+            fdt::Fdt::new(data).ok()
+        } else {
+            None
+        }
     }
 }
