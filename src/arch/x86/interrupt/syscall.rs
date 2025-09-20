@@ -1,6 +1,7 @@
 use crate::{
-    ptrace, syscall,
+    ptrace,
     sync::CleanLockToken,
+    syscall,
     syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
 };
 
