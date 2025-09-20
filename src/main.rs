@@ -222,8 +222,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    //TODO: workaround for bug where an AP on MeteorLake has cpu_id 0
-    if !cfg!(feature = "multi_core") || cpu_id == crate::cpu_set::LogicalCpuId::BSP {
+    if !cfg!(feature = "multi_core") {
         info!("AP {}: Disabled", cpu_id);
 
         loop {
