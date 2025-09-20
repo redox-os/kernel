@@ -8,6 +8,7 @@ use crate::{
     memory::GenericPfFlags,
     panic::stack_trace,
     ptrace,
+    sync::CleanLockToken,
     syscall::{self, flag::*},
 };
 
@@ -155,16 +156,18 @@ unsafe fn handle_interrupt(interrupt: usize) {
 
 unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
     unsafe {
+        let mut token = CleanLockToken::new();
+
         if scause == USERMODE_ECALL {
             let r = &mut regs.registers;
             regs.iret.sepc += 4; // skip ecall
-            let ret = syscall::syscall(r.x17, r.x10, r.x11, r.x12, r.x13, r.x14);
+            let ret = syscall::syscall(r.x17, r.x10, r.x11, r.x12, r.x13, r.x14, &mut token);
             r.x10 = ret;
             return;
         }
 
         if scause == BREAKPOINT {
-            if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_some() {
+            if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None, &mut token).is_some() {
                 return;
             }
         }

@@ -2,6 +2,7 @@ use crate::{
     context,
     context::timeout,
     dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+    sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, BE};
@@ -44,7 +45,10 @@ impl InterruptHandler for ClintConnector {
             // a bit of hack, but it is a really bad idea to call scheduler
             // from inside clint irq handler
             timeout::trigger();
-            context::switch::tick();
+
+            //TODO: propogate lock token upwards?
+            let mut token = unsafe { CleanLockToken::new() };
+            context::switch::tick(&mut token);
         }
     }
 }

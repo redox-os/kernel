@@ -10,6 +10,7 @@ use crate::{
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
     interrupt::irq::trigger,
+    sync::CleanLockToken,
     time,
 };
 use fdt::Fdt;
@@ -132,7 +133,9 @@ impl InterruptHandler for GenericTimer {
 
         timeout::trigger();
 
-        context::switch::tick();
+        //TODO: propogate lock token upwards? (requires changes to InterruptHandler trait)
+        let mut token = unsafe { CleanLockToken::new() };
+        context::switch::tick(&mut token);
 
         unsafe {
             trigger(irq);
