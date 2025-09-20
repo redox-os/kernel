@@ -42,12 +42,11 @@ impl InterruptHandler for ClintConnector {
             .unwrap()
             .irq_handler(self.hart_id, self.irq);
         if self.irq == IRQ_TIMER {
-            // a bit of hack, but it is a really bad idea to call scheduler
-            // from inside clint irq handler
-            timeout::trigger();
-
             //TODO: propogate lock token upwards?
             let mut token = unsafe { CleanLockToken::new() };
+            // a bit of hack, but it is a really bad idea to call scheduler
+            // from inside clint irq handler
+            timeout::trigger(&mut token);
             context::switch::tick(&mut token);
         }
     }

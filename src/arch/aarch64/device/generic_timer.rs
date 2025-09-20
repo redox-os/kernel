@@ -131,10 +131,9 @@ impl InterruptHandler for GenericTimer {
             *time::OFFSET.lock() += self.clk_freq as u128;
         }
 
-        timeout::trigger();
-
         //TODO: propogate lock token upwards? (requires changes to InterruptHandler trait)
         let mut token = unsafe { CleanLockToken::new() };
+        timeout::trigger(&mut token);
         context::switch::tick(&mut token);
 
         unsafe {

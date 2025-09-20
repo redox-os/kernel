@@ -176,11 +176,12 @@ interrupt_stack!(pit_stack, |_stack| {
     // Wake up other CPUs
     ipi(IpiKind::Pit, IpiTarget::Other);
 
+    let mut token = unsafe { CleanLockToken::new() };
+
     // Any better way of doing this?
-    timeout::trigger();
+    timeout::trigger(&mut token);
 
     // Switch after a sufficient amount of time since the last switch.
-    let mut token = unsafe { CleanLockToken::new() };
     context::switch::tick(&mut token);
 });
 

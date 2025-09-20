@@ -135,7 +135,7 @@ impl KernelScheme for TimeScheme {
         for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
             let time = unsafe { current_chunk.read_exact::<TimeSpec>()? };
 
-            timeout::register(GlobalSchemes::Time.scheme_id(), id, clock, time);
+            timeout::register(GlobalSchemes::Time.scheme_id(), id, clock, time, token);
 
             bytes_written += mem::size_of::<TimeSpec>();
         }
