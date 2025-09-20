@@ -155,7 +155,7 @@ fn cpu_id() -> crate::cpu_set::LogicalCpuId {
 }
 
 /// The count of all CPUs that can have work scheduled
-static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
+static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 
 /// Get the number of CPUs currently active
 #[inline(always)]
@@ -180,16 +180,14 @@ struct Bootstrap {
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
-    CPU_COUNT.store(cpu_count, Ordering::SeqCst);
-
+fn kmain(bootstrap: Bootstrap) -> ! {
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init();
 
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    info!("BSP: {}", cpu_count);
+    info!("BSP: {}", cpu_count());
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);

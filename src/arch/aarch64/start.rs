@@ -4,7 +4,7 @@
 //! defined in other files inside of the `arch` module
 use core::{
     slice,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use fdt::Fdt;
@@ -25,7 +25,6 @@ static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
@@ -174,7 +173,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
             // Reset AP variables
-            CPU_COUNT.store(1, Ordering::SeqCst);
             AP_READY.store(false, Ordering::SeqCst);
             BSP_READY.store(false, Ordering::SeqCst);
 
@@ -215,7 +213,7 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             }
         };
 
-        crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
+        crate::kmain(bootstrap);
     }
 }
 

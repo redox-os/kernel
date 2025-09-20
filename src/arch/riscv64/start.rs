@@ -1,7 +1,7 @@
 use core::{
     arch::asm,
     slice,
-    sync::atomic::{AtomicU32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use fdt::Fdt;
 
@@ -24,7 +24,6 @@ static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
 pub static BOOT_HART_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[repr(packed)]
@@ -186,8 +185,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
 
             crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
-            CPU_COUNT.store(1, Ordering::SeqCst);
-
             // Setup kernel heap
             allocator::init();
 
@@ -207,6 +204,6 @@ pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
             bootstrap
         };
 
-        crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
+        crate::kmain(bootstrap);
     }
 }

@@ -9,7 +9,7 @@ use crate::{
     device::local_apic::the_local_apic,
     memory::{allocate_p2frame, Frame, KernelMapper},
     paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
-    start::{kstart_ap, AP_READY, CPU_COUNT},
+    start::{kstart_ap, AP_READY},
 };
 
 use super::{Madt, MadtEntry};
@@ -61,10 +61,7 @@ pub(super) fn init(madt: Madt) {
                         println!("        This is my local APIC");
                     } else {
                         if ap_local_apic.flags & 1 == 1 {
-                            // Increase CPU ID
-                            CPU_COUNT.fetch_add(1, Ordering::SeqCst);
-
-                            let cpu_id = LogicalCpuId::new(ap_local_apic.processor.into());
+                            let cpu_id = LogicalCpuId::next();
 
                             // Allocate a stack
                             let stack_start = allocate_p2frame(4)
