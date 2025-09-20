@@ -352,14 +352,7 @@ impl ProcScheme {
 }
 
 impl KernelScheme for ProcScheme {
-    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
-        if path != "authority" {
-            return Err(Error::new(ENOENT));
-        }
-        static LOCK: AtomicBool = AtomicBool::new(false);
-        if LOCK.swap(true, Ordering::Relaxed) {
-            return Err(Error::new(EEXIST));
-        }
+    fn open_capability(&self) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(
             id,
@@ -369,9 +362,8 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::Authority,
             },
         );
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(id)
     }
-
     fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
         let handles = HANDLES.read();
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
