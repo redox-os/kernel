@@ -10,7 +10,7 @@ use core::{
 use alloc::{string::String, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
-use spin::{Mutex, Once, RwLock};
+use spin::{Mutex, Once};
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
 use crate::context::file::InternalFlags;
@@ -23,7 +23,7 @@ use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_res
 use crate::{
     cpu_set::LogicalCpuId,
     event,
-    sync::CleanLockToken,
+    sync::{CleanLockToken, RwLock, L1},
     syscall::{
         data::Stat,
         error::*,
@@ -35,7 +35,7 @@ use crate::{
 ///
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
-static HANDLES: RwLock<HashMap<usize, Handle>> =
+static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
@@ -57,10 +57,13 @@ const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
 
 /// Add to the input queue
 pub fn irq_trigger(irq: u8) {
+    //TODO: propogate lock token upwards (changes lots of arch-specific code)?
+    let mut token = unsafe { CleanLockToken::new() };
+
     COUNTS.lock()[irq as usize] += 1;
 
     for (fd, _) in HANDLES
-        .read()
+        .read(token.token())
         .iter()
         .filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?)))
         .filter(|&(_, (_, handle_irq))| handle_irq == irq)
@@ -304,7 +307,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             }
         };
         let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(fd, handle);
+        HANDLES.write(token.token()).insert(fd, handle);
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
     fn getdents(
@@ -324,7 +327,11 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
         let mut intermediate = String::new();
 
-        match *HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+        match *HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        {
             Handle::TopLevel => {
                 let cpus = CPUS.get().expect("IRQ scheme not initialized");
 
@@ -394,7 +401,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let handles_guard = HANDLES.read();
+        let handles_guard = HANDLES.read(token.token());
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         if let &Handle::Irq {
@@ -415,7 +422,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handles_guard = HANDLES.read();
+        let handles_guard = HANDLES.read(token.token());
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
         match handle {
@@ -443,7 +450,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let handles_guard = HANDLES.read();
+        let handles_guard = HANDLES.read(token.token());
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         buf.copy_exactly(&match *handle {
@@ -493,7 +500,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         Ok(())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let handles_guard = HANDLES.read();
+        let handles_guard = HANDLES.read(token.token());
         let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
 
         let scheme_path = match handle {
@@ -516,7 +523,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handles_guard = HANDLES.read();
+        let handles_guard = HANDLES.read(token.token());
         let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
 
         match *handle {
