@@ -180,7 +180,6 @@ struct Bootstrap {
     env: &'static [u8],
 }
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
-static INIT_THREAD: spin::Once<Arc<RwSpinlock<crate::context::Context>>> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
@@ -214,7 +213,6 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
                 context.euid = 0;
                 context.egid = 0;
             }
-            INIT_THREAD.call_once(move || context_lock);
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
