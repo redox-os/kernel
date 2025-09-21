@@ -21,6 +21,7 @@ use crate::{
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
+    sync::CleanLockToken,
 };
 
 use super::{context::HardBlockedReason, file::FileDescription};
@@ -51,7 +52,7 @@ pub struct UnmapResult {
     pub flags: MunmapFlags,
 }
 impl UnmapResult {
-    pub fn unmap(mut self) -> Result<()> {
+    pub fn unmap(mut self, token: &mut CleanLockToken) -> Result<()> {
         let Some(GrantFileRef {
             base_offset,
             description,
@@ -64,14 +65,13 @@ impl UnmapResult {
             ref desc => (desc.scheme, desc.number),
         };
 
-        let funmap_result = scheme::schemes()
-            .get(scheme_id)
-            .cloned()
+        let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
+        let funmap_result = scheme_opt
             .ok_or(Error::new(ENODEV))
-            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
+            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
-            fd.into_inner().try_close()?;
+            fd.into_inner().try_close(token)?;
         }
         funmap_result?;
 
@@ -502,7 +502,11 @@ impl AddrSpaceWrapper {
     }
     /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
     /// is intended to be used for user-kernel shared memory.
-    pub fn borrow_frame_enforce_rw_allocated(self: &Arc<Self>, page: Page) -> Result<RaiiFrame> {
+    pub fn borrow_frame_enforce_rw_allocated(
+        self: &Arc<Self>,
+        page: Page,
+        token: &mut CleanLockToken,
+    ) -> Result<RaiiFrame> {
         let mut guard = self.acquire_write();
 
         let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
@@ -519,8 +523,9 @@ impl AddrSpaceWrapper {
         {
             Frame::containing(f)
         } else {
-            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
-                .map_err(|_| Error::new(ENOMEM))?;
+            let (frame, flush, new_guard) =
+                correct_inner(self, guard, page, AccessMode::Write, 0, token)
+                    .map_err(|_| Error::new(ENOMEM))?;
             flush.flush();
             guard = new_guard;
 
@@ -1333,6 +1338,7 @@ impl Grant {
         lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
+        token: &mut CleanLockToken,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
@@ -1359,6 +1365,7 @@ impl Grant {
                                     src_page,
                                     AccessMode::Read,
                                     0,
+                                    token,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
@@ -1383,6 +1390,7 @@ impl Grant {
                                     src_page,
                                     AccessMode::Read,
                                     0,
+                                    token,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
@@ -2232,6 +2240,9 @@ pub struct Table {
 
 impl Drop for AddrSpace {
     fn drop(&mut self) {
+        //TODO: DANGER: unmap requires a CleanLockToken, this cheats!
+        let mut token = unsafe { CleanLockToken::new() };
+
         for mut grant in core::mem::take(&mut self.grants).into_iter() {
             // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
             // prevent unmapping the mapped range twice (which would corrupt only the scheme
@@ -2245,7 +2256,7 @@ impl Drop for AddrSpace {
             // the underlying pages (and send some funmaps).
             let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
 
-            let _ = res.unmap();
+            let _ = res.unmap(&mut token);
         }
     }
 }
@@ -2372,14 +2383,18 @@ pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
     }
 }
 
-pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Result<(), PfError> {
+pub fn try_correcting_page_tables(
+    faulting_page: Page,
+    access: AccessMode,
+    token: &mut CleanLockToken,
+) -> Result<(), PfError> {
     let Ok(addr_space_lock) = AddrSpace::current() else {
         debug!("User page fault without address space being set.");
         return Err(PfError::Segv);
     };
 
     let lock = &addr_space_lock;
-    let (_, flush, _) = correct_inner(lock, lock.acquire_write(), faulting_page, access, 0)?;
+    let (_, flush, _) = correct_inner(lock, lock.acquire_write(), faulting_page, access, 0, token)?;
 
     flush.flush();
 
@@ -2391,6 +2406,7 @@ fn correct_inner<'l>(
     faulting_page: Page,
     access: AccessMode,
     recursion_level: u32,
+    token: &mut CleanLockToken,
 ) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
     let mut addr_space = &mut *addr_space_guard;
     let mut flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
@@ -2533,6 +2549,7 @@ fn correct_inner<'l>(
                                     src_page,
                                     AccessMode::Read,
                                     new_recursion_level,
+                                    token,
                                 )?
                             };
 
@@ -2610,7 +2627,7 @@ fn correct_inner<'l>(
             let (scheme_id, scheme_number) = match file_ref.description.read() {
                 ref desc => (desc.scheme, desc.number),
             };
-            let user_inner = scheme::schemes()
+            let user_inner = scheme::schemes(token.token())
                 .get(scheme_id)
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
@@ -2623,18 +2640,18 @@ fn correct_inner<'l>(
 
             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
             user_inner
-                .request_fmap(scheme_number, offset, 1, flags)
+                .request_fmap(scheme_number, offset, 1, flags, token)
                 .unwrap();
 
             let context_lock = crate::context::current();
             context_lock
-                .write()
+                .write(token.token())
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
-            super::switch();
+            super::switch(token);
 
             let frame = context_lock
-                .write()
+                .write(token.token())
                 .fmap_ret
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;
@@ -2678,9 +2695,9 @@ pub struct BorrowedFmapSource<'a> {
     pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
 }
 
-pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
+pub fn handle_notify_files(notify_files: Vec<UnmapResult>, token: &mut CleanLockToken) {
     for file in notify_files {
-        let _ = file.unmap();
+        let _ = file.unmap(token);
     }
 }
 

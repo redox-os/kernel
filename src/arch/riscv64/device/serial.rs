@@ -10,6 +10,7 @@ use crate::{
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
     scheme::irq::irq_trigger,
+    sync::CleanLockToken,
 };
 
 pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
@@ -17,10 +18,10 @@ pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 pub struct Com1Irq {}
 
 impl InterruptHandler for Com1Irq {
-    fn irq_handler(&mut self, irq: u32) {
-        COM1.lock().receive();
+    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
+        COM1.lock().receive(token);
         unsafe {
-            irq_trigger(irq as u8);
+            irq_trigger(irq as u8, token);
             IRQ_CHIP.irq_eoi(irq);
         }
     }

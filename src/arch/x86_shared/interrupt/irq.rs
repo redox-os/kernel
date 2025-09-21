@@ -12,6 +12,7 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},
+    sync::CleanLockToken,
     time,
 };
 
@@ -34,7 +35,7 @@ pub fn spurious_count_irq15() -> usize {
 pub fn spurious_count() -> usize {
     spurious_count_irq7() + spurious_count_irq15()
 }
-pub fn spurious_irq_resource() -> syscall::Result<Vec<u8>> {
+pub fn spurious_irq_resource(_token: &mut CleanLockToken) -> syscall::Result<Vec<u8>> {
     match irq_method() {
         IrqMethod::Apic => Ok(Vec::from(&b"(not implemented for APIC yet)"[..])),
         IrqMethod::Pic => Ok(format!(
@@ -75,7 +76,8 @@ unsafe fn trigger(irq: u8) {
             }
             IrqMethod::Apic => ioapic_mask(irq),
         }
-        irq_trigger(irq);
+        let mut token = CleanLockToken::new();
+        irq_trigger(irq, &mut token);
     }
 }
 
@@ -175,11 +177,13 @@ interrupt_stack!(pit_stack, |_stack| {
     // Wake up other CPUs
     ipi(IpiKind::Pit, IpiTarget::Other);
 
+    let mut token = unsafe { CleanLockToken::new() };
+
     // Any better way of doing this?
-    timeout::trigger();
+    timeout::trigger(&mut token);
 
     // Switch after a sufficient amount of time since the last switch.
-    context::switch::tick();
+    context::switch::tick(&mut token);
 });
 
 interrupt!(keyboard, || {
@@ -188,7 +192,8 @@ interrupt!(keyboard, || {
 
     unsafe { eoi(1) };
 
-    serio_input(0, data);
+    let mut token = unsafe { CleanLockToken::new() };
+    serio_input(0, data, &mut token);
 });
 
 interrupt!(cascade, || {
@@ -197,12 +202,14 @@ interrupt!(cascade, || {
 });
 
 interrupt!(com2, || {
-    COM2.lock().receive();
+    let mut token = unsafe { CleanLockToken::new() };
+    COM2.lock().receive(&mut token);
     unsafe { eoi(3) };
 });
 
 interrupt!(com1, || {
-    COM1.lock().receive();
+    let mut token = unsafe { CleanLockToken::new() };
+    COM1.lock().receive(&mut token);
     unsafe { eoi(4) };
 });
 
@@ -266,7 +273,8 @@ interrupt!(mouse, || {
 
     unsafe { eoi(12) };
 
-    serio_input(1, data);
+    let mut token = unsafe { CleanLockToken::new() };
+    serio_input(1, data, &mut token);
 });
 
 interrupt!(fpu, || {
@@ -326,7 +334,8 @@ macro_rules! allocatable_irq(
 #[cfg(target_arch = "x86")]
 pub unsafe fn allocatable_irq_generic(number: u8) {
     unsafe {
-        irq_trigger(number - 32);
+        let mut token = unsafe { CleanLockToken::new() };
+        irq_trigger(number - 32, &mut token);
         lapic_eoi();
     }
 }
@@ -336,10 +345,12 @@ default_irqs!((), allocatable_irq);
 
 #[cfg(target_arch = "x86_64")]
 interrupt_error!(generic_irq, |_stack, code| {
+    let mut token = unsafe { CleanLockToken::new() };
+
     // The reason why 128 is subtracted and added from the code, is that PUSH imm8 sign-extends the
     // value, and the longer PUSH imm32 would make the generic_interrupts table twice as large
     // (containing lots of useless NOPs).
-    irq_trigger((code as i32).wrapping_add(128) as u8);
+    irq_trigger((code as i32).wrapping_add(128) as u8, &mut token);
 
     unsafe { lapic_eoi() };
 });

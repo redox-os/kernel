@@ -4,9 +4,9 @@ use alloc::{
 };
 use core::fmt::Write;
 
-use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
+use crate::{context, paging::PAGE_SIZE, sync::CleanLockToken, syscall::error::Result};
 
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
         "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
         "PID", "EUID", "EGID", "ENS", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
@@ -14,9 +14,10 @@ pub fn resource() -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let contexts = context::contexts();
+        let mut contexts = context::contexts(token.token());
+        let (contexts, mut token) = contexts.token_split();
         for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
-            let context = context_ref.read();
+            let context = context_ref.read(token.token());
 
             let mut stat_string = String::new();
             // TODO: All user programs must have some grant in order for executable memory to even

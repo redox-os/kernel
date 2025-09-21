@@ -1,10 +1,10 @@
 use core::sync::atomic::Ordering;
 
-use crate::{context, syscall::flag::SigcontrolFlags};
+use crate::{context, sync::CleanLockToken, syscall::flag::SigcontrolFlags};
 
-pub fn signal_handler() {
+pub fn signal_handler(token: &mut CleanLockToken) {
     let context_lock = context::current();
-    let mut context_guard = context_lock.write();
+    let mut context_guard = context_lock.write(token.token());
     let context = &mut *context_guard;
 
     let being_sigkilled = context.being_sigkilled;
@@ -12,7 +12,7 @@ pub fn signal_handler() {
     if being_sigkilled {
         drop(context_guard);
         drop(context_lock);
-        crate::syscall::process::exit_this_context(None);
+        crate::syscall::process::exit_this_context(None, token);
     }
 
     /*let thumbs_down = ptrace::breakpoint_callback(
@@ -72,9 +72,11 @@ pub fn signal_handler() {
     );
 }
 pub fn excp_handler(excp: syscall::Exception) {
+    let mut token = unsafe { CleanLockToken::new() };
+
     let current = context::current();
 
-    let mut context = current.write();
+    let context = current.write(token.token());
 
     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         // TODO: Let procmgr print this?
@@ -87,7 +89,7 @@ pub fn excp_handler(excp: syscall::Exception) {
         drop(context);
         // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
         // context (closing files, dropping AddrSpace, etc)
-        crate::syscall::process::exit_this_context(Some(excp));
+        crate::syscall::process::exit_this_context(Some(excp), &mut token);
     };
     // TODO
     /*

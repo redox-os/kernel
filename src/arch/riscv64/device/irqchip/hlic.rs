@@ -1,4 +1,7 @@
-use crate::dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP};
+use crate::{
+    dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+    sync::CleanLockToken,
+};
 use alloc::vec::Vec;
 use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
@@ -24,7 +27,7 @@ fn acknowledge(interrupt: usize) {
     }
 }
 
-pub unsafe fn interrupt(hart: usize, interrupt: usize) {
+pub unsafe fn interrupt(hart: usize, interrupt: usize, token: &mut CleanLockToken) {
     unsafe {
         assert!(
             hart < CPU_INTERRUPT_HANDLERS.len(),
@@ -42,13 +45,13 @@ pub unsafe fn interrupt(hart: usize, interrupt: usize) {
             .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
         match &mut IRQ_CHIP.irq_desc[virq].handler {
             Some(handler) => {
-                handler.irq_handler(virq as u32);
+                handler.irq_handler(virq as u32, token);
             }
             _ => match IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
                 Some(ic_idx) => {
                     IRQ_CHIP.irq_chip_list.chips[ic_idx]
                         .ic
-                        .irq_handler(virq as u32);
+                        .irq_handler(virq as u32, token);
                 }
                 _ => {
                     panic!(
@@ -83,10 +86,10 @@ impl Hlic {
     }
 }
 impl InterruptHandler for Hlic {
-    fn irq_handler(&mut self, irq: u32) {
+    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
         assert!(irq < 16, "Unsupported HLIC interrupt raised!");
         unsafe {
-            IRQ_CHIP.trigger_virq(self.virq_base as u32 + irq);
+            IRQ_CHIP.trigger_virq(self.virq_base as u32 + irq, token);
         }
     }
 }

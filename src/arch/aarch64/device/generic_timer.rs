@@ -10,6 +10,7 @@ use crate::{
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
     interrupt::irq::trigger,
+    sync::CleanLockToken,
     time,
 };
 use fdt::Fdt;
@@ -124,18 +125,17 @@ impl GenericTimer {
 }
 
 impl InterruptHandler for GenericTimer {
-    fn irq_handler(&mut self, irq: u32) {
+    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
         self.clear_irq();
         {
             *time::OFFSET.lock() += self.clk_freq as u128;
         }
 
-        timeout::trigger();
-
-        context::switch::tick();
+        timeout::trigger(token);
+        context::switch::tick(token);
 
         unsafe {
-            trigger(irq);
+            trigger(irq, token);
         }
         self.reload_count();
     }

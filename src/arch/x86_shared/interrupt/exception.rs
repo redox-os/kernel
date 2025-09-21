@@ -3,7 +3,8 @@ use x86::irq::PageFaultError;
 
 use crate::{
     arch::x86_shared::interrupt, context::signal::excp_handler, interrupt_error, interrupt_stack,
-    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace, syscall::flag::*,
+    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace,
+    sync::CleanLockToken, syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {
@@ -28,7 +29,8 @@ interrupt_stack!(debug, @paranoid, |stack| {
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
-    if ptrace::breakpoint_callback(PTRACE_STOP_SINGLESTEP, None).is_some() {
+    let mut token = unsafe { CleanLockToken::new() };
+    if ptrace::breakpoint_callback(PTRACE_STOP_SINGLESTEP, None, &mut token).is_some() {
         handled = true;
     } else {
         // There was no breakpoint, restore original value
@@ -78,7 +80,8 @@ interrupt_stack!(breakpoint, |stack| {
         stack.iret.rip -= 1;
     }
 
-    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
+    let mut token = unsafe { CleanLockToken::new() };
+    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None, &mut token).is_none() {
         println!("Breakpoint trap");
         stack.dump();
         excp_handler(Exception {

@@ -4,7 +4,6 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
-use spin::RwLock;
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     O_EXLOCK, O_FSYNC,
@@ -17,6 +16,7 @@ use crate::{
         user::{UserInner, UserScheme},
         FileDescription, SchemeId, SchemeNamespace,
     },
+    sync::{CleanLockToken, RwLock, L1},
     syscall::{
         data::Stat,
         error::*,
@@ -38,7 +38,7 @@ pub struct RootScheme {
     scheme_ns: SchemeNamespace,
     scheme_id: SchemeId,
     next_id: AtomicUsize,
-    handles: RwLock<HashMap<usize, Handle>>,
+    handles: RwLock<L1, HashMap<usize, Handle>>,
 }
 
 impl RootScheme {
@@ -53,7 +53,13 @@ impl RootScheme {
 }
 
 impl KernelScheme for RootScheme {
-    fn kopen(&self, path: &str, flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let path = path.trim_start_matches('/');
 
         //TODO: Make this follow standards for flags and errors
@@ -72,7 +78,7 @@ impl KernelScheme for RootScheme {
 
             let inner = {
                 let path_box = path.to_string().into_boxed_str();
-                let mut schemes = scheme::schemes_mut();
+                let mut schemes = scheme::schemes_mut(token.token());
 
                 let v2 = flags & O_FSYNC == O_FSYNC;
                 let new_close = flags & O_EXLOCK == O_EXLOCK;
@@ -110,32 +116,38 @@ impl KernelScheme for RootScheme {
                 inner
             };
 
-            self.handles.write().insert(id, Handle::Scheme(inner));
+            self.handles
+                .write(token.token())
+                .insert(id, Handle::Scheme(inner));
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
         } else if path.is_empty() {
-            let ens = context::current().read().ens;
+            let ens = context::current().read(token.token()).ens;
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            self.handles.write().insert(id, Handle::List { ens });
+            self.handles
+                .write(token.token())
+                .insert(id, Handle::List { ens });
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         } else {
             let inner = Arc::new(path.as_bytes().to_vec().into_boxed_slice());
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-            self.handles.write().insert(id, Handle::File(inner));
+            self.handles
+                .write(token.token())
+                .insert(id, Handle::File(inner));
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         }
     }
 
-    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
         let path = path.trim_matches('/');
 
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
         let inner = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             handles
                 .iter()
                 .find_map(|(_id, handle)| {
@@ -152,12 +164,12 @@ impl KernelScheme for RootScheme {
                 .ok_or(Error::new(ENOENT))?
         };
 
-        inner.unmount()
+        inner.unmount(token)
     }
 
-    fn fsize(&self, file: usize) -> Result<u64> {
+    fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -169,9 +181,14 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn fevent(&self, file: usize, flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        file: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -183,9 +200,14 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn kfpath(&self, file: usize, mut buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(
+        &self,
+        file: usize,
+        mut buf: UserSliceWo,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -206,9 +228,9 @@ impl KernelScheme for RootScheme {
         Ok(bytes_copied)
     }
 
-    fn fsync(&self, file: usize) -> Result<()> {
+    fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -220,15 +242,15 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn close(&self, file: usize) -> Result<()> {
+    fn close(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
         let handle = self
             .handles
-            .write()
+            .write(token.token())
             .remove(&file)
             .ok_or(Error::new(EBADF))?;
         match handle {
             Handle::Scheme(inner) => {
-                scheme::schemes_mut().remove(inner.scheme_id);
+                scheme::schemes_mut(token.token()).remove(inner.scheme_id);
             }
             _ => (),
         }
@@ -241,15 +263,16 @@ impl KernelScheme for RootScheme {
         _offset: u64,
         flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
         match handle {
-            Handle::Scheme(inner) => inner.read(buf, flags),
+            Handle::Scheme(inner) => inner.read(buf, flags, token),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }
@@ -260,14 +283,20 @@ impl KernelScheme for RootScheme {
         buf: UserSliceWo,
         header_size: u16,
         opaque: u64,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let Handle::List { ens } = *self.handles.read().get(&id).ok_or(Error::new(EBADF))? else {
+        let Handle::List { ens } = *self
+            .handles
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        else {
             return Err(Error::new(ENOTDIR));
         };
 
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
         {
-            let schemes = scheme::schemes();
+            let schemes = scheme::schemes(token.token());
             for (i, (name, _)) in schemes
                 .iter_name(ens)
                 .enumerate()
@@ -292,23 +321,24 @@ impl KernelScheme for RootScheme {
         buf: UserSliceRo,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
         match handle {
-            Handle::Scheme(inner) => inner.write(buf),
+            Handle::Scheme(inner) => inner.write(buf, token),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }
     }
 
-    fn kfstat(&self, file: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, file: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&file).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -334,13 +364,14 @@ impl KernelScheme for RootScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<spin::RwLock<FileDescription>>>,
         flags: CallFlags,
         arg: u64,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -358,15 +389,16 @@ impl KernelScheme for RootScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = self.handles.read();
+            let handles = self.handles.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
         match handle {
-            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
+            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata, token),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }

@@ -1,7 +1,10 @@
 #[cfg(feature = "acpi")]
 use crate::{context, scheme::acpi, time};
 
-use crate::syscall::io::{Io, Pio};
+use crate::{
+    sync::CleanLockToken,
+    syscall::io::{Io, Pio},
+};
 
 pub unsafe fn kreset() -> ! {
     unsafe {
@@ -56,11 +59,11 @@ pub unsafe fn emergency_reset() -> ! {
 }
 
 #[cfg(feature = "acpi")]
-fn userspace_acpi_shutdown() {
+fn userspace_acpi_shutdown(token: &mut CleanLockToken) {
     info!("Notifying any potential ACPI driver");
     // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
     // shutdown).
-    if !acpi::register_kstop() {
+    if !acpi::register_kstop(token) {
         // There was no context to switch to.
         info!("No ACPI driver was alive to handle shutdown.");
         return;
@@ -76,7 +79,7 @@ fn userspace_acpi_shutdown() {
         // TODO: Switch directly to whichever process is handling the kstop pipe. We would add an
         // event flag like EVENT_DIRECT, which has already been suggested for IRQs.
         // TODO: Waitpid with timeout? Because, what if the ACPI driver would crash?
-        let _ = context::switch();
+        let _ = context::switch(token);
 
         let current = time::monotonic();
         if current - initial > time::NANOS_PER_SEC {
@@ -86,12 +89,12 @@ fn userspace_acpi_shutdown() {
     }
 }
 
-pub unsafe fn kstop() -> ! {
+pub unsafe fn kstop(token: &mut CleanLockToken) -> ! {
     unsafe {
         info!("Running kstop()");
 
         #[cfg(feature = "acpi")]
-        userspace_acpi_shutdown();
+        userspace_acpi_shutdown(token);
 
         // Magic shutdown code for bochs and qemu (older versions).
         for c in "Shutdown".bytes() {

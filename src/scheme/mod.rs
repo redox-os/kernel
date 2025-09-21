@@ -12,7 +12,7 @@ use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
 use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::Once;
 use syscall::{CallFlags, EventFlags, MunmapFlags};
 
 use crate::{
@@ -20,6 +20,7 @@ use crate::{
         file::{FileDescription, InternalFlags},
         memory::AddrSpaceWrapper,
     },
+    sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L0, L1},
     syscall::{
         error::*,
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
@@ -361,26 +362,32 @@ impl SchemeList {
 }
 
 /// Schemes list
-static SCHEMES: Once<RwLock<SchemeList>> = Once::new();
+static SCHEMES: Once<RwLock<L1, SchemeList>> = Once::new();
 
 /// Initialize schemes, called if needed
-fn init_schemes() -> RwLock<SchemeList> {
+fn init_schemes() -> RwLock<L1, SchemeList> {
     RwLock::new(SchemeList::new())
 }
 
 /// Get the global schemes list, const
-pub fn schemes() -> RwLockReadGuard<'static, SchemeList> {
-    SCHEMES.call_once(init_schemes).read()
+pub fn schemes<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, SchemeList> {
+    SCHEMES.call_once(init_schemes).read(token)
 }
 
 /// Get the global schemes list, mutable
-pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
-    SCHEMES.call_once(init_schemes).write()
+pub fn schemes_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, SchemeList> {
+    SCHEMES.call_once(init_schemes).write(token)
 }
 
 #[allow(unused_variables)]
 pub trait KernelScheme: Send + Sync + 'static {
-    fn kopen(&self, path: &str, flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         Err(Error::new(ENOENT))
     }
 
@@ -391,6 +398,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         flags: usize,
         fcntl_flags: u32,
         _ctx: CallerCtx,
+        token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
     }
@@ -401,14 +409,28 @@ pub trait KernelScheme: Send + Sync + 'static {
         addr_space: &Arc<AddrSpaceWrapper>,
         map: &crate::syscall::data::Map,
         consume: bool,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
-    fn kfunmap(&self, number: usize, offset: usize, size: usize, flags: MunmapFlags) -> Result<()> {
+    fn kfunmap(
+        &self,
+        number: usize,
+        offset: usize,
+        size: usize,
+        flags: MunmapFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         Err(Error::new(EOPNOTSUPP))
     }
 
-    fn kdup(&self, old_id: usize, buf: UserSliceRo, _caller: CallerCtx) -> Result<OpenResult> {
+    fn kdup(
+        &self,
+        old_id: usize,
+        buf: UserSliceRo,
+        _caller: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         Err(Error::new(EOPNOTSUPP))
     }
     fn kwriteoff(
@@ -418,11 +440,12 @@ pub trait KernelScheme: Send + Sync + 'static {
         offset: u64,
         flags: u32,
         stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         if offset != u64::MAX {
             return Err(Error::new(ESPIPE));
         }
-        self.kwrite(id, buf, flags, stored_flags)
+        self.kwrite(id, buf, flags, stored_flags, token)
     }
     fn kreadoff(
         &self,
@@ -431,28 +454,43 @@ pub trait KernelScheme: Send + Sync + 'static {
         offset: u64,
         flags: u32,
         stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         if offset != u64::MAX {
             return Err(Error::new(ESPIPE));
         }
-        self.kread(id, buf, flags, stored_flags)
+        self.kread(id, buf, flags, stored_flags, token)
     }
-    fn kwrite(&self, id: usize, buf: UserSliceRo, flags: u32, stored_flags: u32) -> Result<usize> {
+    fn kwrite(
+        &self,
+        id: usize,
+        buf: UserSliceRo,
+        flags: u32,
+        stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, stored_flags: u32) -> Result<usize> {
+    fn kread(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        flags: u32,
+        stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfutimens(&self, id: usize, buf: UserSliceRo) -> Result<usize> {
+    fn kfutimens(&self, id: usize, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn kfstatvfs(&self, id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstatvfs(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
 
@@ -462,47 +500,83 @@ pub trait KernelScheme: Send + Sync + 'static {
         buf: UserSliceWo,
         header_size: u16,
         opaque_id_first: u64,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
 
-    fn fsync(&self, id: usize) -> Result<()> {
+    fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
-    fn ftruncate(&self, id: usize, len: usize) -> Result<()> {
+    fn ftruncate(&self, id: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn fsize(&self, id: usize) -> Result<u64> {
+    fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         Err(Error::new(ESPIPE))
     }
-    fn legacy_seek(&self, id: usize, pos: isize, whence: usize) -> Option<Result<usize>> {
+    fn legacy_seek(
+        &self,
+        id: usize,
+        pos: isize,
+        whence: usize,
+        token: &mut CleanLockToken,
+    ) -> Option<Result<usize>> {
         None
     }
-    fn fchmod(&self, id: usize, new_mode: u16) -> Result<()> {
+    fn fchmod(&self, id: usize, new_mode: u16, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn fchown(&self, id: usize, new_uid: u32, new_gid: u32) -> Result<()> {
+    fn fchown(
+        &self,
+        id: usize,
+        new_uid: u32,
+        new_gid: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        id: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
-    fn flink(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
+    fn flink(
+        &self,
+        id: usize,
+        new_path: &str,
+        caller_ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn frename(&self, id: usize, new_path: &str, caller_ctx: CallerCtx) -> Result<()> {
+    fn frename(
+        &self,
+        id: usize,
+        new_path: &str,
+        caller_ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         Err(Error::new(EBADF))
     }
-    fn fcntl(&self, id: usize, cmd: usize, arg: usize) -> Result<usize> {
+    fn fcntl(
+        &self,
+        id: usize,
+        cmd: usize,
+        arg: usize,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         Ok(0)
     }
-    fn rmdir(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+    fn rmdir(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(ENOENT))
     }
-    fn unlink(&self, path: &str, ctx: CallerCtx) -> Result<()> {
+    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(ENOENT))
     }
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
     fn kcall(
@@ -511,16 +585,18 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<spin::RwLock<FileDescription>>>,
         flags: CallFlags,
         args: u64,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
@@ -530,6 +606,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
@@ -538,7 +615,7 @@ pub trait KernelScheme: Send + Sync + 'static {
 #[derive(Debug)]
 pub enum OpenResult {
     SchemeLocal(usize, InternalFlags),
-    External(Arc<RwLock<FileDescription>>),
+    External(Arc<spin::RwLock<FileDescription>>),
 }
 pub struct CallerCtx {
     pub pid: usize,
