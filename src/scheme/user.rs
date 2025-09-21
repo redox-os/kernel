@@ -28,7 +28,7 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        BorrowedHtBuf, Context, ContextLock, Status,
+        BorrowedHtBuf, ContextLock, Status,
     },
     event,
     memory::Frame,

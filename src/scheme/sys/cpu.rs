@@ -6,7 +6,7 @@ use crate::{
     syscall::error::{Error, Result, EIO},
 };
 
-pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!("CPUs: {}\n", crate::cpu_count());
 
     match cpu_info(&mut string) {

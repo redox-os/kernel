@@ -51,7 +51,7 @@ impl KernelScheme for TimeScheme {
         _id: usize,
         _cmd: usize,
         _arg: usize,
-        token: &mut CleanLockToken,
+        _token: &mut CleanLockToken,
     ) -> Result<usize> {
         Ok(0)
     }

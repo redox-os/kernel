@@ -212,7 +212,7 @@ impl SerialPort {
 
             flags = self.intr_stats();
         }
-        debug_notify();
+        debug_notify(token);
     }
 
     pub fn send(&mut self, data: u8) {

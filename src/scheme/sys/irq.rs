@@ -3,7 +3,7 @@ use core::fmt::Write;
 
 use crate::{sync::CleanLockToken, syscall::error::Result};
 
-pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();
 
     {

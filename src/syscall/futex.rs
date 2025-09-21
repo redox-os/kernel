@@ -14,7 +14,7 @@ use crate::{
     context::{
         self,
         memory::{AddrSpace, AddrSpaceWrapper},
-        Context, ContextLock,
+        ContextLock,
     },
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},

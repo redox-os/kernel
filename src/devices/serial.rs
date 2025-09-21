@@ -41,19 +41,19 @@ impl SerialKind {
                 while let Some(c) = inner.receive() {
                     debug_input(c, token);
                 }
-                debug_notify();
+                debug_notify(token);
             }
             Self::Ns16550u8(inner) => {
                 while let Some(c) = inner.receive() {
                     debug_input(c, token);
                 }
-                debug_notify();
+                debug_notify(token);
             }
             Self::Ns16550u32(inner) => {
                 while let Some(c) = inner.receive() {
                     debug_input(c, token);
                 }
-                debug_notify();
+                debug_notify(token);
             }
             Self::Pl011(inner) => inner.receive(token),
         }

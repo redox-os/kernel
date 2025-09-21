@@ -35,7 +35,7 @@ pub fn spurious_count_irq15() -> usize {
 pub fn spurious_count() -> usize {
     spurious_count_irq7() + spurious_count_irq15()
 }
-pub fn spurious_irq_resource(token: &mut CleanLockToken) -> syscall::Result<Vec<u8>> {
+pub fn spurious_irq_resource(_token: &mut CleanLockToken) -> syscall::Result<Vec<u8>> {
     match irq_method() {
         IrqMethod::Apic => Ok(Vec::from(&b"(not implemented for APIC yet)"[..])),
         IrqMethod::Pic => Ok(format!(
@@ -76,7 +76,7 @@ unsafe fn trigger(irq: u8) {
             }
             IrqMethod::Apic => ioapic_mask(irq),
         }
-        let mut token = unsafe { CleanLockToken::new() };
+        let mut token = CleanLockToken::new();
         irq_trigger(irq, &mut token);
     }
 }

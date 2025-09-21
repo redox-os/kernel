@@ -162,8 +162,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     let mut switch_context_opt = None;
     {
-        let mut contexts = contexts(token.token());
-        let (contexts, token) = contexts.token_split();
+        let contexts = contexts(token.token());
 
         // Lock the previous context.
         let prev_context_lock = crate::context::current();

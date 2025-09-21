@@ -1,12 +1,14 @@
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use hashbrown::HashMap;
-use spin::{Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use spin::Once;
 
 use crate::{
     context,
     scheme::{self, SchemeId},
-    sync::{CleanLockToken, WaitQueue},
+    sync::{
+        CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0, L1,
+    },
     syscall::{
         data::Event,
         error::{Error, Result, EBADF},
@@ -84,21 +86,21 @@ pub fn next_queue_id() -> EventQueueId {
 }
 
 // Current event queues
-static QUEUES: Once<RwLock<EventQueueList>> = Once::new();
+static QUEUES: Once<RwLock<L1, EventQueueList>> = Once::new();
 
 /// Initialize queues, called if needed
-fn init_queues() -> RwLock<EventQueueList> {
+fn init_queues() -> RwLock<L1, EventQueueList> {
     RwLock::new(HashMap::new())
 }
 
 /// Get the event queues list, const
-pub fn queues() -> RwLockReadGuard<'static, EventQueueList> {
-    QUEUES.call_once(init_queues).read()
+pub fn queues<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, EventQueueList> {
+    QUEUES.call_once(init_queues).read(token)
 }
 
 /// Get the event queues list, mutable
-pub fn queues_mut() -> RwLockWriteGuard<'static, EventQueueList> {
-    QUEUES.call_once(init_queues).write()
+pub fn queues_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, EventQueueList> {
+    QUEUES.call_once(init_queues).write(token)
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -116,20 +118,20 @@ pub struct QueueKey {
 
 type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
 
-static REGISTRY: Once<RwLock<Registry>> = Once::new();
+static REGISTRY: Once<spin::RwLock<Registry>> = Once::new();
 
 /// Initialize registry, called if needed
-fn init_registry() -> RwLock<Registry> {
-    RwLock::new(Registry::new())
+fn init_registry() -> spin::RwLock<Registry> {
+    spin::RwLock::new(Registry::new())
 }
 
 /// Get the global schemes list, const
-fn registry() -> RwLockReadGuard<'static, Registry> {
+fn registry() -> spin::RwLockReadGuard<'static, Registry> {
     REGISTRY.call_once(init_registry).read()
 }
 
 /// Get the global schemes list, mutable
-pub fn registry_mut() -> RwLockWriteGuard<'static, Registry> {
+pub fn registry_mut() -> spin::RwLockWriteGuard<'static, Registry> {
     REGISTRY.call_once(init_registry).write()
 }
 
@@ -178,16 +180,20 @@ pub fn unregister_file(scheme: SchemeId, number: usize) {
 // }
 
 pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
+    //TODO: propogate this lock token
+    let mut token = unsafe { CleanLockToken::new() };
+
     let registry = registry();
 
     if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
         for (queue_key, &queue_flags) in queue_list.iter() {
             let common_flags = flags & queue_flags;
             if !common_flags.is_empty() {
-                let queues = queues();
-                if let Some(queue) = queues.get(&queue_key.queue) {
-                    //TODO: propogate this lock token
-                    let mut token = unsafe { CleanLockToken::new() };
+                let queue_opt = {
+                    let queues = queues(token.token());
+                    queues.get(&queue_key.queue).cloned()
+                };
+                if let Some(queue) = queue_opt {
                     queue.queue.send(
                         Event {
                             id: queue_key.id,

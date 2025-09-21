@@ -5,7 +5,7 @@ use alloc::{
 use spin::Mutex;
 
 use crate::{
-    context::{self, Context, ContextLock},
+    context::{self, ContextLock},
     sync::CleanLockToken,
 };
 

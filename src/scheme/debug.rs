@@ -1,12 +1,11 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::RwLock;
 
 use crate::{
     devices::graphical_debug,
     event,
     log::Writer,
     scheme::*,
-    sync::{CleanLockToken, WaitQueue},
+    sync::{CleanLockToken, RwLock, WaitQueue, L1},
     syscall::{
         flag::{EventFlags, EVENT_READ, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceWo},
@@ -23,7 +22,7 @@ struct Handle {
     num: usize,
 }
 
-static HANDLES: RwLock<HashMap<usize, Handle>> =
+static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 /// Add to the input queue
@@ -32,8 +31,8 @@ pub fn debug_input(data: u8, token: &mut CleanLockToken) {
 }
 
 // Notify readers of input updates
-pub fn debug_notify() {
-    for (id, _handle) in HANDLES.read().iter() {
+pub fn debug_notify(token: &mut CleanLockToken) {
+    for (id, _handle) in HANDLES.read(token.token()).iter() {
         event::trigger(GlobalSchemes::Debug.scheme_id(), *id, EVENT_READ);
     }
 }
@@ -81,7 +80,7 @@ impl KernelScheme for DebugScheme {
         };
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle { num });
+        HANDLES.write(token.token()).insert(id, Handle { num });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
@@ -93,7 +92,7 @@ impl KernelScheme for DebugScheme {
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
         let _handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -102,7 +101,7 @@ impl KernelScheme for DebugScheme {
 
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let _handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -111,7 +110,7 @@ impl KernelScheme for DebugScheme {
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let _handle = {
-            let mut handles = HANDLES.write();
+            let mut handles = HANDLES.write(token.token());
             handles.remove(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -126,7 +125,7 @@ impl KernelScheme for DebugScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -164,7 +163,7 @@ impl KernelScheme for DebugScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -212,7 +211,7 @@ impl KernelScheme for DebugScheme {
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
         if handle.num != SpecialFds::Default as usize

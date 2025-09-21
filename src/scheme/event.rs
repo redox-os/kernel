@@ -26,14 +26,14 @@ impl KernelScheme for EventScheme {
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let id = next_queue_id();
-        queues_mut().insert(id, Arc::new(EventQueue::new(id)));
+        queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 
         Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let id = EventQueueId::from(id);
-        queues_mut()
+        queues_mut(token.token())
             .remove(&id)
             .ok_or(Error::new(EBADF))
             .and(Ok(()))
@@ -49,7 +49,7 @@ impl KernelScheme for EventScheme {
         let id = EventQueueId::from(id);
 
         let queue = {
-            let handles = queues();
+            let handles = queues(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -68,7 +68,7 @@ impl KernelScheme for EventScheme {
         let id = EventQueueId::from(id);
 
         let queue = {
-            let handles = queues();
+            let handles = queues(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };

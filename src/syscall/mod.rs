@@ -27,7 +27,7 @@ use crate::{
     context::memory::AddrSpace,
     percpu::PercpuBlock,
     scheme::{memory::MemoryScheme, FileHandle},
-    sync::{CleanLockToken, LockToken, L0},
+    sync::CleanLockToken,
 };
 
 /// Debug
