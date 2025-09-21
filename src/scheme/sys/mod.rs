@@ -47,6 +47,7 @@ mod uname;
 #[cfg(feature = "sys_stat")]
 mod stat;
 
+#[derive(PartialEq)]
 enum Handle {
     TopLevel,
     Resource {
