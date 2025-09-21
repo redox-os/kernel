@@ -213,7 +213,7 @@ impl KernelScheme for PipeScheme {
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         log::info!("PipeScheme::kopenat: call kopen for path {path}");
-        return self.kopen(path, 0, _ctx);
+        self.kopen(path, 0, _ctx)
     }
 
     fn kread(
