@@ -51,11 +51,6 @@
 //! ```
 use alloc::sync::Arc;
 use core::marker::PhantomData;
-use spinning_top::{
-    guard::{ArcRwSpinlockWriteGuard, RwSpinlockReadGuard, RwSpinlockWriteGuard, SpinlockGuard},
-    lock_api::RawRwLock,
-    RwSpinlock, Spinlock,
-};
 
 /// Lock level of a mutex
 ///
@@ -182,7 +177,7 @@ impl CleanLockToken {
 /// ever accessed when the mutex is locked.
 #[derive(Debug)]
 pub struct Mutex<L: Level, T> {
-    inner: Spinlock<T>,
+    inner: spin::Mutex<T>,
     _phantom: PhantomData<L>,
 }
 
@@ -199,7 +194,7 @@ impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
     pub const fn new(val: T) -> Self {
         Self {
-            inner: Spinlock::new(val),
+            inner: spin::Mutex::new(val),
             _phantom: PhantomData,
         }
     }
@@ -251,7 +246,7 @@ impl<L: Level, T> Mutex<L, T> {
 /// The data protected by the mutex can be accessed through this guard via its
 /// `Deref` and `DerefMut` implementations.
 pub struct MutexGuard<'a, L: Level, T: ?Sized + 'a> {
-    inner: SpinlockGuard<'a, T>,
+    inner: spin::MutexGuard<'a, T>,
     lock_token: LockToken<'a, L>,
 }
 
@@ -277,7 +272,7 @@ impl<'a, L: Level, T: ?Sized + 'a> core::ops::DerefMut for MutexGuard<'a, L, T> 
 }
 
 pub struct RwLock<L: Level, T> {
-    inner: RwSpinlock<T>,
+    inner: spin::RwLock<T>,
     _phantom: PhantomData<L>,
 }
 
@@ -304,7 +299,7 @@ impl<L: Level, T> RwLock<L, T> {
     /// Creates a new instance of an RwLock<T> which is unlocked.
     pub const fn new(val: T) -> Self {
         Self {
-            inner: RwSpinlock::new(val),
+            inner: spin::RwLock::new(val),
             _phantom: PhantomData,
         }
     }
@@ -348,9 +343,7 @@ impl<L: Level, T> RwLock<L, T> {
 
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
-        unsafe {
-            self.inner.raw().lock_exclusive();
-        }
+        core::mem::forget(self.inner.write());
         ArcRwLockWriteGuard {
             rwlock: self.clone(),
         }
@@ -359,7 +352,7 @@ impl<L: Level, T> RwLock<L, T> {
 
 /// RAII structure used to release the exclusive write access of a lock when dropped
 pub struct RwLockWriteGuard<'a, L: Level, T> {
-    inner: RwSpinlockWriteGuard<'a, T>,
+    inner: spin::RwLockWriteGuard<'a, T>,
     lock_token: LockToken<'a, L>,
 }
 
@@ -387,7 +380,7 @@ impl<'a, L: Level, T> core::ops::DerefMut for RwLockWriteGuard<'a, L, T> {
 
 /// RAII structure used to release the shared read access of a lock when dropped.
 pub struct RwLockReadGuard<'a, L: Level, T> {
-    inner: RwSpinlockReadGuard<'a, T>,
+    inner: spin::RwLockReadGuard<'a, T>,
     lock_token: LockToken<'a, L>,
 }
 
@@ -422,14 +415,14 @@ impl<L: Level, T> core::ops::Deref for ArcRwLockWriteGuard<L, T> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.rwlock.inner.data_ptr() }
+        unsafe { &*self.rwlock.inner.as_mut_ptr() }
     }
 }
 
 impl<L: Level, T> core::ops::DerefMut for ArcRwLockWriteGuard<L, T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.rwlock.inner.data_ptr() }
+        unsafe { &mut *self.rwlock.inner.as_mut_ptr() }
     }
 }
 
@@ -437,7 +430,7 @@ impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
     #[inline]
     fn drop(&mut self) {
         unsafe {
-            self.rwlock.inner.raw().unlock_exclusive();
+            self.rwlock.inner.force_write_unlock();
         }
     }
 }
