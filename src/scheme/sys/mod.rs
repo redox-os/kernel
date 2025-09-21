@@ -26,7 +26,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 mod block;
 mod context;
@@ -160,7 +160,7 @@ impl KernelScheme for SysScheme {
         _fcntl_flags: u32,
         ctx: CallerCtx,
     ) -> Result<OpenResult> {
-        if HANDLES.read().get(&id).ok_or(Error::new(EBADF))? != &Handle::OpenCapability {
+        if *HANDLES.read().get(&id).ok_or(Error::new(EBADF))? != Handle::OpenCapability {
             return Err(Error::new(EPERM));
         }
 

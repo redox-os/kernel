@@ -22,7 +22,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 pub struct MemoryScheme;
 
