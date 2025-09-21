@@ -2640,18 +2640,18 @@ fn correct_inner<'l>(
 
             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
             user_inner
-                .request_fmap(scheme_number, offset, 1, flags)
+                .request_fmap(scheme_number, offset, 1, flags, token)
                 .unwrap();
 
             let context_lock = crate::context::current();
             context_lock
-                .write()
+                .write(token.token())
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
             super::switch(token);
 
             let frame = context_lock
-                .write()
+                .write(token.token())
                 .fmap_ret
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;

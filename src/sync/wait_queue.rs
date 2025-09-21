@@ -106,13 +106,13 @@ impl<T> WaitQueue<T> {
         }
     }
 
-    pub fn send(&self, value: T) -> usize {
+    pub fn send(&self, value: T, token: &mut CleanLockToken) -> usize {
         let len = {
             let mut inner = self.inner.lock();
             inner.push_back(value);
             inner.len()
         };
-        self.condition.notify();
+        self.condition.notify(token);
         len
     }
 }

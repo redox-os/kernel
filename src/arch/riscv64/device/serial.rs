@@ -19,7 +19,7 @@ pub struct Com1Irq {}
 
 impl InterruptHandler for Com1Irq {
     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
-        COM1.lock().receive();
+        COM1.lock().receive(token);
         unsafe {
             irq_trigger(irq as u8, token);
             IRQ_CHIP.irq_eoi(irq);

@@ -39,7 +39,7 @@ impl EventQueue {
         for event in events {
             let file = {
                 let context_ref = context::current();
-                let context = context_ref.read();
+                let context = context_ref.read(token.token());
 
                 let files = context.files.read();
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
@@ -186,11 +186,16 @@ pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
             if !common_flags.is_empty() {
                 let queues = queues();
                 if let Some(queue) = queues.get(&queue_key.queue) {
-                    queue.queue.send(Event {
-                        id: queue_key.id,
-                        flags: common_flags,
-                        data: queue_key.data,
-                    });
+                    //TODO: propogate this lock token
+                    let mut token = unsafe { CleanLockToken::new() };
+                    queue.queue.send(
+                        Event {
+                            id: queue_key.id,
+                            flags: common_flags,
+                            data: queue_key.data,
+                        },
+                        &mut token,
+                    );
                 }
             }
         }

@@ -8,7 +8,7 @@ use super::{
 };
 
 pub fn mkns(mut user_buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
-    let (uid, from) = match context::current().read() {
+    let (uid, from) = match context::current().read(token.token()) {
         ref cx => (cx.euid, cx.ens),
     };
 

@@ -202,12 +202,14 @@ interrupt!(cascade, || {
 });
 
 interrupt!(com2, || {
-    COM2.lock().receive();
+    let mut token = unsafe { CleanLockToken::new() };
+    COM2.lock().receive(&mut token);
     unsafe { eoi(3) };
 });
 
 interrupt!(com1, || {
-    COM1.lock().receive();
+    let mut token = unsafe { CleanLockToken::new() };
+    COM1.lock().receive(&mut token);
     unsafe { eoi(4) };
 });
 

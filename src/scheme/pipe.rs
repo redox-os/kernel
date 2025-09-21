@@ -103,14 +103,14 @@ impl KernelScheme for PipeScheme {
         let can_remove = if is_write_not_read {
             event::trigger(scheme_id, key, EVENT_READ);
 
-            pipe.read_condition.notify();
+            pipe.read_condition.notify(token);
             pipe.writer_is_alive.store(false, Ordering::SeqCst);
 
             !pipe.reader_is_alive.load(Ordering::SeqCst)
         } else {
             event::trigger(scheme_id, key | WRITE_NOT_READ_BIT, EVENT_WRITE);
 
-            pipe.write_condition.notify();
+            pipe.write_condition.notify(token);
             pipe.reader_is_alive.store(false, Ordering::SeqCst);
 
             !pipe.writer_is_alive.load(Ordering::SeqCst)
@@ -253,7 +253,7 @@ impl KernelScheme for PipeScheme {
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
                 );
-                pipe.write_condition.notify();
+                pipe.write_condition.notify(token);
 
                 return Ok(bytes_read);
             } else if user_buf.is_empty() {
@@ -320,7 +320,7 @@ impl KernelScheme for PipeScheme {
 
             if bytes_written > 0 {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
-                pipe.read_condition.notify();
+                pipe.read_condition.notify(token);
 
                 return Ok(bytes_written);
             } else if user_buf.is_empty() {

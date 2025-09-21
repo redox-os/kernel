@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use crate::{context, scheme, sync::CleanLockToken, syscall::error::Result};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    let scheme_ns = context::current().read().ens;
+    let scheme_ns = context::current().read(token.token()).ens;
 
     let mut data = Vec::new();
 

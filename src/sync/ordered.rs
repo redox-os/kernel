@@ -49,9 +49,11 @@
 //! *g2 = 11;
 //! *g1 = 12;
 //! ```
+use alloc::sync::Arc;
 use core::marker::PhantomData;
 use spinning_top::{
-    guard::{RwSpinlockReadGuard, RwSpinlockWriteGuard, SpinlockGuard},
+    guard::{ArcRwSpinlockWriteGuard, RwSpinlockReadGuard, RwSpinlockWriteGuard, SpinlockGuard},
+    lock_api::RawRwLock,
     RwSpinlock, Spinlock,
 };
 
@@ -343,6 +345,16 @@ impl<L: Level, T> RwLock<L, T> {
             lock_token: LockToken::downgraded(lock_token),
         }
     }
+
+    // Unsafe due to not using token, currently required by context::switch
+    pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
+        unsafe {
+            self.inner.raw().lock_exclusive();
+        }
+        ArcRwLockWriteGuard {
+            rwlock: self.clone(),
+        }
+    }
 }
 
 /// RAII structure used to release the exclusive write access of a lock when dropped
@@ -392,6 +404,41 @@ impl<'a, L: Level, T> core::ops::Deref for RwLockReadGuard<'a, L, T> {
 
     fn deref(&self) -> &Self::Target {
         self.inner.deref()
+    }
+}
+
+pub struct ArcRwLockWriteGuard<L: Level + 'static, T> {
+    rwlock: Arc<RwLock<L, T>>,
+}
+
+impl<L: Level, T> ArcRwLockWriteGuard<L, T> {
+    pub fn rwlock(s: &Self) -> &Arc<RwLock<L, T>> {
+        &s.rwlock
+    }
+}
+
+impl<L: Level, T> core::ops::Deref for ArcRwLockWriteGuard<L, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.rwlock.inner.data_ptr() }
+    }
+}
+
+impl<L: Level, T> core::ops::DerefMut for ArcRwLockWriteGuard<L, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.rwlock.inner.data_ptr() }
+    }
+}
+
+impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe {
+            self.rwlock.inner.raw().unlock_exclusive();
+        }
     }
 }
 

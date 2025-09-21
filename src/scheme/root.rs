@@ -121,7 +121,7 @@ impl KernelScheme for RootScheme {
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
         } else if path.is_empty() {
-            let ens = context::current().read().ens;
+            let ens = context::current().read(token.token()).ens;
 
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             self.handles.write().insert(id, Handle::List { ens });
@@ -159,7 +159,7 @@ impl KernelScheme for RootScheme {
                 .ok_or(Error::new(ENOENT))?
         };
 
-        inner.unmount()
+        inner.unmount(token)
     }
 
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
@@ -388,7 +388,7 @@ impl KernelScheme for RootScheme {
         };
 
         match handle {
-            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata),
+            Handle::Scheme(inner) => inner.call_fdread(payload, flags, metadata, token),
             Handle::File(_) => Err(Error::new(EBADF)),
             Handle::List { .. } => Err(Error::new(EISDIR)),
         }

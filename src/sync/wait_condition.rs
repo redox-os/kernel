@@ -22,24 +22,24 @@ impl WaitCondition {
     }
 
     // Notify all waiters
-    pub fn notify(&self) -> usize {
+    pub fn notify(&self, token: &mut CleanLockToken) -> usize {
         let mut contexts = self.contexts.lock();
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write().unblock();
+                context_ref.write(token.token()).unblock();
             }
         }
         len
     }
 
     // Notify as though a signal woke the waiters
-    pub unsafe fn notify_signal(&self) -> usize {
+    pub unsafe fn notify_signal(&self, token: &mut CleanLockToken) -> usize {
         let contexts = self.contexts.lock();
         let len = contexts.len();
         for context_weak in contexts.iter() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write().unblock();
+                context_ref.write(token.token()).unblock();
             }
         }
         len
@@ -50,7 +50,7 @@ impl WaitCondition {
         let current_context_ref = context::current();
         {
             {
-                let mut context = current_context_ref.write();
+                let mut context = current_context_ref.write(token.token());
                 if let Some((control, pctl, _)) = context.sigcontrol()
                     && control.currently_pending_unblocked(pctl) != 0
                 {
@@ -92,6 +92,10 @@ impl WaitCondition {
 
 impl Drop for WaitCondition {
     fn drop(&mut self) {
-        unsafe { self.notify_signal() };
+        //TODO: drop violates lock tokens
+        unsafe {
+            let mut token = CleanLockToken::new();
+            self.notify_signal(&mut token);
+        };
     }
 }

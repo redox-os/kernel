@@ -55,9 +55,9 @@ static DATA: Once<Box<[u8]>> = Once::new();
 static KSTOP_WAITCOND: WaitCondition = WaitCondition::new();
 static KSTOP_FLAG: Mutex<bool> = Mutex::new(false);
 
-pub fn register_kstop() -> bool {
+pub fn register_kstop(token: &mut CleanLockToken) -> bool {
     *KSTOP_FLAG.lock() = true;
-    let mut waiters_awoken = KSTOP_WAITCOND.notify();
+    let mut waiters_awoken = KSTOP_WAITCOND.notify(token);
 
     let handles = HANDLES.read();
 

@@ -31,7 +31,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
 
     let context_lock = context::current();
     {
-        let mut context = context_lock.write();
+        let mut context = context_lock.write(token.token());
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
         addrspace_opt = context
@@ -46,7 +46,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     drop(addrspace_opt);
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
-        let mut guard = context_lock.write();
+        let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
         guard.owner_proc_id
     };
@@ -73,13 +73,13 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
     AddrSpace::current()?.mprotect(span, flags)
 }
 
-pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
+pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
     {
         let addr_space = Arc::clone(
             context::current()
-                .read()
+                .read(token.token())
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
@@ -129,7 +129,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     // Start in a minimal environment without any stack.
 
     match context::current()
-        .write()
+        .write(token.token())
         .regs_mut()
         .expect("bootstrap needs registers to be available")
     {

@@ -63,7 +63,7 @@ fn userspace_acpi_shutdown(token: &mut CleanLockToken) {
     info!("Notifying any potential ACPI driver");
     // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
     // shutdown).
-    if !acpi::register_kstop() {
+    if !acpi::register_kstop(token) {
         // There was no context to switch to.
         info!("No ACPI driver was alive to handle shutdown.");
         return;

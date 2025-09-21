@@ -33,7 +33,7 @@ pub fn serio_input(index: usize, data: u8, token: &mut CleanLockToken) {
     #[cfg(feature = "profiling")]
     crate::profiling::serio_command(index, data);
 
-    INPUT[index].send(data);
+    INPUT[index].send(data, token);
 
     for (id, _handle) in HANDLES.read(token.token()).iter() {
         event::trigger(GlobalSchemes::Serio.scheme_id(), *id, EVENT_READ);

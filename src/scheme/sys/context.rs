@@ -14,9 +14,10 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let contexts = context::contexts(token.token());
+        let mut contexts = context::contexts(token.token());
+        let (contexts, mut token) = contexts.token_split();
         for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
-            let context = context_ref.read();
+            let context = context_ref.read(token.token());
 
             let mut stat_string = String::new();
             // TODO: All user programs must have some grant in order for executable memory to even

@@ -37,7 +37,7 @@ pub fn nanosleep(
 
     let current_context = context::current();
     {
-        let mut context = current_context.write();
+        let mut context = current_context.write(token.token());
 
         if let Some((tctl, pctl, _)) = context.sigcontrol() {
             if tctl.currently_pending_unblocked(pctl) != 0 {
@@ -53,7 +53,7 @@ pub fn nanosleep(
     // reason?
     context::switch(token);
 
-    let was_interrupted = current_context.write().wake.take().is_some();
+    let was_interrupted = current_context.write(token.token()).wake.take().is_some();
 
     if let Some(rem_buf) = rem_buf_opt {
         let current = time::monotonic();

@@ -27,8 +27,8 @@ static HANDLES: RwLock<HashMap<usize, Handle>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 /// Add to the input queue
-pub fn debug_input(data: u8) {
-    INPUT.send(data);
+pub fn debug_input(data: u8, token: &mut CleanLockToken) {
+    INPUT.send(data, token);
 }
 
 // Notify readers of input updates

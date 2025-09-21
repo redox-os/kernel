@@ -104,9 +104,9 @@ impl Session {
 /// Remove the session from the list of open sessions and notify any
 /// waiting processes
 // TODO
-pub fn close_session(session: &Session) {
-    session.tracer.notify();
-    session.tracee.notify();
+pub fn close_session(session: &Session, token: &mut CleanLockToken) {
+    session.tracer.notify(token);
+    session.tracee.notify(token);
 }
 
 /// Wake up the tracer to make sure it catches on that the tracee is dead. This
@@ -115,8 +115,8 @@ pub fn close_session(session: &Session) {
 /// session will *actually* be closed. This is partly to ensure ENOSRCH is
 /// returned rather than ENODEV (which occurs when there's no session - should
 /// never really happen).
-pub fn close_tracee(session: &Session) {
-    session.tracer.notify();
+pub fn close_tracee(session: &Session, token: &mut CleanLockToken) {
+    session.tracer.notify(token);
 
     let data = session.data.lock();
     proc_trigger_event(data.file_id, EVENT_READ);
@@ -130,7 +130,7 @@ fn proc_trigger_event(file_id: usize, flags: EventFlags) {
 /// Dispatch an event to any tracer tracing `self`. This will cause
 /// the tracer to wake up and poll for events. Returns Some(()) if an
 /// event was sent.
-pub fn send_event(event: PtraceEvent) -> Option<()> {
+pub fn send_event(event: PtraceEvent, token: &mut CleanLockToken) -> Option<()> {
     let session = Session::current()?;
     let mut data = session.data.lock();
     let breakpoint = data.breakpoint.as_ref()?;
@@ -142,7 +142,7 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
     // Add event to queue
     data.add_event(event);
     // Notify tracer
-    session.tracer.notify();
+    session.tracer.notify(token);
 
     Some(())
 }
@@ -222,7 +222,7 @@ pub fn breakpoint_callback(
         data.add_event(event.unwrap_or(ptrace_event!(match_flags)));
 
         // Wake up sleeping tracer
-        session.tracer.notify();
+        session.tracer.notify(token);
 
         if session
             .tracee

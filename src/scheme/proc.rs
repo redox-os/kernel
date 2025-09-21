@@ -55,11 +55,11 @@ fn try_stop_context<T>(
     callback: impl FnOnce(&mut Context) -> Result<T>,
 ) -> Result<T> {
     if context::is_current(&context_ref) {
-        return callback(&mut *context_ref.write());
+        return callback(&mut *context_ref.write(token.token()));
     }
     // Stop process
     let (prev_status, mut running) = {
-        let mut context = context_ref.write();
+        let mut context = context_ref.write(token.token());
 
         (
             core::mem::replace(
@@ -76,10 +76,10 @@ fn try_stop_context<T>(
     while running {
         context::switch(token);
 
-        running = context_ref.read().running;
+        running = context_ref.read(token.token()).running;
     }
 
-    let mut context = context_ref.write();
+    let mut context = context_ref.write(token.token());
     assert!(
         !context.running,
         "process can't have been restarted, we stopped it!"
@@ -196,7 +196,7 @@ impl ProcScheme {
                 ContextHandle::AddrSpace {
                     addrspace: Arc::clone(
                         context
-                            .read()
+                            .read(token.token())
                             .addr_space()
                             .map_err(|_| Error::new(ENOENT))?,
                     ),
@@ -205,7 +205,7 @@ impl ProcScheme {
             ),
             "filetable" => (
                 ContextHandle::Filetable {
-                    filetable: Arc::downgrade(&context.read().files),
+                    filetable: Arc::downgrade(&context.read(token.token()).files),
                     data: Box::new([]),
                 },
                 true,
@@ -221,7 +221,7 @@ impl ProcScheme {
             "mmap-min-addr" => (
                 ContextHandle::MmapMinAddr(Arc::clone(
                     context
-                        .read()
+                        .read(token.token())
                         .addr_space()
                         .map_err(|_| Error::new(ENOENT))?,
                 )),
@@ -428,10 +428,10 @@ impl KernelScheme for ProcScheme {
 
                     Ok(context.set_addr_space(Some(new)))
                 })?;
-                let _ = ptrace::send_event(crate::syscall::ptrace_event!(
-                    PTRACE_EVENT_ADDRSPACE_SWITCH,
-                    0
-                ));
+                let _ = ptrace::send_event(
+                    crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0),
+                    token,
+                );
             }
             Handle {
                 kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
@@ -442,7 +442,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },
                 context,
             } => {
-                context.write().files = new_ft;
+                context.write(token.token()).files = new_ft;
             }
             _ => (),
         }
@@ -526,7 +526,7 @@ impl KernelScheme for ProcScheme {
                 Ok(result_base.start_address().data())
             }
             ContextHandle::Sighandler => {
-                let context = context.read();
+                let context = context.read(token.token());
                 let sig = context.sig.as_ref().ok_or(Error::new(EBADF))?;
                 let frame = match map.offset {
                     // tctl
@@ -610,7 +610,9 @@ impl KernelScheme for ProcScheme {
         let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
 
         match verb {
-            ProcSchemeVerb::Iopl => context::current().write().set_userspace_io_allowed(true),
+            ProcSchemeVerb::Iopl => context::current()
+                .write(token.token())
+                .set_userspace_io_allowed(true),
         }
         Ok(0)
     }
@@ -808,7 +810,7 @@ impl KernelScheme for ProcScheme {
 }
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
     let (scheme_id, number) = match &*context::current()
-        .read()
+        .read(token.token())
         .get_file(FileHandle::from(fd))
         .ok_or(Error::new(EBADF))?
         .description
@@ -960,7 +962,7 @@ impl ContextHandle {
                         }
                     };
 
-                    let addrsp = Arc::clone(context.read().addr_space()?);
+                    let addrsp = Arc::clone(context.read(token.token()).addr_space()?);
 
                     Some(SignalState {
                         threadctl_off: validate_off(
@@ -987,11 +989,11 @@ impl ContextHandle {
                     None
                 };
 
-                context.write().sig = state;
+                context.write(token.token()).sig = state;
 
                 Ok(mem::size_of::<SetSighandlerData>())
             }
-            ContextHandle::Start => match context.write().status {
+            ContextHandle::Start => match context.write(token.token()).status {
                 ref mut status @ Status::HardBlocked {
                     reason: HardBlockedReason::NotYetStarted,
                 } => {
@@ -1087,7 +1089,10 @@ impl ContextHandle {
             Self::SchedAffinity => {
                 let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
 
-                context.write().sched_affinity.override_from(&mask);
+                context
+                    .write(token.token())
+                    .sched_affinity
+                    .override_from(&mask);
 
                 Ok(mem::size_of_val(&mask))
             }
@@ -1105,7 +1110,7 @@ impl ContextHandle {
                         return Err(Error::new(EPERM))
                     }
                     ContextVerb::Stop => {
-                        let mut guard = context.write();
+                        let mut guard = context.write(token.token());
 
                         match guard.status {
                             Status::Dead { .. } => return Err(Error::new(EOWNERDEAD)),
@@ -1121,7 +1126,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Unstop => {
-                        let mut guard = context.write();
+                        let mut guard = context.write(token.token());
 
                         if let Status::HardBlocked {
                             reason: HardBlockedReason::Stopped,
@@ -1132,7 +1137,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Interrupt => {
-                        let mut guard = context.write();
+                        let mut guard = context.write(token.token());
                         guard.unblock();
                         Ok(size_of::<usize>())
                     }
@@ -1147,7 +1152,8 @@ impl ContextHandle {
                                 let size = args.next().ok_or(Error::new(EINVAL))??;
 
                                 if size > 0 {
-                                    let addrsp = Arc::clone(context.read().addr_space()?);
+                                    let addrsp =
+                                        Arc::clone(context.read(token.token()).addr_space()?);
                                     let res = addrsp.munmap(
                                         PageSpan::validate_nonempty(
                                             VirtualAddress::new(base),
@@ -1163,7 +1169,7 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            let mut ctxt = context.write();
+                            let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
                             ctxt.status = context::Status::Runnable;
                             ctxt.being_sigkilled = true;
@@ -1174,7 +1180,7 @@ impl ContextHandle {
             }
             ContextHandle::Attr => {
                 let info = unsafe { buf.read_exact::<ProcSchemeAttrs>()? };
-                let mut guard = context.write();
+                let mut guard = context.write(token.token());
 
                 let len = info
                     .debug_name
@@ -1214,7 +1220,7 @@ impl ContextHandle {
 
                 let (output, size) = match kind {
                     RegsKind::Float => {
-                        let context = context.read();
+                        let context = context.read(token.token());
                         // NOTE: The kernel will never touch floats
 
                         (
@@ -1298,14 +1304,14 @@ impl ContextHandle {
                 Ok(mem::size_of::<usize>())
             }
             ContextHandle::SchedAffinity => {
-                let mask = context.read().sched_affinity.to_raw();
+                let mask = context.read(token.token()).sched_affinity.to_raw();
 
                 buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
                 Ok(mem::size_of_val(&mask))
             } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
                 let status = {
-                    let context = context.read();
+                    let context = context.read(token.token());
                     match context.status {
                         Status::Runnable | Status::Dead { excp: None }
                             if context.being_sigkilled =>
@@ -1337,7 +1343,7 @@ impl ContextHandle {
             }
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
-                let (euid, egid, ens, pid, name) = match context.read() {
+                let (euid, egid, ens, pid, name) = match context.read(token.token()) {
                     ref c => (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name),
                 };
                 let min = name.len().min(debug_name.len());
@@ -1351,7 +1357,7 @@ impl ContextHandle {
                 })
             }
             ContextHandle::Sighandler => {
-                let data = match context.read().sig {
+                let data = match context.read(token.token()).sig {
                     Some(ref sig) => SetSighandlerData {
                         excp_handler: sig.excp_handler.map_or(0, NonZeroUsize::get),
                         user_handler: sig.user_handler.get(),
@@ -1377,7 +1383,9 @@ fn write_env_regs(
     token: &mut CleanLockToken,
 ) -> Result<()> {
     if context::is_current(&context) {
-        context::current().write().write_current_env_regs(regs)
+        context::current()
+            .write(token.token())
+            .write_current_env_regs(regs)
     } else {
         try_stop_context(context, token, |context| context.write_env_regs(regs))
     }
@@ -1385,7 +1393,9 @@ fn write_env_regs(
 
 fn read_env_regs(context: Arc<ContextLock>, token: &mut CleanLockToken) -> Result<EnvRegisters> {
     if context::is_current(&context) {
-        context::current().read().read_current_env_regs()
+        context::current()
+            .read(token.token())
+            .read_current_env_regs()
     } else {
         try_stop_context(context, token, |context| context.read_env_regs())
     }

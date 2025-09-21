@@ -239,11 +239,11 @@ pub fn syscall(
 
     PercpuBlock::current().inside_syscall.set(true);
 
-    debug_start([a, b, c, d, e, f]);
+    debug_start([a, b, c, d, e, f], token);
 
     let result = inner(a, b, c, d, e, f, token);
 
-    debug_end([a, b, c, d, e, f], result);
+    debug_end([a, b, c, d, e, f], result, token);
 
     let percpu = PercpuBlock::current();
     percpu.inside_syscall.set(false);

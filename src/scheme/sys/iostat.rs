@@ -22,9 +22,10 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
     {
         let mut rows = Vec::new();
         {
-            let contexts = context::contexts(token.token());
+            let mut contexts = context::contexts(token.token());
+            let (contexts, mut token) = contexts.token_split();
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
-                let context = context_ref.read();
+                let context = context_ref.read(token.token());
                 rows.push((
                     context.pid,
                     context.name.clone(),
@@ -89,7 +90,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let page_count = NonZeroUsize::new(1).unwrap();
     let fpath_page = {
-        let addr_space = Arc::clone(context::current().read().addr_space()?);
+        let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
         addr_space.acquire_write().mmap(
             &addr_space,
             None,
@@ -113,7 +114,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         .and_then(|fpath_user| inner(fpath_user, token));
 
     {
-        let addr_space = Arc::clone(context::current().read().addr_space()?);
+        let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
         addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false)?;
     }
 

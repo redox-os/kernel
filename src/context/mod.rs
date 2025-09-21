@@ -11,7 +11,10 @@ use crate::{
     cpu_set::LogicalCpuSet,
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L0, L1},
+    sync::{
+        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        L0, L1, L2,
+    },
     syscall::error::{Error, Result},
 };
 
@@ -21,8 +24,8 @@ pub use self::{
     switch::switch,
 };
 
-pub type ContextLock = spinning_top::RwSpinlock<Context>;
-pub type ArcContextLockWriteGuard = spinning_top::guard::ArcRwSpinlockWriteGuard<Context>;
+pub type ContextLock = RwLock<L2, Context>;
+pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L2, Context>;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
@@ -164,7 +167,7 @@ pub fn spawn(
     contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
 
     {
-        let mut context = context_lock.write();
+        let mut context = context_lock.write(token.token());
         let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
         context
             .arch

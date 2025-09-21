@@ -18,6 +18,7 @@ use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
     context, cpu_id, interrupt,
     memory::KernelMapper,
+    sync::CleanLockToken,
     syscall,
 };
 
@@ -44,9 +45,10 @@ fn rust_begin_unwind(info: &PanicInfo) -> ! {
 
     println!("CPU {}, CID {:p}", cpu_id(), context_lock);
 
-    // This could deadlock, but at this point we are going to halt anyways
     {
-        let context = context_lock.read();
+        // This could deadlock, but at this point we are going to halt anyways
+        let mut token = unsafe { CleanLockToken::new() };
+        let context = context_lock.read(token.token());
         println!("NAME: {}, DEBUG ID: {}", context.name, context.debug_id);
 
         if let Some([a, b, c, d, e, f]) = context.current_syscall() {

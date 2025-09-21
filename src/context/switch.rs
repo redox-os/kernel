@@ -162,11 +162,13 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     let mut switch_context_opt = None;
     {
-        let contexts = contexts(token.token());
+        let mut contexts = contexts(token.token());
+        let (contexts, token) = contexts.token_split();
 
         // Lock the previous context.
         let prev_context_lock = crate::context::current();
-        let prev_context_guard = prev_context_lock.write_arc();
+        // We are careful not to lock this context twice
+        let prev_context_guard = unsafe { prev_context_lock.write_arc() };
 
         let idle_context = percpu.switch_internals.idle_context();
 
@@ -202,7 +204,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
             {
                 // Lock next context
-                let mut next_context_guard = next_context_lock.write_arc();
+                // We are careful not to lock this context twice
+                let mut next_context_guard = unsafe { next_context_lock.write_arc() };
 
                 // Check if the context is runnable and can be switched to.
                 if let UpdateResult::CanSwitch =

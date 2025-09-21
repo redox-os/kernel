@@ -429,11 +429,11 @@ pub struct BorrowedHtBuf {
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
-    pub fn head() -> Result<Self> {
+    pub fn head(token: &mut CleanLockToken) -> Result<Self> {
         Ok(Self {
             inner: Some(
                 context::current()
-                    .write()
+                    .write(token.token())
                     .syscall_head
                     .take()
                     .ok_or(Error::new(EAGAIN))?,
@@ -441,11 +441,11 @@ impl BorrowedHtBuf {
             head_and_not_tail: true,
         })
     }
-    pub fn tail() -> Result<Self> {
+    pub fn tail(token: &mut CleanLockToken) -> Result<Self> {
         Ok(Self {
             inner: Some(
                 context::current()
-                    .write()
+                    .write(token.token())
                     .syscall_tail
                     .take()
                     .ok_or(Error::new(EAGAIN))?,
@@ -496,7 +496,9 @@ impl Drop for BorrowedHtBuf {
         let Some(inner) = self.inner.take() else {
             return;
         };
-        match context.write() {
+        //TODO: do not allow drop so lock token can be passed in
+        let mut token = unsafe { CleanLockToken::new() };
+        match context.write(token.token()) {
             mut context => {
                 (if self.head_and_not_tail {
                     &mut context.syscall_head

@@ -96,6 +96,7 @@ pub fn futex(
 
             {
                 let mut futexes = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes.token_split();
 
                 let context_lock = context::current();
 
@@ -143,7 +144,7 @@ pub fn futex(
                 }
 
                 {
-                    let mut context = context_lock.write();
+                    let mut context = context_lock.write(token.token());
 
                     context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
                         tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
@@ -170,7 +171,7 @@ pub fn futex(
             context::switch(token);
 
             if timeout_opt.is_some() {
-                context::current().write().wake = None;
+                context::current().write(token.token()).wake = None;
                 Err(Error::new(ETIMEDOUT))
             } else {
                 Ok(0)
@@ -181,6 +182,7 @@ pub fn futex(
 
             {
                 let mut futexes = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes.token_split();
 
                 let mut i = 0;
 
@@ -193,7 +195,7 @@ pub fn futex(
                         i += 1;
                         continue;
                     }
-                    futexes[i].context_lock.write().unblock();
+                    futexes[i].context_lock.write(token.token()).unblock();
                     futexes.swap_remove_back(i);
                     woken += 1;
                 }

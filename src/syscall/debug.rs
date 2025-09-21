@@ -9,7 +9,7 @@ use super::{
     usercopy::UserSlice,
 };
 
-use crate::syscall::error::Result;
+use crate::{sync::CleanLockToken, syscall::error::Result};
 
 struct ByteStr<'a>(&'a [u8]);
 
@@ -217,12 +217,17 @@ impl SyscallDebugInfo {
 }
 
 #[cfg_attr(feature = "syscall_debug", inline)]
-pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
+pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
     if cfg!(not(feature = "syscall_debug")) {
         return;
     }
 
-    let do_debug = if false && crate::context::current().read().name.contains("init") {
+    let do_debug = if false
+        && crate::context::current()
+            .read(token.token())
+            .name
+            .contains("init")
+    {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -237,7 +242,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
     let debug_start = if do_debug {
         let context_lock = crate::context::current();
         {
-            let context = context_lock.read();
+            let context = context_lock.read(token.token());
             print!("{} (*{}*): ", context.name, context.pid,);
         }
 
@@ -261,7 +266,11 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
 }
 
 #[cfg_attr(feature = "syscall_debug", inline)]
-pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
+pub fn debug_end(
+    [a, b, c, d, e, f]: [usize; 6],
+    result: Result<usize>,
+    token: &mut CleanLockToken,
+) {
     if cfg!(not(feature = "syscall_debug")) {
         return;
     }
@@ -278,7 +287,7 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
 
     let context_lock = crate::context::current();
     {
-        let context = context_lock.read();
+        let context = context_lock.read(token.token());
         print!("{} (*{}*): ", context.name, context.pid,);
     }
 
