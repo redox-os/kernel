@@ -2,16 +2,15 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use spin::Mutex;
 
 use crate::{
     context::{self, ContextLock},
-    sync::CleanLockToken,
+    sync::{CleanLockToken, Mutex, L1},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<Vec<Weak<ContextLock>>>,
+    contexts: Mutex<L1, Vec<Weak<ContextLock>>>,
 }
 
 impl WaitCondition {
@@ -23,7 +22,8 @@ impl WaitCondition {
 
     // Notify all waiters
     pub fn notify(&self, token: &mut CleanLockToken) -> usize {
-        let mut contexts = self.contexts.lock();
+        let mut contexts = self.contexts.lock(token.token());
+        let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
             if let Some(context_ref) = context_weak.upgrade() {
@@ -35,7 +35,8 @@ impl WaitCondition {
 
     // Notify as though a signal woke the waiters
     pub unsafe fn notify_signal(&self, token: &mut CleanLockToken) -> usize {
-        let contexts = self.contexts.lock();
+        let mut contexts = self.contexts.lock(token.token());
+        let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
         for context_weak in contexts.iter() {
             if let Some(context_ref) = context_weak.upgrade() {
@@ -60,7 +61,7 @@ impl WaitCondition {
             }
 
             self.contexts
-                .lock()
+                .lock(token.token())
                 .push(Arc::downgrade(&current_context_ref));
 
             drop(guard);
@@ -71,7 +72,7 @@ impl WaitCondition {
         let mut waited = true;
 
         {
-            let mut contexts = self.contexts.lock();
+            let mut contexts = self.contexts.lock(token.token());
 
             // TODO: retain
             let mut i = 0;
