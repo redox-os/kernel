@@ -166,7 +166,6 @@ impl KernelScheme for SysScheme {
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        log::info!("kopenat: {path}");
         self.kopen(path, 0, ctx)
     }
 
