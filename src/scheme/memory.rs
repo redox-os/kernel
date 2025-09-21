@@ -186,7 +186,7 @@ impl KernelScheme for MemoryScheme {
         path: &str,
         _flags: usize,
         ctx: CallerCtx,
-        token: &mut CleanLockToken,
+        _token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if path.len() > 64 {
             return Err(Error::new(ENOENT));
@@ -245,7 +245,7 @@ impl KernelScheme for MemoryScheme {
         payload: UserSliceRw,
         _flags: syscall::CallFlags,
         _metadata: &[u64],
-        token: &mut CleanLockToken,
+        _token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (handle_ty, _, _) = u32::try_from(id)
             .ok()
@@ -295,7 +295,7 @@ impl KernelScheme for MemoryScheme {
             HandleTy::Translation => Err(Error::new(EOPNOTSUPP)),
         }
     }
-    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
+    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo, _token: &mut CleanLockToken) -> Result<()> {
         let used = used_frames() as u64;
         let free = free_frames() as u64;
 

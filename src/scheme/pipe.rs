@@ -334,7 +334,7 @@ impl KernelScheme for PipeScheme {
             }
         }
     }
-    fn kfstat(&self, _id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
+    fn kfstat(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<()> {
         buf.copy_exactly(&Stat {
             st_mode: MODE_FIFO | 0o666,
             ..Default::default()

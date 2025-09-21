@@ -379,7 +379,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _id: usize,
         _cmd: usize,
         _arg: usize,
-        token: &mut CleanLockToken,
+        _token: &mut CleanLockToken,
     ) -> Result<usize> {
         Ok(0)
     }
@@ -388,12 +388,12 @@ impl crate::scheme::KernelScheme for IrqScheme {
         &self,
         _id: usize,
         _flags: EventFlags,
-        token: &mut CleanLockToken,
+        _token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
 
-    fn fsync(&self, _file: usize, token: &mut CleanLockToken) -> Result<()> {
+    fn fsync(&self, _file: usize, _token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
 

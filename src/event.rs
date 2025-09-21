@@ -184,7 +184,6 @@ pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
     let mut token = unsafe { CleanLockToken::new() };
 
     let registry = registry();
-
     if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
         for (queue_key, &queue_flags) in queue_list.iter() {
             let common_flags = flags & queue_flags;
