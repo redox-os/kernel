@@ -17,11 +17,29 @@ use super::{CallerCtx, KernelScheme, OpenResult};
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {
+    fn open_capability(&self) -> Result<usize> {
+        Ok(usize::MAX)
+    }
     fn kopen(&self, _path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
         let id = next_queue_id();
         queues_mut().insert(id, Arc::new(EventQueue::new(id)));
 
         Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
+    }
+
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: StrOrBytes,
+        _flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+    ) -> Result<OpenResult> {
+        if id != usize::MAX {
+            return Err(Error::new(EPERM));
+        }
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, 0, ctx)
     }
 
     fn close(&self, id: usize) -> Result<()> {
