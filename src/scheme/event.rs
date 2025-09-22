@@ -5,6 +5,7 @@ use syscall::O_NONBLOCK;
 use crate::{
     context::file::InternalFlags,
     event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId},
+    sync::CleanLockToken,
     syscall::{
         data::Event,
         error::*,
@@ -17,30 +18,43 @@ use super::{CallerCtx, KernelScheme, OpenResult};
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {
-    fn kopen(&self, _path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        _path: &str,
+        _flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let id = next_queue_id();
-        queues_mut().insert(id, Arc::new(EventQueue::new(id)));
+        queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 
         Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let id = EventQueueId::from(id);
-        queues_mut()
+        queues_mut(token.token())
             .remove(&id)
             .ok_or(Error::new(EBADF))
             .and(Ok(()))
     }
-    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kread(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        flags: u32,
+        _stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         let id = EventQueueId::from(id);
 
         let queue = {
-            let handles = queues();
+            let handles = queues(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
-        queue.read(buf, flags & O_NONBLOCK as u32 == 0)
+        queue.read(buf, flags & O_NONBLOCK as u32 == 0, token)
     }
 
     fn kwrite(
@@ -49,11 +63,12 @@ impl KernelScheme for EventScheme {
         buf: UserSliceRo,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let id = EventQueueId::from(id);
 
         let queue = {
-            let handles = queues();
+            let handles = queues(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -61,7 +76,7 @@ impl KernelScheme for EventScheme {
 
         for chunk in buf.in_exact_chunks(mem::size_of::<Event>()) {
             let event = unsafe { chunk.read_exact::<Event>()? };
-            if queue.write(&[event])? == 0 {
+            if queue.write(&[event], token)? == 0 {
                 break;
             }
             events_written += 1;
@@ -70,7 +85,7 @@ impl KernelScheme for EventScheme {
         Ok(events_written * mem::size_of::<Event>())
     }
 
-    fn kfpath(&self, _id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
         buf.copy_common_bytes_from_slice(b"event:")
     }
 }

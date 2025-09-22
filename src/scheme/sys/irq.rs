@@ -1,9 +1,9 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
-use crate::syscall::error::Result;
+use crate::{sync::CleanLockToken, syscall::error::Result};
 
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();
 
     {

@@ -2,9 +2,12 @@ use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
 
 use super::InterruptController;
-use crate::dtb::{
-    get_interrupt, get_mmio_address,
-    irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+use crate::{
+    dtb::{
+        get_interrupt, get_mmio_address,
+        irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+    },
+    sync::CleanLockToken,
 };
 use syscall::{
     error::{Error, EINVAL},
@@ -278,14 +281,14 @@ impl InterruptController for Bcm2835ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2835ArmInterruptController {
-    fn irq_handler(&mut self, _irq: u32) {
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
         unsafe {
             let irq = self.irq_ack();
             if let Some(virq) = self.irq_to_virq(irq)
                 && virq < 1024
             {
                 if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
-                    handler.irq_handler(virq as u32);
+                    handler.irq_handler(virq as u32, token);
                 }
             } else {
                 error!("unexpected irq num {}", irq);

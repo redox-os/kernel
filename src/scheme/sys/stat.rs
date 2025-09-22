@@ -2,16 +2,17 @@ use crate::{
     context::{contexts, ContextRef, Status},
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
     percpu::get_all_stats,
+    sync::CleanLockToken,
     syscall::error::Result,
     time::START,
 };
 use alloc::{string::String, vec::Vec};
 
 /// Get the sys:stat data as displayed to the user.
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let start_time_sec = *START.lock() / 1_000_000_000;
 
-    let (contexts_running, contexts_blocked) = get_contexts_stats();
+    let (contexts_running, contexts_blocked) = get_contexts_stats(token);
     let res = format!(
         "{}{}\n\
         boot_time: {start_time_sec}\n\
@@ -68,11 +69,11 @@ fn get_irq_stats() -> String {
 }
 
 /// Format contexts stats.
-fn get_contexts_stats() -> (u64, u64) {
+fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     let mut running = 0;
     let mut blocked = 0;
 
-    let statuses = contexts()
+    let statuses = contexts(token.token())
         .iter()
         .filter_map(ContextRef::upgrade)
         .map(|context| context.read_arc().status.clone())

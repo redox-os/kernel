@@ -1,3 +1,4 @@
+use crate::sync::CleanLockToken;
 use core::arch::asm;
 
 pub unsafe fn kreset() -> ! {
@@ -20,7 +21,7 @@ pub unsafe fn emergency_reset() -> ! {
     }
 }
 
-pub unsafe fn kstop() -> ! {
+pub unsafe fn kstop(token: &mut CleanLockToken) -> ! {
     unsafe {
         println!("kstop");
 

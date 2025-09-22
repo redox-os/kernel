@@ -2,6 +2,7 @@ use crate::{
     context,
     context::{file::FileDescription, memory::AddrSpaceWrapper},
     scheme,
+    sync::CleanLockToken,
     syscall::error::Result,
 };
 use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
@@ -9,7 +10,7 @@ use core::{fmt::Write, hash::Hash};
 use hashbrown::HashMap;
 use spin::RwLock;
 
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     #[derive(Debug)]
     struct Ref<T>(Arc<T>);
     impl<T> Hash for Ref<T> {
@@ -31,7 +32,10 @@ pub fn resource() -> Result<Vec<u8>> {
     let mut map = HashMap::<Ref<RwLock<FileDescription>>, Descr>::new();
 
     let mut report = String::new();
-    'contexts: for context in context::contexts().iter().filter_map(|c| c.upgrade()) {
+    'contexts: for context in context::contexts(token.token())
+        .iter()
+        .filter_map(|c| c.upgrade())
+    {
         let context = context.read();
         let files = context.files.read();
         writeln!(report, "'{}' {{", context.name).unwrap();
@@ -51,7 +55,7 @@ pub fn resource() -> Result<Vec<u8>> {
             let descr = map.entry(fr).or_default();
 
             let scheme_id = file.description.read().scheme;
-            let scheme = scheme::schemes()
+            let scheme = scheme::schemes(token.token())
                 .names
                 .iter()
                 .flat_map(|(_, v)| v.iter())

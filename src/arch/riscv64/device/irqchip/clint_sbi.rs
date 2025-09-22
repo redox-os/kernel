@@ -2,6 +2,7 @@ use crate::{
     context,
     context::timeout,
     dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+    sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
 use byteorder::{ByteOrder, BE};
@@ -34,7 +35,7 @@ struct ClintConnector {
 }
 
 impl InterruptHandler for ClintConnector {
-    fn irq_handler(&mut self, _irq: u32) {
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
         CLINT
             .lock()
             .as_mut()
@@ -43,8 +44,8 @@ impl InterruptHandler for ClintConnector {
         if self.irq == IRQ_TIMER {
             // a bit of hack, but it is a really bad idea to call scheduler
             // from inside clint irq handler
-            timeout::trigger();
-            context::switch::tick();
+            timeout::trigger(token);
+            context::switch::tick(token);
         }
     }
 }

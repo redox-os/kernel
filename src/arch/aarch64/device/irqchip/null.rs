@@ -5,12 +5,15 @@ use syscall::{
 };
 
 use super::InterruptController;
-use crate::dtb::irqchip::{InterruptHandler, IrqCell, IrqDesc};
+use crate::{
+    dtb::irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    sync::CleanLockToken,
+};
 
 pub struct Null;
 
 impl InterruptHandler for Null {
-    fn irq_handler(&mut self, _irq: u32) {}
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for Null {

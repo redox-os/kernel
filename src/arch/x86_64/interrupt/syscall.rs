@@ -1,6 +1,8 @@
 use crate::{
     arch::{gdt, interrupt::InterruptStack},
-    ptrace, syscall,
+    ptrace,
+    sync::CleanLockToken,
+    syscall,
     syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
 };
 use core::mem::offset_of;
@@ -66,7 +68,8 @@ pub unsafe fn init() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
     unsafe {
-        let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
+        let mut token = CleanLockToken::new();
+        let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None, &mut token)
             .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
 
         if allowed.unwrap_or(true) {
@@ -79,11 +82,12 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
                 scratch.rdx,
                 scratch.r10,
                 scratch.r8,
+                &mut token,
             );
             (*stack).scratch.rax = ret;
         }
 
-        ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
+        ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None, &mut token);
     }
 }
 

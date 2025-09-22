@@ -1,5 +1,6 @@
 use crate::{
     context,
+    sync::CleanLockToken,
     syscall::{
         data::TimeSpec,
         error::*,
@@ -24,7 +25,11 @@ pub fn clock_gettime(clock: usize, buf: UserSliceWo) -> Result<()> {
 }
 
 /// Nanosleep will sleep by switching the current context
-pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Result<()> {
+pub fn nanosleep(
+    req_buf: UserSliceRo,
+    rem_buf_opt: Option<UserSliceWo>,
+    token: &mut CleanLockToken,
+) -> Result<()> {
     let req = unsafe { req_buf.read_exact::<TimeSpec>()? };
 
     let start = time::monotonic();
@@ -32,7 +37,7 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 
     let current_context = context::current();
     {
-        let mut context = current_context.write();
+        let mut context = current_context.write(token.token());
 
         if let Some((tctl, pctl, _)) = context.sigcontrol() {
             if tctl.currently_pending_unblocked(pctl) != 0 {
@@ -46,9 +51,9 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
 
     // TODO: The previous wakeup reason was most likely signals, but is there any other possible
     // reason?
-    context::switch();
+    context::switch(token);
 
-    let was_interrupted = current_context.write().wake.take().is_some();
+    let was_interrupted = current_context.write(token.token()).wake.take().is_some();
 
     if let Some(rem_buf) = rem_buf_opt {
         let current = time::monotonic();
@@ -74,9 +79,9 @@ pub fn nanosleep(req_buf: UserSliceRo, rem_buf_opt: Option<UserSliceWo>) -> Resu
     }
 }
 
-pub fn sched_yield() -> Result<()> {
-    context::switch();
+pub fn sched_yield(token: &mut CleanLockToken) -> Result<()> {
+    context::switch(token);
     // TODO: Do this check in userspace
-    context::signal::signal_handler();
+    context::signal::signal_handler(token);
     Ok(())
 }

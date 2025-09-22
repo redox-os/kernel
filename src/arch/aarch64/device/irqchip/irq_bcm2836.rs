@@ -5,6 +5,7 @@ use crate::{
         get_mmio_address,
         irqchip::{InterruptHandler, IrqCell, IrqDesc},
     },
+    sync::CleanLockToken,
 };
 use core::{
     arch::asm,
@@ -116,7 +117,7 @@ impl Bcm2836ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2836ArmInterruptController {
-    fn irq_handler(&mut self, _irq: u32) {}
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for Bcm2836ArmInterruptController {

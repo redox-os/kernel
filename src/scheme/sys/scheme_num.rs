@@ -1,13 +1,13 @@
 use alloc::vec::Vec;
 
-use crate::{context, scheme, syscall::error::Result};
+use crate::{context, scheme, sync::CleanLockToken, syscall::error::Result};
 
-pub fn resource() -> Result<Vec<u8>> {
-    let scheme_ns = context::current().read().ens;
+pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+    let scheme_ns = context::current().read(token.token()).ens;
 
     let mut data = Vec::new();
 
-    let schemes = scheme::schemes();
+    let schemes = scheme::schemes(token.token());
     for (name, &scheme_id) in schemes.iter_name(scheme_ns) {
         data.extend_from_slice(format!("{:>4}: ", scheme_id.get()).as_bytes());
         data.extend_from_slice(name.as_bytes());

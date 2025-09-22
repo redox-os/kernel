@@ -20,7 +20,6 @@ redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git", bran
 rmm = { path = "rmm", default-features = false }
 slab = { version = "0.4", default-features = false }
 spin = { version = "0.9.8" }
-spinning_top = { version = "0.3", features = ["arc_lock"] }
 # TODO: Remove
 indexmap = { version = "2.5.0", default-features = false }
 

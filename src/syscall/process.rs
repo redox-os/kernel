@@ -11,6 +11,7 @@ use crate::{
     },
     event,
     scheme::GlobalSchemes,
+    sync::CleanLockToken,
     syscall::EventFlags,
 };
 
@@ -24,13 +25,13 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
-pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
+pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
     let mut close_files;
     let addrspace_opt;
 
     let context_lock = context::current();
     {
-        let mut context = context_lock.write();
+        let mut context = context_lock.write(token.token());
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
         addrspace_opt = context
@@ -41,11 +42,11 @@ pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
     }
 
     // Files must be closed while context is valid so that messages can be passed
-    close_files.force_close_all();
+    close_files.force_close_all(token);
     drop(addrspace_opt);
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
-        let mut guard = context_lock.write();
+        let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
         guard.owner_proc_id
     };
@@ -57,9 +58,9 @@ pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
         );
     }
     {
-        let _ = context::contexts_mut().remove(&ContextRef(context_lock));
+        let _ = context::contexts_mut(token.token()).remove(&ContextRef(context_lock));
     }
-    context::switch();
+    context::switch(token);
     unreachable!();
 }
 
@@ -72,13 +73,13 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
     AddrSpace::current()?.mprotect(span, flags)
 }
 
-pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
+pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
     {
         let addr_space = Arc::clone(
             context::current()
-                .read()
+                .read(token.token())
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
@@ -128,7 +129,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
     // Start in a minimal environment without any stack.
 
     match context::current()
-        .write()
+        .write(token.token())
         .regs_mut()
         .expect("bootstrap needs registers to be available")
     {

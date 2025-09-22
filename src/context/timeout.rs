@@ -1,9 +1,10 @@
 use alloc::collections::VecDeque;
-use spin::{Mutex, MutexGuard, Once};
+use spin::Once;
 
 use crate::{
     event,
     scheme::SchemeId,
+    sync::{CleanLockToken, LockToken, Mutex, MutexGuard, L0, L1},
     syscall::{
         data::TimeSpec,
         flag::{CLOCK_MONOTONIC, CLOCK_REALTIME, EVENT_READ},
@@ -21,20 +22,26 @@ struct Timeout {
 
 type Registry = VecDeque<Timeout>;
 
-static REGISTRY: Once<Mutex<Registry>> = Once::new();
+static REGISTRY: Once<Mutex<L1, Registry>> = Once::new();
 
 /// Initialize registry, called if needed
-fn init_registry() -> Mutex<Registry> {
+fn init_registry() -> Mutex<L1, Registry> {
     Mutex::new(Registry::new())
 }
 
 /// Get the global timeouts list
-fn registry() -> MutexGuard<'static, Registry> {
-    REGISTRY.call_once(init_registry).lock()
+fn registry<'a>(token: LockToken<'a, L0>) -> MutexGuard<'a, L1, Registry> {
+    REGISTRY.call_once(init_registry).lock(token)
 }
 
-pub fn register(scheme_id: SchemeId, event_id: usize, clock: usize, time: TimeSpec) {
-    let mut registry = registry();
+pub fn register(
+    scheme_id: SchemeId,
+    event_id: usize,
+    clock: usize,
+    time: TimeSpec,
+    token: &mut CleanLockToken,
+) {
+    let mut registry = registry(token.token());
     registry.push_back(Timeout {
         scheme_id,
         event_id,
@@ -43,34 +50,38 @@ pub fn register(scheme_id: SchemeId, event_id: usize, clock: usize, time: TimeSp
     });
 }
 
-pub fn trigger() {
-    let mut registry = registry();
-
+pub fn trigger(token: &mut CleanLockToken) {
     let mono = time::monotonic();
     let real = time::realtime();
 
     let mut i = 0;
-    while i < registry.len() {
-        let trigger = match registry[i].clock {
-            CLOCK_MONOTONIC => {
-                let time = registry[i].time;
-                mono >= time
-            }
-            CLOCK_REALTIME => {
-                let time = registry[i].time;
-                real >= time
-            }
-            clock => {
-                println!("timeout::trigger: unknown clock {}", clock);
-                true
-            }
-        };
+    loop {
+        let mut registry = registry(token.token());
+        let timeout = if i < registry.len() {
+            let trigger = match registry[i].clock {
+                CLOCK_MONOTONIC => {
+                    let time = registry[i].time;
+                    mono >= time
+                }
+                CLOCK_REALTIME => {
+                    let time = registry[i].time;
+                    real >= time
+                }
+                clock => {
+                    println!("timeout::trigger: unknown clock {}", clock);
+                    true
+                }
+            };
 
-        if trigger {
-            let timeout = registry.remove(i).unwrap();
-            event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ);
+            if trigger {
+                registry.remove(i).unwrap()
+            } else {
+                i += 1;
+                continue;
+            }
         } else {
-            i += 1;
-        }
+            break;
+        };
+        event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ);
     }
 }

@@ -1,8 +1,8 @@
 use alloc::vec::Vec;
 
-use crate::{log::LOG, syscall::error::Result};
+use crate::{log::LOG, sync::CleanLockToken, syscall::error::Result};
 
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut vec = Vec::new();
 
     if let Some(ref log) = *LOG.lock() {

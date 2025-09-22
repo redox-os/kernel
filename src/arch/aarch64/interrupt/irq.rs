@@ -1,4 +1,7 @@
-use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP, scheme::irq::irq_trigger};
+use crate::{
+    arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP, scheme::irq::irq_trigger,
+    sync::CleanLockToken,
+};
 use core::sync::atomic::Ordering;
 
 // use crate::percpu::PercpuBlock;
@@ -12,34 +15,36 @@ unsafe fn irq_ack() -> (u32, Option<usize>) {
 }
 
 exception_stack!(irq_at_el0, |_stack| {
+    let mut token = unsafe { CleanLockToken::new() };
     let (irq, virq) = irq_ack();
     if let Some(virq) = virq
         && virq < 1024
     {
-        IRQ_CHIP.trigger_virq(virq as u32);
+        IRQ_CHIP.trigger_virq(virq as u32, &mut token);
     } else {
         println!("unexpected irq num {}", irq);
     }
 });
 
 exception_stack!(irq_at_el1, |_stack| {
+    let mut token = unsafe { CleanLockToken::new() };
     let (irq, virq) = irq_ack();
     if let Some(virq) = virq
         && virq < 1024
     {
-        IRQ_CHIP.trigger_virq(virq as u32);
+        IRQ_CHIP.trigger_virq(virq as u32, &mut token);
     } else {
         println!("unexpected irq num {}", irq);
     }
 });
 
 //TODO
-pub unsafe fn trigger(irq: u32) {
+pub unsafe fn trigger(irq: u32, token: &mut CleanLockToken) {
     unsafe {
         // FIXME add_irq accepts a u8 as irq number
         // PercpuBlock::current().stats.add_irq(irq);
 
-        irq_trigger(irq.try_into().unwrap());
+        irq_trigger(irq.try_into().unwrap(), token);
         IRQ_CHIP.irq_eoi(irq);
     }
 }
