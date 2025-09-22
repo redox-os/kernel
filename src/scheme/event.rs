@@ -12,7 +12,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 pub struct EventScheme;
 
