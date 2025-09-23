@@ -19,11 +19,13 @@ pub unsafe fn init() {
     }
 
     let mut com1 = SerialPort::<Pio<u8>>::new(0x3F8);
-    com1.init();
-    *COM1.lock() = SerialKind::Ns16550Pio(com1);
+    if com1.init().is_ok() {
+        *COM1.lock() = SerialKind::Ns16550Pio(com1);
+    }
     let mut com2 = SerialPort::<Pio<u8>>::new(0x2F8);
-    com2.init();
-    *COM2.lock() = SerialKind::Ns16550Pio(com2);
+    if com2.init().is_ok() {
+        *COM2.lock() = SerialKind::Ns16550Pio(com2);
+    }
 
     // FIXME remove explicit LPSS handling once ACPI SPCR is supported
     if cfg!(not(feature = "lpss_debug")) {
@@ -55,8 +57,8 @@ pub unsafe fn init() {
         }
     }
 
-    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(crate::PHYS_OFFSET + 0xFE032000) };
-    lpss.init();
-
-    *LPSS.lock() = SerialKind::Ns16550u32(lpss);
+    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(address) };
+    if lpss.init().is_ok() {
+        *LPSS.lock() = SerialKind::Ns16550u32(lpss);
+    }
 }
