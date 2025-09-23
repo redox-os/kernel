@@ -140,6 +140,7 @@ pub unsafe fn switch_arch_hook() {
         };
         if retain_pgtbl {
             // If we are not switching to a different address space, we can simply return early.
+            return;
         }
         if let &Some(ref prev_addrsp) = &*cur_addrsp {
             prev_addrsp
