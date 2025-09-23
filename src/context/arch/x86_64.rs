@@ -6,7 +6,10 @@ use core::{
 use crate::syscall::FloatRegisters;
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PageMapper},
+    arch::{
+        interrupt::InterruptStack,
+        paging::{PageMapper, ENTRY_COUNT},
+    },
     context::{context::Kstack, memory::Table},
     memory::RmmA,
 };
@@ -406,29 +409,14 @@ pub fn setup_new_utable() -> Result<Table> {
         PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))?
     };
 
-    {
+    // Copy higher half (kernel) mappings
+    unsafe {
         let active_ktable = KernelMapper::lock();
-
-        let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable
-                .table()
-                .entry(p4_no)
-                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
-
-            utable.table().set_entry(p4_no, entry)
-        };
-        // TODO: Just copy all 256 mappings? Or copy KERNEL_PML4+KERNEL_PERCPU_PML4 (needed for
-        // paranoid ISRs which can occur anywhere; we don't want interrupts to triple fault!) and
-        // map lazily via page faults in the kernel.
-
-        // Copy kernel image mapping
-        copy_mapping(crate::KERNEL_PML4);
-
-        // Copy kernel heap mapping
-        copy_mapping(crate::KERNEL_HEAP_PML4);
-
-        // Copy physmap mapping
-        copy_mapping(crate::PHYS_PML4);
+        for pde_no in ENTRY_COUNT / 2..ENTRY_COUNT {
+            if let Some(entry) = active_ktable.table().entry(pde_no) {
+                utable.table().set_entry(pde_no, entry);
+            }
+        }
     }
 
     Ok(Table { utable })
