@@ -40,14 +40,14 @@ pub unsafe fn init_early(dtb: &Fdt) {
                 //TODO: get actual register size from device tree
                 let serial_port = uart_16550::SerialPort::<Mmio<u8>>::new(virt);
                 if !skip_init {
-                    serial_port.init();
+                    let _ = serial_port.init();
                 }
                 Some(SerialKind::Ns16550u8(serial_port))
             } else if compatible.contains("snps,dw-apb-uart") {
                 //TODO: get actual register size from device tree
                 let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
                 if !skip_init {
-                    serial_port.init();
+                    let _ = serial_port.init();
                 }
                 Some(SerialKind::Ns16550u32(serial_port))
             } else {
