@@ -129,11 +129,12 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
             chunk.size
         );
 
+        /*TODO: soc memory may contain all free memory!
         register_memory_region(
             chunk.parent_bus_address,
             chunk.size,
             BootloaderMemoryKind::Device,
-        );
+        );*/
     }
 
     // also add all soc-internal devices because they might not be shown in ranges
