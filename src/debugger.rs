@@ -21,11 +21,13 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
     let old_table = unsafe { RmmA::table(TableKind::User) };
 
-    for context_lock in crate::context::contexts(token.token()).iter() {
+    let mut contexts_guard = crate::context::contexts(token.token());
+    let (contexts, mut context_token) = contexts_guard.token_split();
+    for context_lock in contexts.iter() {
         if target_id.map_or(false, |target_id| Arc::as_ptr(&context_lock.0) != target_id) {
             continue;
         }
-        let context = context_lock.0.read();
+        let context = context_lock.0.read(context_token.token());
         println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
 
         if let Some(ref head) = context.syscall_head {
@@ -129,8 +131,9 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
         println!();
     }
+    drop(contexts_guard);
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-    crate::scheme::proc::foreach_addrsp(|addrsp| {
+    crate::scheme::proc::foreach_addrsp(token, |addrsp| {
         let was_new = spaces.insert(addrsp.acquire_read().table.utable.table().phys().data());
         unsafe { check_page_table_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree) };
     });
