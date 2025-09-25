@@ -1,9 +1,7 @@
 use core::{
-    arch::asm,
-    slice,
+    arch::{asm, global_asm},
     sync::atomic::{AtomicUsize, Ordering},
 };
-use fdt::Fdt;
 
 use crate::{
     allocator,
@@ -38,25 +36,40 @@ fn get_boot_hart_id(env: &[u8]) -> Option<usize> {
     None
 }
 
+global_asm!("
+    .globl kstart
+    kstart:
+        mv gp, x0 // ensure gp relative accesses crash
+        mv tp, x0 // reset percpu until it is initialized
+        csrw sscratch, tp
+
+        // BSS should already be zero
+        ld t0, {bss_test_zero}
+        bnez t0, .Lkstart_crash
+        ld t0, {data_test_nonzero}
+        beqz t0, .Lkstart_crash
+
+        li ra, 0
+        j {start}
+
+    .Lkstart_crash:
+        jr x0
+    ",
+    bss_test_zero = sym BSS_TEST_ZERO,
+    data_test_nonzero = sym DATA_TEST_NONZERO,
+    start = sym start,
+);
+
 /// The entry to Rust, all things must be initialized
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
+unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
     unsafe {
         asm!(
-            "mv tp, x0", // reset percpu until it is initialized
-            "csrw sscratch, tp",
             "sd x0, -16(fp)", // and stop frame walker here
             "sd x0, -8(fp)",
         );
 
         let bootstrap = {
             let args = args_ptr.read();
-
-            // BSS should already be zero
-            {
-                assert_eq!(BSS_TEST_ZERO, 0);
-                assert_eq!(DATA_TEST_NONZERO, 0xFFFF_FFFF_FFFF_FFFF);
-            }
 
             let dtb_data = if args.hwdesc_base != 0 {
                 Some((
