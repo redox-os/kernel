@@ -89,8 +89,8 @@ const FILES: &[(&'static str, Kind)] = &[
     ("stat", Rd(stat::resource)),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
     /*
-    ("trigger_debugger", Rd(|| unsafe {
-        crate::debugger::debugger(None);
+    ("trigger_debugger", Rd(|token| unsafe {
+        crate::debugger::debugger(None, token);
         Ok(Vec::new())
     })),
     */
