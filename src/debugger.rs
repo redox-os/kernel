@@ -47,6 +47,11 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             SyscallFrame::Dummy => {}
         }
 
+        if let Some(sig) = &context.sig {
+            tree.insert(sig.proc_control.get(), (1, false));
+            tree.insert(sig.thread_control.get(), (1, false));
+        }
+
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
             let was_new = spaces.insert(space.acquire_read().table.utable.table().phys().data());
