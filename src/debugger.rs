@@ -1,5 +1,5 @@
 use crate::{
-    context::{Context, ContextLock},
+    context::{context::SyscallFrame, Context, ContextLock},
     memory::{get_page_info, the_zeroed_frame, Frame, RefCount},
     paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
     sync::CleanLockToken,
@@ -15,8 +15,6 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
     let mut tree = HashMap::new();
     let mut spaces = HashSet::new();
 
-    let mut temporarily_taken_htbufs = 0;
-
     tree.insert(the_zeroed_frame().0, (1, false));
 
     let old_table = unsafe { RmmA::table(TableKind::User) };
@@ -30,15 +28,23 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
         let context = context_lock.0.read(context_token.token());
         println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
 
-        if let Some(ref head) = context.syscall_head {
-            tree.insert(head.get(), (1, false));
-        } else {
-            temporarily_taken_htbufs += 1;
+        match &context.syscall_head {
+            SyscallFrame::Free(head) => {
+                tree.insert(head.get(), (1, false));
+            }
+            SyscallFrame::Used { _frame: head } => {
+                tree.insert(*head, (1, false));
+            }
+            SyscallFrame::Dummy => {}
         }
-        if let Some(ref tail) = context.syscall_tail {
-            tree.insert(tail.get(), (1, false));
-        } else {
-            temporarily_taken_htbufs += 1;
+        match &context.syscall_tail {
+            SyscallFrame::Free(tail) => {
+                tree.insert(tail.get(), (1, false));
+            }
+            SyscallFrame::Used { _frame: tail } => {
+                tree.insert(*tail, (1, false));
+            }
+            SyscallFrame::Dummy => {}
         }
 
         // Switch to context page table to ensure syscall debug and stack dump will work
@@ -156,10 +162,6 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             );
         }
     }
-    println!(
-        "({} kernel-owned references were not counted)",
-        temporarily_taken_htbufs
-    );
 
     println!("DEBUGGER END");
 }

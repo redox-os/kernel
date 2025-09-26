@@ -6,6 +6,7 @@ use spin::RwLock;
 
 use crate::{
     context::{
+        context::SyscallFrame,
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
@@ -37,8 +38,8 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         addrspace_opt = context
             .set_addr_space(None)
             .and_then(|a| Arc::try_unwrap(a).ok());
-        drop(context.syscall_head.take());
-        drop(context.syscall_tail.take());
+        drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
+        drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
     }
 
     // Files must be closed while context is valid so that messages can be passed
