@@ -28,28 +28,24 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
         let context = context_lock.0.read(context_token.token());
         println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
 
+        let mut mark_frame_use = |frame| {
+            tree.entry(frame).or_insert((0, false)).0 += 1;
+        };
+
         match &context.syscall_head {
-            SyscallFrame::Free(head) => {
-                tree.insert(head.get(), (1, false));
-            }
-            SyscallFrame::Used { _frame: head } => {
-                tree.insert(*head, (1, false));
-            }
+            SyscallFrame::Free(head) => mark_frame_use(head.get()),
+            SyscallFrame::Used { _frame: head } => mark_frame_use(*head),
             SyscallFrame::Dummy => {}
         }
         match &context.syscall_tail {
-            SyscallFrame::Free(tail) => {
-                tree.insert(tail.get(), (1, false));
-            }
-            SyscallFrame::Used { _frame: tail } => {
-                tree.insert(*tail, (1, false));
-            }
+            SyscallFrame::Free(tail) => mark_frame_use(tail.get()),
+            SyscallFrame::Used { _frame: tail } => mark_frame_use(*tail),
             SyscallFrame::Dummy => {}
         }
 
         if let Some(sig) = &context.sig {
-            tree.insert(sig.proc_control.get(), (1, false));
-            tree.insert(sig.thread_control.get(), (1, false));
+            mark_frame_use(sig.proc_control.get());
+            mark_frame_use(sig.thread_control.get());
         }
 
         // Switch to context page table to ensure syscall debug and stack dump will work
