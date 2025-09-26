@@ -153,16 +153,15 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             assert!(p);
             continue;
         };
-        let rc = info.refcount();
-        let (c, s) = match rc {
-            None => (0, false),
-            Some(RefCount::One) => (1, false),
-            Some(RefCount::Cow(c)) => (c.get(), false),
-            Some(RefCount::Shared(s)) => (s.get(), true),
+        let (c, s) = match info.refcount() {
+            None => (0, ""),
+            Some(RefCount::One) => (1, ""),
+            Some(RefCount::Cow(c)) => (c.get(), " cow"),
+            Some(RefCount::Shared(s)) => (s.get(), " shared"),
         };
         if c != count {
             println!(
-                "frame refcount mismatch for {:?} ({} != {} s {})",
+                "frame refcount mismatch for {:?} ({} != {}{})",
                 frame, c, count, s
             );
         }
