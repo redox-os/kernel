@@ -160,7 +160,10 @@ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
 pub fn foreach_addrsp(token: &mut CleanLockToken, mut f: impl FnMut(&Arc<AddrSpaceWrapper>)) {
     for (_, handle) in HANDLES.read(token.token()).iter() {
         let Handle {
-            kind: ContextHandle::AddrSpace { addrspace, .. },
+            kind:
+                ContextHandle::AddrSpace { addrspace, .. }
+                | ContextHandle::AwaitingAddrSpaceChange { new: addrspace, .. }
+                | ContextHandle::MmapMinAddr(addrspace),
             ..
         } = handle
         else {

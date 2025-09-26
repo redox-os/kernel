@@ -71,6 +71,14 @@ pub enum HardBlockedReason {
 
 const CONTEXT_NAME_CAPAC: usize = 32;
 
+#[derive(Debug)]
+pub enum SyscallFrame {
+    Free(RaiiFrame),
+    // The field is used by the consistency checker of the kernel debugger
+    Used { _frame: Frame },
+    Dummy,
+}
+
 /// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
 pub struct Context {
@@ -100,10 +108,10 @@ pub struct Context {
 
     /// Head buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_head: Option<RaiiFrame>,
+    pub syscall_head: SyscallFrame,
     /// Tail buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_tail: Option<RaiiFrame>,
+    pub syscall_tail: SyscallFrame,
     /// Context should wake up at specified time
     pub wake: Option<u128>,
     /// The architecture specific context
@@ -168,8 +176,8 @@ impl Context {
             cpu_time: 0,
             sched_affinity: LogicalCpuSet::all(),
             inside_syscall: false,
-            syscall_head: Some(RaiiFrame::allocate()?),
-            syscall_tail: Some(RaiiFrame::allocate()?),
+            syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),
+            syscall_tail: SyscallFrame::Free(RaiiFrame::allocate()?),
             wake: None,
             arch: arch::Context::new(),
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
@@ -430,28 +438,36 @@ pub struct BorrowedHtBuf {
 }
 impl BorrowedHtBuf {
     pub fn head(token: &mut CleanLockToken) -> Result<Self> {
-        Ok(Self {
-            inner: Some(
-                context::current()
-                    .write(token.token())
-                    .syscall_head
-                    .take()
-                    .ok_or(Error::new(EAGAIN))?,
-            ),
-            head_and_not_tail: true,
-        })
+        let current = context::current();
+        let frame = &mut current.write(token.token()).syscall_head;
+        match mem::replace(frame, SyscallFrame::Dummy) {
+            SyscallFrame::Free(free_frame) => {
+                *frame = SyscallFrame::Used {
+                    _frame: free_frame.get(),
+                };
+                Ok(Self {
+                    inner: Some(free_frame),
+                    head_and_not_tail: true,
+                })
+            }
+            SyscallFrame::Used { .. } | SyscallFrame::Dummy => Err(Error::new(EAGAIN)),
+        }
     }
     pub fn tail(token: &mut CleanLockToken) -> Result<Self> {
-        Ok(Self {
-            inner: Some(
-                context::current()
-                    .write(token.token())
-                    .syscall_tail
-                    .take()
-                    .ok_or(Error::new(EAGAIN))?,
-            ),
-            head_and_not_tail: false,
-        })
+        let current = context::current();
+        let frame = &mut current.write(token.token()).syscall_tail;
+        match mem::replace(frame, SyscallFrame::Dummy) {
+            SyscallFrame::Free(free_frame) => {
+                *frame = SyscallFrame::Used {
+                    _frame: free_frame.get(),
+                };
+                Ok(Self {
+                    inner: Some(free_frame),
+                    head_and_not_tail: false,
+                })
+            }
+            SyscallFrame::Used { .. } | SyscallFrame::Dummy => Err(Error::new(EAGAIN)),
+        }
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
         unsafe {
@@ -500,12 +516,11 @@ impl Drop for BorrowedHtBuf {
         let mut token = unsafe { CleanLockToken::new() };
         match context.write(token.token()) {
             mut context => {
-                (if self.head_and_not_tail {
+                *(if self.head_and_not_tail {
                     &mut context.syscall_head
                 } else {
                     &mut context.syscall_tail
-                })
-                .get_or_insert(inner);
+                }) = SyscallFrame::Free(inner);
             }
         }
     }

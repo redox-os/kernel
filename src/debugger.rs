@@ -1,5 +1,5 @@
 use crate::{
-    context::{Context, ContextLock},
+    context::{context::SyscallFrame, Context, ContextLock},
     memory::{get_page_info, the_zeroed_frame, Frame, RefCount},
     paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
     sync::CleanLockToken,
@@ -15,8 +15,6 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
     let mut tree = HashMap::new();
     let mut spaces = HashSet::new();
 
-    let mut temporarily_taken_htbufs = 0;
-
     tree.insert(the_zeroed_frame().0, (1, false));
 
     let old_table = unsafe { RmmA::table(TableKind::User) };
@@ -30,15 +28,24 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
         let context = context_lock.0.read(context_token.token());
         println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
 
-        if let Some(ref head) = context.syscall_head {
-            tree.insert(head.get(), (1, false));
-        } else {
-            temporarily_taken_htbufs += 1;
+        let mut mark_frame_use = |frame| {
+            tree.entry(frame).or_insert((0, false)).0 += 1;
+        };
+
+        match &context.syscall_head {
+            SyscallFrame::Free(head) => mark_frame_use(head.get()),
+            SyscallFrame::Used { _frame: head } => mark_frame_use(*head),
+            SyscallFrame::Dummy => {}
         }
-        if let Some(ref tail) = context.syscall_tail {
-            tree.insert(tail.get(), (1, false));
-        } else {
-            temporarily_taken_htbufs += 1;
+        match &context.syscall_tail {
+            SyscallFrame::Free(tail) => mark_frame_use(tail.get()),
+            SyscallFrame::Used { _frame: tail } => mark_frame_use(*tail),
+            SyscallFrame::Dummy => {}
+        }
+
+        if let Some(sig) = &context.sig {
+            mark_frame_use(sig.proc_control.get());
+            mark_frame_use(sig.thread_control.get());
         }
 
         // Switch to context page table to ensure syscall debug and stack dump will work
@@ -142,24 +149,19 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             assert!(p);
             continue;
         };
-        let rc = info.refcount();
-        let (c, s) = match rc {
-            None => (0, false),
-            Some(RefCount::One) => (1, false),
-            Some(RefCount::Cow(c)) => (c.get(), false),
-            Some(RefCount::Shared(s)) => (s.get(), true),
+        let (c, s) = match info.refcount() {
+            None => (0, ""),
+            Some(RefCount::One) => (1, ""),
+            Some(RefCount::Cow(c)) => (c.get(), " cow"),
+            Some(RefCount::Shared(s)) => (s.get(), " shared"),
         };
         if c != count {
             println!(
-                "frame refcount mismatch for {:?} ({} != {} s {})",
+                "frame refcount mismatch for {:?} ({} != {}{})",
                 frame, c, count, s
             );
         }
     }
-    println!(
-        "({} kernel-owned references were not counted)",
-        temporarily_taken_htbufs
-    );
 
     println!("DEBUGGER END");
 }
