@@ -7,7 +7,7 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
         Context, ContextLock, Status,
     },
-    memory::{get_page_info, AddRefError, RefKind, PAGE_SIZE},
+    memory::PAGE_SIZE,
     ptrace,
     scheme::{self, FileHandle, KernelScheme},
     sync::{CleanLockToken, RwLock, L1},
@@ -538,13 +538,6 @@ impl KernelScheme for ProcScheme {
                     PAGE_SIZE => &sig.proc_control,
                     _ => return Err(Error::new(EINVAL)),
                 };
-                let info = get_page_info(frame.get()).ok_or(Error::new(EBADFD))?;
-                match info.add_ref(RefKind::Shared) {
-                    Ok(()) => (),
-                    Err(AddRefError::RcOverflow) => return Err(Error::new(ENOMEM)),
-                    Err(AddRefError::CowToShared) => unreachable!("cannot be CoW since it's a kernel RaiiFrame that at some point was made Shared"),
-                    Err(AddRefError::SharedToCow) => unreachable!("wasn't requested"),
-                }
                 // TODO: Allocated or AllocatedShared?
                 let addrsp = AddrSpace::current()?;
                 let page = addrsp.acquire_write().mmap(
