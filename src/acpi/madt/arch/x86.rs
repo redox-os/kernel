@@ -27,140 +27,149 @@ pub(super) fn init(madt: Madt) {
         println!("    XAPIC {}: {:>08X}", me.get(), local_apic.address);
     }
 
-    if cfg!(feature = "multi_core") {
-        // Map trampoline
-        let trampoline_frame = Frame::containing(PhysicalAddress::new(TRAMPOLINE));
-        let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
-        let (result, page_table_physaddr) = unsafe {
-            //TODO: do not have writable and executable!
-            let mut mapper = KernelMapper::lock();
-
-            let result = mapper
-                .get_mut()
-                .expect("expected kernel page table not to be recursively locked while initializing MADT")
-                .map_phys(trampoline_page.start_address(), trampoline_frame.base(), PageFlags::new().execute(true).write(true))
-                .expect("failed to map trampoline");
-
-            (result, mapper.table().phys().data())
-        };
-        result.flush();
-
-        // Write trampoline, make sure TRAMPOLINE page is free for use
-        for (i, val) in TRAMPOLINE_DATA.iter().enumerate() {
-            unsafe {
-                (*((TRAMPOLINE as *mut u8).add(i) as *const AtomicU8))
-                    .store(*val, Ordering::SeqCst);
-            }
-        }
-
-        for madt_entry in madt.iter() {
-            println!("      {:x?}", madt_entry);
-            if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
-                if u32::from(ap_local_apic.id) == me.get() {
-                    println!("        This is my local APIC");
-                } else if ap_local_apic.flags & 1 == 1 {
-                    let cpu_id = LogicalCpuId::next();
-
-                    // Allocate a stack
-                    let stack_start = allocate_p2frame(4)
-                        .expect("no more frames in acpi stack_start")
-                        .base()
-                        .data()
-                        + crate::PHYS_OFFSET;
-                    let stack_end = stack_start + (PAGE_SIZE << 4);
-
-                    let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
-
-                    let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
-
-                    let args = KernelArgsAp {
-                        cpu_id,
-                        page_table: page_table_physaddr,
-                        pcr_ptr,
-                        idt_ptr,
-                    };
-
-                    let ap_ready = (TRAMPOLINE + 8) as *mut u64;
-                    let ap_args_ptr = unsafe { ap_ready.add(1) };
-                    let ap_page_table = unsafe { ap_ready.add(2) };
-                    let ap_stack_end = unsafe { ap_ready.add(3) };
-                    let ap_code = unsafe { ap_ready.add(4) };
-
-                    // Set the ap_ready to 0, volatile
-                    unsafe {
-                        ap_ready.write(0);
-                        ap_args_ptr.write(&args as *const _ as u64);
-                        ap_page_table.write(page_table_physaddr as u64);
-                        ap_stack_end.write(stack_end as u64);
-                        #[expect(clippy::fn_to_numeric_cast)]
-                        ap_code.write(kstart_ap as u64);
-
-                        // TODO: Is this necessary (this fence)?
-                        core::arch::asm!("");
-                    };
-                    AP_READY.store(false, Ordering::SeqCst);
-
-                    print!(
-                        "        AP {} APIC {}:",
-                        ap_local_apic.processor, ap_local_apic.id
-                    );
-
-                    // Send INIT IPI
-                    {
-                        let mut icr = 0x4500;
-                        if local_apic.x2 {
-                            icr |= u64::from(ap_local_apic.id) << 32;
-                        } else {
-                            icr |= u64::from(ap_local_apic.id) << 56;
-                        }
-                        print!(" IPI...");
-                        local_apic.set_icr(icr);
-                    }
-
-                    // Send START IPI
-                    {
-                        //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
-                        let ap_segment = (TRAMPOLINE >> 12) & 0xFF;
-                        let mut icr = 0x4600 | ap_segment as u64;
-
-                        if local_apic.x2 {
-                            icr |= u64::from(ap_local_apic.id) << 32;
-                        } else {
-                            icr |= u64::from(ap_local_apic.id) << 56;
-                        }
-
-                        print!(" SIPI...");
-                        local_apic.set_icr(icr);
-                    }
-
-                    // Wait for trampoline ready
-                    print!(" Wait...");
-                    while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) } == 0 {
-                        hint::spin_loop();
-                    }
-                    print!(" Trampoline...");
-                    while !AP_READY.load(Ordering::SeqCst) {
-                        hint::spin_loop();
-                    }
-                    println!(" Ready");
-
-                    unsafe {
-                        RmmA::invalidate_all();
-                    }
-                } else {
-                    println!("        CPU Disabled");
-                }
-            }
-        }
-
-        // Unmap trampoline
-        let (_frame, _, flush) = unsafe {
-            KernelMapper::lock()
-                .get_mut()
-                .expect("expected kernel page table not to be recursively locked while initializing MADT")
-                .unmap_phys(trampoline_page.start_address(), true)
-                .expect("failed to unmap trampoline page")
-        };
-        flush.flush();
+    if cfg!(not(feature = "multi_core")) {
+        return;
     }
+
+    // Map trampoline
+    let trampoline_frame = Frame::containing(PhysicalAddress::new(TRAMPOLINE));
+    let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
+    let (result, page_table_physaddr) = unsafe {
+        //TODO: do not have writable and executable!
+        let mut mapper = KernelMapper::lock();
+
+        let result = mapper
+            .get_mut()
+            .expect(
+                "expected kernel page table not to be recursively locked while initializing MADT",
+            )
+            .map_phys(
+                trampoline_page.start_address(),
+                trampoline_frame.base(),
+                PageFlags::new().execute(true).write(true),
+            )
+            .expect("failed to map trampoline");
+
+        (result, mapper.table().phys().data())
+    };
+    result.flush();
+
+    // Write trampoline, make sure TRAMPOLINE page is free for use
+    for (i, val) in TRAMPOLINE_DATA.iter().enumerate() {
+        unsafe {
+            (*((TRAMPOLINE as *mut u8).add(i) as *const AtomicU8)).store(*val, Ordering::SeqCst);
+        }
+    }
+
+    for madt_entry in madt.iter() {
+        println!("      {:x?}", madt_entry);
+        if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
+            if u32::from(ap_local_apic.id) == me.get() {
+                println!("        This is my local APIC");
+            } else if ap_local_apic.flags & 1 == 1 {
+                let cpu_id = LogicalCpuId::next();
+
+                // Allocate a stack
+                let stack_start = allocate_p2frame(4)
+                    .expect("no more frames in acpi stack_start")
+                    .base()
+                    .data()
+                    + crate::PHYS_OFFSET;
+                let stack_end = stack_start + (PAGE_SIZE << 4);
+
+                let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
+
+                let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
+
+                let args = KernelArgsAp {
+                    cpu_id,
+                    page_table: page_table_physaddr,
+                    pcr_ptr,
+                    idt_ptr,
+                };
+
+                let ap_ready = (TRAMPOLINE + 8) as *mut u64;
+                let ap_args_ptr = unsafe { ap_ready.add(1) };
+                let ap_page_table = unsafe { ap_ready.add(2) };
+                let ap_stack_end = unsafe { ap_ready.add(3) };
+                let ap_code = unsafe { ap_ready.add(4) };
+
+                // Set the ap_ready to 0, volatile
+                unsafe {
+                    ap_ready.write(0);
+                    ap_args_ptr.write(&args as *const _ as u64);
+                    ap_page_table.write(page_table_physaddr as u64);
+                    ap_stack_end.write(stack_end as u64);
+                    #[expect(clippy::fn_to_numeric_cast)]
+                    ap_code.write(kstart_ap as u64);
+
+                    // TODO: Is this necessary (this fence)?
+                    core::arch::asm!("");
+                };
+                AP_READY.store(false, Ordering::SeqCst);
+
+                print!(
+                    "        AP {} APIC {}:",
+                    ap_local_apic.processor, ap_local_apic.id
+                );
+
+                // Send INIT IPI
+                {
+                    let mut icr = 0x4500;
+                    if local_apic.x2 {
+                        icr |= u64::from(ap_local_apic.id) << 32;
+                    } else {
+                        icr |= u64::from(ap_local_apic.id) << 56;
+                    }
+                    print!(" IPI...");
+                    local_apic.set_icr(icr);
+                }
+
+                // Send START IPI
+                {
+                    //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
+                    let ap_segment = (TRAMPOLINE >> 12) & 0xFF;
+                    let mut icr = 0x4600 | ap_segment as u64;
+
+                    if local_apic.x2 {
+                        icr |= u64::from(ap_local_apic.id) << 32;
+                    } else {
+                        icr |= u64::from(ap_local_apic.id) << 56;
+                    }
+
+                    print!(" SIPI...");
+                    local_apic.set_icr(icr);
+                }
+
+                // Wait for trampoline ready
+                print!(" Wait...");
+                while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) } == 0 {
+                    hint::spin_loop();
+                }
+                print!(" Trampoline...");
+                while !AP_READY.load(Ordering::SeqCst) {
+                    hint::spin_loop();
+                }
+                println!(" Ready");
+
+                unsafe {
+                    RmmA::invalidate_all();
+                }
+            } else {
+                println!("        CPU Disabled");
+            }
+        }
+    }
+
+    // Unmap trampoline
+    let (_frame, _, flush) = unsafe {
+        KernelMapper::lock()
+            .get_mut()
+            .expect(
+                "expected kernel page table not to be recursively locked while initializing MADT",
+            )
+            .unmap_phys(trampoline_page.start_address(), true)
+            .expect("failed to unmap trampoline page")
+    };
+    flush.flush();
 }
