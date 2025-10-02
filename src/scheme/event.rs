@@ -17,7 +17,7 @@ use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {
-    fn open_capability(&self) -> Result<usize> {
+    fn root_cap(&self) -> Result<usize> {
         Ok(usize::MAX)
     }
     fn kopen(&self, _path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {

@@ -54,7 +54,7 @@ enum Handle {
         path: &'static str,
         data: Option<Vec<u8>>,
     },
-    OpenCapability,
+    RootCapability,
 }
 
 enum Kind {
@@ -113,9 +113,9 @@ const FILES: &[(&'static str, Kind)] = &[
 ];
 
 impl KernelScheme for SysScheme {
-    fn open_capability(&self) -> Result<usize> {
+    fn root_cap(&self) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle::OpenCapability);
+        HANDLES.write().insert(id, Handle::RootCapability);
         Ok(id)
     }
     fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
@@ -161,7 +161,7 @@ impl KernelScheme for SysScheme {
         _fcntl_flags: u32,
         ctx: CallerCtx,
     ) -> Result<OpenResult> {
-        if *HANDLES.read().get(&id).ok_or(Error::new(EBADF))? != Handle::OpenCapability {
+        if *HANDLES.read().get(&id).ok_or(Error::new(EBADF))? != Handle::RootCapability {
             return Err(Error::new(EPERM));
         }
 
@@ -173,7 +173,7 @@ impl KernelScheme for SysScheme {
         match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => Ok(0),
             Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
-            Handle::OpenCapability => Err(Error::new(EBADF)),
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -186,7 +186,7 @@ impl KernelScheme for SysScheme {
         let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => "",
             Handle::Resource { path, .. } => path,
-            Handle::OpenCapability => return Err(Error::new(EBADF)),
+            Handle::RootCapability => return Err(Error::new(EBADF)),
         };
 
         const FIRST: &[u8] = b"sys:";
@@ -222,7 +222,7 @@ impl KernelScheme for SysScheme {
 
                 buffer.copy_common_bytes_from_slice(avail_buf)
             }
-            Handle::OpenCapability => Err(Error::new(EBADF)),
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
     fn kwriteoff(
@@ -249,7 +249,7 @@ impl KernelScheme for SysScheme {
                 };
                 handler(&intermediate[..len])
             }
-            Handle::OpenCapability => Err(Error::new(EBADF)),
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
     fn getdents(
@@ -276,7 +276,7 @@ impl KernelScheme for SysScheme {
                 }
                 Ok(buf.finalize())
             }
-            Handle::OpenCapability => Err(Error::new(EBADF)),
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -296,7 +296,7 @@ impl KernelScheme for SysScheme {
                 st_size: 0,
                 ..Default::default()
             },
-            Handle::OpenCapability => return Err(Error::new(EBADF)),
+            Handle::RootCapability => return Err(Error::new(EBADF)),
         };
 
         buf.copy_exactly(&stat)?;

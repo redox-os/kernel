@@ -392,7 +392,7 @@ pub fn schemes_mut() -> RwLockWriteGuard<'static, SchemeList> {
 
 #[allow(unused_variables)]
 pub trait KernelScheme: Send + Sync + 'static {
-    fn open_capability(&self) -> Result<usize> {
+    fn root_cap(&self) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
 

@@ -180,7 +180,7 @@ impl MemoryScheme {
     }
 }
 impl KernelScheme for MemoryScheme {
-    fn open_capability(&self) -> Result<usize> {
+    fn root_cap(&self) -> Result<usize> {
         Ok(usize::MAX)
     }
     fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {

@@ -33,7 +33,7 @@ static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 enum Handle {
     Pipe(Arc<Pipe>),
-    OpenCapability,
+    RootCapability,
 }
 
 // TODO: SLOB?
@@ -85,9 +85,9 @@ impl PipeScheme {
 }
 
 impl KernelScheme for PipeScheme {
-    fn open_capability(&self) -> Result<usize> {
+    fn root_cap(&self) -> Result<usize> {
         let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        PIPES.write().insert(id, Handle::OpenCapability);
+        PIPES.write().insert(id, Handle::RootCapability);
         Ok(id)
     }
     fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
@@ -188,7 +188,7 @@ impl KernelScheme for PipeScheme {
 
         {
             let guard = PIPES.read();
-            if let Some(Handle::OpenCapability) = guard.get(&key) {
+            if let Some(Handle::RootCapability) = guard.get(&key) {
             } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
                 let pipe = Arc::clone(pipe_arc);
                 drop(guard);

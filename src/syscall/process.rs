@@ -131,7 +131,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
-                    let cap_fd = match scheme.as_scheme().open_capability() {
+                    let cap_fd = match scheme.as_scheme().root_cap() {
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };

@@ -352,7 +352,7 @@ impl ProcScheme {
 }
 
 impl KernelScheme for ProcScheme {
-    fn open_capability(&self) -> Result<usize> {
+    fn root_cap(&self) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write().insert(
             id,
