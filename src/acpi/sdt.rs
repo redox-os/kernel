@@ -24,10 +24,6 @@ impl Sdt {
     pub fn data_len(&self) -> usize {
         let total_size = self.length as usize;
         let header_size = mem::size_of::<Sdt>();
-        if total_size >= header_size {
-            total_size - header_size
-        } else {
-            0
-        }
+        total_size.saturating_sub(header_size)
     }
 }

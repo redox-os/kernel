@@ -117,6 +117,7 @@ impl CpuStats {
             return;
         }
 
+        #[expect(clippy::indexing_slicing)] // this is ok because there are only 256 irqs and the irq num comes from a u8
         IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
         self.irq.fetch_add(1, Ordering::Relaxed);
     }
@@ -136,14 +137,14 @@ impl CpuStatsData {
     }
 }
 
-impl Into<CpuStatsData> for &CpuStats {
-    fn into(self) -> CpuStatsData {
+impl From<&CpuStats> for CpuStatsData {
+    fn from(val: &CpuStats) -> Self {
         CpuStatsData {
-            user: self.user.load(Ordering::Relaxed),
-            nice: self.nice.load(Ordering::Relaxed),
-            kernel: self.kernel.load(Ordering::Relaxed),
-            idle: self.idle.load(Ordering::Relaxed),
-            irq: self.irq.load(Ordering::Relaxed),
+            user: val.user.load(Ordering::Relaxed),
+            nice: val.nice.load(Ordering::Relaxed),
+            kernel: val.kernel.load(Ordering::Relaxed),
+            idle: val.idle.load(Ordering::Relaxed),
+            irq: val.irq.load(Ordering::Relaxed),
         }
     }
 }

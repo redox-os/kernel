@@ -11,7 +11,7 @@ use crate::{
     paging::{PageFlags, PhysicalAddress, RmmA, RmmArch},
 };
 
-use self::{hpet::Hpet, madt::Madt, rsdp::RSDP, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
+use self::{hpet::Hpet, madt::Madt, rsdp::Rsdp, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
 
 #[cfg(target_arch = "aarch64")]
 mod gtdt;
@@ -100,7 +100,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
         }
 
         // Search for RSDP
-        let rsdp_opt = RSDP::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
+        let rsdp_opt = Rsdp::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
 
         if let Some(rsdp) = rsdp_opt {
             info!("SDT address: {:#x}", rsdp.sdt_address());

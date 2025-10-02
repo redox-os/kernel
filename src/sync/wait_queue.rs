@@ -84,13 +84,13 @@ impl<T> WaitQueue<T> {
             let s1_bytes = unsafe {
                 core::slice::from_raw_parts(
                     s1.as_ptr().cast::<u8>(),
-                    s1.len() * core::mem::size_of::<T>(),
+                    core::mem::size_of_val(s1),
                 )
             };
             let s2_bytes = unsafe {
                 core::slice::from_raw_parts(
                     s2.as_ptr().cast::<u8>(),
-                    s2.len() * core::mem::size_of::<T>(),
+                    core::mem::size_of_val(s2),
                 )
             };
 
