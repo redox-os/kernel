@@ -67,7 +67,7 @@ impl<'a> Writer<'a> {
     }
 }
 
-impl<'a> fmt::Write for Writer<'a> {
+impl fmt::Write for Writer<'_> {
     fn write_str(&mut self, s: &str) -> Result<(), fmt::Error> {
         self.write(s.as_bytes(), true);
         Ok(())

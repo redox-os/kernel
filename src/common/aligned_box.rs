@@ -10,13 +10,15 @@ pub struct AlignedBox<T: ?Sized, const ALIGN: usize> {
 unsafe impl<T: Send + ?Sized, const ALIGN: usize> Send for AlignedBox<T, ALIGN> {}
 unsafe impl<T: Sync + ?Sized, const ALIGN: usize> Sync for AlignedBox<T, ALIGN> {}
 
+/// # Safety
+/// All types implementing this trait must be valid when zeroed
 pub unsafe trait ValidForZero {}
 unsafe impl<const N: usize> ValidForZero for [u8; N] {}
 unsafe impl ValidForZero for u8 {}
 
 impl<T: ?Sized, const ALIGN: usize> AlignedBox<T, ALIGN> {
     fn layout(&self) -> Layout {
-        layout_upgrade_align(Layout::for_value::<T>(&*self), ALIGN)
+        layout_upgrade_align(Layout::for_value::<T>(self), ALIGN)
     }
 }
 const fn layout_upgrade_align(layout: Layout, align: usize) -> Layout {

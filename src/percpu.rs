@@ -47,9 +47,8 @@ pub struct PercpuBlock {
     pub stats: CpuStats,
 }
 
-const NULL: AtomicPtr<PercpuBlock> = AtomicPtr::new(core::ptr::null_mut());
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
-    [NULL; MAX_CPU_COUNT as usize];
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_CPU_COUNT as usize];
 
 #[allow(unused)]
 pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
@@ -92,16 +91,15 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
         while percpublock
             .wants_tlb_shootdown
             .swap(true, Ordering::Release)
-            == true
         {
             // Load is faster than CAS or on x86, LOCK BTS
-            while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) == true {
+            while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) {
                 my_percpublock.maybe_handle_tlb_shootdown();
                 core::hint::spin_loop();
             }
         }
 
-        crate::ipi::ipi_single(crate::ipi::IpiKind::Tlb, &percpublock);
+        crate::ipi::ipi_single(crate::ipi::IpiKind::Tlb, percpublock);
     } else {
         for id in 0..crate::cpu_count() {
             // TODO: Optimize: use global counter and percpu ack counters, send IPI using
@@ -112,7 +110,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
 }
 impl PercpuBlock {
     pub fn maybe_handle_tlb_shootdown(&self) {
-        if self.wants_tlb_shootdown.swap(false, Ordering::Relaxed) == false {
+        if !self.wants_tlb_shootdown.swap(false, Ordering::Relaxed) {
             return;
         }
 
@@ -121,7 +119,7 @@ impl PercpuBlock {
             crate::paging::RmmA::invalidate_all();
         }
 
-        if let &Some(ref addrsp) = &*self.current_addrsp.borrow() {
+        if let Some(addrsp) = &*self.current_addrsp.borrow() {
             addrsp.tlb_ack.fetch_add(1, Ordering::Release);
         }
     }
@@ -134,7 +132,7 @@ pub unsafe fn switch_arch_hook() {
         let next_addrsp = percpu.new_addrsp_tmp.take();
 
         let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
-            (&Some(ref p), &Some(ref n)) => Arc::ptr_eq(p, n),
+            (Some(p), Some(n)) => Arc::ptr_eq(p, n),
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => true,
         };
@@ -142,7 +140,7 @@ pub unsafe fn switch_arch_hook() {
             // If we are not switching to a different address space, we can simply return early.
             return;
         }
-        if let &Some(ref prev_addrsp) = &*cur_addrsp {
+        if let Some(prev_addrsp) = &*cur_addrsp {
             prev_addrsp
                 .acquire_read()
                 .used_by

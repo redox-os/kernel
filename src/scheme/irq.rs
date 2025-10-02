@@ -78,7 +78,7 @@ enum Handle {
     Bsp,
 }
 impl Handle {
-    fn as_irq_handle<'a>(&'a self) -> Option<(&'a AtomicUsize, u8)> {
+    fn as_irq_handle(&self) -> Option<(&AtomicUsize, u8)> {
         match self {
             &Self::Irq { ref ack, irq } => Some((ack, irq)),
             _ => None,
@@ -245,63 +245,61 @@ impl crate::scheme::KernelScheme for IrqScheme {
             }
 
             (Handle::TopLevel, InternalFlags::POSITIONED)
-        } else {
-            if path_str == "bsp" {
-                (Handle::Bsp, InternalFlags::empty())
-            } else if path_str.starts_with("cpu-") {
-                let path_str = &path_str[4..];
-                let cpu_id = u8::from_str_radix(&path_str[..2], 16).or(Err(Error::new(ENOENT)))?;
-                let path_str = path_str[2..].trim_end_matches('/');
+        } else if path_str == "bsp" {
+            (Handle::Bsp, InternalFlags::empty())
+        } else if path_str.starts_with("cpu-") {
+            let path_str = &path_str[4..];
+            let cpu_id = u8::from_str_radix(&path_str[..2], 16).or(Err(Error::new(ENOENT)))?;
+            let path_str = path_str[2..].trim_end_matches('/');
 
-                if path_str.is_empty() {
-                    (
-                        Handle::Avail(LogicalCpuId::new(cpu_id.into())),
-                        InternalFlags::POSITIONED,
-                    )
-                } else if path_str.starts_with('/') {
-                    let path_str = &path_str[1..];
-                    Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str)?
-                } else {
-                    return Err(Error::new(ENOENT));
-                }
-            } else if cfg!(dtb) && path_str.starts_with("phandle-") {
-                #[cfg(dtb)]
-                unsafe {
-                    let (phandle_str, path_str) =
-                        path_str[8..].split_once('/').unwrap_or((path_str, ""));
-                    let phandle = usize::from_str(phandle_str).or(Err(Error::new(ENOENT)))?;
-                    if path_str.is_empty() {
-                        let has_any = IRQ_CHIP.irq_iter_for(phandle as u32).next().is_some();
-                        if has_any {
-                            let data = String::new();
-                            (
-                                Handle::Phandle(phandle as u8, data.into_bytes()),
-                                InternalFlags::POSITIONED,
-                            )
-                        } else {
-                            return Err(Error::new(ENOENT));
-                        }
-                    } else {
-                        Self::open_phandle_irq(flags, phandle, path_str)?
-                    }
-                }
-                #[cfg(not(dtb))]
-                panic!("")
-            } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
-                if plain_irq_number < BASE_IRQ_COUNT {
-                    (
-                        Handle::Irq {
-                            ack: AtomicUsize::new(0),
-                            irq: plain_irq_number,
-                        },
-                        InternalFlags::empty(),
-                    )
-                } else {
-                    return Err(Error::new(ENOENT));
-                }
+            if path_str.is_empty() {
+                (
+                    Handle::Avail(LogicalCpuId::new(cpu_id.into())),
+                    InternalFlags::POSITIONED,
+                )
+            } else if path_str.starts_with('/') {
+                let path_str = &path_str[1..];
+                Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str)?
             } else {
                 return Err(Error::new(ENOENT));
             }
+        } else if cfg!(dtb) && path_str.starts_with("phandle-") {
+            #[cfg(dtb)]
+            unsafe {
+                let (phandle_str, path_str) =
+                    path_str[8..].split_once('/').unwrap_or((path_str, ""));
+                let phandle = usize::from_str(phandle_str).or(Err(Error::new(ENOENT)))?;
+                if path_str.is_empty() {
+                    let has_any = IRQ_CHIP.irq_iter_for(phandle as u32).next().is_some();
+                    if has_any {
+                        let data = String::new();
+                        (
+                            Handle::Phandle(phandle as u8, data.into_bytes()),
+                            InternalFlags::POSITIONED,
+                        )
+                    } else {
+                        return Err(Error::new(ENOENT));
+                    }
+                } else {
+                    Self::open_phandle_irq(flags, phandle, path_str)?
+                }
+            }
+            #[cfg(not(dtb))]
+            panic!("")
+        } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
+            if plain_irq_number < BASE_IRQ_COUNT {
+                (
+                    Handle::Irq {
+                        ack: AtomicUsize::new(0),
+                        irq: plain_irq_number,
+                    },
+                    InternalFlags::empty(),
+                )
+            } else {
+                return Err(Error::new(ENOENT));
+            }
+        } else {
+            return Err(Error::new(ENOENT));
         };
         let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(fd, handle);
@@ -474,14 +472,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
             Handle::Avail(cpu_id) => Stat {
                 st_mode: MODE_DIR | 0o700,
                 st_size: 0,
-                st_ino: INO_AVAIL | u64::from(cpu_id.get()) << 32,
+                st_ino: INO_AVAIL | (u64::from(cpu_id.get()) << 32),
                 st_nlink: 2,
                 ..Default::default()
             },
             Handle::Phandle(phandle, ref buf) => Stat {
                 st_mode: MODE_DIR | 0o700,
                 st_size: buf.len() as u64,
-                st_ino: INO_PHANDLE | u64::from(phandle) << 32,
+                st_ino: INO_PHANDLE | (u64::from(phandle) << 32),
                 st_nlink: 2,
                 ..Default::default()
             },

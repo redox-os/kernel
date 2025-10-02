@@ -123,7 +123,7 @@ pub fn get_kvm_support() -> &'static Option<KvmSupport> {
 pub unsafe fn init() -> bool {
     unsafe {
         let cpuid = crate::cpuid::cpuid();
-        if !cpuid.get_feature_info().map_or(false, |f| f.has_tsc()) {
+        if !cpuid.get_feature_info().is_some_and(|f| f.has_tsc()) {
             return false;
         }
 

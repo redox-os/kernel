@@ -25,5 +25,5 @@ pub fn feature_info() -> FeatureInfo {
 
 #[cfg_attr(not(target_arch = "x86_64"), expect(dead_code))]
 pub fn has_ext_feat(feat: impl FnOnce(ExtendedFeatures) -> bool) -> bool {
-    cpuid().get_extended_feature_info().map_or(false, feat)
+    cpuid().get_extended_feature_info().is_some_and(feat)
 }

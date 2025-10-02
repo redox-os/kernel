@@ -6,7 +6,7 @@ use crate::{
 /// RSDP
 #[derive(Copy, Clone, Debug)]
 #[repr(C, packed)]
-pub struct RSDP {
+pub struct Rsdp {
     signature: [u8; 8],
     _checksum: u8,
     _oemid: [u8; 6],
@@ -18,15 +18,15 @@ pub struct RSDP {
     _reserved: [u8; 3],
 }
 
-impl RSDP {
-    fn get_already_supplied_rsdp(rsdp_ptr: *const u8) -> RSDP {
+impl Rsdp {
+    fn get_already_supplied_rsdp(rsdp_ptr: *const u8) -> Rsdp {
         // TODO: Validate
-        unsafe { *(rsdp_ptr as *const RSDP) }
+        unsafe { *(rsdp_ptr as *const Rsdp) }
     }
     pub fn get_rsdp(
         mapper: &mut KernelMapper,
         already_supplied_rsdp: Option<*const u8>,
-    ) -> Option<RSDP> {
+    ) -> Option<Rsdp> {
         if let Some(rsdp_ptr) = already_supplied_rsdp {
             Some(Self::get_already_supplied_rsdp(rsdp_ptr))
         } else {
@@ -34,7 +34,7 @@ impl RSDP {
         }
     }
     /// Search for the RSDP
-    pub fn get_rsdp_by_searching(mapper: &mut KernelMapper) -> Option<RSDP> {
+    pub fn get_rsdp_by_searching(mapper: &mut KernelMapper) -> Option<Rsdp> {
         let start_addr = 0xE_0000;
         let end_addr = 0xF_FFFF;
 
@@ -55,12 +55,12 @@ impl RSDP {
             }
         }
 
-        RSDP::search(start_addr, end_addr)
+        Rsdp::search(start_addr, end_addr)
     }
 
-    fn search(start_addr: usize, end_addr: usize) -> Option<RSDP> {
+    fn search(start_addr: usize, end_addr: usize) -> Option<Rsdp> {
         for i in 0..(end_addr + 1 - start_addr) / 16 {
-            let rsdp = unsafe { &*((start_addr + i * 16) as *const RSDP) };
+            let rsdp = unsafe { &*((start_addr + i * 16) as *const Rsdp) };
             if &rsdp.signature == b"RSD PTR " {
                 return Some(*rsdp);
             }

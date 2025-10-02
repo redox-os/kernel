@@ -25,11 +25,15 @@ pub struct Hpet {
 impl Hpet {
     pub fn init() {
         let hpet_sdt = find_sdt("HPET");
-        let hpet = if hpet_sdt.len() == 1 {
-            Hpet::new(hpet_sdt[0])
-        } else {
+        let hpet = if hpet_sdt.is_empty() {
             println!("Unable to find HPET");
             return;
+        } else if hpet_sdt.len() > 1 {
+            println!("Multiple HPETs found");
+            return;
+        } else {
+            #[expect(clippy::indexing_slicing)] // we just checked it has 1 element
+            Hpet::new(hpet_sdt[0])
         };
 
         if let Some(hpet) = hpet {
