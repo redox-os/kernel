@@ -95,98 +95,98 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 #[allow(named_asm_labels)]
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(concat!(
-        // Yes, this is magic. No, you don't need to understand
-        "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
-        "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
-        "mov rsp, gs:[{ksp}];",       // Load kernel stack pointer
-        "push QWORD PTR {ss_sel};",   // Push fake userspace SS (resembling iret frame)
-        "push QWORD PTR gs:[{sp}];",  // Push userspace rsp
-        "push r11;",                  // Push rflags
-        "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
-        "push rcx;",                  // Push userspace return pointer
+    // Yes, this is magic. No, you don't need to understand
+    "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
+    "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
+    "mov rsp, gs:[{ksp}];",       // Load kernel stack pointer
+    "push QWORD PTR {ss_sel};",   // Push fake userspace SS (resembling iret frame)
+    "push QWORD PTR gs:[{sp}];",  // Push userspace rsp
+    "push r11;",                  // Push rflags
+    "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
+    "push rcx;",                  // Push userspace return pointer
 
-        // Push context registers
-        "push rax;",
-        push_scratch!(),
-        push_preserved!(),
+    // Push context registers
+    "push rax;",
+    push_scratch!(),
+    push_preserved!(),
 
-        // TODO: Map PTI
-        // $crate::arch::x86_64::pti::map();
+    // TODO: Map PTI
+    // $crate::arch::x86_64::pti::map();
 
-        // Call inner funtion
-        "mov rdi, rsp;",
-        "call __inner_syscall_instruction;",
+    // Call inner funtion
+    "mov rdi, rsp;",
+    "call __inner_syscall_instruction;",
 
-        // TODO: Unmap PTI
-        // $crate::arch::x86_64::pti::unmap();
+    // TODO: Unmap PTI
+    // $crate::arch::x86_64::pti::unmap();
 
-        "
+    "
     .globl enter_usermode
     enter_usermode:
     ",
 
-        // Pop context registers
-        pop_preserved!(),
-        pop_scratch!(),
+    // Pop context registers
+    pop_preserved!(),
+    pop_scratch!(),
 
-        // Restore user GSBASE by swapping GSBASE and KGSBASE.
-        "swapgs;",
+    // Restore user GSBASE by swapping GSBASE and KGSBASE.
+    "swapgs;",
 
-        // TODO: Should we unconditionally jump or avoid jumping, to hint to the branch predictor that
-        // singlestep is NOT set?
-        //
-        // It appears Intel CPUs assume (previously unknown) forward conditional branches to not be
-        // taken, and AMD appears to assume all previously unknown conditional branches will not be
-        // taken.
+    // TODO: Should we unconditionally jump or avoid jumping, to hint to the branch predictor that
+    // singlestep is NOT set?
+    //
+    // It appears Intel CPUs assume (previously unknown) forward conditional branches to not be
+    // taken, and AMD appears to assume all previously unknown conditional branches will not be
+    // taken.
 
-        // Check if the Trap Flag (singlestep flag) is set. If so, sysretq will return to before the
-        // instruction, whereas debuggers expect the iretq behavior of returning to after the
-        // instruction.
+    // Check if the Trap Flag (singlestep flag) is set. If so, sysretq will return to before the
+    // instruction, whereas debuggers expect the iretq behavior of returning to after the
+    // instruction.
 
-        // TODO: Which one is faster?
-        //      bt DWORD PTR [rsp + 16], 8
-        //  or,
-        //      bt BYTE PTR [rsp + 17], 0
-        //  or,
-        //      test BYTE PTR [rsp + 17], 1
-        //  or,
-        //      test WORD PTR [rsp + 16], 0x100
-        //  or,
-        //      test DWORD PTR [rsp + 16], 0x100
-        //  ?
+    // TODO: Which one is faster?
+    //      bt DWORD PTR [rsp + 16], 8
+    //  or,
+    //      bt BYTE PTR [rsp + 17], 0
+    //  or,
+    //      test BYTE PTR [rsp + 17], 1
+    //  or,
+    //      test WORD PTR [rsp + 16], 0x100
+    //  or,
+    //      test DWORD PTR [rsp + 16], 0x100
+    //  ?
 
-        "test BYTE PTR [rsp + 17], 1;",
-        // If set, return using IRETQ instead.
-        "jnz 2f;",
+    "test BYTE PTR [rsp + 17], 1;",
+    // If set, return using IRETQ instead.
+    "jnz 2f;",
 
-        // Otherwise, continue with the fast sysretq.
+    // Otherwise, continue with the fast sysretq.
 
-        // Pop userspace return pointer
-        "pop rcx;",
+    // Pop userspace return pointer
+    "pop rcx;",
 
-        // We must ensure RCX is canonical; if it is not when running sysretq, the consequences can be
-        // fatal from a security perspective.
-        //
-        // See https://xenproject.org/2012/06/13/the-intel-sysret-privilege-escalation/.
-        //
-        // This is not just theoretical; ptrace allows userspace to change RCX (via RIP) of target
-        // processes.
-        //
-        // While we could also conditionally IRETQ here, an easier method is to simply sign-extend RCX:
+    // We must ensure RCX is canonical; if it is not when running sysretq, the consequences can be
+    // fatal from a security perspective.
+    //
+    // See https://xenproject.org/2012/06/13/the-intel-sysret-privilege-escalation/.
+    //
+    // This is not just theoretical; ptrace allows userspace to change RCX (via RIP) of target
+    // processes.
+    //
+    // While we could also conditionally IRETQ here, an easier method is to simply sign-extend RCX:
 
-        // Shift away the upper 16 bits (0xBAAD_8000_DEAD_BEEF => 0x8000_DEAD_BEEF_XXXX).
-        "shl rcx, 16;",
-        // Shift arithmetically right by 16 bits, effectively extending the 47th sign bit to bits
-        // 63:48 (0x8000_DEAD_BEEF_XXXX => 0xFFFF_8000_DEAD_BEEF).
-        "sar rcx, 16;",
+    // Shift away the upper 16 bits (0xBAAD_8000_DEAD_BEEF => 0x8000_DEAD_BEEF_XXXX).
+    "shl rcx, 16;",
+    // Shift arithmetically right by 16 bits, effectively extending the 47th sign bit to bits
+    // 63:48 (0x8000_DEAD_BEEF_XXXX => 0xFFFF_8000_DEAD_BEEF).
+    "sar rcx, 16;",
 
-        "add rsp, 8;",              // Pop fake userspace CS
-        "pop r11;",                 // Pop rflags
-        "pop rsp;",                 // Restore userspace stack pointer
-        "sysretq;",                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
+    "add rsp, 8;",              // Pop fake userspace CS
+    "pop r11;",                 // Pop rflags
+    "pop rsp;",                 // Restore userspace stack pointer
+    "sysretq;",                 // Return into userspace; RCX=>RIP,R11=>RFLAGS
 
-        // IRETQ fallback:
-        "
+    // IRETQ fallback:
+    "
     .p2align 4
 2:
     xor rcx, rcx
@@ -194,11 +194,11 @@ pub unsafe extern "C" fn syscall_instruction() {
     iretq
     "),
 
-        sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
-        ksp = const(offset_of!(gdt::ProcessorControlRegion, tss) + offset_of!(TaskStateSegment, rsp)),
-        ss_sel = const(SegmentSelector::new(gdt::GDT_USER_DATA as u16, x86::Ring::Ring3).bits()),
-        cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
-        );
+    sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
+    ksp = const(offset_of!(gdt::ProcessorControlRegion, tss) + offset_of!(TaskStateSegment, rsp)),
+    ss_sel = const(SegmentSelector::new(gdt::GDT_USER_DATA as u16, x86::Ring::Ring3).bits()),
+    cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
+    );
 }
 unsafe extern "C" {
     // TODO: macro?

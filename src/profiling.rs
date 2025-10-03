@@ -209,8 +209,10 @@ pub unsafe fn init() {
         profiling as *const _ as *mut _,
         core::sync::atomic::Ordering::SeqCst,
     );
-    unsafe { (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>)
-        .write(Some(profiling)) };
+    unsafe {
+        (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>)
+            .write(Some(profiling))
+    };
 }
 
 static ACK: AtomicU32 = AtomicU32::new(0);
@@ -225,11 +227,7 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
     }
     unsafe {
         for i in 33..255 {
-            crate::idt::IDTS
-                .write()
-                .get_mut(&cpu_id)
-                .unwrap()
-                .entries[i]
+            crate::idt::IDTS.write().get_mut(&cpu_id).unwrap().entries[i]
                 .set_func(crate::interrupt::ipi::wakeup);
         }
 
