@@ -117,7 +117,6 @@ impl CpuStats {
             return;
         }
 
-        #[expect(clippy::indexing_slicing)] // this is ok because there are only 256 irqs and the irq num comes from a u8
         IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
         self.irq.fetch_add(1, Ordering::Relaxed);
     }

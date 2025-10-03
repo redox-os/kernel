@@ -907,7 +907,7 @@ impl RefCount {
     }
     pub fn to_raw(self) -> usize {
         match self {
-            Self::One => RC_USED_NOT_FREE,
+            Self::One => 0 | RC_USED_NOT_FREE,
             Self::Shared(inner) => (inner.get() - 1) | RC_SHARED_NOT_COW | RC_USED_NOT_FREE,
             Self::Cow(inner) => (inner.get() - 1) | RC_USED_NOT_FREE,
         }

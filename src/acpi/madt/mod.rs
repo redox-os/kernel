@@ -1,6 +1,7 @@
 use core::{cell::SyncUnsafeCell, mem};
 
-use super::{find_sdt, sdt::Sdt};
+use crate::find_one_sdt;
+use super::sdt::Sdt;
 
 /// The Multiple APIC Descriptor Table
 #[derive(Clone, Copy, Debug)]
@@ -30,17 +31,7 @@ pub const FLAG_PCAT: u32 = 1;
 
 impl Madt {
     pub fn init() {
-        let madt_sdt = find_sdt("APIC");
-        let madt = if madt_sdt.is_empty() {
-            println!("Unable to find MADT");
-            return;
-        } else if madt_sdt.len() > 1 {
-            println!("Multiple MADTs found");
-            return;
-        } else {
-            #[expect(clippy::indexing_slicing)] // we just checked it has 1 element
-            Madt::new(madt_sdt[0])
-        };
+        let madt = Madt::new(find_one_sdt!("APIC", "MADT"));
 
         if let Some(madt) = madt {
             // safe because no APs have been started yet.

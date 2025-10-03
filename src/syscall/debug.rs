@@ -223,12 +223,24 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
     }
 
     #[expect(clippy::overly_complex_bool_expr)]
-    let do_debug = false
+    #[expect(clippy::needless_bool)]
+    let do_debug = if false
         && crate::context::current()
             .read(token.token())
             .name
             .contains("init")
-        && !((a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX) || ((a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2)));
+            {
+                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
+                    false
+                } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+        
 
     let debug_start = if do_debug {
         let context_lock = crate::context::current();
