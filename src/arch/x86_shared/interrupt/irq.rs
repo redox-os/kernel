@@ -309,7 +309,7 @@ interrupt!(lapic_timer, || {
 });
 #[cfg(feature = "profiling")]
 interrupt!(aux_timer, || {
-    lapic_eoi();
+    unsafe { lapic_eoi() };
     crate::ipi::ipi(IpiKind::Profile, IpiTarget::Other);
 });
 

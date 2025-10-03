@@ -30,10 +30,10 @@
 // Overflows are very, very bad in kernel code as it may provide an attack vector for
 // userspace applications, and it is only checked in debug builds
 // TODO: address ocurrances and then deny
-#![warn(clippy::integer_arithmetic)]
+#![warn(clippy::arithmetic_side_effects)]
 // Avoid panicking in the kernel without information about the panic. Use expect
 // TODO: address ocurrances and then deny
-#![warn(clippy::result_unwrap_used)]
+#![warn(clippy::unwrap_used)]
 // This is usually a serious issue - a missing import of a define where it is interpreted
 // as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
@@ -41,18 +41,15 @@
 #![deny(unused_must_use)]
 #![warn(static_mut_refs)] // FIXME deny once all occurences are fixed
 #![feature(allocator_api)]
+#![feature(if_let_guard)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
-#![feature(let_chains)]
-#![feature(naked_functions)]
-#![feature(slice_as_chunks)]
+#![feature(iterator_try_collect)]
 #![feature(sync_unsafe_cell)]
+#![feature(thread_local)]
 #![feature(variant_count)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
-#![feature(if_let_guard)]
-#![feature(iterator_try_collect)]
-#![feature(new_zeroed_alloc)]
 #[macro_use]
 extern crate alloc;
 
