@@ -192,6 +192,31 @@ pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
     sdts
 }
 
+#[macro_export]
+macro_rules! find_one_sdt {
+    ($name:expr, $console_name:expr) => {
+        {
+            use $crate::acpi::find_sdt;
+            match find_sdt($name).as_slice() {
+                [] => {
+                    println!("Unable to find {}", $console_name);
+                    return
+                }
+                [x] => {
+                    *x
+                }
+                x => {
+                    println!("{} {} found, expected 1", x.len(), $console_name);
+                    return;
+                },
+            }
+        }
+    };
+    ($name:expr) => {
+        find_one_sdt!($name, $name)
+    }
+}
+
 pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
     let signature =
         String::from_utf8(sdt.signature.to_vec()).expect("Error converting signature to string");

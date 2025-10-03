@@ -2,9 +2,10 @@ use core::{mem, ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
+use crate::find_one_sdt;
 use crate::memory::{map_device_memory, PhysicalAddress, PAGE_SIZE};
 
-use super::{find_sdt, sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
+use super::{sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -24,17 +25,7 @@ pub struct Hpet {
 
 impl Hpet {
     pub fn init() {
-        let hpet_sdt = find_sdt("HPET");
-        let hpet = if hpet_sdt.is_empty() {
-            println!("Unable to find HPET");
-            return;
-        } else if hpet_sdt.len() > 1 {
-            println!("Multiple HPETs found");
-            return;
-        } else {
-            #[expect(clippy::indexing_slicing)] // we just checked it has 1 element
-            Hpet::new(hpet_sdt[0])
-        };
+        let hpet = Hpet::new(find_one_sdt!("HPET"));
 
         if let Some(hpet) = hpet {
             println!("  HPET: {:X}", hpet.hpet_number);

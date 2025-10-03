@@ -85,11 +85,11 @@ bitflags! {
         const RX4_8 = 2 << 3;
         const RX6_8 = 3 << 3;
         const RX7_8 = 4 << 3;
-        const TX1_8 = 0;
-        const TX2_8 = 1;
-        const TX4_8 = 2;
-        const TX6_8 = 3;
-        const TX7_8 = 4;
+        const TX1_8 = 0 << 0;
+        const TX2_8 = 1 << 0;
+        const TX4_8 = 2 << 0;
+        const TX6_8 = 3 << 0;
+        const TX7_8 = 4 << 0;
     }
 }
 
