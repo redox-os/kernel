@@ -88,12 +88,14 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
             warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
+        #[expect(clippy::bool_comparison)]
         while percpublock
             .wants_tlb_shootdown
             .swap(true, Ordering::Release)
+            == true
         {
             // Load is faster than CAS or on x86, LOCK BTS
-            while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) {
+            while percpublock.wants_tlb_shootdown.load(Ordering::Relaxed) == true {
                 my_percpublock.maybe_handle_tlb_shootdown();
                 core::hint::spin_loop();
             }
@@ -110,7 +112,8 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
 }
 impl PercpuBlock {
     pub fn maybe_handle_tlb_shootdown(&self) {
-        if !self.wants_tlb_shootdown.swap(false, Ordering::Relaxed) {
+        #[expect(clippy::bool_comparison)]
+        if self.wants_tlb_shootdown.swap(false, Ordering::Relaxed) == false {
             return;
         }
 
