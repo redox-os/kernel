@@ -16,7 +16,6 @@ use crate::{
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
-    ptrace,
     sync::CleanLockToken,
     time,
 };

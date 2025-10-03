@@ -34,7 +34,7 @@ use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
     slice, str,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},

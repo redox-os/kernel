@@ -204,7 +204,7 @@ impl KernelScheme for PipeScheme {
         let (_, key) = from_raw_id(id);
 
         {
-            let guard = PIPES.read(token);
+            let guard = PIPES.read(token.token());
             if let Some(Handle::RootCapability) = guard.get(&key) {
             } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
                 let pipe = Arc::clone(pipe_arc);
@@ -390,11 +390,9 @@ impl KernelScheme for PipeScheme {
 
             let before_len = vec.len();
 
-            let mut pushed_count = 0;
             for desc in descs.drain(..) {
                 if vec.len() < crate::context::CONTEXT_MAX_FILES {
                     vec.push_back(desc);
-                    pushed_count += 1;
                 } else {
                     break;
                 }
