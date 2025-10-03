@@ -31,7 +31,7 @@ pub const FLAG_PCAT: u32 = 1;
 
 impl Madt {
     pub fn init() {
-        let madt = Madt::new(find_one_sdt!("APIC", "MADT"));
+        let madt = Madt::new(find_one_sdt!("APIC"));
 
         if let Some(madt) = madt {
             // safe because no APs have been started yet.
