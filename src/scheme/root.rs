@@ -4,6 +4,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
+use spin::RwLock as SpinRwLock;
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     O_EXLOCK, O_FSYNC,
@@ -147,7 +148,6 @@ impl KernelScheme for RootScheme {
         _caller: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        log::info!("kdup called with id {}", old_id);
         let scheme = match self
             .handles
             .read(token.token())
@@ -158,7 +158,7 @@ impl KernelScheme for RootScheme {
             _ => return Err(Error::new(EBADF)),
         };
         let number = buf.read_usize()?;
-        Ok(OpenResult::External(Arc::new(RwLock::new(
+        Ok(OpenResult::External(Arc::new(SpinRwLock::new(
             FileDescription {
                 scheme,
                 number,

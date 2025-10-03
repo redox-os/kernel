@@ -1,16 +1,11 @@
-use alloc::{collections::VecDeque, sync::Arc};
-use alloc::{
-    collections::{BTreeMap, VecDeque},
-    sync::Arc,
-    vec::Vec,
-};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use syscall::data::GlobalSchemes;
 use syscall::CallFlags;
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
-use spin::Mutex;
+use spin::{Mutex, RwLock as SpinRwLock};
 
 use crate::{
     context::{
@@ -209,9 +204,9 @@ impl KernelScheme for PipeScheme {
         let (_, key) = from_raw_id(id);
 
         {
-            let guard = PIPES.read();
+            let guard = PIPES.read(token);
             if let Some(Handle::RootCapability) = guard.get(&key) {
-            } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key, token) {
+            } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
                 let pipe = Arc::clone(pipe_arc);
                 drop(guard);
 
@@ -234,7 +229,6 @@ impl KernelScheme for PipeScheme {
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        log::info!("PipeScheme::kopenat: call kopen for path {path}");
         self.kopen(path, 0, _ctx, token)
     }
 
@@ -366,59 +360,35 @@ impl KernelScheme for PipeScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        mut descs: Vec<Arc<RwLock<FileDescription>>>,
+        mut descs: Vec<Arc<SpinRwLock<FileDescription>>>,
         _flags: CallFlags,
         _args: u64,
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        log::info!("kfdwrite(id: {}, descs.len(): {})", id, descs.len());
         let (is_write_not_read, key) = from_raw_id(id);
-        log::debug!(
-            "kfdwrite: is_write_not_read: {}, key: {}",
-            is_write_not_read,
-            key
-        );
 
         if !is_write_not_read {
-            log::warn!(
-                "kfdwrite: called on a read-only descriptor (id: {}). Returning EBADF",
-                id
-            );
             return Err(Error::new(EBADF));
         }
         let pipe = match Self::get_pipe(key, token) {
             Ok(p) => p,
             Err(e) => {
-                log::error!("kfdwrite: failed to get pipe for key {}: {:?}", key, e);
                 return Err(e);
             }
         };
-        log::debug!("kfdwrite: got pipe for key {}", key);
 
         loop {
-            log::trace!("kfdwrite: entering loop for key {}", key);
             let mut vec = pipe.fd_queue.lock();
-            log::trace!("kfdwrite: fd_queue locked for key {}", key);
 
             if !pipe.reader_is_alive.load(Ordering::Relaxed) {
-                log::warn!("kfdwrite: reader is dead for pipe {}. Returning EPIPE", key);
                 return Err(Error::new(EPIPE));
             }
             if descs.is_empty() {
-                log::info!(
-                    "kfdwrite: no file descriptions to write for key {}. Returning Ok(0)",
-                    key
-                );
                 return Ok(0);
             }
 
             let before_len = vec.len();
-            log::debug!(
-                "kfdwrite: queue length before write for key {}: {}",
-                key,
-                before_len
-            );
 
             let mut pushed_count = 0;
             for desc in descs.drain(..) {
@@ -426,51 +396,22 @@ impl KernelScheme for PipeScheme {
                     vec.push_back(desc);
                     pushed_count += 1;
                 } else {
-                    log::warn!(
-                        "kfdwrite: fd_queue for key {} is full ({} entries). Breaking write loop.",
-                        key,
-                        vec.len()
-                    );
                     break;
                 }
             }
-            log::debug!(
-                "kfdwrite: pushed {} descriptors to queue for key {}",
-                pushed_count,
-                key
-            );
 
             let fds_written = vec.len() - before_len;
-            log::info!("kfdwrite: fds_written: {} for key {}", fds_written, key);
 
             if fds_written > 0 {
-                log::debug!(
-                    "kfdwrite: triggering read event and notifying for key {}",
-                    key
-                );
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify(token);
 
-                log::info!(
-                    "kfdwrite: successfully wrote {} fds for key {}. Returning.",
-                    fds_written,
-                    key
-                );
                 return Ok(fds_written);
             }
 
-            log::debug!(
-                "kfdwrite: no fds written, waiting on write_condition for key {}",
-                key
-            );
             if !pipe.write_condition.wait(vec, "PipeWrite::write", token) {
-                log::warn!(
-                    "kfdwrite: wait on write_condition interrupted for key {}. Returning EINTR",
-                    key
-                );
                 return Err(Error::new(EINTR));
             }
-            log::trace!("kfdwrite: woken up for key {}", key);
         }
     }
     fn kfdread(
@@ -481,78 +422,37 @@ impl KernelScheme for PipeScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        log::info!(
-            "kfdread(id: {}, payload.len(): {}, flags: {:?})",
-            id,
-            payload.len(),
-            flags
-        );
         let (is_write_not_read, key) = from_raw_id(id);
-        log::debug!(
-            "kfdread: is_write_not_read: {}, key: {}",
-            is_write_not_read,
-            key
-        );
 
         if is_write_not_read {
-            log::warn!(
-                "kfdread: called on a write-only descriptor (id: {}). Returning EBADF",
-                id
-            );
             return Err(Error::new(EBADF));
         }
         let pipe = match Self::get_pipe(key, token) {
             Ok(p) => p,
             Err(e) => {
-                log::error!("kfdread: failed to get pipe for key {}: {:?}", key, e);
                 return Err(e);
             }
         };
-        log::debug!("kfdread: got pipe for key {}", key);
 
         if payload.is_empty() {
-            log::info!(
-                "kfdread: payload buffer is empty for key {}. Returning Ok(0)",
-                key
-            );
             return Ok(0);
         }
 
         loop {
-            log::trace!("kfdread: entering loop for key {}", key);
             let mut vec = pipe.fd_queue.lock();
-            log::trace!("kfdread: fd_queue locked for key {}", key);
 
             let fds_available = vec.len();
             let max_fds_read = payload.len() / core::mem::size_of::<usize>();
             let fds_to_read = core::cmp::min(fds_available, max_fds_read);
-            log::debug!(
-                "kfdread: fds_available: {}, max_fds_read: {}, fds_to_read: {}",
-                fds_available,
-                max_fds_read,
-                fds_to_read
-            );
-
             if fds_to_read > 0 {
                 let fds_to_transfer: Vec<_> = vec.drain(..fds_to_read).collect();
-                log::info!(
-                    "kfdread: transferring {} fds for key {}",
-                    fds_to_transfer.len(),
-                    key
-                );
 
                 if flags.contains(CallFlags::FD_UPPER) {
-                    log::debug!("kfdread: inserting fds into upper table for key {}", key);
                     bulk_insert_fds(fds_to_transfer, payload, token)?;
                 } else {
-                    log::debug!("kfdread: adding fds to posix table for key {}", key);
                     bulk_add_fds(fds_to_transfer, payload, token)?;
                 }
 
-                log::debug!(
-                    "kfdread: triggering write event and notifying for key {}",
-                    key
-                );
                 event::trigger(
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
@@ -560,33 +460,15 @@ impl KernelScheme for PipeScheme {
                 );
                 pipe.write_condition.notify(token);
 
-                log::info!(
-                    "kfdread: successfully read {} fds for key {}. Returning.",
-                    fds_to_read,
-                    key
-                );
                 return Ok(fds_to_read);
             }
 
             if !pipe.writer_is_alive.load(Ordering::SeqCst) {
-                log::info!(
-                    "kfdread: writer is dead for pipe {}. Returning Ok(0) for EOF",
-                    key
-                );
                 return Ok(0);
             } else {
-                log::debug!(
-                    "kfdread: no fds to read, waiting on read_condition for key {}",
-                    key
-                );
-                if !pipe.read_condition.wait(vec, "PipeRead::read") {
-                    log::warn!(
-                        "kfdread: wait on read_condition interrupted for key {}. Returning EINTR",
-                        key
-                    );
+                if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
                     return Err(Error::new(EINTR));
                 }
-                log::trace!("kfdread: woken up for key {}", key);
             }
         }
     }
@@ -599,5 +481,5 @@ pub struct Pipe {
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
-    fd_queue: Mutex<VecDeque<Arc<RwLock<FileDescription>>>>,
+    fd_queue: Mutex<VecDeque<Arc<SpinRwLock<FileDescription>>>>,
 }

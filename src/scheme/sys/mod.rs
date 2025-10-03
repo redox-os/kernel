@@ -114,9 +114,11 @@ const FILES: &[(&'static str, Kind)] = &[
 ];
 
 impl KernelScheme for SysScheme {
-    fn root_cap(&self) -> Result<usize> {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle::RootCapability);
+        HANDLES
+            .write(token.token())
+            .insert(id, Handle::RootCapability);
         Ok(id)
     }
     fn kopen(

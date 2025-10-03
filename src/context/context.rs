@@ -19,6 +19,7 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
+    sync::CleanLockToken,
     syscall::usercopy::UserSliceRw,
 };
 
