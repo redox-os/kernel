@@ -316,7 +316,7 @@ impl AddrSpaceWrapper {
     }
     pub fn r#move(
         &self,
-        mut src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
+        src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
         src_span: PageSpan,
         requested_dst_base: Option<Page>,
         new_page_count: usize,
@@ -327,16 +327,14 @@ impl AddrSpaceWrapper {
         let mut dst = dst_lock.acquire_write();
         let dst = &mut *dst;
 
-        let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| {
-            (
-                &mut a.grants,
-                &mut a.table.utable,
-                Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack),
-            )
-        });
-        let mut src_opt = src_owned_opt
-            .as_mut()
-            .map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+        let mut src_flusher;
+        let mut src_opt = match src_opt {
+            Some((aw, a)) => {
+                src_flusher = Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack);
+                Some((&mut a.grants, &mut a.table.utable, &mut src_flusher))
+            }
+            None => None,
+        };
         let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
 
         let dst_base = match requested_dst_base {
@@ -372,10 +370,10 @@ impl AddrSpaceWrapper {
             }
         };
 
-        let (src_grants, src_mapper, src_flusher) = src_opt.as_mut().map_or(
-            (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
-            |(g, m, f)| (&mut *g, &mut *m, &mut *f),
-        );
+        let (src_grants, src_mapper, src_flusher) = match &mut src_opt {
+            Some((g, m, f)) => (&mut **g, &mut **m, &mut **f),
+            None => (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
+        };
 
         if src_grants
             .conflicts(src_span)
@@ -433,10 +431,9 @@ impl AddrSpaceWrapper {
                 )?);
             }
 
-            let (src_grants, _, _) = src_opt.as_mut().map_or(
-                (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
-                |(g, m, f)| (&mut *g, &mut *m, &mut *f),
-            );
+            let src_grants = src_opt
+                .as_mut()
+                .map_or(&mut dst.grants, |(g, _, _)| &mut *g);
             let grant = src_grants
                 .remove(grant_base)
                 .expect("grant cannot disappear");
@@ -454,10 +451,6 @@ impl AddrSpaceWrapper {
 
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
-
-            let mut src_opt = src_opt
-                .as_mut()
-                .map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
 
             dst.grants.insert(match src_opt.as_mut() {
                 Some((_, other_mapper, other_flusher)) => middle.transfer(
