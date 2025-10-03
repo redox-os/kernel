@@ -64,23 +64,25 @@ impl RingBuffer {
     }
     pub unsafe fn extend(&self, mut slice: &[usize]) -> usize {
         let mut n = 0;
-        for mut sender_slice in self.sender_owned() {
+        for mut sender_slice in unsafe { self.sender_owned() } {
             while !slice.is_empty() && !sender_slice.is_empty() {
-                sender_slice[0].get().write(slice[0]);
+                unsafe { sender_slice[0].get().write(slice[0]) };
                 slice = &slice[1..];
                 sender_slice = &sender_slice[1..];
                 n += 1;
             }
         }
-        self.advance_tail(n);
+        unsafe { self.advance_tail(n) };
         n
     }
     pub unsafe fn peek(&self) -> [&[usize]; 2] {
-        self.receiver_owned()
-            .map(|slice| core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()))
+        unsafe {
+            self.receiver_owned()
+                .map(|slice| core::slice::from_raw_parts(slice.as_ptr().cast(), slice.len()))
+        }
     }
     pub unsafe fn advance(&self, n: usize) {
-        self.advance_head(n)
+        unsafe { self.advance_head(n) }
     }
     pub fn create() -> &'static Self {
         Box::leak(Box::new(Self {
@@ -168,7 +170,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
 
     let mut buf = [0_usize; 32];
     buf[0] = stack.iret.rip & !(1 << 63);
-    buf[1] = x86::time::rdtsc() as usize;
+    buf[1] = unsafe { x86::time::rdtsc() } as usize;
 
     let mut bp = stack.preserved.rbp;
 
@@ -179,8 +181,8 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
         {
             break;
         }
-        let ip = ((bp + 8) as *const usize).read();
-        bp = (bp as *const usize).read();
+        let ip = unsafe { ((bp + 8) as *const usize).read() };
+        bp = unsafe { (bp as *const usize).read() };
 
         if ip < crate::kernel_executable_offsets::__text_start()
             || ip >= crate::kernel_executable_offsets::__text_end()
@@ -192,7 +194,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
         len = i + 1;
     }
 
-    let _ = profiling.extend(&buf[..len]);
+    let _ = unsafe { profiling.extend(&buf[..len]) };
 }
 pub unsafe fn init() {
     let percpu = PercpuBlock::current();
@@ -207,8 +209,8 @@ pub unsafe fn init() {
         profiling as *const _ as *mut _,
         core::sync::atomic::Ordering::SeqCst,
     );
-    (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>)
-        .write(Some(profiling));
+    unsafe { (core::ptr::addr_of!(percpu.profiling) as *mut Option<&'static RingBuffer>)
+        .write(Some(profiling)) };
 }
 
 static ACK: AtomicU32 = AtomicU32::new(0);
@@ -225,8 +227,6 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
         for i in 33..255 {
             crate::idt::IDTS
                 .write()
-                .as_mut()
-                .unwrap()
                 .get_mut(&cpu_id)
                 .unwrap()
                 .entries[i]

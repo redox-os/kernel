@@ -23,30 +23,28 @@ pub mod flags {
 
 // TODO: Maybe support rewriting relocations (using LD's --emit-relocs) when working with entire
 // functions?
-#[naked]
+#[unsafe(naked)]
 #[unsafe(link_section = ".usercopy-fns")]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    unsafe {
-        // TODO: spectre_v1
+    // TODO: spectre_v1
 
-        core::arch::naked_asm!(alternative!(
-            feature: "smap",
-            then: ["
-            xor eax, eax
-            mov rcx, rdx
-            stac
-            rep movsb
-            clac
-            ret
-        "],
-            default: ["
-            xor eax, eax
-            mov rcx, rdx
-            rep movsb
-            ret
-        "]
-        ));
-    }
+    core::arch::naked_asm!(alternative!(
+        feature: "smap",
+        then: ["
+        xor eax, eax
+        mov rcx, rdx
+        stac
+        rep movsb
+        clac
+        ret
+    "],
+        default: ["
+        xor eax, eax
+        mov rcx, rdx
+        rep movsb
+        ret
+    "]
+    ));
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 

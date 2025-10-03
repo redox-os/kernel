@@ -91,11 +91,10 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     }
 }
 
-#[naked]
+#[unsafe(naked)]
 #[allow(named_asm_labels)]
 pub unsafe extern "C" fn syscall_instruction() {
-    unsafe {
-        core::arch::naked_asm!(concat!(
+    core::arch::naked_asm!(concat!(
         // Yes, this is magic. No, you don't need to understand
         "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
         "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
@@ -200,7 +199,6 @@ pub unsafe extern "C" fn syscall_instruction() {
         ss_sel = const(SegmentSelector::new(gdt::GDT_USER_DATA as u16, x86::Ring::Ring3).bits()),
         cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
         );
-    }
 }
 unsafe extern "C" {
     // TODO: macro?
