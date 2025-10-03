@@ -2,11 +2,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::string::{String, ToString};
 
+use crate::CPU_COUNT;
+
 /// A unique number used internally by the kernel to identify CPUs.
 ///
 /// This is usually but not necessarily the same as the APIC ID.
-
-// TODO: Differentiate between logical CPU IDs and hardware CPU IDs (e.g. APIC IDs)
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]
 // TODO: NonMaxUsize?
 // TODO: Optimize away this type if not cfg!(feature = "multi_core")
@@ -14,6 +14,12 @@ pub struct LogicalCpuId(u32);
 
 impl LogicalCpuId {
     pub const BSP: Self = Self::new(0);
+
+    pub fn next() -> Self {
+        let id = CPU_COUNT.fetch_add(1, Ordering::Relaxed);
+        assert!(id < MAX_CPU_COUNT);
+        Self(id)
+    }
 
     pub const fn new(inner: u32) -> Self {
         Self(inner)

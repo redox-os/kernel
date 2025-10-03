@@ -1,26 +1,25 @@
-/// This function is where the kernel sets up IRQ handlers
-/// It is increcibly unsafe, and should be minimal in nature
-/// It must create the IDT with the correct entries, those entries are
-/// defined in other files inside of the `arch` module
-use core::slice;
+//! This function is where the kernel sets up IRQ handlers
+//! It is increcibly unsafe, and should be minimal in nature
+//! It must create the IDT with the correct entries, those entries are
+//! defined in other files inside of the `arch` module
 use core::{
+    arch::global_asm,
     cell::SyncUnsafeCell,
-    sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    hint,
+    sync::atomic::{AtomicBool, Ordering},
 };
-
-use log::info;
 
 #[cfg(feature = "acpi")]
 use crate::acpi;
 
-#[cfg(feature = "graphical_debug")]
-use crate::devices::graphical_debug;
 use crate::{
     allocator,
     cpu_set::LogicalCpuId,
-    device, gdt, idt, interrupt,
+    device,
+    devices::graphical_debug,
+    gdt, idt, interrupt,
     paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
-    startup::memory::{register_bootloader_areas, register_memory_region, BootloaderMemoryKind},
+    startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -28,291 +27,174 @@ static BSS_TEST_ZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
 /// Test of non-zero values in data.
 static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::max_value());
 
-pub static KERNEL_BASE: AtomicUsize = AtomicUsize::new(0);
-pub static KERNEL_SIZE: AtomicUsize = AtomicUsize::new(0);
-
-// TODO: This probably shouldn't be an atomic. Only the BSP starts APs.
-pub static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
-
 pub static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
-#[repr(C, packed(8))]
-pub struct KernelArgs {
-    kernel_base: u64,
-    kernel_size: u64,
-    stack_base: u64,
-    stack_size: u64,
-    env_base: u64,
-    env_size: u64,
+#[cfg(target_arch = "x86")]
+global_asm!("
+    .globl kstart
+    kstart:
+        // BSS should already be zero
+        cmp dword ptr [{bss_test_zero}], 0
+        jne .Lkstart_crash
+        cmp dword ptr [{data_test_nonzero}], 0
+        je .Lkstart_crash
 
-    /// The base pointer to the saved RSDP.
-    ///
-    /// This field can be NULL, and if so, the system has not booted with UEFI or in some other way
-    /// retrieved the RSDPs. The kernel or a userspace driver will thus try searching the BIOS
-    /// memory instead. On UEFI systems, searching is not guaranteed to actually work though.
-    acpi_rsdp_base: u64,
-    /// The size of the RSDP region.
-    acpi_rsdp_size: u64,
+        jmp {start}
 
-    areas_base: u64,
-    areas_size: u64,
+    .Lkstart_crash:
+        mov eax, 0
+        jmp eax
+    ",
+    bss_test_zero = sym BSS_TEST_ZERO,
+    data_test_nonzero = sym DATA_TEST_NONZERO,
+    start = sym start,
+);
 
-    /// The physical base 64-bit pointer to the contiguous bootstrap/initfs.
-    bootstrap_base: u64,
-    /// Size of contiguous bootstrap/initfs physical region, not necessarily page aligned.
-    bootstrap_size: u64,
-}
+#[cfg(target_arch = "x86_64")]
+global_asm!("
+    .globl kstart
+    kstart:
+        // BSS should already be zero
+        cmp qword ptr [rip + {bss_test_zero}], 0
+        jne .Lkstart_crash
+        cmp qword ptr [rip + {data_test_nonzero}], 0
+        je .Lkstart_crash
+
+        jmp {start}
+
+    .Lkstart_crash:
+        mov rax, 0
+        jmp rax
+    ",
+    bss_test_zero = sym BSS_TEST_ZERO,
+    data_test_nonzero = sym DATA_TEST_NONZERO,
+    start = sym start,
+);
 
 /// The entry to Rust, all things must be initialized
-#[no_mangle]
-pub unsafe extern "C" fn kstart(args_ptr: *const KernelArgs) -> ! {
-    let bootstrap = {
-        let args = args_ptr.read();
+unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
+    unsafe {
+        let bootstrap = {
+            let args = args_ptr.read();
 
-        // BSS should already be zero
-        {
-            assert_eq!(BSS_TEST_ZERO.get().read(), 0);
-            assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
-        }
+            // Set up serial debug
+            device::serial::init();
 
-        KERNEL_BASE.store(args.kernel_base as usize, Ordering::SeqCst);
-        KERNEL_SIZE.store(args.kernel_size as usize, Ordering::SeqCst);
+            // Set up graphical debug
+            graphical_debug::init(args.env());
 
-        // Convert env to slice
-        let env = slice::from_raw_parts(
-            (args.env_base as usize + crate::PHYS_OFFSET) as *const u8,
-            args.env_size as usize,
-        );
+            info!("Redox OS starting...");
+            args.print();
 
-        // Set up serial debug
-        #[cfg(feature = "serial_debug")]
-        device::serial::init();
+            // Set up GDT
+            gdt::init_bsp(args.stack_base as usize + args.stack_size as usize);
 
-        // Set up graphical debug
-        #[cfg(feature = "graphical_debug")]
-        graphical_debug::init(env);
+            // Set up IDT
+            idt::init_bsp();
 
-        #[cfg(feature = "system76_ec_debug")]
-        device::system76_ec::init();
+            // Initialize RMM
+            #[cfg(target_arch = "x86")]
+            crate::startup::memory::init(&args, Some(0x100000), Some(0x40000000));
+            #[cfg(target_arch = "x86_64")]
+            crate::startup::memory::init(&args, Some(0x100000), None);
 
-        // Initialize logger
-        crate::log::init_logger(|r| {
-            use core::fmt::Write;
-            let _ = writeln!(
-                super::debug::Writer::new(),
-                "{}:{} -- {}",
-                r.target(),
-                r.level(),
-                r.args()
-            );
-        });
+            // Initialize paging
+            paging::init();
 
-        info!("Redox OS starting...");
-        info!(
-            "Kernel: {:X}:{:X}",
-            { args.kernel_base },
-            { args.kernel_base } + { args.kernel_size }
-        );
-        info!(
-            "Stack: {:X}:{:X}",
-            { args.stack_base },
-            { args.stack_base } + { args.stack_size }
-        );
-        info!(
-            "Env: {:X}:{:X}",
-            { args.env_base },
-            { args.env_base } + { args.env_size }
-        );
-        info!(
-            "RSDP: {:X}:{:X}",
-            { args.acpi_rsdp_base },
-            { args.acpi_rsdp_base } + { args.acpi_rsdp_size }
-        );
-        info!(
-            "Areas: {:X}:{:X}",
-            { args.areas_base },
-            { args.areas_base } + { args.areas_size }
-        );
-        info!(
-            "Bootstrap: {:X}:{:X}",
-            { args.bootstrap_base },
-            { args.bootstrap_base } + { args.bootstrap_size }
-        );
+            #[cfg(target_arch = "x86_64")]
+            crate::alternative::early_init(true);
 
-        // Set up GDT before paging
-        gdt::init();
+            // Set up syscall instruction
+            interrupt::syscall::init();
 
-        // Set up IDT before paging
-        idt::init();
+            // Reset AP variables
+            AP_READY.store(false, Ordering::SeqCst);
+            BSP_READY.store(false, Ordering::SeqCst);
 
-        // Initialize RMM
-        register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
-        register_memory_region(
-            args.kernel_base as usize,
-            args.kernel_size as usize,
-            BootloaderMemoryKind::Kernel,
-        );
-        register_memory_region(
-            args.stack_base as usize,
-            args.stack_size as usize,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        register_memory_region(
-            args.env_base as usize,
-            args.env_size as usize,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        register_memory_region(
-            args.acpi_rsdp_base as usize,
-            args.acpi_rsdp_size as usize,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        register_memory_region(
-            args.bootstrap_base as usize,
-            args.bootstrap_size as usize,
-            BootloaderMemoryKind::IdentityMap,
-        );
-        #[cfg(target_arch = "x86")]
-        crate::startup::memory::init(Some(0x100000), Some(0x40000000));
-        #[cfg(target_arch = "x86_64")]
-        crate::startup::memory::init(Some(0x100000), None);
+            // Setup kernel heap
+            allocator::init();
 
-        // Initialize paging
-        paging::init();
+            #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
+            crate::profiling::init();
 
-        // Set up GDT after paging with TLS
-        gdt::init_paging(
-            args.stack_base as usize + args.stack_size as usize,
-            LogicalCpuId::BSP,
-        );
+            // Activate memory logging
+            crate::log::init();
 
-        // Set up IDT
-        idt::init_paging_bsp();
+            // Initialize miscellaneous processor features
+            #[cfg(target_arch = "x86_64")]
+            crate::misc::init(LogicalCpuId::BSP);
 
-        #[cfg(target_arch = "x86_64")]
-        crate::alternative::early_init(true);
+            // Initialize devices
+            device::init();
 
-        // Set up syscall instruction
-        interrupt::syscall::init();
+            // Read ACPI tables, starts APs
+            #[cfg(feature = "acpi")]
+            {
+                acpi::init(args.acpi_rsdp());
+                device::init_after_acpi();
+            }
 
-        // Reset AP variables
-        CPU_COUNT.store(1, Ordering::SeqCst);
-        AP_READY.store(false, Ordering::SeqCst);
-        BSP_READY.store(false, Ordering::SeqCst);
+            // Initialize all of the non-core devices not otherwise needed to complete initialization
+            device::init_noncore();
 
-        // Setup kernel heap
-        allocator::init();
+            BSP_READY.store(true, Ordering::SeqCst);
 
-        #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
-        crate::profiling::init();
+            args.bootstrap()
+        };
 
-        // Set up double buffer for graphical debug now that heap is available
-        #[cfg(feature = "graphical_debug")]
-        graphical_debug::init_heap();
-
-        idt::init_paging_post_heap(LogicalCpuId::BSP);
-
-        // Activate memory logging
-        crate::log::init();
-
-        // Initialize miscellaneous processor features
-        #[cfg(target_arch = "x86_64")]
-        crate::misc::init(LogicalCpuId::BSP);
-
-        // Initialize devices
-        device::init();
-
-        // Read ACPI tables, starts APs
-        #[cfg(feature = "acpi")]
-        {
-            acpi::init(if args.acpi_rsdp_base != 0 {
-                Some((args.acpi_rsdp_base as usize + crate::PHYS_OFFSET) as *const u8)
-            } else {
-                None
-            });
-            device::init_after_acpi();
-        }
-
-        // Initialize all of the non-core devices not otherwise needed to complete initialization
-        device::init_noncore();
-
-        BSP_READY.store(true, Ordering::SeqCst);
-
-        crate::Bootstrap {
-            base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
-                args.bootstrap_base as usize,
-            )),
-            page_count: (args.bootstrap_size as usize) / crate::memory::PAGE_SIZE,
-            env,
-        }
-    };
-
-    crate::kmain(CPU_COUNT.load(Ordering::SeqCst), bootstrap);
+        crate::kmain(bootstrap);
+    }
 }
 
-#[repr(C, packed)]
 pub struct KernelArgsAp {
-    // TODO: u32?
-    cpu_id: u64,
-
-    page_table: u64,
-    stack_start: u64,
-    stack_end: u64,
+    pub cpu_id: LogicalCpuId,
+    pub page_table: usize,
+    pub pcr_ptr: *mut gdt::ProcessorControlRegion,
+    pub idt_ptr: *mut idt::Idt,
 }
 
 /// Entry to rust for an AP
 pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
-    let cpu_id = {
-        let args = &*args_ptr;
-        let cpu_id = LogicalCpuId::new(args.cpu_id as u32);
-        let bsp_table = args.page_table as usize;
-        let _stack_start = args.stack_start as usize;
-        let stack_end = args.stack_end as usize;
+    unsafe {
+        let cpu_id = {
+            let args = &*args_ptr;
 
-        assert_eq!(BSS_TEST_ZERO.get().read(), 0);
-        assert_eq!(DATA_TEST_NONZERO.get().read(), usize::max_value());
+            // Set up GDT
+            gdt::install_pcr(args.pcr_ptr);
 
-        // Set up GDT before paging
-        gdt::init();
+            // Set up IDT
+            idt::install_idt(args.idt_ptr);
 
-        // Set up IDT before paging
-        idt::init();
+            // Initialize paging
+            RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(args.page_table));
+            paging::init();
 
-        // Initialize paging
-        RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(bsp_table));
-        paging::init();
+            #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
+            crate::profiling::init();
 
-        // Set up GDT with TLS
-        gdt::init_paging(stack_end, cpu_id);
+            #[cfg(target_arch = "x86_64")]
+            crate::alternative::early_init(false);
 
-        #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
-        crate::profiling::init();
+            // Set up syscall instruction
+            interrupt::syscall::init();
 
-        // Set up IDT for AP
-        idt::init_paging_post_heap(cpu_id);
+            // Initialize miscellaneous processor features
+            #[cfg(target_arch = "x86_64")]
+            crate::misc::init(args.cpu_id);
 
-        #[cfg(target_arch = "x86_64")]
-        crate::alternative::early_init(false);
+            // Initialize devices (for AP)
+            device::init_ap();
 
-        // Set up syscall instruction
-        interrupt::syscall::init();
+            AP_READY.store(true, Ordering::SeqCst);
 
-        // Initialize miscellaneous processor features
-        #[cfg(target_arch = "x86_64")]
-        crate::misc::init(cpu_id);
+            args.cpu_id
+        };
 
-        // Initialize devices (for AP)
-        device::init_ap();
+        while !BSP_READY.load(Ordering::SeqCst) {
+            hint::spin_loop();
+        }
 
-        AP_READY.store(true, Ordering::SeqCst);
-
-        cpu_id
-    };
-
-    while !BSP_READY.load(Ordering::SeqCst) {
-        interrupt::pause();
+        crate::kmain_ap(cpu_id);
     }
-
-    crate::kmain_ap(cpu_id);
 }

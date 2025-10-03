@@ -4,7 +4,6 @@ use crate::{
     dtb::irqchip::IrqCell,
     startup::memory::{register_memory_region, BootloaderMemoryKind},
 };
-use alloc::vec::Vec;
 use byteorder::{ByteOrder, BE};
 use core::slice;
 use fdt::{
@@ -12,22 +11,31 @@ use fdt::{
     standard_nodes::MemoryRegion,
     Fdt,
 };
-use log::debug;
 use spin::once::Once;
 
-pub static DTB_BINARY: Once<Vec<u8>> = Once::new();
+/// Represents the in-memory DTB (DeviceTree) binary.
+pub static DTB_BINARY: Once<&'static [u8]> = Once::new();
 
+/// Initializes the DTB from the provided base address and size.
+///
+/// # Safety
+///
+/// Caller must ensure the base address and size reference valid memory.
+///
+/// The referenced memory must contain a valid DTB for the underlying system.
+///
+/// The referenced memory must **not** be mutated for the duration of kernel run-time.
 pub unsafe fn init(dtb: Option<(usize, usize)>) {
     let mut initialized = false;
     DTB_BINARY.call_once(|| {
         initialized = true;
 
-        let mut binary = Vec::new();
         if let Some((dtb_base, dtb_size)) = dtb {
-            let data = unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) };
-            binary.extend(data);
-        };
-        binary
+            // SAFETY: `dtb_base` + `dtb_size` reference valid memory due to caller invariants
+            unsafe { slice::from_raw_parts(dtb_base as *const u8, dtb_size) }
+        } else {
+            &[]
+        }
     });
     if !initialized {
         println!("DTB_BINARY INIT TWICE!");
@@ -44,24 +52,31 @@ pub fn travel_interrupt_ctrl(fdt: &Fdt) {
     }
     for node in fdt.all_nodes() {
         if node.property("interrupt-controller").is_some() {
-            let compatible = node.property("compatible").unwrap().as_str().unwrap();
-            let phandle = node.property("phandle").unwrap().as_usize().unwrap();
-            let intr_cells = node.interrupt_cells().unwrap();
-            let _intr = node
-                .property("interrupt-parent")
-                .and_then(NodeProperty::as_usize);
-            let _intr_data = node.property("interrupts");
+            let Some(compatible) = node.property("compatible") else {
+                continue;
+            };
+            let compatible = compatible.as_str().unwrap();
+            let Some(phandle) = node.property("phandle") else {
+                continue;
+            };
+            let phandle = phandle.as_usize().unwrap();
+            if let Some(intr_cells) = node.interrupt_cells() {
+                let _intr = node
+                    .property("interrupt-parent")
+                    .and_then(NodeProperty::as_usize);
+                let _intr_data = node.property("interrupts");
 
-            debug!(
-                "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
-                node.name, compatible, intr_cells, phandle
-            );
-            if let Some(intr) = _intr {
-                if let Some(intr_data) = _intr_data {
-                    debug!("interrupt-parent = 0x{:08x}", intr);
-                    debug!("interrupts begin:");
-                    for chunk in intr_data.value.chunks(4) {
-                        debug!("0x{:08x}, ", BE::read_u32(chunk));
+                debug!(
+                    "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
+                    node.name, compatible, intr_cells, phandle
+                );
+                if let Some(intr) = _intr {
+                    if let Some(intr_data) = _intr_data {
+                        debug!("interrupt-parent = 0x{:08x}", intr);
+                        debug!("interrupts begin:");
+                        for chunk in intr_data.value.chunks(4) {
+                            debug!("0x{:08x}, ", BE::read_u32(chunk));
+                        }
                     }
                     debug!("interrupts end");
                 }
@@ -98,15 +113,15 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
     }
 
     let Some(soc_node) = dt.find_node("/soc") else {
-        log::warn!("failed to find /soc in devicetree");
+        warn!("failed to find /soc in devicetree");
         return;
     };
     let Some(reg) = soc_node.ranges() else {
-        log::warn!("devicetree /soc has no ranges");
+        warn!("devicetree /soc has no ranges");
         return;
     };
     for chunk in reg {
-        log::debug!(
+        debug!(
             "dev mem 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
             chunk.child_bus_address_hi,
             chunk.child_bus_address,
@@ -114,11 +129,12 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
             chunk.size
         );
 
+        /*TODO: soc memory may contain all free memory!
         register_memory_region(
             chunk.parent_bus_address,
             chunk.size,
             BootloaderMemoryKind::Device,
-        );
+        );*/
     }
 
     // also add all soc-internal devices because they might not be shown in ranges
@@ -186,7 +202,9 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
         .unwrap();
     let mut intr = interrupts
         .value
-        .array_chunks::<4>()
+        .as_chunks::<4>()
+        .0
+        .iter()
         .map(|f| BE::read_u32(f))
         .skip(parent_interrupt_cells * idx);
     match parent_interrupt_cells {

@@ -15,18 +15,20 @@ pub enum IpiTarget {
     Other = 3,
 }
 
-#[cfg(not(feature = "multi_core"))]
 #[inline(always)]
-pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
+pub fn ipi(_kind: IpiKind, _target: IpiTarget) {
+    if cfg!(not(feature = "multi_core")) {
+        return;
+    }
 
-#[cfg(feature = "multi_core")]
-#[inline(always)]
-pub fn ipi(_kind: IpiKind, _target: IpiTarget) {}
+    // FIXME implement
+}
 
-#[cfg(not(feature = "multi_core"))]
 #[inline(always)]
-pub fn ipi_single(_kind: IpiKind, _target: &crate::percpu::PercpuBlock) {}
+pub fn ipi_single(_kind: IpiKind, _target: &crate::percpu::PercpuBlock) {
+    if cfg!(not(feature = "multi_core")) {
+        return;
+    }
 
-#[cfg(feature = "multi_core")]
-#[inline(always)]
-pub fn ipi_single(_kind: IpiKind, _target: &crate::percpu::PercpuBlock) {}
+    // FIXME implement
+}

@@ -1,23 +1,6 @@
-/// Print to console
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => ({
-        use core::fmt::Write;
-        let _ = write!($crate::arch::debug::Writer::new(), $($arg)*);
-    });
-}
-
-/// Print with new line to console
-#[macro_export]
-macro_rules! println {
-    () => (print!("\n"));
-    ($fmt:expr) => (print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
-}
-
 #[macro_export]
 macro_rules! irqs(
-    ( [ $( ($idt:expr, $number:literal, $name:ident) ,)* ], $submac:ident ) => {
+    ( [ $( ($idt:expr_2021, $number:literal, $name:ident) ,)* ], $submac:ident ) => {
         $(
             $submac!($idt, $number, $name);
         )*
@@ -28,7 +11,7 @@ macro_rules! irqs(
 // allocatable_irq_NUM.
 #[macro_export]
 macro_rules! default_irqs(
-    ($idt:expr, $submac:ident) => {
+    ($idt:expr_2021, $submac:ident) => {
         irqs!([
             // interrupt vectors below 32 are exceptions
             // vectors 32..=47 are used for standard 8259 pic irqs.
@@ -59,11 +42,5 @@ macro_rules! default_irqs(
             ($idt, 240, irq_240), ($idt, 241, irq_241), ($idt, 242, irq_242), ($idt, 243, irq_243), ($idt, 244, irq_244), ($idt, 245, irq_245), ($idt, 246, irq_246), ($idt, 247, irq_247), ($idt, 248, irq_248), ($idt, 249, irq_249),
             ($idt, 250, irq_250), ($idt, 251, irq_251), ($idt, 252, irq_252), ($idt, 253, irq_253), ($idt, 254, irq_254), ($idt, 255, irq_255),
         ], $submac);
-    }
-);
-
-macro_rules! define_default_irqs(
-    () => {
-        default_irqs!((), allocatable_irq);
     }
 );

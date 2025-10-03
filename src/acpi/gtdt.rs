@@ -38,17 +38,17 @@ impl Gtdt {
             match Gtdt::new(gtdt_sdt[0]) {
                 Some(gtdt) => gtdt,
                 None => {
-                    log::warn!("Failed to parse GTDT");
+                    warn!("Failed to parse GTDT");
                     return;
                 }
             }
         } else {
-            log::warn!("Unable to find GTDT");
+            warn!("Unable to find GTDT");
             return;
         };
 
         let gsiv = gtdt.non_secure_el1_timer_gsiv;
-        log::info!("generic_timer gsiv = {}", gsiv);
+        info!("generic_timer gsiv = {}", gsiv);
         let mut timer = GenericTimer::new();
         timer.init();
         register_irq(gsiv, Box::new(timer));

@@ -1,14 +1,16 @@
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
+use alloc::{collections::VecDeque, sync::Arc};
 use alloc::{
     collections::{BTreeMap, VecDeque},
     sync::Arc,
     vec::Vec,
 };
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use syscall::data::GlobalSchemes;
 use syscall::CallFlags;
 
-use spin::{Mutex, RwLock};
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use spin::Mutex;
 
 use crate::{
     context::{
@@ -16,7 +18,7 @@ use crate::{
         file::{FileDescription, InternalFlags},
     },
     event,
-    sync::WaitCondition,
+    sync::{CleanLockToken, RwLock, WaitCondition, L1},
     syscall::{
         data::Stat,
         error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
@@ -37,8 +39,8 @@ enum Handle {
 }
 
 // TODO: SLOB?
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static PIPES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static PIPES: RwLock<L1, HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 const MAX_QUEUE_SIZE: usize = 65536;
 
@@ -50,10 +52,10 @@ fn from_raw_id(id: usize) -> (bool, usize) {
     (id & WRITE_NOT_READ_BIT != 0, id & !WRITE_NOT_READ_BIT)
 }
 
-pub fn pipe() -> Result<(usize, usize)> {
+pub fn pipe(token: &mut CleanLockToken) -> Result<(usize, usize)> {
     let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-    PIPES.write().insert(
+    PIPES.write(token.token()).insert(
         id,
         Handle::Pipe(Arc::new(Pipe {
             queue: Mutex::new(VecDeque::new()),
@@ -72,9 +74,9 @@ pub fn pipe() -> Result<(usize, usize)> {
 pub struct PipeScheme;
 
 impl PipeScheme {
-    fn get_pipe(key: usize) -> Result<Arc<Pipe>> {
+    fn get_pipe(key: usize, token: &mut CleanLockToken) -> Result<Arc<Pipe>> {
         PIPES
-            .read()
+            .read(token.token())
             .get(&key)
             .and_then(|handle| match handle {
                 Handle::Pipe(pipe) => Some(Arc::clone(pipe)),
@@ -85,14 +87,21 @@ impl PipeScheme {
 }
 
 impl KernelScheme for PipeScheme {
-    fn root_cap(&self) -> Result<usize> {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        PIPES.write().insert(id, Handle::RootCapability);
+        PIPES
+            .write(token.token())
+            .insert(id, Handle::RootCapability);
         Ok(id)
     }
-    fn fevent(&self, id: usize, flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        id: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let (is_writer_not_reader, key) = from_raw_id(id);
-        let pipe = Self::get_pipe(key)?;
+        let pipe = Self::get_pipe(key, token)?;
 
         let mut ready = EventFlags::empty();
 
@@ -113,36 +122,42 @@ impl KernelScheme for PipeScheme {
         Ok(ready)
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let (is_write_not_read, key) = from_raw_id(id);
 
-        let pipe = Self::get_pipe(key)?;
+        let pipe = Self::get_pipe(key, token)?;
         let scheme_id = GlobalSchemes::Pipe.scheme_id();
 
         let can_remove = if is_write_not_read {
             event::trigger(scheme_id, key, EVENT_READ);
 
-            pipe.read_condition.notify();
+            pipe.read_condition.notify(token);
             pipe.writer_is_alive.store(false, Ordering::SeqCst);
 
             !pipe.reader_is_alive.load(Ordering::SeqCst)
         } else {
             event::trigger(scheme_id, key | WRITE_NOT_READ_BIT, EVENT_WRITE);
 
-            pipe.write_condition.notify();
+            pipe.write_condition.notify(token);
             pipe.reader_is_alive.store(false, Ordering::SeqCst);
 
             !pipe.writer_is_alive.load(Ordering::SeqCst)
         };
 
         if can_remove {
-            let _ = PIPES.write().remove(&key);
+            let _ = PIPES.write(token.token()).remove(&key);
         }
 
         Ok(())
     }
 
-    fn kdup(&self, old_id: usize, user_buf: UserSliceRo, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kdup(
+        &self,
+        old_id: usize,
+        user_buf: UserSliceRo,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let (is_writer_not_reader, key) = from_raw_id(old_id);
 
         if is_writer_not_reader {
@@ -155,7 +170,7 @@ impl KernelScheme for PipeScheme {
             return Err(Error::new(EINVAL));
         }
 
-        let pipe = Self::get_pipe(key)?;
+        let pipe = Self::get_pipe(key, token)?;
 
         if pipe.has_run_dup.swap(true, Ordering::SeqCst) {
             return Err(Error::new(EBADF));
@@ -166,12 +181,18 @@ impl KernelScheme for PipeScheme {
             InternalFlags::empty(),
         ))
     }
-    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         if !path.trim_start_matches('/').is_empty() {
             return Err(Error::new(ENOENT));
         }
 
-        let (read_id, _) = pipe()?;
+        let (read_id, _) = pipe(token)?;
 
         Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
     }
@@ -183,13 +204,14 @@ impl KernelScheme for PipeScheme {
         _flags: usize,
         _fcntl_flags: u32,
         _ctx: CallerCtx,
+        token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
 
         {
             let guard = PIPES.read();
             if let Some(Handle::RootCapability) = guard.get(&key) {
-            } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
+            } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key, token) {
                 let pipe = Arc::clone(pipe_arc);
                 drop(guard);
 
@@ -213,7 +235,7 @@ impl KernelScheme for PipeScheme {
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         log::info!("PipeScheme::kopenat: call kopen for path {path}");
-        self.kopen(path, 0, _ctx)
+        self.kopen(path, 0, _ctx, token)
     }
 
     fn kread(
@@ -222,13 +244,14 @@ impl KernelScheme for PipeScheme {
         user_buf: UserSliceWo,
         fcntl_flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
 
         if is_write_not_read {
             return Err(Error::new(EBADF));
         }
-        let pipe = Self::get_pipe(key)?;
+        let pipe = Self::get_pipe(key, token)?;
 
         loop {
             let mut vec = pipe.queue.lock();
@@ -256,7 +279,7 @@ impl KernelScheme for PipeScheme {
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
                 );
-                pipe.write_condition.notify();
+                pipe.write_condition.notify(token);
 
                 return Ok(bytes_read);
             } else if user_buf.is_empty() {
@@ -267,7 +290,7 @@ impl KernelScheme for PipeScheme {
                 return Ok(0);
             } else if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
-            } else if !pipe.read_condition.wait(vec, "PipeRead::read") {
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
                 return Err(Error::new(EINTR));
             }
         }
@@ -278,13 +301,14 @@ impl KernelScheme for PipeScheme {
         user_buf: UserSliceRo,
         fcntl_flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
 
         if !is_write_not_read {
             return Err(Error::new(EBADF));
         }
-        let pipe = Self::get_pipe(key)?;
+        let pipe = Self::get_pipe(key, token)?;
 
         loop {
             let mut vec = pipe.queue.lock();
@@ -317,7 +341,7 @@ impl KernelScheme for PipeScheme {
 
             if bytes_written > 0 {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
-                pipe.read_condition.notify();
+                pipe.read_condition.notify(token);
 
                 return Ok(bytes_written);
             } else if user_buf.is_empty() {
@@ -326,12 +350,12 @@ impl KernelScheme for PipeScheme {
 
             if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
-            } else if !pipe.write_condition.wait(vec, "PipeWrite::write") {
+            } else if !pipe.write_condition.wait(vec, "PipeWrite::write", token) {
                 return Err(Error::new(EINTR));
             }
         }
     }
-    fn kfstat(&self, _id: usize, buf: UserSliceWo) -> Result<()> {
+    fn kfstat(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<()> {
         buf.copy_exactly(&Stat {
             st_mode: MODE_FIFO | 0o666,
             ..Default::default()
@@ -346,6 +370,7 @@ impl KernelScheme for PipeScheme {
         _flags: CallFlags,
         _args: u64,
         _metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         log::info!("kfdwrite(id: {}, descs.len(): {})", id, descs.len());
         let (is_write_not_read, key) = from_raw_id(id);
@@ -362,7 +387,7 @@ impl KernelScheme for PipeScheme {
             );
             return Err(Error::new(EBADF));
         }
-        let pipe = match Self::get_pipe(key) {
+        let pipe = match Self::get_pipe(key, token) {
             Ok(p) => p,
             Err(e) => {
                 log::error!("kfdwrite: failed to get pipe for key {}: {:?}", key, e);
@@ -424,7 +449,7 @@ impl KernelScheme for PipeScheme {
                     key
                 );
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
-                pipe.read_condition.notify();
+                pipe.read_condition.notify(token);
 
                 log::info!(
                     "kfdwrite: successfully wrote {} fds for key {}. Returning.",
@@ -438,7 +463,7 @@ impl KernelScheme for PipeScheme {
                 "kfdwrite: no fds written, waiting on write_condition for key {}",
                 key
             );
-            if !pipe.write_condition.wait(vec, "PipeWrite::write") {
+            if !pipe.write_condition.wait(vec, "PipeWrite::write", token) {
                 log::warn!(
                     "kfdwrite: wait on write_condition interrupted for key {}. Returning EINTR",
                     key
@@ -454,6 +479,7 @@ impl KernelScheme for PipeScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         _metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         log::info!(
             "kfdread(id: {}, payload.len(): {}, flags: {:?})",
@@ -475,7 +501,7 @@ impl KernelScheme for PipeScheme {
             );
             return Err(Error::new(EBADF));
         }
-        let pipe = match Self::get_pipe(key) {
+        let pipe = match Self::get_pipe(key, token) {
             Ok(p) => p,
             Err(e) => {
                 log::error!("kfdread: failed to get pipe for key {}: {:?}", key, e);
@@ -517,10 +543,10 @@ impl KernelScheme for PipeScheme {
 
                 if flags.contains(CallFlags::FD_UPPER) {
                     log::debug!("kfdread: inserting fds into upper table for key {}", key);
-                    bulk_insert_fds(fds_to_transfer, payload)?;
+                    bulk_insert_fds(fds_to_transfer, payload, token)?;
                 } else {
                     log::debug!("kfdread: adding fds to posix table for key {}", key);
-                    bulk_add_fds(fds_to_transfer, payload)?;
+                    bulk_add_fds(fds_to_transfer, payload, token)?;
                 }
 
                 log::debug!(
@@ -532,7 +558,7 @@ impl KernelScheme for PipeScheme {
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
                 );
-                pipe.write_condition.notify();
+                pipe.write_condition.notify(token);
 
                 log::info!(
                     "kfdread: successfully read {} fds for key {}. Returning.",

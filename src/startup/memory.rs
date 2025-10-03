@@ -1,7 +1,7 @@
 use crate::{
     arch::{consts::KERNEL_OFFSET, paging::entry::EntryFlags, rmm::page_flags, CurrentRmmArch},
     memory::PAGE_SIZE,
-    startup::memory::BootloaderMemoryKind::Null,
+    startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };
 use core::{
     cell::SyncUnsafeCell,
@@ -144,14 +144,47 @@ fn align_down(x: usize) -> usize {
     x / PAGE_SIZE * PAGE_SIZE
 }
 
+fn register_memory_from_kernel_args(args: &KernelArgs) {
+    register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
+    #[cfg(dtb)]
+    if let Some(dt) = args.dtb() {
+        crate::dtb::register_dev_memory_ranges(&dt);
+    }
+    register_memory_region(
+        args.kernel_base as usize,
+        args.kernel_size as usize,
+        BootloaderMemoryKind::Kernel,
+    );
+    register_memory_region(
+        args.stack_base as usize,
+        args.stack_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+    register_memory_region(
+        args.env_base as usize,
+        args.env_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+    register_memory_region(
+        args.hwdesc_base as usize,
+        args.hwdesc_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+    register_memory_region(
+        args.bootstrap_base as usize,
+        args.bootstrap_size as usize,
+        BootloaderMemoryKind::IdentityMap,
+    );
+}
+
 pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKind) {
     if kind != Null && size != 0 {
-        log::debug!("Registering {:?} memory {:X} size {:X}", kind, base, size);
+        debug!("Registering {:?} memory {:X} size {:X}", kind, base, size);
         unsafe { (*MEMORY_MAP.get()).register(base, size, kind) }
     }
 }
 
-pub fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
+fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
     let bootloader_areas = unsafe {
         slice::from_raw_parts(
             areas_base as *const BootloaderMemoryEntry,
@@ -168,274 +201,268 @@ pub fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
 }
 
 unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: MemoryEntry) {
-    for reservation in (*MEMORY_MAP.get()).non_free() {
-        if area.end > reservation.start && area.end <= reservation.end {
-            log::info!(
-                "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
-                area.start,
-                area.end,
-                reservation.start,
-                reservation.end
-            );
-            area.end = reservation.start;
-        }
-        if area.start >= area.end {
-            return;
-        }
+    unsafe {
+        for reservation in (*MEMORY_MAP.get()).non_free() {
+            if area.end > reservation.start && area.end <= reservation.end {
+                info!(
+                    "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
+                    area.start, area.end, reservation.start, reservation.end
+                );
+                area.end = reservation.start;
+            }
+            if area.start >= area.end {
+                return;
+            }
 
-        if area.start >= reservation.start && area.start < reservation.end {
-            log::info!(
-                "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
-                area.start,
-                area.end,
-                reservation.start,
-                reservation.end
-            );
-            area.start = reservation.end;
-        }
-        if area.start >= area.end {
-            return;
-        }
+            if area.start >= reservation.start && area.start < reservation.end {
+                info!(
+                    "Memory {:X}:{:X} overlaps with reservation {:X}:{:X}",
+                    area.start, area.end, reservation.start, reservation.end
+                );
+                area.start = reservation.end;
+            }
+            if area.start >= area.end {
+                return;
+            }
 
-        if area.start <= reservation.start && area.end > reservation.start {
-            log::info!(
-                "Memory {:X}:{:X} contains reservation {:X}:{:X}",
-                area.start,
-                area.end,
-                reservation.start,
-                reservation.end
-            );
-            debug_assert!(area.start < reservation.start && reservation.end < area.end,
+            if area.start <= reservation.start && area.end > reservation.start {
+                info!(
+                    "Memory {:X}:{:X} contains reservation {:X}:{:X}",
+                    area.start, area.end, reservation.start, reservation.end
+                );
+                debug_assert!(area.start < reservation.start && reservation.end < area.end,
                     "Should've contained reservation entirely: memory block {:X}:{:X} reservation {:X}:{:X}",
                     area.start, area.end,
                     reservation.start, reservation.end
             );
-            // recurse on first part of split memory block
+                // recurse on first part of split memory block
 
-            add_memory(
-                areas,
-                area_i,
-                MemoryEntry {
-                    end: reservation.start,
-                    ..area
-                },
-            );
+                add_memory(
+                    areas,
+                    area_i,
+                    MemoryEntry {
+                        end: reservation.start,
+                        ..area
+                    },
+                );
 
-            // and continue with the second part
-            area.start = reservation.end;
-        }
-        debug_assert!(
-            area.intersect(reservation).is_none(),
-            "Intersects with reservation! memory block {:X}:{:X} reservation {:X}:{:X}",
-            area.start,
-            area.end,
-            reservation.start,
-            reservation.end
-        );
-        debug_assert!(
-            area.start < area.end,
-            "Empty memory block {:X}:{:X}",
-            area.start,
-            area.end
-        );
-    }
-
-    // Combine overlapping memory areas
-    let mut other_i = 0;
-    while other_i < *area_i {
-        let other = &areas[other_i];
-        let other = MemoryEntry {
-            start: other.base.data(),
-            end: other.base.data().saturating_add(other.size),
-            kind: BootloaderMemoryKind::Free,
-        };
-        if let Some(union) = area.combine(&other) {
-            log::debug!(
-                "{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}",
+                // and continue with the second part
+                area.start = reservation.end;
+            }
+            debug_assert!(
+                area.intersect(reservation).is_none(),
+                "Intersects with reservation! memory block {:X}:{:X} reservation {:X}:{:X}",
                 area.start,
                 area.end,
-                other.start,
-                other.end,
-                union.start,
-                union.end
+                reservation.start,
+                reservation.end
             );
-            area = union;
-            *area_i -= 1; // delete the original memory chunk
-            areas[other_i] = areas[*area_i];
-        } else {
-            other_i += 1;
+            debug_assert!(
+                area.start < area.end,
+                "Empty memory block {:X}:{:X}",
+                area.start,
+                area.end
+            );
         }
-    }
 
-    areas[*area_i].base = PhysicalAddress::new(area.start);
-    areas[*area_i].size = area.end - area.start;
-    *area_i += 1;
+        // Combine overlapping memory areas
+        let mut other_i = 0;
+        while other_i < *area_i {
+            let other = &areas[other_i];
+            let other = MemoryEntry {
+                start: other.base.data(),
+                end: other.base.data().saturating_add(other.size),
+                kind: BootloaderMemoryKind::Free,
+            };
+            if let Some(union) = area.combine(&other) {
+                debug!(
+                    "{:X}:{:X} overlaps with area {:X}:{:X}, combining into {:X}:{:X}",
+                    area.start, area.end, other.start, other.end, union.start, union.end
+                );
+                area = union;
+                *area_i -= 1; // delete the original memory chunk
+                areas[other_i] = areas[*area_i];
+            } else {
+                other_i += 1;
+            }
+        }
+
+        areas[*area_i].base = PhysicalAddress::new(area.start);
+        areas[*area_i].size = area.end - area.start;
+        *area_i += 1;
+    }
 }
 
 unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut BumpAllocator<A>) {
-    let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
-        .expect("failed to create Mapper");
+    unsafe {
+        let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
+            .expect("failed to create Mapper");
 
-    #[cfg(target_arch = "i686")]
-    {
-        // Pre-allocate all kernel PD entries so that when the page table is copied,
-        // these entries are synced between processes
-        for i in 512..1024 {
-            let phys = mapper
-                .allocator_mut()
-                .allocate_one()
-                .expect("failed to map page table");
-            let flags = A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_DEFAULT_TABLE;
-            mapper
-                .table()
-                .set_entry(i, PageEntry::new(phys.data(), flags));
-        }
-    }
+        if cfg!(target_arch = "x86") {
+            // Pre-allocate all kernel PD entries so that when the page table is copied,
+            // these entries are synced between processes
+            for i in 512..1024 {
+                use rmm::{FrameAllocator, PageEntry};
 
-    // Map all physical areas at PHYS_OFFSET
-    for area in areas.iter() {
-        for i in 0..area.size / PAGE_SIZE {
-            let phys = area.base.add(i * PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
-            let flags = page_flags::<A>(virt);
-            let flush = mapper
-                .map_phys(virt, phys, flags)
-                .expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
-    }
-
-    let kernel_area = (*MEMORY_MAP.get()).kernel().unwrap();
-    let kernel_base = kernel_area.start;
-    let kernel_size = kernel_area.end - kernel_area.start;
-    // Map kernel at KERNEL_OFFSET and identity map too
-    for i in 0..kernel_size / A::PAGE_SIZE {
-        let phys = PhysicalAddress::new(kernel_base + i * PAGE_SIZE);
-        let virt = VirtualAddress::new(KERNEL_OFFSET + i * PAGE_SIZE);
-        let flags = page_flags::<A>(virt);
-        let flush = mapper
-            .map_phys(virt, phys, flags)
-            .expect("failed to map frame");
-        flush.ignore(); // Not the active table
-
-        let virt = A::phys_to_virt(phys);
-        let flush = mapper
-            .map_phys(virt, phys, flags)
-            .expect("failed to map frame");
-        flush.ignore(); // Not the active table
-    }
-
-    for area in (*MEMORY_MAP.get()).identity_mapped() {
-        let base = area.start;
-        let size = area.end - area.start;
-        for i in 0..size / PAGE_SIZE {
-            let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
-            let flags = page_flags::<A>(virt);
-            let flush = mapper
-                .map_phys(virt, phys, flags)
-                .expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
-    }
-
-    //map dev mem
-    for area in (*MEMORY_MAP.get()).devices() {
-        let base = area.start;
-        let size = area.end - area.start;
-        for i in 0..size / PAGE_SIZE {
-            let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
-            let virt = A::phys_to_virt(phys);
-            // use the same mair_el1 value with bootloader,
-            // mair_el1 == 0x00000000000044FF
-            // set mem_attr == device memory
-            let flags = page_flags::<A>(virt).custom_flag(EntryFlags::DEV_MEM.bits(), true);
-            let flush = mapper
-                .map_phys(virt, phys, flags)
-                .expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
-    }
-
-    // Ensure graphical debug region remains paged
-    #[cfg(feature = "graphical_debug")]
-    {
-        use crate::devices::graphical_debug::FRAMEBUFFER;
-
-        let (phys, virt, size) = *FRAMEBUFFER.lock();
-
-        let pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
-        for i in 0..pages {
-            let phys = PhysicalAddress::new(phys + i * PAGE_SIZE);
-            let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
-            let flags = PageFlags::new().write(true).write_combining(true);
-            let flush = mapper
-                .map_phys(virt, phys, flags)
-                .expect("failed to map frame");
-            flush.ignore(); // Not the active table
-        }
-    }
-
-    log::debug!("Table: {:X}", mapper.table().phys().data());
-    for i in 0..A::PAGE_ENTRIES {
-        if let Some(entry) = mapper.table().entry(i) {
-            if entry.present() {
-                log::debug!("{}: {:X}", i, entry.data());
+                let phys = mapper
+                    .allocator_mut()
+                    .allocate_one()
+                    .expect("failed to map page table");
+                let flags = A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_DEFAULT_TABLE;
+                mapper
+                    .table()
+                    .set_entry(i, PageEntry::new(phys.data(), flags));
             }
         }
-    }
 
-    // Use the new table
-    mapper.make_current();
+        // Map all physical areas at PHYS_OFFSET
+        for area in areas.iter() {
+            for i in 0..area.size / PAGE_SIZE {
+                let phys = area.base.add(i * PAGE_SIZE);
+                let virt = A::phys_to_virt(phys);
+                let flags = page_flags::<A>(virt);
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
+
+        let kernel_area = (*MEMORY_MAP.get()).kernel().unwrap();
+        let kernel_base = kernel_area.start;
+        let kernel_size = kernel_area.end - kernel_area.start;
+        // Map kernel at KERNEL_OFFSET and identity map too
+        for i in 0..kernel_size / A::PAGE_SIZE {
+            let phys = PhysicalAddress::new(kernel_base + i * PAGE_SIZE);
+            let virt = VirtualAddress::new(KERNEL_OFFSET + i * PAGE_SIZE);
+            let flags = page_flags::<A>(virt);
+            let flush = mapper
+                .map_phys(virt, phys, flags)
+                .expect("failed to map frame");
+            flush.ignore(); // Not the active table
+
+            let virt = A::phys_to_virt(phys);
+            let flush = mapper
+                .map_phys(virt, phys, flags)
+                .expect("failed to map frame");
+            flush.ignore(); // Not the active table
+        }
+
+        for area in (*MEMORY_MAP.get()).identity_mapped() {
+            let base = area.start;
+            let size = area.end - area.start;
+            for i in 0..size / PAGE_SIZE {
+                let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
+                let virt = A::phys_to_virt(phys);
+                let flags = page_flags::<A>(virt);
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
+
+        //map dev mem
+        for area in (*MEMORY_MAP.get()).devices() {
+            let base = area.start;
+            let size = area.end - area.start;
+            for i in 0..size / PAGE_SIZE {
+                let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
+                let virt = A::phys_to_virt(phys);
+                // use the same mair_el1 value with bootloader,
+                // mair_el1 == 0x00000000000044FF
+                // set mem_attr == device memory
+                let flags = page_flags::<A>(virt).custom_flag(EntryFlags::DEV_MEM.bits(), true);
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
+
+        // Ensure graphical debug region remains paged
+        {
+            use crate::devices::graphical_debug::FRAMEBUFFER;
+
+            let (phys, virt, size) = *FRAMEBUFFER.lock();
+
+            let pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+            for i in 0..pages {
+                let phys = PhysicalAddress::new(phys + i * PAGE_SIZE);
+                let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
+                let flags = PageFlags::new().write(true).write_combining(true);
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
+
+        debug!("Table: {:X}", mapper.table().phys().data());
+        for i in 0..A::PAGE_ENTRIES {
+            if let Some(entry) = mapper.table().entry(i) {
+                if entry.present() {
+                    debug!("{}: {:X}", i, entry.data());
+                }
+            }
+        }
+
+        // Use the new table
+        mapper.make_current();
+    }
 }
 
-pub unsafe fn init(low_limit: Option<usize>, high_limit: Option<usize>) {
-    let physmem_limit = MemoryEntry {
-        start: align_up(low_limit.unwrap_or(0)),
-        end: align_down(high_limit.unwrap_or(usize::MAX)),
-        kind: BootloaderMemoryKind::Free,
-    };
+pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Option<usize>) {
+    register_memory_from_kernel_args(args);
 
-    let areas = &mut *crate::memory::AREAS.get();
-    let mut area_i = 0;
+    unsafe {
+        let physmem_limit = MemoryEntry {
+            start: align_up(low_limit.unwrap_or(0)),
+            end: align_down(high_limit.unwrap_or(usize::MAX)),
+            kind: BootloaderMemoryKind::Free,
+        };
 
-    // Copy initial memory map, and page align it
-    for area in (*MEMORY_MAP.get()).free() {
-        log::debug!("{:X}:{:X}", area.start, area.end);
+        let areas = &mut *crate::memory::AREAS.get();
+        let mut area_i = 0;
 
-        if let Some(area) = area.intersect(&physmem_limit) {
-            add_memory(areas, &mut area_i, area);
+        // Copy initial memory map, and page align it
+        for area in (*MEMORY_MAP.get()).free() {
+            debug!("{:X}:{:X}", area.start, area.end);
+
+            if let Some(area) = area.intersect(&physmem_limit) {
+                add_memory(areas, &mut area_i, area);
+            }
         }
-    }
 
-    areas[..area_i].sort_unstable_by_key(|area| area.base);
-    crate::memory::AREA_COUNT.get().write(area_i as u16);
+        areas[..area_i].sort_unstable_by_key(|area| area.base);
+        crate::memory::AREA_COUNT.get().write(area_i as u16);
 
-    // free memory map in now ready
-    let areas = crate::memory::areas();
+        // free memory map in now ready
+        let areas = crate::memory::areas();
 
-    // First, calculate how much memory we have
-    let mut size = 0;
-    for area in areas.iter() {
-        if area.size > 0 {
-            log::debug!("{:X?}", area);
-            size += area.size;
+        // First, calculate how much memory we have
+        let mut size = 0;
+        for area in areas.iter() {
+            if area.size > 0 {
+                debug!("{:X?}", area);
+                size += area.size;
+            }
         }
+
+        info!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
+
+        // Create a basic allocator for the first pages
+        let mut bump_allocator = BumpAllocator::<CurrentRmmArch>::new(areas, 0);
+
+        map_memory(areas, &mut bump_allocator);
+
+        // Create the physical memory map
+        let offset = bump_allocator.offset();
+        info!(
+            "Permanently used: {} KB",
+            (offset + (KILOBYTE - 1)) / KILOBYTE
+        );
+
+        crate::memory::init_mm(bump_allocator);
     }
-
-    log::info!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
-
-    // Create a basic allocator for the first pages
-    let mut bump_allocator = BumpAllocator::<CurrentRmmArch>::new(areas, 0);
-
-    map_memory(areas, &mut bump_allocator);
-
-    // Create the physical memory map
-    let offset = bump_allocator.offset();
-    log::info!(
-        "Permanently used: {} KB",
-        (offset + (KILOBYTE - 1)) / KILOBYTE
-    );
-
-    crate::memory::init_mm(bump_allocator);
 }

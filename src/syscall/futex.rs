@@ -8,18 +8,17 @@ use alloc::{
 };
 use core::sync::atomic::{AtomicU32, Ordering};
 use rmm::Arch;
-use spin::RwLock;
-use spinning_top::RwSpinlock;
 use syscall::EINTR;
 
 use crate::{
     context::{
         self,
         memory::{AddrSpace, AddrSpaceWrapper},
-        Context,
+        ContextLock,
     },
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},
+    sync::{CleanLockToken, Mutex, L1},
     time,
 };
 
@@ -42,7 +41,7 @@ pub struct FutexEntry {
     // TODO: FUTEX_REQUEUE
     target_virtaddr: VirtualAddress,
     // Context to wake up, and compare address spaces.
-    context_lock: Arc<RwSpinlock<Context>>,
+    context_lock: Arc<ContextLock>,
     // address space to check against if virt matches but not phys
     addr_space: Weak<AddrSpaceWrapper>,
 }
@@ -53,7 +52,7 @@ pub struct FutexEntry {
 // lwp_park/lwp_unpark from NetBSD) could be a simpler replacement.
 //
 // TODO: Use an actual hash table.
-static FUTEXES: RwLock<FutexList> = RwLock::new(FutexList::new());
+static FUTEXES: Mutex<L1, FutexList> = Mutex::new(FutexList::new());
 
 fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Option<PhysicalAddress> {
     // TODO: Move this elsewhere!
@@ -69,7 +68,14 @@ fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Optio
     Some(frame.add(off))
 }
 
-pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> Result<usize> {
+pub fn futex(
+    addr: usize,
+    op: usize,
+    val: usize,
+    val2: usize,
+    _addr2: usize,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
     let current_addrsp = AddrSpace::current()?;
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
@@ -89,7 +95,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                 .transpose()?;
 
             {
-                let mut futexes = FUTEXES.write();
+                let mut futexes = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes.token_split();
 
                 let context_lock = context::current();
 
@@ -137,7 +144,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                 }
 
                 {
-                    let mut context = context_lock.write();
+                    let mut context = context_lock.write(token.token());
 
                     context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
                         tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
@@ -161,10 +168,10 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
 
             drop(addr_space_guard);
 
-            context::switch();
+            context::switch(token);
 
             if timeout_opt.is_some() {
-                context::current().write().wake = None;
+                context::current().write(token.token()).wake = None;
                 Err(Error::new(ETIMEDOUT))
             } else {
                 Ok(0)
@@ -174,7 +181,8 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
             let mut woken = 0;
 
             {
-                let mut futexes = FUTEXES.write();
+                let mut futexes = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes.token_split();
 
                 let mut i = 0;
 
@@ -187,7 +195,7 @@ pub fn futex(addr: usize, op: usize, val: usize, val2: usize, _addr2: usize) -> 
                         i += 1;
                         continue;
                     }
-                    futexes[i].context_lock.write().unblock();
+                    futexes[i].context_lock.write(token.token()).unblock();
                     futexes.swap_remove_back(i);
                     woken += 1;
                 }

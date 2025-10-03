@@ -1,13 +1,12 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::RwLock;
 use syscall::data::GlobalSchemes;
 
 use crate::{
-    arch::debug::Writer,
     devices::graphical_debug,
     event,
+    log::Writer,
     scheme::*,
-    sync::WaitQueue,
+    sync::{CleanLockToken, RwLock, WaitQueue, L1},
     syscall::{
         flag::{EventFlags, EVENT_READ, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceWo},
@@ -24,17 +23,17 @@ struct Handle {
     num: usize,
 }
 
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 /// Add to the input queue
-pub fn debug_input(data: u8) {
-    INPUT.send(data);
+pub fn debug_input(data: u8, token: &mut CleanLockToken) {
+    INPUT.send(data, token);
 }
 
 // Notify readers of input updates
-pub fn debug_notify() {
-    for (id, _handle) in HANDLES.read().iter() {
+pub fn debug_notify(token: &mut CleanLockToken) {
+    for (id, _handle) in HANDLES.read(token.token()).iter() {
         event::trigger(GlobalSchemes::Debug.scheme_id(), *id, EVENT_READ);
     }
 }
@@ -52,7 +51,13 @@ enum SpecialFds {
 }
 
 impl KernelScheme for DebugScheme {
-    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -76,40 +81,52 @@ impl KernelScheme for DebugScheme {
         };
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write().insert(id, Handle { num });
+        HANDLES.write(token.token()).insert(id, Handle { num });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
-    fn fevent(&self, id: usize, _flags: EventFlags) -> Result<EventFlags> {
+    fn fevent(
+        &self,
+        id: usize,
+        _flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
         let _handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
         Ok(EventFlags::empty())
     }
 
-    fn fsync(&self, id: usize) -> Result<()> {
+    fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let _handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
         Ok(())
     }
 
-    fn close(&self, id: usize) -> Result<()> {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let _handle = {
-            let mut handles = HANDLES.write();
+            let mut handles = HANDLES.write(token.token());
             handles.remove(&id).ok_or(Error::new(EBADF))?
         };
 
         Ok(())
     }
-    fn kread(&self, id: usize, buf: UserSliceWo, flags: u32, _stored_flags: u32) -> Result<usize> {
+    fn kread(
+        &self,
+        id: usize,
+        buf: UserSliceWo,
+        flags: u32,
+        _stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
         let handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -130,7 +147,12 @@ impl KernelScheme for DebugScheme {
             );
         }
 
-        INPUT.receive_into_user(buf, flags & O_NONBLOCK as u32 == 0, "DebugScheme::read")
+        INPUT.receive_into_user(
+            buf,
+            flags & O_NONBLOCK as u32 == 0,
+            "DebugScheme::read",
+            token,
+        )
     }
 
     fn kwrite(
@@ -139,9 +161,10 @@ impl KernelScheme for DebugScheme {
         buf: UserSliceRo,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
@@ -155,14 +178,13 @@ impl KernelScheme for DebugScheme {
                 b'1' => true,
                 _ => return Err(Error::new(EINVAL)),
             };
-            log::info!("Wrote {is_profiling} to IS_PROFILING");
+            info!("Wrote {is_profiling} to IS_PROFILING");
             crate::profiling::IS_PROFILING.store(is_profiling, Ordering::Relaxed);
 
             return Ok(1);
         }
 
         if handle.num == SpecialFds::DisableGraphicalDebug as usize {
-            #[cfg(feature = "graphical_debug")]
             graphical_debug::fini();
 
             return Ok(0);
@@ -188,9 +210,9 @@ impl KernelScheme for DebugScheme {
 
         Ok(buf.len())
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let handle = {
-            let handles = HANDLES.read();
+            let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
         if handle.num != SpecialFds::Default as usize

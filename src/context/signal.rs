@@ -1,10 +1,10 @@
 use core::sync::atomic::Ordering;
 
-use crate::{context, syscall::flag::SigcontrolFlags};
+use crate::{context, sync::CleanLockToken, syscall::flag::SigcontrolFlags};
 
-pub fn signal_handler() {
+pub fn signal_handler(token: &mut CleanLockToken) {
     let context_lock = context::current();
-    let mut context_guard = context_lock.write();
+    let mut context_guard = context_lock.write(token.token());
     let context = &mut *context_guard;
 
     let being_sigkilled = context.being_sigkilled;
@@ -12,7 +12,7 @@ pub fn signal_handler() {
     if being_sigkilled {
         drop(context_guard);
         drop(context_lock);
-        crate::syscall::process::exit_this_context(None);
+        crate::syscall::process::exit_this_context(None, token);
     }
 
     /*let thumbs_down = ptrace::breakpoint_callback(
@@ -24,7 +24,7 @@ pub fn signal_handler() {
     // TODO: thumbs_down
     let Some((thread_ctl, proc_ctl, st)) = context.sigcontrol() else {
         // Discard signal if sigcontrol is unset.
-        log::trace!("no sigcontrol, returning");
+        trace!("no sigcontrol, returning");
         return;
     };
     if thread_ctl.currently_pending_unblocked(proc_ctl) == 0 {
@@ -42,7 +42,7 @@ pub fn signal_handler() {
     if control_flags.contains(SigcontrolFlags::INHIBIT_DELIVERY) {
         // Signals are inhibited to protect critical sections inside libc, but this code will run
         // every time the context is switched to.
-        log::trace!("Inhibiting delivery, returning");
+        trace!("Inhibiting delivery, returning");
         return;
     }
 
@@ -50,7 +50,7 @@ pub fn signal_handler() {
 
     let Some(regs) = context.regs_mut() else {
         // TODO: is this even reachable?
-        log::trace!("No registers, returning");
+        trace!("No registers, returning");
         return;
     };
 
@@ -72,13 +72,15 @@ pub fn signal_handler() {
     );
 }
 pub fn excp_handler(excp: syscall::Exception) {
+    let mut token = unsafe { CleanLockToken::new() };
+
     let current = context::current();
 
-    let mut context = current.write();
+    let context = current.write(token.token());
 
     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         // TODO: Let procmgr print this?
-        log::info!(
+        info!(
             "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {current:p}",
             crate::cpu_id(),
             context.pid,
@@ -87,7 +89,7 @@ pub fn excp_handler(excp: syscall::Exception) {
         drop(context);
         // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
         // context (closing files, dropping AddrSpace, etc)
-        crate::syscall::process::exit_this_context(Some(excp));
+        crate::syscall::process::exit_this_context(Some(excp), &mut token);
     };
     // TODO
     /*

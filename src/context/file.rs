@@ -3,6 +3,7 @@
 use crate::{
     event,
     scheme::{self, SchemeId},
+    sync::CleanLockToken,
     syscall::error::{Error, Result, EBADF},
 };
 use alloc::sync::Arc;
@@ -70,22 +71,22 @@ pub struct FileDescriptor {
 impl FileDescription {
     /// Try closing a file, although at this point the description will be destroyed anyway, if
     /// doing so fails.
-    pub fn try_close(self) -> Result<()> {
+    pub fn try_close(self, token: &mut CleanLockToken) -> Result<()> {
         event::unregister_file(self.scheme, self.number);
 
-        let scheme = scheme::schemes()
+        let scheme = scheme::schemes(token.token())
             .get(self.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 
-        scheme.close(self.number)
+        scheme.close(self.number, token)
     }
 }
 
 impl FileDescriptor {
-    pub fn close(self) -> Result<()> {
+    pub fn close(self, token: &mut CleanLockToken) -> Result<()> {
         if let Ok(file) = Arc::try_unwrap(self.description).map(RwLock::into_inner) {
-            file.try_close()?;
+            file.try_close(token)?;
         }
         Ok(())
     }

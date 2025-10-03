@@ -7,11 +7,14 @@ use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{
+        context::SyscallFrame,
         file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
     event,
+    sync::CleanLockToken,
+    syscall::EventFlags,
     syscall::{
         flag::{O_CREAT, O_RDWR},
         EventFlags,
@@ -29,28 +32,28 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
-pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
+pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
     let mut close_files;
     let addrspace_opt;
 
     let context_lock = context::current();
     {
-        let mut context = context_lock.write();
+        let mut context = context_lock.write(token.token());
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
         addrspace_opt = context
             .set_addr_space(None)
             .and_then(|a| Arc::try_unwrap(a).ok());
-        drop(context.syscall_head.take());
-        drop(context.syscall_tail.take());
+        drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
+        drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
     }
 
     // Files must be closed while context is valid so that messages can be passed
-    close_files.force_close_all();
+    close_files.force_close_all(token);
     drop(addrspace_opt);
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
-        let mut guard = context_lock.write();
+        let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
         guard.owner_proc_id
     };
@@ -61,8 +64,10 @@ pub fn exit_this_context(excp: Option<syscall::Exception>) -> ! {
             EventFlags::EVENT_READ,
         );
     }
-    let _ = context::contexts_mut().remove(&ContextRef(context_lock));
-    context::switch();
+    {
+        let _ = context::contexts_mut(token.token()).remove(&ContextRef(context_lock));
+    }
+    context::switch(token);
     unreachable!();
 }
 
@@ -84,13 +89,13 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
     }
 };
 
-pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
+pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
     {
         let addr_space = Arc::clone(
             context::current()
-                .read()
+                .read(token.token())
                 .addr_space()
                 .expect("expected bootstrap context to have an address space"),
         );
@@ -131,12 +136,12 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
-                    let cap_fd = match scheme.as_scheme().root_cap() {
+                    let cap_fd = match scheme.as_scheme().root_cap(token) {
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
                     context::current()
-                        .write()
+                        .write(token.token())
                         .add_file_min(
                             FileDescriptor {
                                 description: Arc::new(RwLock::new(FileDescription {
@@ -213,14 +218,14 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
         .expect("failed to copy memory to bootstrap");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
-    log::info!("Bootstrap entry point: {:X}", bootstrap_entry);
+    info!("Bootstrap entry point: {:X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
     println!("\n");
 
     // Start in a minimal environment without any stack.
 
     match context::current()
-        .write()
+        .write(token.token())
         .regs_mut()
         .expect("bootstrap needs registers to be available")
     {
@@ -232,8 +237,10 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap) {
 }
 
 pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
-    core::slice::from_raw_parts(
-        CurrentRmmArch::phys_to_virt(bootstrap.base.base()).data() as *const u8,
-        bootstrap.page_count * PAGE_SIZE,
-    )
+    unsafe {
+        core::slice::from_raw_parts(
+            CurrentRmmArch::phys_to_virt(bootstrap.base.base()).data() as *const u8,
+            bootstrap.page_count * PAGE_SIZE,
+        )
+    }
 }

@@ -1,12 +1,14 @@
 use core::sync::atomic::{self, AtomicUsize};
 
-use alloc::{boxed::Box, collections::BTreeMap};
-use spin::{Once, RwLock};
+use alloc::boxed::Box;
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use spin::Once;
 
 use super::{CallerCtx, KernelScheme, OpenResult};
 use crate::{
     dtb::DTB_BINARY,
     scheme::InternalFlags,
+    sync::{CleanLockToken, RwLock, L1},
     syscall::{
         data::Stat,
         error::*,
@@ -27,7 +29,8 @@ struct Handle {
     stat: bool,
 }
 
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
 static DATA: Once<Box<[u8]>> = Once::new();
 
@@ -38,28 +41,29 @@ impl DtbScheme {
         DATA.call_once(|| {
             data_init = true;
 
-            let dtb = match DTB_BINARY.get() {
-                Some(dtb) => dtb.as_slice(),
-                None => &[],
-            };
-
-            Box::from(dtb)
+            Box::from(DTB_BINARY.get().map(|&d| d).unwrap_or(&[]))
         });
 
         if !data_init {
-            log::error!("DtbScheme::new called multiple times");
+            error!("DtbScheme::new called multiple times");
         }
     }
 }
 
 impl KernelScheme for DtbScheme {
-    fn kopen(&self, path: &str, _flags: usize, _ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let path = path.trim_matches('/');
 
         if path.is_empty() {
             let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
 
-            let mut handles_guard = HANDLES.write();
+            let mut handles_guard = HANDLES.write(token.token());
 
             let _ = handles_guard.insert(
                 id,
@@ -74,8 +78,8 @@ impl KernelScheme for DtbScheme {
         Err(Error::new(ENOENT))
     }
 
-    fn fsize(&self, id: usize) -> Result<u64> {
-        let mut handles = HANDLES.write();
+    fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
+        let mut handles = HANDLES.write(token.token());
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         if handle.stat {
@@ -89,8 +93,8 @@ impl KernelScheme for DtbScheme {
         Ok(file_len as u64)
     }
 
-    fn close(&self, id: usize) -> Result<()> {
-        if HANDLES.write().remove(&id).is_none() {
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        if HANDLES.write(token.token()).remove(&id).is_none() {
             return Err(Error::new(EBADF));
         }
         Ok(())
@@ -103,8 +107,9 @@ impl KernelScheme for DtbScheme {
         offset: u64,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let mut handles = HANDLES.write();
+        let mut handles = HANDLES.write(token.token());
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
 
         if handle.stat {
@@ -123,8 +128,8 @@ impl KernelScheme for DtbScheme {
         dst_buf.copy_common_bytes_from_slice(src_buf)
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-        let handles = HANDLES.read();
+    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
+        let handles = HANDLES.read(token.token());
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
         buf.copy_exactly(&match handle.kind {
             HandleKind::RawData => {

@@ -1,11 +1,15 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::{
+    hint,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 use crate::{
+    arch::start::KernelArgsAp,
+    cpu_set::LogicalCpuId,
     device::local_apic::the_local_apic,
-    interrupt,
     memory::{allocate_p2frame, Frame, KernelMapper},
     paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
-    start::{kstart_ap, AP_READY, CPU_COUNT},
+    start::{kstart_ap, AP_READY},
 };
 
 use super::{Madt, MadtEntry};
@@ -57,8 +61,7 @@ pub(super) fn init(madt: Madt) {
                         println!("        This is my local APIC");
                     } else {
                         if ap_local_apic.flags & 1 == 1 {
-                            // Increase CPU ID
-                            CPU_COUNT.fetch_add(1, Ordering::SeqCst);
+                            let cpu_id = LogicalCpuId::next();
 
                             // Allocate a stack
                             let stack_start = allocate_p2frame(4)
@@ -68,19 +71,29 @@ pub(super) fn init(madt: Madt) {
                                 + crate::PHYS_OFFSET;
                             let stack_end = stack_start + (PAGE_SIZE << 4);
 
+                            let pcr_ptr =
+                                crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
+
+                            let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
+
+                            let args = KernelArgsAp {
+                                cpu_id,
+                                page_table: page_table_physaddr,
+                                pcr_ptr,
+                                idt_ptr,
+                            };
+
                             let ap_ready = (TRAMPOLINE + 8) as *mut u64;
-                            let ap_cpu_id = unsafe { ap_ready.add(1) };
+                            let ap_args_ptr = unsafe { ap_ready.add(1) };
                             let ap_page_table = unsafe { ap_ready.add(2) };
-                            let ap_stack_start = unsafe { ap_ready.add(3) };
-                            let ap_stack_end = unsafe { ap_ready.add(4) };
-                            let ap_code = unsafe { ap_ready.add(5) };
+                            let ap_stack_end = unsafe { ap_ready.add(3) };
+                            let ap_code = unsafe { ap_ready.add(4) };
 
                             // Set the ap_ready to 0, volatile
                             unsafe {
                                 ap_ready.write(0);
-                                ap_cpu_id.write(ap_local_apic.processor.into());
+                                ap_args_ptr.write(&args as *const _ as u64);
                                 ap_page_table.write(page_table_physaddr as u64);
-                                ap_stack_start.write(stack_start as u64);
                                 ap_stack_end.write(stack_end as u64);
                                 ap_code.write(kstart_ap as u64);
 
@@ -127,11 +140,11 @@ pub(super) fn init(madt: Madt) {
                             while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) }
                                 == 0
                             {
-                                interrupt::pause();
+                                hint::spin_loop();
                             }
                             print!(" Trampoline...");
                             while !AP_READY.load(Ordering::SeqCst) {
-                                interrupt::pause();
+                                hint::spin_loop();
                             }
                             println!(" Ready");
 

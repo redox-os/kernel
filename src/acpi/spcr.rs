@@ -2,10 +2,8 @@ use core::mem;
 
 use super::{find_sdt, sdt::Sdt, GenericAddressStructure};
 use crate::{
-    device::{
-        serial::{SerialKind, COM1},
-        uart_pl011,
-    },
+    device::serial::COM1,
+    devices::{serial::SerialKind, uart_pl011},
     log::LOG,
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
@@ -49,12 +47,12 @@ impl Spcr {
             match Spcr::new(spcr_sdt[0]) {
                 Some(spcr) => spcr,
                 None => {
-                    log::warn!("Failed to parse SPCR");
+                    warn!("Failed to parse SPCR");
                     return;
                 }
             }
         } else {
-            log::warn!("Unable to find SPCR");
+            warn!("Unable to find SPCR");
             return;
         };
 
@@ -63,7 +61,7 @@ impl Spcr {
             return;
         }
 
-        let serial_was_empty = !COM1.lock().is_some();
+        let serial_was_empty = !matches!(*COM1.lock(), SerialKind::NotPresent);
         if spcr.header.revision >= 2 {
             match spcr.interface_type {
                 3 => {
@@ -80,9 +78,9 @@ impl Spcr {
                             )
                         };
                         let serial_port = uart_pl011::SerialPort::new(virt.data(), false);
-                        *COM1.lock() = Some(SerialKind::Pl011(serial_port))
+                        *COM1.lock() = SerialKind::Pl011(serial_port)
                     } else {
-                        log::warn!(
+                        warn!(
                             "SPCR unsuppoted address for PL011 {:#x?}",
                             spcr.base_address
                         );
@@ -90,10 +88,9 @@ impl Spcr {
                 }
                 //TODO: support more types!
                 unsupported => {
-                    log::warn!(
+                    warn!(
                         "SPCR revision {} unsupported interface type {}",
-                        spcr.header.revision,
-                        unsupported
+                        spcr.header.revision, unsupported
                     );
                 }
             }
@@ -101,13 +98,14 @@ impl Spcr {
             match spcr.interface_type {
                 //TODO: support more types!
                 unsupported => {
-                    log::warn!("SPCR revision 1 unsupported interface type {}", unsupported);
+                    warn!("SPCR revision 1 unsupported interface type {}", unsupported);
                 }
             }
         } else {
-            log::warn!("SPCR unsupported revision {}", spcr.header.revision);
+            warn!("SPCR unsupported revision {}", spcr.header.revision);
         }
-        if serial_was_empty && let Some(ref mut serial_port) = *COM1.lock() {
+        let mut serial_port = COM1.lock();
+        if serial_was_empty && !matches!(*serial_port, SerialKind::NotPresent) {
             // backfill logs since the heap is loaded
             if let Some(ref mut early_log) = *LOG.lock() {
                 let (s1, s2) = early_log.read();

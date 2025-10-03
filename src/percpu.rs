@@ -8,19 +8,16 @@ use rmm::Arch;
 use syscall::PtraceFlags;
 
 use crate::{
+    arch::device::ArchPercpuMisc,
     context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    cpu_stats::CpuStats,
     ptrace::Session,
+    syscall::debug::SyscallDebugInfo,
 };
 
 #[cfg(feature = "sys_stat")]
-use {
-    crate::cpu_stats::{CpuStats, CpuStatsData},
-    alloc::vec::Vec,
-};
-
-#[cfg(feature = "syscall_debug")]
-use crate::syscall::debug::SyscallDebugInfo;
+use {crate::cpu_stats::CpuStatsData, alloc::vec::Vec};
 
 /// The percpu block, that stored all percpu variables.
 pub struct PercpuBlock {
@@ -43,12 +40,10 @@ pub struct PercpuBlock {
     pub ptrace_session: RefCell<Option<Weak<Session>>>,
     pub inside_syscall: Cell<bool>,
 
-    #[cfg(feature = "syscall_debug")]
     pub syscall_debug_info: Cell<SyscallDebugInfo>,
 
     pub misc_arch_info: crate::device::ArchPercpuMisc,
 
-    #[cfg(feature = "sys_stat")]
     pub stats: CpuStats,
 }
 
@@ -77,11 +72,11 @@ pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
 
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
 
-#[cfg(not(feature = "multi_core"))]
-pub fn shootdown_tlb_ipi(_target: Option<LogicalCpuId>) {}
-
-#[cfg(feature = "multi_core")]
 pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
+    if cfg!(not(feature = "multi_core")) {
+        return;
+    }
+
     if let Some(target) = target {
         let my_percpublock = PercpuBlock::current();
         assert_ne!(target, my_percpublock.cpu_id);
@@ -91,7 +86,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
                 .load(Ordering::Acquire)
                 .as_ref()
         }) else {
-            log::warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
+            warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
         while percpublock
@@ -126,68 +121,72 @@ impl PercpuBlock {
             crate::paging::RmmA::invalidate_all();
         }
 
-        if let Some(ref addrsp) = &*self.current_addrsp.borrow() {
+        if let &Some(ref addrsp) = &*self.current_addrsp.borrow() {
             addrsp.tlb_ack.fetch_add(1, Ordering::Release);
         }
     }
 }
 pub unsafe fn switch_arch_hook() {
-    let percpu = PercpuBlock::current();
+    unsafe {
+        let percpu = PercpuBlock::current();
 
-    let cur_addrsp = percpu.current_addrsp.borrow();
-    let next_addrsp = percpu.new_addrsp_tmp.take();
+        let cur_addrsp = percpu.current_addrsp.borrow();
+        let next_addrsp = percpu.new_addrsp_tmp.take();
 
-    let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
-        (Some(ref p), Some(ref n)) => Arc::ptr_eq(p, n),
-        (Some(_), None) | (None, Some(_)) => false,
-        (None, None) => true,
-    };
-    if retain_pgtbl {
-        // If we are not switching to a different address space, we can simply return early.
-    }
-    if let Some(ref prev_addrsp) = &*cur_addrsp {
-        prev_addrsp
-            .acquire_read()
-            .used_by
-            .atomic_clear(percpu.cpu_id);
-    }
+        let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
+            (&Some(ref p), &Some(ref n)) => Arc::ptr_eq(p, n),
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => true,
+        };
+        if retain_pgtbl {
+            // If we are not switching to a different address space, we can simply return early.
+            return;
+        }
+        if let &Some(ref prev_addrsp) = &*cur_addrsp {
+            prev_addrsp
+                .acquire_read()
+                .used_by
+                .atomic_clear(percpu.cpu_id);
+        }
 
-    drop(cur_addrsp);
+        drop(cur_addrsp);
 
-    // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
-    // space.
-    *percpu.current_addrsp.borrow_mut() = next_addrsp;
+        // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
+        // space.
+        *percpu.current_addrsp.borrow_mut() = next_addrsp;
 
-    if let Some(next_addrsp) = &*percpu.current_addrsp.borrow() {
-        let next = next_addrsp.acquire_read();
+        match &*percpu.current_addrsp.borrow() {
+            Some(next_addrsp) => {
+                let next = next_addrsp.acquire_read();
 
-        next.used_by.atomic_set(percpu.cpu_id);
-        next.table.utable.make_current();
-    } else {
-        crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                next.used_by.atomic_set(percpu.cpu_id);
+                next.table.utable.make_current();
+            }
+            _ => {
+                crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+            }
+        }
     }
 }
 impl PercpuBlock {
-    pub fn init(cpu_id: LogicalCpuId) -> Self {
+    pub const fn init(cpu_id: LogicalCpuId) -> Self {
         Self {
             cpu_id,
-            switch_internals: Default::default(),
+            switch_internals: ContextSwitchPercpu::default(),
             current_addrsp: RefCell::new(None),
             new_addrsp_tmp: Cell::new(None),
             wants_tlb_shootdown: AtomicBool::new(false),
-            ptrace_flags: Cell::new(Default::default()),
+            ptrace_flags: Cell::new(PtraceFlags::empty()),
             ptrace_session: RefCell::new(None),
             inside_syscall: Cell::new(false),
 
-            #[cfg(feature = "syscall_debug")]
             syscall_debug_info: Cell::new(SyscallDebugInfo::default()),
 
             #[cfg(feature = "profiling")]
             profiling: None,
 
-            misc_arch_info: Default::default(),
+            misc_arch_info: ArchPercpuMisc::default(),
 
-            #[cfg(feature = "sys_stat")]
             stats: CpuStats::default(),
         }
     }

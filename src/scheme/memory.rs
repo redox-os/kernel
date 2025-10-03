@@ -10,6 +10,7 @@ use crate::{
     },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
     paging::VirtualAddress,
+    sync::CleanLockToken,
     syscall::usercopy::UserSliceRw,
 };
 
@@ -76,6 +77,7 @@ impl MemoryScheme {
         addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         is_phys_contiguous: bool,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size)
             .ok_or(Error::new(EINVAL))?;
@@ -110,7 +112,7 @@ impl MemoryScheme {
             },
         )?;
 
-        handle_notify_files(notify_files);
+        handle_notify_files(notify_files, token);
 
         Ok(page.start_address().data())
     }
@@ -128,10 +130,9 @@ impl MemoryScheme {
         }
 
         if size % PAGE_SIZE != 0 {
-            log::warn!(
+            warn!(
                 "physmap size {} is not multiple of PAGE_SIZE {}",
-                size,
-                PAGE_SIZE
+                size, PAGE_SIZE
             );
             return Err(Error::new(EINVAL));
         }
@@ -180,10 +181,16 @@ impl MemoryScheme {
     }
 }
 impl KernelScheme for MemoryScheme {
-    fn root_cap(&self) -> Result<usize> {
+    fn root_cap(&self, _token: &mut CleanLockToken) -> Result<usize> {
         Ok(usize::MAX)
     }
-    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        ctx: CallerCtx,
+        _token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         if path.len() > 64 {
             return Err(Error::new(ENOENT));
         }
@@ -242,12 +249,13 @@ impl KernelScheme for MemoryScheme {
         _flags: usize,
         _fcntl_flags: u32,
         ctx: CallerCtx,
+        token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if id != usize::MAX {
             return Err(Error::new(EPERM));
         }
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, ctx)
+        self.kopen(path, 0, ctx, token)
     }
     fn kcall(
         &self,
@@ -255,6 +263,7 @@ impl KernelScheme for MemoryScheme {
         payload: UserSliceRw,
         _flags: syscall::CallFlags,
         _metadata: &[u64],
+        _token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (handle_ty, _, _) = u32::try_from(id)
             .ok()
@@ -286,6 +295,7 @@ impl KernelScheme for MemoryScheme {
         addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         _consume: bool,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (handle_ty, mem_ty, flags) = u32::try_from(id)
             .ok()
@@ -297,12 +307,13 @@ impl KernelScheme for MemoryScheme {
                 addr_space,
                 map,
                 flags.contains(HandleFlags::PHYS_CONTIGUOUS),
+                token,
             ),
             HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
             HandleTy::Translation => Err(Error::new(EOPNOTSUPP)),
         }
     }
-    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo) -> Result<()> {
+    fn kfstatvfs(&self, _file: usize, dst: UserSliceWo, _token: &mut CleanLockToken) -> Result<()> {
         let used = used_frames() as u64;
         let free = free_frames() as u64;
 

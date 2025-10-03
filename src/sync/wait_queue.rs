@@ -3,7 +3,7 @@ use spin::Mutex;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    sync::WaitCondition,
+    sync::{CleanLockToken, WaitCondition},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -27,19 +27,29 @@ impl<T> WaitQueue<T> {
         self.inner.lock().is_empty()
     }
 
-    pub fn receive(&self, block: bool, reason: &'static str) -> Result<T> {
+    pub fn receive(
+        &self,
+        block: bool,
+        reason: &'static str,
+        token: &mut CleanLockToken,
+    ) -> Result<T> {
         loop {
             let mut inner = self.inner.lock();
 
-            if let Some(t) = inner.pop_front() {
-                return Ok(t);
-            } else if block {
-                if !self.condition.wait(inner, reason) {
-                    return Err(Error::new(EINTR));
+            match inner.pop_front() {
+                Some(t) => {
+                    return Ok(t);
                 }
-                continue;
-            } else {
-                return Err(Error::new(EAGAIN));
+                _ => {
+                    if block {
+                        if !self.condition.wait(inner, reason, token) {
+                            return Err(Error::new(EINTR));
+                        }
+                        continue;
+                    } else {
+                        return Err(Error::new(EAGAIN));
+                    }
+                }
             }
         }
     }
@@ -49,13 +59,14 @@ impl<T> WaitQueue<T> {
         buf: UserSliceWo,
         block: bool,
         reason: &'static str,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         loop {
             let mut inner = self.inner.lock();
 
             if inner.is_empty() {
                 if block {
-                    if !self.condition.wait(inner, reason) {
+                    if !self.condition.wait(inner, reason, token) {
                         return Err(Error::new(EINTR));
                     }
                     continue;
@@ -95,13 +106,13 @@ impl<T> WaitQueue<T> {
         }
     }
 
-    pub fn send(&self, value: T) -> usize {
+    pub fn send(&self, value: T, token: &mut CleanLockToken) -> usize {
         let len = {
             let mut inner = self.inner.lock();
             inner.push_back(value);
             inner.len()
         };
-        self.condition.notify();
+        self.condition.notify(token);
         len
     }
 }

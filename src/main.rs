@@ -3,8 +3,6 @@
 //! The Redox OS Kernel is a microkernel that supports `x86_64` systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
-// Necessary for alternative! macro.
-#![allow(unexpected_cfgs)]
 // Useful for adding comments about different branches
 #![allow(clippy::if_same_then_else)]
 // Useful in the syscall function
@@ -41,18 +39,20 @@
 #![deny(unreachable_patterns)]
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
+#![warn(static_mut_refs)] // FIXME deny once all occurences are fixed
 #![feature(allocator_api)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
 #![feature(let_chains)]
 #![feature(naked_functions)]
+#![feature(slice_as_chunks)]
 #![feature(sync_unsafe_cell)]
 #![feature(variant_count)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
-#![feature(array_chunks)]
 #![feature(if_let_guard)]
 #![feature(iterator_try_collect)]
+#![feature(new_zeroed_alloc)]
 #[macro_use]
 extern crate alloc;
 
@@ -68,6 +68,9 @@ use crate::consts::*;
 #[macro_use]
 /// Shared data structures
 mod common;
+
+#[macro_use]
+mod macros;
 
 /// Architecture-dependent stuff
 #[macro_use]
@@ -90,7 +93,6 @@ mod dtb;
 mod cpu_set;
 
 /// Stats for the CPUs
-#[cfg(feature = "sys_stat")]
 mod cpu_stats;
 
 /// Context management
@@ -103,9 +105,6 @@ mod debugger;
 /// Architecture-independent devices
 mod devices;
 
-/// ELF file parsing
-mod elf;
-
 /// Event handling
 mod event;
 
@@ -115,9 +114,6 @@ mod externs;
 
 /// Logging
 mod log;
-use ::log::info;
-use alloc::sync::Arc;
-use spinning_top::RwSpinlock;
 
 /// Memory management
 mod memory;
@@ -141,6 +137,7 @@ mod scheme;
 mod startup;
 
 /// Synchronization primitives
+use sync::CleanLockToken;
 mod sync;
 
 /// Syscall handlers
@@ -159,7 +156,7 @@ fn cpu_id() -> crate::cpu_set::LogicalCpuId {
 }
 
 /// The count of all CPUs that can have work scheduled
-static CPU_COUNT: AtomicU32 = AtomicU32::new(0);
+static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 
 /// Get the number of CPUs currently active
 #[inline(always)]
@@ -172,8 +169,9 @@ fn init_env() -> &'static [u8] {
 }
 
 extern "C" fn userspace_init() {
+    let mut token = unsafe { CleanLockToken::new() };
     let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
-    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap) }
+    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
 }
 
 struct Bootstrap {
@@ -182,19 +180,18 @@ struct Bootstrap {
     env: &'static [u8],
 }
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
-static INIT_THREAD: spin::Once<Arc<RwSpinlock<crate::context::Context>>> = spin::Once::new();
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
-    CPU_COUNT.store(cpu_count, Ordering::SeqCst);
+fn kmain(bootstrap: Bootstrap) -> ! {
+    let mut token = unsafe { CleanLockToken::new() };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
-    context::init();
+    context::init(&mut token);
 
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    info!("BSP: {}", cpu_count);
+    info!("BSP: {}", cpu_count());
     info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
@@ -203,37 +200,35 @@ fn kmain(cpu_count: u32, bootstrap: Bootstrap) -> ! {
     profiling::ready_for_profiling();
 
     let owner = None; // kmain not owned by any fd
-    match context::spawn(true, owner, userspace_init) {
+    match context::spawn(true, owner, userspace_init, &mut token) {
         Ok(context_lock) => {
-            {
-                let mut context = context_lock.write();
-                context.status = context::Status::Runnable;
-                context.name.clear();
-                context.name.push_str("[bootstrap]");
+            let mut context = context_lock.write(token.token());
+            context.status = context::Status::Runnable;
+            context.name.clear();
+            context.name.push_str("[bootstrap]");
 
-                // TODO: Remove these from kernel
-                context.ens = SchemeNamespace::from(1);
-                context.euid = 0;
-                context.egid = 0;
-            }
-            INIT_THREAD.call_once(move || context_lock);
+            // TODO: Remove these from kernel
+            context.ens = SchemeNamespace::from(1);
+            context.euid = 0;
+            context.egid = 0;
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
         }
     }
 
-    run_userspace()
+    run_userspace(&mut token)
 }
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables, dead_code)]
 fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
+    let mut token = unsafe { CleanLockToken::new() };
+
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
-    //TODO: workaround for bug where an AP on MeteorLake has cpu_id 0
-    if !cfg!(feature = "multi_core") || cpu_id == crate::cpu_set::LogicalCpuId::BSP {
+    if !cfg!(feature = "multi_core") {
         info!("AP {}: Disabled", cpu_id);
 
         loop {
@@ -243,20 +238,21 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
             }
         }
     }
-    context::init();
+
+    context::init(&mut token);
 
     info!("AP {}", cpu_id);
 
     #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
-    run_userspace();
+    run_userspace(&mut token);
 }
-fn run_userspace() -> ! {
+fn run_userspace(token: &mut CleanLockToken) -> ! {
     loop {
         unsafe {
             interrupt::disable();
-            match context::switch() {
+            match context::switch(token) {
                 SwitchResult::Switched => {
                     interrupt::enable_and_nop();
                 }
@@ -276,11 +272,11 @@ macro_rules! linker_offsets(
         $(
         #[inline]
         pub fn $name() -> usize {
-            extern "C" {
+            unsafe extern "C" {
                 // TODO: UnsafeCell?
                 static $name: u8;
             }
-            unsafe { &$name as *const u8 as usize }
+            (&raw const $name) as usize
         }
         )*
     }

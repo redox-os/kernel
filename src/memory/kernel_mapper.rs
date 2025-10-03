@@ -1,12 +1,12 @@
 use crate::cpu_set::LogicalCpuId;
 use core::sync::{
     atomic,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 use rmm::{PageMapper, TableKind};
 
-const NO_PROCESSOR: usize = !0;
-static LOCK_OWNER: AtomicUsize = AtomicUsize::new(NO_PROCESSOR);
+const NO_PROCESSOR: u32 = !0;
+static LOCK_OWNER: AtomicU32 = AtomicU32::new(NO_PROCESSOR);
 static LOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 // TODO: Support, perhaps via const generics, embedding address checking in PageMapper, thereby
@@ -23,17 +23,17 @@ pub struct KernelMapper {
     ro: bool,
 }
 impl KernelMapper {
-    fn lock_inner(current_processor: usize) -> bool {
+    fn lock_inner(current_processor: LogicalCpuId) -> bool {
         loop {
             match LOCK_OWNER.compare_exchange_weak(
                 NO_PROCESSOR,
-                current_processor,
+                current_processor.get(),
                 Ordering::Acquire,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => break,
                 // already owned by this hardware thread
-                Err(id) if id == current_processor => break,
+                Err(id) if id == current_processor.get() => break,
                 // either CAS failed, or some other hardware thread holds the lock
                 Err(_) => core::hint::spin_loop(),
             }
@@ -48,7 +48,7 @@ impl KernelMapper {
         current_processor: LogicalCpuId,
         mapper: crate::paging::PageMapper,
     ) -> Self {
-        let ro = Self::lock_inner(current_processor.get() as usize);
+        let ro = Self::lock_inner(current_processor);
         Self { mapper, ro }
     }
     pub fn lock_manually(current_processor: LogicalCpuId) -> Self {

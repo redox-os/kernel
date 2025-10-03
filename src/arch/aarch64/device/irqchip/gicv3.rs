@@ -3,9 +3,12 @@ use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
 
 use super::{gic::GicDistIf, InterruptController};
-use crate::dtb::{
-    get_mmio_address,
-    irqchip::{InterruptHandler, IrqCell, IrqDesc},
+use crate::{
+    dtb::{
+        get_mmio_address,
+        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    },
+    sync::CleanLockToken,
 };
 use syscall::{
     error::{Error, EINVAL},
@@ -74,7 +77,7 @@ impl GicV3 {
 }
 
 impl InterruptHandler for GicV3 {
-    fn irq_handler(&mut self, _irq: u32) {}
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for GicV3 {
@@ -88,7 +91,7 @@ impl InterruptController for GicV3 {
         if let Some(fdt) = fdt_opt {
             self.parse(fdt)?;
         }
-        log::info!("{:X?}", self);
+        info!("{:X?}", self);
 
         unsafe {
             self.gic_cpu_if.init();
@@ -109,7 +112,7 @@ impl InterruptController for GicV3 {
             i += 1;
         }
 
-        log::info!("gic irq_range = ({}, {})", idx, idx + cnt);
+        info!("gic irq_range = ({}, {})", idx, idx + cnt);
         self.irq_range = (idx, idx + cnt);
         *irq_idx = idx + cnt;
         Ok(())
@@ -149,39 +152,45 @@ pub struct GicV3CpuIf;
 
 impl GicV3CpuIf {
     pub unsafe fn init(&mut self) {
-        // Enable system register access
-        {
-            let value = 1_usize;
-            asm!("msr icc_sre_el1, {}", in(reg) value);
-        }
-        // Set control register
-        {
-            let value = 0_usize;
-            asm!("msr icc_ctlr_el1, {}", in(reg) value);
-        }
-        // Enable non-secure group 1
-        {
-            let value = 1_usize;
-            asm!("msr icc_igrpen1_el1, {}", in(reg) value);
-        }
-        // Set CPU0's Interrupt Priority Mask
-        {
-            let value = 0xFF_usize;
-            asm!("msr icc_pmr_el1, {}", in(reg) value);
+        unsafe {
+            // Enable system register access
+            {
+                let value = 1_usize;
+                asm!("msr icc_sre_el1, {}", in(reg) value);
+            }
+            // Set control register
+            {
+                let value = 0_usize;
+                asm!("msr icc_ctlr_el1, {}", in(reg) value);
+            }
+            // Enable non-secure group 1
+            {
+                let value = 1_usize;
+                asm!("msr icc_igrpen1_el1, {}", in(reg) value);
+            }
+            // Set CPU0's Interrupt Priority Mask
+            {
+                let value = 0xFF_usize;
+                asm!("msr icc_pmr_el1, {}", in(reg) value);
+            }
         }
     }
 
     unsafe fn irq_ack(&mut self) -> u32 {
-        let mut irq: usize;
-        asm!("mrs {}, icc_iar1_el1", out(reg) irq);
-        irq &= 0x1ff;
-        if irq == 1023 {
-            panic!("irq_ack: got ID 1023!!!");
+        unsafe {
+            let mut irq: usize;
+            asm!("mrs {}, icc_iar1_el1", out(reg) irq);
+            irq &= 0x1ff;
+            if irq == 1023 {
+                panic!("irq_ack: got ID 1023!!!");
+            }
+            irq as u32
         }
-        irq as u32
     }
 
     unsafe fn irq_eoi(&mut self, irq: u32) {
-        asm!("msr icc_eoir1_el1, {}", in(reg) irq as usize);
+        unsafe {
+            asm!("msr icc_eoir1_el1, {}", in(reg) irq as usize);
+        }
     }
 }

@@ -8,13 +8,12 @@ use core::{
 use spin::RwLock;
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
-#[cfg(feature = "sys_stat")]
-use crate::cpu_stats;
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
     common::aligned_box::AlignedBox,
     context::{self, arch, file::FileDescriptor},
     cpu_set::{LogicalCpuId, LogicalCpuSet},
+    cpu_stats,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
@@ -69,10 +68,17 @@ pub enum HardBlockedReason {
     },
     // TODO: PageFaultOom?
     NotYetStarted,
-    PtraceStop,
 }
 
 const CONTEXT_NAME_CAPAC: usize = 32;
+
+#[derive(Debug)]
+pub enum SyscallFrame {
+    Free(RaiiFrame),
+    // The field is used by the consistency checker of the kernel debugger
+    Used { _frame: Frame },
+    Dummy,
+}
 
 /// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
@@ -103,10 +109,10 @@ pub struct Context {
 
     /// Head buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_head: Option<RaiiFrame>,
+    pub syscall_head: SyscallFrame,
     /// Tail buffer to use when system call buffers are not page aligned
     // TODO: Store in user memory?
-    pub syscall_tail: Option<RaiiFrame>,
+    pub syscall_tail: SyscallFrame,
     /// Context should wake up at specified time
     pub wake: Option<u128>,
     /// The architecture specific context
@@ -171,8 +177,8 @@ impl Context {
             cpu_time: 0,
             sched_affinity: LogicalCpuSet::all(),
             inside_syscall: false,
-            syscall_head: Some(RaiiFrame::allocate()?),
-            syscall_tail: Some(RaiiFrame::allocate()?),
+            syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),
+            syscall_tail: SyscallFrame::Free(RaiiFrame::allocate()?),
             wake: None,
             arch: arch::Context::new(),
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
@@ -193,7 +199,6 @@ impl Context {
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
         };
-        #[cfg(feature = "sys_stat")]
         cpu_stats::add_context();
         Ok(this)
     }
@@ -325,7 +330,7 @@ impl Context {
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let (Some(ref old), Some(ref new)) = (&self.addr_space, &addr_space)
+        if let (&Some(ref old), &Some(ref new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
         {
             return addr_space;
@@ -351,17 +356,18 @@ impl Context {
                 addr_space.clone(),
             );
 
-            if let Some(ref new) = addr_space {
-                let new_addrsp = new.acquire_read();
-                new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
+            match addr_space {
+                Some(ref new) => {
+                    let new_addrsp = new.acquire_read();
+                    new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
 
-                unsafe {
-                    new_addrsp.table.utable.make_current();
+                    unsafe {
+                        new_addrsp.table.utable.make_current();
+                    }
                 }
-            } else {
-                unsafe {
+                _ => unsafe {
                     crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
-                }
+                },
             }
         } else {
             assert!(!self.running);
@@ -432,29 +438,37 @@ pub struct BorrowedHtBuf {
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
-    pub fn head() -> Result<Self> {
-        Ok(Self {
-            inner: Some(
-                context::current()
-                    .write()
-                    .syscall_head
-                    .take()
-                    .ok_or(Error::new(EAGAIN))?,
-            ),
-            head_and_not_tail: true,
-        })
+    pub fn head(token: &mut CleanLockToken) -> Result<Self> {
+        let current = context::current();
+        let frame = &mut current.write(token.token()).syscall_head;
+        match mem::replace(frame, SyscallFrame::Dummy) {
+            SyscallFrame::Free(free_frame) => {
+                *frame = SyscallFrame::Used {
+                    _frame: free_frame.get(),
+                };
+                Ok(Self {
+                    inner: Some(free_frame),
+                    head_and_not_tail: true,
+                })
+            }
+            SyscallFrame::Used { .. } | SyscallFrame::Dummy => Err(Error::new(EAGAIN)),
+        }
     }
-    pub fn tail() -> Result<Self> {
-        Ok(Self {
-            inner: Some(
-                context::current()
-                    .write()
-                    .syscall_tail
-                    .take()
-                    .ok_or(Error::new(EAGAIN))?,
-            ),
-            head_and_not_tail: false,
-        })
+    pub fn tail(token: &mut CleanLockToken) -> Result<Self> {
+        let current = context::current();
+        let frame = &mut current.write(token.token()).syscall_tail;
+        match mem::replace(frame, SyscallFrame::Dummy) {
+            SyscallFrame::Free(free_frame) => {
+                *frame = SyscallFrame::Used {
+                    _frame: free_frame.get(),
+                };
+                Ok(Self {
+                    inner: Some(free_frame),
+                    head_and_not_tail: false,
+                })
+            }
+            SyscallFrame::Used { .. } | SyscallFrame::Dummy => Err(Error::new(EAGAIN)),
+        }
     }
     pub fn buf(&self) -> &[u8; PAGE_SIZE] {
         unsafe {
@@ -499,14 +513,15 @@ impl Drop for BorrowedHtBuf {
         let Some(inner) = self.inner.take() else {
             return;
         };
-        match context.write() {
+        //TODO: do not allow drop so lock token can be passed in
+        let mut token = unsafe { CleanLockToken::new() };
+        match context.write(token.token()) {
             mut context => {
-                (if self.head_and_not_tail {
+                *(if self.head_and_not_tail {
                     &mut context.syscall_head
                 } else {
                     &mut context.syscall_tail
-                })
-                .get_or_insert(inner);
+                }) = SyscallFrame::Free(inner);
             }
         }
     }
@@ -875,10 +890,10 @@ impl FdTbl {
         FileHandle::from(start | UPPER_FDTBL_TAG)
     }
 
-    pub fn force_close_all(&mut self) {
+    pub fn force_close_all(&mut self, token: &mut CleanLockToken) {
         for file_opt in self.iter_mut() {
             if let Some(file) = file_opt.take() {
-                let _ = file.close();
+                let _ = file.close(token);
             }
         }
         self.active_count = 0;
@@ -900,6 +915,7 @@ impl FdTbl {
 pub fn bulk_add_fds(
     descriptions: Vec<Arc<RwLock<FileDescription>>>,
     payload: UserSliceRw,
+    token: &mut CleanLockToken,
 ) -> Result<usize> {
     let cnt = descriptions.len();
     if payload.len() != cnt * size_of::<usize>() {
@@ -909,7 +925,7 @@ pub fn bulk_add_fds(
         return Ok(0);
     }
     let current_lock = context::current();
-    let current = current_lock.write();
+    let current = current_lock.write(token.token());
 
     let files: Vec<FileDescriptor> = descriptions
         .into_iter()
@@ -931,6 +947,7 @@ pub fn bulk_add_fds(
 pub fn bulk_insert_fds(
     descriptions: Vec<Arc<RwLock<FileDescription>>>,
     payload: UserSliceRw,
+    token: &mut CleanLockToken,
 ) -> Result<usize> {
     let cnt = descriptions.len();
     if payload.len() != cnt * size_of::<usize>() {
@@ -950,7 +967,7 @@ pub fn bulk_insert_fds(
         .read_usize()?;
 
     let current_lock = context::current();
-    let current = current_lock.write();
+    let current = current_lock.write(token.token());
 
     if first_fd == usize::MAX {
         let files = files_iter.collect::<Vec<_>>();

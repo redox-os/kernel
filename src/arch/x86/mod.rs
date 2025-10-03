@@ -6,9 +6,6 @@ pub mod macros;
 /// Constants like memory locations
 pub mod consts;
 
-/// Global descriptor table
-pub mod gdt;
-
 /// Interrupt instructions
 #[macro_use]
 pub mod interrupt;
@@ -20,10 +17,11 @@ pub mod flags {
 }
 
 #[naked]
-#[link_section = ".usercopy-fns"]
+#[unsafe(link_section = ".usercopy-fns")]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    core::arch::naked_asm!(
-        "
+    unsafe {
+        core::arch::naked_asm!(
+            "
             push edi
             push esi
 
@@ -38,7 +36,8 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
             xor eax, eax
             ret
     "
-    );
+        );
+    }
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 

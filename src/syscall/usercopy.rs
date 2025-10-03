@@ -108,7 +108,7 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
         }
     }
     pub unsafe fn read_exact<T>(self) -> Result<T> {
-        let mut t: T = core::mem::zeroed();
+        let mut t: T = unsafe { core::mem::zeroed() };
         let slice = unsafe {
             core::slice::from_raw_parts_mut(
                 (&mut t as *mut T).cast::<u8>(),

@@ -1,6 +1,11 @@
+#![allow(unused)]
+
 use core::ptr;
 
-use crate::scheme::debug::{debug_input, debug_notify};
+use crate::{
+    scheme::debug::{debug_input, debug_notify},
+    sync::CleanLockToken,
+};
 
 bitflags! {
     /// UARTFR
@@ -182,7 +187,7 @@ impl SerialPort {
         }
     }
 
-    pub fn receive(&mut self) {
+    pub fn receive(&mut self, token: &mut CleanLockToken) {
         let mut flags = self.intr_stats();
         let chk_flags = UartRisFlags::RTIS | UartRisFlags::RXIS;
         while (flags & chk_flags).bits() != 0 {
@@ -201,13 +206,13 @@ impl SerialPort {
                 }
                 let c = self.read_reg(self.data_reg) as u8;
                 if c != 0 {
-                    debug_input(c);
+                    debug_input(c, token);
                 }
             }
 
             flags = self.intr_stats();
         }
-        debug_notify();
+        debug_notify(token);
     }
 
     pub fn send(&mut self, data: u8) {
