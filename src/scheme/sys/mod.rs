@@ -281,7 +281,7 @@ impl KernelScheme for SysScheme {
                 };
                 (handler, intermediate, len)
             }
-            Handle::RootCapability => Err(Error::new(EBADF)),
+            Handle::RootCapability => return Err(Error::new(EBADF)),
         };
         handler(&intermediate[..len], token)
     }
