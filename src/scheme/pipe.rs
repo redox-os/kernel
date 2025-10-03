@@ -1,5 +1,5 @@
-use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use syscall::data::GlobalSchemes;
 use syscall::CallFlags;

@@ -14,7 +14,7 @@ use crate::{
     },
     event,
     sync::CleanLockToken,
-    syscall::flag::{O_CREAT, O_RDWR},
+    syscall::flag::{EventFlags, O_CREAT, O_RDWR},
 };
 
 use crate::{
