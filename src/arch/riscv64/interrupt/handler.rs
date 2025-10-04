@@ -300,7 +300,7 @@ macro_rules! pop_registers {
     };
 }
 
-#[naked]
+#[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode() -> ! {
     unsafe {
         core::arch::naked_asm!(concat!(

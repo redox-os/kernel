@@ -20,7 +20,7 @@ const STORE_PAGE_FAULT: usize = 15;
 
 use super::InterruptStack;
 
-#[naked]
+#[unsafe(naked)]
 // FIXME use extern "custom"
 // FIXME use align(4)
 pub unsafe extern "C" fn exception_handler() {

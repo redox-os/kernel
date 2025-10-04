@@ -254,7 +254,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 }
 
 // Check disassembly!
-#[naked]
+#[unsafe(naked)]
 unsafe extern "cdecl" fn switch_to_inner() {
     unsafe {
         use Context as Cx;

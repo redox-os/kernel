@@ -152,7 +152,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     }
 }
 
-#[naked]
+#[unsafe(naked)]
 unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
     unsafe {
         core::arch::naked_asm!(r#"
