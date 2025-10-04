@@ -3,6 +3,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{file::InternalFlags, timeout},
@@ -16,7 +17,7 @@ use crate::{
     time,
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt};
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 static HANDLES: RwLock<L1, HashMap<usize, usize>> =

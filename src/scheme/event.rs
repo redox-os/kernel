@@ -13,11 +13,14 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {
+    fn root_cap(&self, _token: &mut CleanLockToken) -> Result<usize> {
+        Ok(usize::MAX)
+    }
     fn kopen(
         &self,
         _path: &str,
@@ -29,6 +32,22 @@ impl KernelScheme for EventScheme {
         queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 
         Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
+    }
+
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: StrOrBytes,
+        _flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        if id != usize::MAX {
+            return Err(Error::new(EPERM));
+        }
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, 0, ctx, token)
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {

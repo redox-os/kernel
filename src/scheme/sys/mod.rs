@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 mod block;
 mod context;
@@ -48,12 +48,14 @@ mod uname;
 #[cfg(feature = "sys_stat")]
 mod stat;
 
+#[derive(PartialEq)]
 enum Handle {
     TopLevel,
     Resource {
         path: &'static str,
         data: Option<Vec<u8>>,
     },
+    RootCapability,
 }
 
 enum Kind {
@@ -112,6 +114,13 @@ const FILES: &[(&'static str, Kind)] = &[
 ];
 
 impl KernelScheme for SysScheme {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES
+            .write(token.token())
+            .insert(id, Handle::RootCapability);
+        Ok(id)
+    }
     fn kopen(
         &self,
         path: &str,
@@ -153,6 +162,27 @@ impl KernelScheme for SysScheme {
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         }
     }
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: StrOrBytes,
+        _flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        if *HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+            != Handle::RootCapability
+        {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, 0, ctx, token)
+    }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         match HANDLES
@@ -162,6 +192,7 @@ impl KernelScheme for SysScheme {
         {
             Handle::TopLevel => Ok(0),
             Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -177,6 +208,7 @@ impl KernelScheme for SysScheme {
         let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => "",
             Handle::Resource { path, .. } => path,
+            Handle::RootCapability => return Err(Error::new(EBADF)),
         };
 
         const FIRST: &[u8] = b"sys:";
@@ -217,6 +249,7 @@ impl KernelScheme for SysScheme {
 
                 buffer.copy_common_bytes_from_slice(avail_buf)
             }
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
     fn kwriteoff(
@@ -248,6 +281,7 @@ impl KernelScheme for SysScheme {
                 };
                 (handler, intermediate, len)
             }
+            Handle::RootCapability => return Err(Error::new(EBADF)),
         };
         handler(&intermediate[..len], token)
     }
@@ -280,6 +314,7 @@ impl KernelScheme for SysScheme {
                 }
                 Ok(buf.finalize())
             }
+            Handle::RootCapability => Err(Error::new(EBADF)),
         }
     }
 
@@ -303,6 +338,7 @@ impl KernelScheme for SysScheme {
                 st_size: 0,
                 ..Default::default()
             },
+            Handle::RootCapability => return Err(Error::new(EBADF)),
         };
 
         buf.copy_exactly(&stat)?;

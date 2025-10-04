@@ -11,11 +11,12 @@ use alloc::{string::String, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
+use syscall::data::GlobalSchemes;
 use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
 
 use crate::context::file::InternalFlags;
 
-use super::{CallerCtx, GlobalSchemes, OpenResult};
+use super::{CallerCtx, OpenResult, SchemeExt};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved, set_reserved};
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]

@@ -13,7 +13,7 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::Once;
-use syscall::{CallFlags, EventFlags, MunmapFlags};
+use syscall::{data::GlobalSchemes, CallFlags, EventFlags, MunmapFlags};
 
 use crate::{
     context::{
@@ -381,6 +381,10 @@ pub fn schemes_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, Sch
 
 #[allow(unused_variables)]
 pub trait KernelScheme: Send + Sync + 'static {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+
     fn kopen(
         &self,
         path: &str,
@@ -629,31 +633,6 @@ pub enum KernelSchemes {
     User(UserScheme),
     Global(GlobalSchemes),
 }
-#[repr(u8)]
-#[derive(Clone, Copy)]
-pub enum GlobalSchemes {
-    Debug = 1,
-    Event,
-    Memory,
-    Pipe,
-    Serio,
-    Irq,
-    Time,
-    Sys,
-    Proc,
-
-    #[cfg(feature = "acpi")]
-    Acpi,
-
-    #[cfg(dtb)]
-    Dtb,
-}
-pub const MAX_GLOBAL_SCHEMES: usize = 16;
-
-const _: () = {
-    assert!(1 + core::mem::variant_count::<GlobalSchemes>() < MAX_GLOBAL_SCHEMES);
-};
-
 impl core::ops::Deref for KernelSchemes {
     type Target = dyn KernelScheme;
 
@@ -662,14 +641,39 @@ impl core::ops::Deref for KernelSchemes {
             Self::Root(scheme) => &**scheme,
             Self::User(scheme) => scheme,
 
-            Self::Global(global) => &**global,
+            Self::Global(global) => global.as_scheme(),
         }
     }
 }
-impl core::ops::Deref for GlobalSchemes {
-    type Target = dyn KernelScheme;
 
-    fn deref(&self) -> &Self::Target {
+pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = &[
+    GlobalSchemes::Debug,
+    GlobalSchemes::Event,
+    GlobalSchemes::Memory,
+    GlobalSchemes::Pipe,
+    GlobalSchemes::Serio,
+    GlobalSchemes::Irq,
+    GlobalSchemes::Time,
+    GlobalSchemes::Sys,
+    GlobalSchemes::Proc,
+    #[cfg(feature = "acpi")]
+    GlobalSchemes::Acpi,
+    #[cfg(dtb)]
+    GlobalSchemes::Dtb,
+];
+
+pub const MAX_GLOBAL_SCHEMES: usize = 16;
+pub const KERNEL_SCHEMES_COUNT: usize = ALL_KERNEL_SCHEMES.len();
+const _: () = {
+    assert!(1 + KERNEL_SCHEMES_COUNT < MAX_GLOBAL_SCHEMES);
+};
+
+pub trait SchemeExt {
+    fn as_scheme(&self) -> &dyn KernelScheme;
+    fn scheme_id(self) -> SchemeId;
+}
+impl SchemeExt for GlobalSchemes {
+    fn as_scheme(&self) -> &dyn KernelScheme {
         match self {
             Self::Debug => &DebugScheme,
             Self::Event => &EventScheme,
@@ -684,11 +688,10 @@ impl core::ops::Deref for GlobalSchemes {
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
+            _ => panic!("Unknown global scheme"),
         }
     }
-}
-impl GlobalSchemes {
-    pub fn scheme_id(self) -> SchemeId {
+    fn scheme_id(self) -> SchemeId {
         SchemeId::new(self as usize)
     }
 }
