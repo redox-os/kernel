@@ -20,5 +20,6 @@
     "exe-suffix": "",
     "has-rpath": false,
     "no-default-libraries": true,
-    "position-independent-executables": false
+    "position-independent-executables": false,
+    "rustc-abi": "x86-softfloat"
 }
