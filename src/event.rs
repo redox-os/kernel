@@ -94,12 +94,12 @@ fn init_queues() -> RwLock<L1, EventQueueList> {
 }
 
 /// Get the event queues list, const
-pub fn queues<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, EventQueueList> {
+pub fn queues(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, EventQueueList> {
     QUEUES.call_once(init_queues).read(token)
 }
 
 /// Get the event queues list, mutable
-pub fn queues_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, EventQueueList> {
+pub fn queues_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, EventQueueList> {
     QUEUES.call_once(init_queues).write(token)
 }
 
@@ -138,7 +138,7 @@ pub fn registry_mut() -> spin::RwLockWriteGuard<'static, Registry> {
 pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: EventFlags) {
     let mut registry = registry_mut();
 
-    let entry = registry.entry(reg_key).or_insert_with(|| HashMap::new());
+    let entry = registry.entry(reg_key).or_default();
 
     if flags.is_empty() {
         entry.remove(&queue_key);

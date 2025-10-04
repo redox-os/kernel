@@ -74,15 +74,12 @@ pub fn allocate_p2frame_complex(
 ) -> Option<(Frame, usize)> {
     let mut freelist = FREELIST.lock();
 
-    let Some((frame_order, frame)) = freelist
+    let (frame_order, frame) = freelist
         .for_orders
         .iter()
         .enumerate()
         .skip(min_order as usize)
-        .find_map(|(i, f)| f.map(|f| (i as u32, f)))
-    else {
-        return None;
-    };
+        .find_map(|(i, f)| f.map(|f| (i as u32, f)))?;
 
     let info = get_page_info(frame)
         .unwrap_or_else(|| panic!("no page info for allocated frame {frame:?}"))
@@ -183,7 +180,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             break;
         }
         debug_assert!(
-            !(sib_info.next().order() > merge_order),
+            (sib_info.next().order() <= merge_order),
             "sibling page has unaligned order or contains current page"
         );
         //info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
@@ -194,8 +191,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             debug_assert_eq!(freelist.for_orders[merge_order as usize], Some(sibling));
             debug_assert!(sib_info
                 .next()
-                .frame()
-                .map_or(true, |f| f.is_aligned_to_order(merge_order)));
+                .frame().is_none_or(|f| f.is_aligned_to_order(merge_order)));
             debug_assert_eq!(sib_info.next().order(), merge_order);
             freelist.for_orders[merge_order as usize] = sib_info.next().frame();
         }
@@ -384,8 +380,7 @@ impl Drop for RaiiFrame {
     fn drop(&mut self) {
         if get_page_info(self.inner)
             .expect("RaiiFrame lacking PageInfo")
-            .remove_ref()
-            == None
+            .remove_ref().is_none()
         {
             unsafe {
                 deallocate_frame(self.inner);
@@ -865,8 +860,7 @@ impl PageInfoFree<'_> {
     #[track_caller]
     fn set_next(&self, next: P2Frame) {
         debug_assert!(next
-            .frame()
-            .map_or(true, |f| f.is_aligned_to_order(next.order())));
+            .frame().is_none_or(|f| f.is_aligned_to_order(next.order())));
         self.next.store(next.0, Ordering::Relaxed)
     }
     fn prev(&self) -> P2Frame {
@@ -874,8 +868,7 @@ impl PageInfoFree<'_> {
     }
     fn set_prev(&self, prev: P2Frame) {
         debug_assert!(prev
-            .frame()
-            .map_or(true, |f| f.is_aligned_to_order(prev.order())));
+            .frame().is_none_or(|f| f.is_aligned_to_order(prev.order())));
         self.prev.store(prev.0, Ordering::Relaxed)
     }
     fn mark_used(&self) {

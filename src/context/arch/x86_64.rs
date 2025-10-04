@@ -103,7 +103,7 @@ impl Context {
                 // Zero-initialize InterruptStack registers.
                 stack_top = stack_top.sub(INT_REGS_SIZE);
                 stack_top.write_bytes(0_u8, INT_REGS_SIZE);
-                (&mut *stack_top.cast::<InterruptStack>()).init();
+                (*stack_top.cast::<InterruptStack>()).init();
 
                 stack_top = stack_top.sub(core::mem::size_of::<usize>());
                 stack_top
@@ -199,10 +199,10 @@ impl super::Context {
             && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))
         {
             unsafe {
-                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
+                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase);
                 // We have to write to KERNEL_GSBASE, because when the kernel returns to
                 // userspace, it will have executed SWAPGS first.
-                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
+                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase);
             }
             self.arch.fsbase = regs.fsbase as usize;
             self.arch.gsbase = regs.gsbase as usize;
