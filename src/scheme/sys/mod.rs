@@ -68,7 +68,7 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
-const FILES: &[(&'static str, Kind)] = &[
+const FILES: &[(&str, Kind)] = &[
     ("block", Rd(block::resource)),
     ("context", Rd(context::resource)),
     ("cpu", Rd(cpu::resource)),
@@ -206,9 +206,7 @@ impl KernelScheme for SysScheme {
             .get(&id)
             .ok_or(Error::new(EBADF))?
         {
-            Handle::TopLevel | Handle::Resource { data: None, .. } => {
-                return Err(Error::new(EISDIR))
-            }
+            Handle::TopLevel | Handle::Resource { data: None, .. } => Err(Error::new(EISDIR)),
             &Handle::Resource {
                 data: Some(ref data),
                 ..
@@ -267,7 +265,7 @@ impl KernelScheme for SysScheme {
             .get(&id)
             .ok_or(Error::new(EBADF))?
         {
-            Handle::Resource { .. } => return Err(Error::new(ENOTDIR)),
+            Handle::Resource { .. } => Err(Error::new(ENOTDIR)),
             Handle::TopLevel => {
                 let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
                 for (this_idx, (name, _)) in FILES.iter().enumerate().skip(first_index) {

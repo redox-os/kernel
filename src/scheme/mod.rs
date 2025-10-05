@@ -370,12 +370,12 @@ fn init_schemes() -> RwLock<L1, SchemeList> {
 }
 
 /// Get the global schemes list, const
-pub fn schemes<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, SchemeList> {
+pub fn schemes(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, SchemeList> {
     SCHEMES.call_once(init_schemes).read(token)
 }
 
 /// Get the global schemes list, mutable
-pub fn schemes_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, SchemeList> {
+pub fn schemes_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, SchemeList> {
     SCHEMES.call_once(init_schemes).write(token)
 }
 

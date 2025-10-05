@@ -329,7 +329,7 @@ impl Context {
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
-        if let (&Some(ref old), &Some(ref new)) = (&self.addr_space, &addr_space)
+        if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
         {
             return addr_space;
@@ -341,7 +341,7 @@ impl Context {
 
             if let Some(ref prev_addrsp) = self.addr_space {
                 assert!(Arc::ptr_eq(
-                    &this_percpu.current_addrsp.borrow().as_ref().unwrap(),
+                    this_percpu.current_addrsp.borrow().as_ref().unwrap(),
                     prev_addrsp
                 ));
                 prev_addrsp
@@ -383,18 +383,14 @@ impl Context {
         if !self.can_access_regs() {
             return None;
         }
-        let Some(ref kstack) = self.kstack else {
-            return None;
-        };
+        let kstack = self.kstack.as_ref()?;
         Some(unsafe { &*kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
     pub fn regs_mut(&mut self) -> Option<&mut InterruptStack> {
         if !self.can_access_regs() {
             return None;
         }
-        let Some(ref mut kstack) = self.kstack else {
-            return None;
-        };
+        let kstack = self.kstack.as_ref()?;
         Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
     pub fn sigcontrol(&mut self) -> Option<(&Sigcontrol, &SigProcControl, &mut SignalState)> {
@@ -514,14 +510,13 @@ impl Drop for BorrowedHtBuf {
         };
         //TODO: do not allow drop so lock token can be passed in
         let mut token = unsafe { CleanLockToken::new() };
-        match context.write(token.token()) {
-            mut context => {
-                *(if self.head_and_not_tail {
-                    &mut context.syscall_head
-                } else {
-                    &mut context.syscall_tail
-                }) = SyscallFrame::Free(inner);
-            }
+        let mut context = context.write(token.token());
+        {
+            *(if self.head_and_not_tail {
+                &mut context.syscall_head
+            } else {
+                &mut context.syscall_tail
+            }) = SyscallFrame::Free(inner);
         }
     }
 }
@@ -811,7 +806,7 @@ impl FdTbl {
                 let desc = context_fd.description.read();
                 desc.scheme == scheme_id && desc.number == scheme_number
             })
-            .map(|fd| fd.clone())
+            .cloned()
             .ok_or(Error::new(EBADF))
     }
 

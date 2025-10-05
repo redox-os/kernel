@@ -83,7 +83,7 @@ pub fn futex(
     let addr_space_guard = current_addrsp.acquire_read();
 
     let target_virtaddr = VirtualAddress::new(addr);
-    let target_physaddr = validate_and_translate_virt(&*addr_space_guard, target_virtaddr)
+    let target_physaddr = validate_and_translate_virt(&addr_space_guard, target_virtaddr)
         .ok_or(Error::new(EFAULT))?;
 
     match op {
@@ -128,9 +128,7 @@ pub fn futex(
                             return Err(Error::new(EINVAL));
                         }
                         (
-                            u64::from(unsafe {
-                                (*(addr as *const AtomicU64)).load(Ordering::SeqCst)
-                            }),
+                            unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) },
                             val as u64,
                         )
                     }

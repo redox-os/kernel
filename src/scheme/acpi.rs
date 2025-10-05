@@ -300,7 +300,7 @@ impl KernelScheme for AcpiScheme {
 
                 Stat {
                     st_mode: MODE_FILE,
-                    st_size: data.len().try_into().unwrap_or(u64::max_value()),
+                    st_size: data.len().try_into().unwrap_or(u64::MAX),
                     ..Default::default()
                 }
             }

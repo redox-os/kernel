@@ -55,7 +55,7 @@ fn try_stop_context<T>(
     callback: impl FnOnce(&mut Context) -> Result<T>,
 ) -> Result<T> {
     if context::is_current(&context_ref) {
-        return callback(&mut *context_ref.write(token.token()));
+        return callback(&mut context_ref.write(token.token()));
     }
     // Stop process
     let (prev_status, mut running) = {
@@ -85,7 +85,7 @@ fn try_stop_context<T>(
         "process can't have been restarted, we stopped it!"
     );
 
-    let ret = callback(&mut *context);
+    let ret = callback(&mut context);
 
     context.status = prev_status;
 
@@ -401,11 +401,9 @@ impl KernelScheme for ProcScheme {
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
         let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let _handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        match handle {
-            _ => Ok(EventFlags::empty()),
-        }
+        Ok(EventFlags::empty())
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
@@ -491,7 +489,7 @@ impl KernelScheme for ProcScheme {
                 // TODO: Validate flags
                 let result_base = if consume {
                     dst_addr_space.r#move(
-                        Some((&addrspace, &mut *src_addr_space)),
+                        Some((addrspace, &mut *src_addr_space)),
                         src_span,
                         requested_dst_base,
                         src_page_count.get(),
@@ -501,15 +499,15 @@ impl KernelScheme for ProcScheme {
                 } else {
                     let mut dst_addrsp_guard = dst_addr_space.acquire_write();
                     dst_addrsp_guard.mmap(
-                        &dst_addr_space,
+                        dst_addr_space,
                         requested_dst_base,
                         src_page_count,
                         map.flags,
                         &mut notify_files,
                         |dst_page, _, dst_mapper, flusher| {
-                            Ok(Grant::borrow(
+                            Grant::borrow(
                                 Arc::clone(addrspace),
-                                &mut *src_addr_space,
+                                &mut src_addr_space,
                                 src_span.base,
                                 dst_page,
                                 src_span.count,
@@ -519,7 +517,7 @@ impl KernelScheme for ProcScheme {
                                 true,
                                 true,
                                 false,
-                            )?)
+                            )
                         },
                     )?
                 };
@@ -577,9 +575,8 @@ impl KernelScheme for ProcScheme {
             handles.get(&id).ok_or(Error::new(EBADF))?.clone()
         };
 
-        match handle {
-            Handle { context, kind } => kind.kreadoff(id, context, buf, offset, token),
-        }
+        let Handle { context, kind } = handle;
+        kind.kreadoff(id, context, buf, offset, token)
     }
     fn kcall(
         &self,
@@ -600,7 +597,7 @@ impl KernelScheme for ProcScheme {
             return Err(Error::new(EBADF));
         };
 
-        let verb: u8 = (*metadata.get(0).ok_or(Error::new(EINVAL))?)
+        let verb: u8 = (*metadata.first().ok_or(Error::new(EINVAL))?)
             .try_into()
             .map_err(|_| Error::new(EINVAL))?;
         let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
@@ -630,9 +627,8 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
-        match handle {
-            Handle { context, kind } => kind.kwriteoff(id, context, buf, token),
-        }
+        let Handle { context, kind } = handle;
+        kind.kwriteoff(id, context, buf, token)
     }
     fn kfstat(&self, id: usize, buffer: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read(token.token());
@@ -776,20 +772,14 @@ impl KernelScheme for ProcScheme {
 
                             let page = Page::containing_address(VirtualAddress::new(page_addr));
 
-                            match addrspace
-                                .acquire_read()
-                                .grants
-                                .contains(page)
-                                .ok_or(Error::new(EINVAL))?
-                            {
-                                (_, info) => {
-                                    return Ok(OpenResult::External(
-                                        info.file_ref()
-                                            .map(|r| Arc::clone(&r.description))
-                                            .ok_or(Error::new(EBADF))?,
-                                    ))
-                                }
-                            }
+                            let read_lock = addrspace.acquire_read();
+                            let (_, info) =
+                                read_lock.grants.contains(page).ok_or(Error::new(EINVAL))?;
+                            return Ok(OpenResult::External(
+                                info.file_ref()
+                                    .map(|r| Arc::clone(&r.description))
+                                    .ok_or(Error::new(EBADF))?,
+                            ));
                         }
 
                         _ => return Err(Error::new(EINVAL)),
@@ -805,15 +795,12 @@ impl KernelScheme for ProcScheme {
     }
 }
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
-    let (scheme_id, number) = match &*context::current()
+    let file_descriptor = context::current()
         .read(token.token())
         .get_file(FileHandle::from(fd))
-        .ok_or(Error::new(EBADF))?
-        .description
-        .read()
-    {
-        desc => (desc.scheme, desc.number),
-    };
+        .ok_or(Error::new(EBADF))?;
+    let desc = file_descriptor.description.read();
+    let (scheme_id, number) = (desc.scheme, desc.number);
     let scheme = scheme::schemes(token.token())
         .get(scheme_id)
         .ok_or(Error::new(ENODEV))?
@@ -904,7 +891,7 @@ impl ContextHandle {
 
                         // Ignore the rare case of floating point
                         // registers being uninitiated
-                        let _ = context.set_fx_regs(regs);
+                        context.set_fx_regs(regs);
 
                         Ok(mem::size_of::<FloatRegisters>())
                     })
@@ -996,7 +983,7 @@ impl ContextHandle {
                     *status = Status::Runnable;
                     Ok(buf.len())
                 }
-                _ => return Err(Error::new(EINVAL)),
+                _ => Err(Error::new(EINVAL)),
             },
             ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } => {
                 Err(Error::new(EBADF))
@@ -1024,10 +1011,10 @@ impl ContextHandle {
                             },
                         ..
                     } => {
-                        let ft = Arc::clone(&filetable);
+                        let ft = Arc::clone(filetable);
                         *entry.get_mut() = Handle {
                             kind: ContextHandle::Filetable {
-                                filetable: Arc::downgrade(&filetable),
+                                filetable: Arc::downgrade(filetable),
                                 data: data.clone(),
                             },
                             context: Arc::clone(&context),
@@ -1103,7 +1090,7 @@ impl ContextHandle {
                 match context_verb {
                     // TODO: lwp_park/lwp_unpark for bypassing procmgr?
                     ContextVerb::Unstop | ContextVerb::Stop if !privileged => {
-                        return Err(Error::new(EPERM))
+                        Err(Error::new(EPERM))
                     }
                     ContextVerb::Stop => {
                         let mut guard = context.write(token.token());
@@ -1257,7 +1244,7 @@ impl ContextHandle {
 
                 buf.copy_common_bytes_from_slice(src_buf)
             }
-            &ContextHandle::AddrSpace { ref addrspace } => {
+            ContextHandle::AddrSpace { addrspace } => {
                 let Ok(offset) = usize::try_from(offset) else {
                     return Ok(0);
                 };
@@ -1295,7 +1282,7 @@ impl ContextHandle {
             }
 
             ContextHandle::Filetable { data, .. } => read_from(buf, &data, offset),
-            &ContextHandle::MmapMinAddr(ref addrspace) => {
+            ContextHandle::MmapMinAddr(addrspace) => {
                 buf.write_usize(addrspace.acquire_read().mmap_min)?;
                 Ok(mem::size_of::<usize>())
             }
@@ -1339,9 +1326,9 @@ impl ContextHandle {
             }
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
-                let (euid, egid, ens, pid, name) = match context.read(token.token()) {
-                    ref c => (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name),
-                };
+                let c = &context.read(token.token());
+                let (euid, egid, ens, pid, name) =
+                    (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name);
                 let min = name.len().min(debug_name.len());
                 debug_name[..min].copy_from_slice(&name.as_bytes()[..min]);
                 buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {
@@ -1368,7 +1355,7 @@ impl ContextHandle {
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
 }

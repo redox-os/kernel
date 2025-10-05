@@ -176,7 +176,7 @@ impl fmt::Debug for IoApic {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         struct RedirTable<'a>(&'a Mutex<IoApicRegs>);
 
-        impl<'a> fmt::Debug for RedirTable<'a> {
+        impl fmt::Debug for RedirTable<'_> {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 let mut guard = self.0.lock();
 

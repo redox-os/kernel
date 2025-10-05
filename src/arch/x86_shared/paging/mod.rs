@@ -52,13 +52,13 @@ unsafe fn init_pat() {
 
         msr::wrmsr(
             msr::IA32_PAT,
-            pat7 << 56
-                | pat6 << 48
-                | pat5 << 40
-                | pat4 << 32
-                | pat3 << 24
-                | pat2 << 16
-                | pat1 << 8
+            (pat7 << 56)
+                | (pat6 << 48)
+                | (pat5 << 40)
+                | (pat4 << 32)
+                | (pat3 << 24)
+                | (pat2 << 16)
+                | (pat1 << 8)
                 | pat0,
         );
     }

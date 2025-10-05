@@ -61,8 +61,9 @@ impl UnmapResult {
             return Ok(());
         };
 
-        let (scheme_id, number) = match description.write() {
-            ref desc => (desc.scheme, desc.number),
+        let (scheme_id, number) = {
+            let desc = description.write();
+            (desc.scheme, desc.number)
         };
 
         let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
@@ -177,7 +178,7 @@ impl AddrSpaceWrapper {
                 } => continue,
 
                 Provider::PhysBorrowed { base } => Grant::physmap(
-                    base.clone(),
+                    base,
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
                     &mut new.inner.get_mut().table.utable,
@@ -221,7 +222,7 @@ impl AddrSpaceWrapper {
                     src_base,
                     ..
                 } => Grant::borrow_grant(
-                    Arc::clone(&address_space),
+                    Arc::clone(address_space),
                     src_base,
                     grant_base,
                     grant_info,
@@ -1995,9 +1996,7 @@ impl Grant {
                     Provider::AllocatedShared { .. } => Provider::AllocatedShared {
                         is_pinned_userscheme_borrow: false,
                     },
-                    Provider::PhysBorrowed { base } => {
-                        Provider::PhysBorrowed { base: base.clone() }
-                    }
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base },
                     Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
                         file_ref: file_ref.clone(),
                         pin_refcount: 0,
@@ -2097,7 +2096,7 @@ impl GrantInfo {
         )
     }
     pub fn can_extract(&self, unpin: bool) -> bool {
-        !(self.is_pinned() && !unpin)
+        (!self.is_pinned() || unpin)
             | matches!(
                 self.provider,
                 Provider::Allocated {
@@ -2617,8 +2616,9 @@ fn correct_inner<'l>(
             drop(flusher);
             drop(addr_space_guard);
 
-            let (scheme_id, scheme_number) = match file_ref.description.read() {
-                ref desc => (desc.scheme, desc.number),
+            let (scheme_id, scheme_number) = {
+                let desc = &file_ref.description.read();
+                (desc.scheme, desc.number)
             };
             let user_inner = scheme::schemes(token.token())
                 .get(scheme_id)
@@ -2742,7 +2742,7 @@ fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) 
         let Some(info) = get_page_info(base) else {
             return;
         };
-        if info.remove_ref() == None {
+        if info.remove_ref().is_none() {
             unsafe {
                 deallocate_frame(base);
             }
@@ -2800,6 +2800,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
     pub fn flush(&mut self) {
         let pages = core::mem::take(&mut self.state.pagequeue);
 
+        #[expect(clippy::bool_comparison)]
         if pages.is_empty() && core::mem::replace(&mut self.state.dirty, false) == false {
             return;
         }

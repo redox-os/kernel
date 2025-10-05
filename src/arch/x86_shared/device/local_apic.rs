@@ -70,7 +70,7 @@ impl LocalApic {
             self.address = virtaddr.data();
             self.x2 = cpuid()
                 .get_feature_info()
-                .map_or(false, |feature_info| feature_info.has_x2apic());
+                .is_some_and(|feature_info| feature_info.has_x2apic());
 
             if !self.x2 {
                 info!("Detected xAPIC at {:#x}", physaddr.data());
@@ -93,7 +93,7 @@ impl LocalApic {
     unsafe fn init_ap(&mut self) {
         unsafe {
             if self.x2 {
-                wrmsr(IA32_APIC_BASE, rdmsr(IA32_APIC_BASE) | 1 << 10);
+                wrmsr(IA32_APIC_BASE, rdmsr(IA32_APIC_BASE) | (1 << 10));
                 wrmsr(IA32_X2APIC_SIVR, 0x100);
             } else {
                 self.write(0xF0, 0x100);
@@ -138,7 +138,7 @@ impl LocalApic {
         if self.x2 {
             unsafe { rdmsr(IA32_X2APIC_ICR) }
         } else {
-            unsafe { (self.read(0x310) as u64) << 32 | self.read(0x300) as u64 }
+            unsafe { ((self.read(0x310) as u64) << 32) | self.read(0x300) as u64 }
         }
     }
 
