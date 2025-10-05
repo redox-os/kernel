@@ -1,7 +1,7 @@
 use core::{cell::SyncUnsafeCell, mem};
 
-use crate::find_one_sdt;
 use super::sdt::Sdt;
+use crate::find_one_sdt;
 
 /// The Multiple APIC Descriptor Table
 #[derive(Clone, Copy, Debug)]

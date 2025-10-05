@@ -194,24 +194,20 @@ pub fn find_sdt(name: &str) -> Vec<&'static Sdt> {
 
 #[macro_export]
 macro_rules! find_one_sdt {
-    ($name:expr) => {
-        {
-            use $crate::acpi::find_sdt;
-            match find_sdt($name).as_slice() {
-                [] => {
-                    println!("Unable to find {}", $name);
-                    return
-                }
-                [x] => {
-                    *x
-                }
-                x => {
-                    println!("{} {} found, expected 1", x.len(), $name);
-                    return;
-                },
+    ($name:expr) => {{
+        use $crate::acpi::find_sdt;
+        match find_sdt($name).as_slice() {
+            [] => {
+                println!("Unable to find {}", $name);
+                return;
+            }
+            [x] => *x,
+            x => {
+                println!("{} {} found, expected 1", x.len(), $name);
+                return;
             }
         }
-    };
+    }};
 }
 
 pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {

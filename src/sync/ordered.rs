@@ -226,9 +226,9 @@ impl<L: Level, T> Mutex<L, T> {
         lock_token: LockToken<'a, LP>,
     ) -> Option<MutexGuard<'a, L, T>> {
         self.inner.try_lock().map(|inner| MutexGuard {
-                inner,
-                lock_token: LockToken::downgraded(lock_token),
-            })
+            inner,
+            lock_token: LockToken::downgraded(lock_token),
+        })
     }
 
     /// Consumes this Mutex, returning the underlying data.

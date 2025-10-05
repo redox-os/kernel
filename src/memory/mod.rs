@@ -191,7 +191,8 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             debug_assert_eq!(freelist.for_orders[merge_order as usize], Some(sibling));
             debug_assert!(sib_info
                 .next()
-                .frame().is_none_or(|f| f.is_aligned_to_order(merge_order)));
+                .frame()
+                .is_none_or(|f| f.is_aligned_to_order(merge_order)));
             debug_assert_eq!(sib_info.next().order(), merge_order);
             freelist.for_orders[merge_order as usize] = sib_info.next().frame();
         }
@@ -380,7 +381,8 @@ impl Drop for RaiiFrame {
     fn drop(&mut self) {
         if get_page_info(self.inner)
             .expect("RaiiFrame lacking PageInfo")
-            .remove_ref().is_none()
+            .remove_ref()
+            .is_none()
         {
             unsafe {
                 deallocate_frame(self.inner);
@@ -860,7 +862,8 @@ impl PageInfoFree<'_> {
     #[track_caller]
     fn set_next(&self, next: P2Frame) {
         debug_assert!(next
-            .frame().is_none_or(|f| f.is_aligned_to_order(next.order())));
+            .frame()
+            .is_none_or(|f| f.is_aligned_to_order(next.order())));
         self.next.store(next.0, Ordering::Relaxed)
     }
     fn prev(&self) -> P2Frame {
@@ -868,7 +871,8 @@ impl PageInfoFree<'_> {
     }
     fn set_prev(&self, prev: P2Frame) {
         debug_assert!(prev
-            .frame().is_none_or(|f| f.is_aligned_to_order(prev.order())));
+            .frame()
+            .is_none_or(|f| f.is_aligned_to_order(prev.order())));
         self.prev.store(prev.0, Ordering::Relaxed)
     }
     fn mark_used(&self) {

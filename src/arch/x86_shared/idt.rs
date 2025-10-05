@@ -210,8 +210,11 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
 
     #[cfg(target_arch = "x86_64")]
     for i in 0..224 {
-        current_idt[i + 32]
-            .set_func(unsafe { mem::transmute::<usize, unsafe extern "C" fn ()>(__generic_interrupts_start as usize + i * 8) });
+        current_idt[i + 32].set_func(unsafe {
+            mem::transmute::<usize, unsafe extern "C" fn()>(
+                __generic_interrupts_start as usize + i * 8,
+            )
+        });
     }
 
     // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions

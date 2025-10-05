@@ -228,7 +228,7 @@ pub fn rmdir(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
 
 /// Unlink syscall
 pub fn unlink(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = { 
+    let (scheme_ns, caller_ctx) = {
         let ctx = context::current();
         let cx = &ctx.read(token.token());
         (cx.ens, cx.caller_ctx())
@@ -430,12 +430,8 @@ fn fdwrite_inner(
         let (scheme, number) = {
             let current_lock = context::current();
             let current = current_lock.read(token.token());
-            let file_descriptor = current
-                .get_file(socket)
-                .ok_or(Error::new(EBADF))?;
-            let desc = &file_descriptor
-                .description
-                .read();
+            let file_descriptor = current.get_file(socket).ok_or(Error::new(EBADF))?;
+            let desc = &file_descriptor.description.read();
             (desc.scheme, desc.number)
         };
         let scheme = scheme::schemes(token.token())
@@ -488,12 +484,8 @@ fn call_fdread(
         let (scheme, number) = {
             let current_lock = context::current();
             let current = current_lock.read(token.token());
-            let file_descriptor = current
-                .get_file(fd)
-                .ok_or(Error::new(EBADF))?;
-            let desc = file_descriptor
-                .description
-                .read();
+            let file_descriptor = current.get_file(fd).ok_or(Error::new(EBADF))?;
+            let desc = file_descriptor.description.read();
             (desc.scheme, desc.number)
         };
         let scheme = scheme::schemes(token.token())

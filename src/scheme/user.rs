@@ -307,8 +307,8 @@ impl UserInner {
         {
             let current_context = context::current();
             current_context
-                    .write(token.token())
-                    .block("UserScheme::call");
+                .write(token.token())
+                .block("UserScheme::call");
             {
                 let mut states = self.states.lock();
                 states[sqe.tag as usize] = State::Waiting {
@@ -370,8 +370,8 @@ impl UserInner {
                             maybe_eintr?;
 
                             context::current()
-                                    .write(token.token())
-                                    .block("UserInner::call");
+                                .write(token.token())
+                                .block("UserInner::call");
                         }
                         // spurious wakeup
                         State::Waiting {
@@ -403,8 +403,8 @@ impl UserInner {
                             );
                             event::trigger(self.root_id, self.handle_id, EVENT_READ);
                             context::current()
-                                    .write(token.token())
-                                    .block("UserInner::call");
+                                .write(token.token())
+                                .block("UserInner::call");
                         }
 
                         // invalid state
@@ -1075,8 +1075,11 @@ impl UserInner {
                 {
                     let mut context = context.write(token.token());
                     if let Status::HardBlocked {
-                            reason: HardBlockedReason::AwaitingMmap { .. },
-                        } = context.status { context.status = Status::Runnable }
+                        reason: HardBlockedReason::AwaitingMmap { .. },
+                    } = context.status
+                    {
+                        context.status = Status::Runnable
+                    }
                     context.fmap_ret = Some(Frame::containing(frame));
                 }
             }

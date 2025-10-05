@@ -1,4 +1,7 @@
-use core::{fmt::Display, sync::atomic::{AtomicUsize, Ordering}};
+use core::{
+    fmt::Display,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::CPU_COUNT;
 

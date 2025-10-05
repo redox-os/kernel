@@ -69,7 +69,8 @@ impl LocalApic {
 
             self.address = virtaddr.data();
             self.x2 = cpuid()
-                .get_feature_info().is_some_and(|feature_info| feature_info.has_x2apic());
+                .get_feature_info()
+                .is_some_and(|feature_info| feature_info.has_x2apic());
 
             if !self.x2 {
                 info!("Detected xAPIC at {:#x}", physaddr.data());

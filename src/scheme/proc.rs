@@ -772,17 +772,14 @@ impl KernelScheme for ProcScheme {
 
                             let page = Page::containing_address(VirtualAddress::new(page_addr));
 
-                            let read_lock = addrspace
-                                .acquire_read();
-                            let (_, info) = read_lock
-                                .grants
-                                .contains(page)
-                                .ok_or(Error::new(EINVAL))?;
+                            let read_lock = addrspace.acquire_read();
+                            let (_, info) =
+                                read_lock.grants.contains(page).ok_or(Error::new(EINVAL))?;
                             return Ok(OpenResult::External(
                                 info.file_ref()
                                     .map(|r| Arc::clone(&r.description))
                                     .ok_or(Error::new(EBADF))?,
-                            ))
+                            ));
                         }
 
                         _ => return Err(Error::new(EINVAL)),
@@ -802,9 +799,7 @@ fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(Kerne
         .read(token.token())
         .get_file(FileHandle::from(fd))
         .ok_or(Error::new(EBADF))?;
-    let desc = file_descriptor
-        .description
-        .read();
+    let desc = file_descriptor.description.read();
     let (scheme_id, number) = (desc.scheme, desc.number);
     let scheme = scheme::schemes(token.token())
         .get(scheme_id)
@@ -1332,7 +1327,8 @@ impl ContextHandle {
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
                 let c = &context.read(token.token());
-                let (euid, egid, ens, pid, name) = (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name);
+                let (euid, egid, ens, pid, name) =
+                    (c.euid, c.egid, c.ens.get() as u32, c.pid as u32, c.name);
                 let min = name.len().min(debug_name.len());
                 debug_name[..min].copy_from_slice(&name.as_bytes()[..min]);
                 buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {

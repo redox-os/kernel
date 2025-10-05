@@ -82,16 +82,10 @@ impl<T> WaitQueue<T> {
 
             let (s1, s2) = inner.as_slices();
             let s1_bytes = unsafe {
-                core::slice::from_raw_parts(
-                    s1.as_ptr().cast::<u8>(),
-                    core::mem::size_of_val(s1),
-                )
+                core::slice::from_raw_parts(s1.as_ptr().cast::<u8>(), core::mem::size_of_val(s1))
             };
             let s2_bytes = unsafe {
-                core::slice::from_raw_parts(
-                    s2.as_ptr().cast::<u8>(),
-                    core::mem::size_of_val(s2),
-                )
+                core::slice::from_raw_parts(s2.as_ptr().cast::<u8>(), core::mem::size_of_val(s2))
             };
 
             let mut bytes_copied = buf.copy_common_bytes_from_slice(s1_bytes)?;

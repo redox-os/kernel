@@ -458,10 +458,7 @@ pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Opti
 
         // Create the physical memory map
         let offset = bump_allocator.offset();
-        info!(
-            "Permanently used: {} KB",
-            offset.div_ceil(KILOBYTE)
-        );
+        info!("Permanently used: {} KB", offset.div_ceil(KILOBYTE));
 
         crate::memory::init_mm(bump_allocator);
     }

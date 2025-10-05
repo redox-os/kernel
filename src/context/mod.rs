@@ -78,9 +78,7 @@ pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<Co
 }
 
 /// Get the global schemes list, mutable
-pub fn contexts_mut(
-    token: LockToken<'_, L0>,
-) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
+pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
     CONTEXTS.write(token)
 }
 

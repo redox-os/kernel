@@ -69,8 +69,7 @@ pub(super) fn init(madt: Madt) {
                         + crate::PHYS_OFFSET;
                     let stack_end = stack_start + (PAGE_SIZE << 4);
 
-                    let pcr_ptr =
-                        crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
+                    let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
 
                     let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
 
@@ -136,9 +135,7 @@ pub(super) fn init(madt: Madt) {
 
                     // Wait for trampoline ready
                     print!(" Wait...");
-                    while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) }
-                        == 0
-                    {
+                    while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) } == 0 {
                         hint::spin_loop();
                     }
                     print!(" Trampoline...");

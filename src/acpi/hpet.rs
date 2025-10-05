@@ -2,8 +2,10 @@ use core::{mem, ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::find_one_sdt;
-use crate::memory::{map_device_memory, PhysicalAddress, PAGE_SIZE};
+use crate::{
+    find_one_sdt,
+    memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
+};
 
 use super::{sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
 

@@ -206,9 +206,7 @@ impl KernelScheme for SysScheme {
             .get(&id)
             .ok_or(Error::new(EBADF))?
         {
-            Handle::TopLevel | Handle::Resource { data: None, .. } => {
-                Err(Error::new(EISDIR))
-            }
+            Handle::TopLevel | Handle::Resource { data: None, .. } => Err(Error::new(EISDIR)),
             &Handle::Resource {
                 data: Some(ref data),
                 ..

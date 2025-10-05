@@ -130,8 +130,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     // Start in a minimal environment without any stack.
 
     let ctx = context::current();
-    let mut lock = ctx
-        .write(token.token());
+    let mut lock = ctx.write(token.token());
     let regs = &mut lock
         .regs_mut()
         .expect("bootstrap needs registers to be available");

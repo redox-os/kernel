@@ -229,18 +229,17 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
             .read(token.token())
             .name
             .contains("init")
-            {
-                if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
-                    false
-                } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
-                    false
-                } else {
-                    true
-                }
-            } else {
-                false
-            };
-        
+    {
+        if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
+            false
+        } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+            false
+        } else {
+            true
+        }
+    } else {
+        false
+    };
 
     let debug_start = if do_debug {
         let context_lock = crate::context::current();

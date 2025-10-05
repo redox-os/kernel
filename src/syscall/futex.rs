@@ -128,9 +128,7 @@ pub fn futex(
                             return Err(Error::new(EINVAL));
                         }
                         (
-                            unsafe {
-                                (*(addr as *const AtomicU64)).load(Ordering::SeqCst)
-                            },
+                            unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) },
                             val as u64,
                         )
                     }

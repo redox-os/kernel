@@ -1996,9 +1996,7 @@ impl Grant {
                     Provider::AllocatedShared { .. } => Provider::AllocatedShared {
                         is_pinned_userscheme_borrow: false,
                     },
-                    Provider::PhysBorrowed { base } => {
-                        Provider::PhysBorrowed { base }
-                    }
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base },
                     Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
                         file_ref: file_ref.clone(),
                         pin_refcount: 0,
