@@ -2098,7 +2098,7 @@ impl GrantInfo {
         )
     }
     pub fn can_extract(&self, unpin: bool) -> bool {
-        (!self.is_pinned() && unpin)
+        (!self.is_pinned() || unpin)
             | matches!(
                 self.provider,
                 Provider::Allocated {
@@ -2802,7 +2802,8 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
     pub fn flush(&mut self) {
         let pages = core::mem::take(&mut self.state.pagequeue);
 
-        if pages.is_empty() && !core::mem::replace(&mut self.state.dirty, false) {
+        #[expect(clippy::bool_comparison)]
+        if pages.is_empty() && core::mem::replace(&mut self.state.dirty, false) == false {
             return;
         }
 
