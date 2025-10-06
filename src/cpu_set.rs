@@ -1,6 +1,7 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
-
-use alloc::string::{String, ToString};
+use core::{
+    fmt::Display,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::CPU_COUNT;
 
@@ -60,12 +61,10 @@ fn parts(id: LogicalCpuId) -> (usize, u32) {
 }
 impl LogicalCpuSet {
     pub const fn empty() -> Self {
-        const ZEROES: AtomicUsize = AtomicUsize::new(0);
-        Self([ZEROES; SET_WORDS])
+        Self([const { AtomicUsize::new(0) }; SET_WORDS])
     }
     pub const fn all() -> Self {
-        const ONES: AtomicUsize = AtomicUsize::new(!0);
-        Self([ONES; SET_WORDS])
+        Self([const { AtomicUsize::new(!0) }; SET_WORDS])
     }
     pub fn contains(&mut self, id: LogicalCpuId) -> bool {
         let (word, bit) = parts(id);
@@ -91,7 +90,7 @@ impl LogicalCpuSet {
         // TODO: Will this be optimized away?
         self.0.iter_mut().enumerate().flat_map(move |(i, w)| {
             (0..usize::BITS).filter_map(move |b| {
-                if *w.get_mut() & 1 << b != 0 {
+                if *w.get_mut() & (1 << b) != 0 {
                     Some(LogicalCpuId::new(i as u32 * usize::BITS + b))
                 } else {
                     None
@@ -101,27 +100,24 @@ impl LogicalCpuSet {
     }
 }
 
-impl ToString for LogicalCpuSet {
-    fn to_string(&self) -> String {
-        use core::fmt::Write;
-
+impl Display for LogicalCpuSet {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let cpu_count = crate::cpu_count();
 
-        let mut ret = String::new();
         let raw = self.to_raw();
         let words = raw.get(..(cpu_count / usize::BITS) as usize).unwrap_or(&[]);
         for (i, word) in words.iter().enumerate() {
             if i != 0 {
-                write!(ret, "_").unwrap();
+                write!(f, "_")?;
             }
             let word = if i == words.len() - 1 {
                 *word & ((1_usize << (cpu_count % usize::BITS)) - 1)
             } else {
                 *word
             };
-            write!(ret, "{word:x}").unwrap();
+            write!(f, "{word:x}")?;
         }
-        ret
+        Ok(())
     }
 }
 

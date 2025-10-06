@@ -1,5 +1,5 @@
 use alloc::{string::String, vec::Vec};
-use core::{ascii, mem};
+use core::{ascii, fmt::Debug, mem};
 
 use super::{
     copy_path_to_buf,
@@ -13,7 +13,7 @@ use crate::{sync::CleanLockToken, syscall::error::Result};
 
 struct ByteStr<'a>(&'a [u8]);
 
-impl<'a> ::core::fmt::Debug for ByteStr<'a> {
+impl Debug for ByteStr<'_> {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         write!(f, "\"")?;
         for i in self.0 {
@@ -61,13 +61,13 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_DUP => format!(
             "dup({}, {:?})",
             b,
-            debug_buf(c, d).as_ref().map(|b| ByteStr(&*b)),
+            debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
         ),
         SYS_DUP2 => format!(
             "dup2({}, {}, {:?})",
             b,
             c,
-            debug_buf(d, e).as_ref().map(|b| ByteStr(&*b)),
+            debug_buf(d, e).as_ref().map(|b| ByteStr(b)),
         ),
         SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
@@ -222,6 +222,8 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
         return;
     }
 
+    #[expect(clippy::overly_complex_bool_expr)]
+    #[expect(clippy::needless_bool)]
     let do_debug = if false
         && crate::context::current()
             .read(token.token())

@@ -26,11 +26,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
             let (contexts, mut token) = contexts.token_split();
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
                 let context = context_ref.read(token.token());
-                rows.push((
-                    context.pid,
-                    context.name.clone(),
-                    context.files.read().clone(),
-                ));
+                rows.push((context.pid, context.name, context.files.read().clone()));
             }
         }
         rows.sort_by_key(|row| row.0);

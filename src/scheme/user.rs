@@ -8,7 +8,6 @@ use core::{
     mem::size_of,
     num::NonZeroUsize,
     sync::atomic::{AtomicBool, Ordering},
-    usize,
 };
 use slab::Slab;
 use spin::{Mutex, RwLock};
@@ -307,11 +306,9 @@ impl UserInner {
 
         {
             let current_context = context::current();
-            {
-                current_context
-                    .write(token.token())
-                    .block("UserScheme::call")
-            };
+            current_context
+                .write(token.token())
+                .block("UserScheme::call");
             {
                 let mut states = self.states.lock();
                 states[sqe.tag as usize] = State::Waiting {
@@ -372,11 +369,9 @@ impl UserInner {
                             drop(states);
                             maybe_eintr?;
 
-                            {
-                                context::current()
-                                    .write(token.token())
-                                    .block("UserInner::call")
-                            };
+                            context::current()
+                                .write(token.token())
+                                .block("UserInner::call");
                         }
                         // spurious wakeup
                         State::Waiting {
@@ -407,11 +402,9 @@ impl UserInner {
                                 token,
                             );
                             event::trigger(self.root_id, self.handle_id, EVENT_READ);
-                            {
-                                context::current()
-                                    .write(token.token())
-                                    .block("UserInner::call")
-                            };
+                            context::current()
+                                .write(token.token())
+                                .block("UserInner::call");
                         }
 
                         // invalid state
@@ -469,9 +462,9 @@ impl UserInner {
                 ONE,
                 PROT_READ,
                 |dst_page, flags, mapper, flusher| {
-                    Ok(Grant::allocated_shared_one_page(
+                    Grant::allocated_shared_one_page(
                         tail_frame, dst_page, flags, mapper, flusher, is_pinned,
-                    )?)
+                    )
                 },
             )?
         };
@@ -612,9 +605,9 @@ impl UserInner {
                 &mut Vec::new(),
                 move |dst_page, page_flags, mapper, flusher| {
                     let is_pinned = true;
-                    Ok(Grant::allocated_shared_one_page(
+                    Grant::allocated_shared_one_page(
                         frame, dst_page, page_flags, mapper, flusher, is_pinned,
-                    )?)
+                    )
                 },
             )?;
 
@@ -664,9 +657,9 @@ impl UserInner {
                     // unmap them is to respond to the scheme socket.
                     let is_pinned_userscheme_borrow = true;
 
-                    Ok(Grant::borrow(
+                    Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut *cur_space_lock.acquire_write(),
+                        &mut cur_space_lock.acquire_write(),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -676,7 +669,7 @@ impl UserInner {
                         eager,
                         allow_phys,
                         is_pinned_userscheme_borrow,
-                    )?)
+                    )
                 },
             )?;
         }
@@ -709,9 +702,9 @@ impl UserInner {
                 &mut Vec::new(),
                 move |dst_page, page_flags, mapper, flusher| {
                     let is_pinned = true;
-                    Ok(Grant::allocated_shared_one_page(
+                    Grant::allocated_shared_one_page(
                         frame, dst_page, page_flags, mapper, flusher, is_pinned,
-                    )?)
+                    )
                 },
             )?;
 
@@ -751,7 +744,7 @@ impl UserInner {
         let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
 
         if self.v2 {
-            return match self
+            match self
                 .todo
                 .receive_into_user(buf, block, "UserInner::read (v2)", token)
             {
@@ -762,7 +755,7 @@ impl UserInner {
                 // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
                 // occurred, return that.
                 Err(error) => Err(error),
-            };
+            }
         } else {
             let mut bytes_read = 0;
 
@@ -983,7 +976,7 @@ impl UserInner {
                 }),
                 token,
             )?,
-            ParsedCqe::ResponseWithMultipleFds { tag, num_fds } => {
+            ParsedCqe::ResponseWithMultipleFds { tag, num_fds: _ } => {
                 self.respond(tag, Response::MultipleFds(None), token)?;
             }
             ParsedCqe::ObtainFd {
@@ -1081,11 +1074,11 @@ impl UserInner {
 
                 {
                     let mut context = context.write(token.token());
-                    match context.status {
-                        Status::HardBlocked {
-                            reason: HardBlockedReason::AwaitingMmap { .. },
-                        } => context.status = Status::Runnable,
-                        _ => (),
+                    if let Status::HardBlocked {
+                        reason: HardBlockedReason::AwaitingMmap { .. },
+                    } = context.status
+                    {
+                        context.status = Status::Runnable
                     }
                     context.fmap_ret = Some(Frame::containing(frame));
                 }
@@ -1150,9 +1143,7 @@ impl UserInner {
 
                         match context.upgrade() {
                             Some(context) => {
-                                {
-                                    context.write(token.token()).unblock()
-                                };
+                                context.write(token.token()).unblock();
                                 *o = State::Responded(response);
                             }
                             _ => {
@@ -1741,12 +1732,10 @@ impl KernelScheme for UserScheme {
 
     fn fchown(&self, file: usize, uid: u32, gid: u32, token: &mut CleanLockToken) -> Result<()> {
         {
-            match context::current().read(token.token()) {
-                ref cx => {
-                    if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
-                        return Err(Error::new(EPERM));
-                    }
-                }
+            let ctx = context::current();
+            let cx = &ctx.read(token.token());
+            if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
+                return Err(Error::new(EPERM));
             }
         }
 
@@ -2146,7 +2135,7 @@ impl KernelScheme for UserScheme {
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
         }
-        let res = inner.call_extended_inner(None, sqe, &mut address.span(), token)?;
+        let res = inner.call_extended_inner(None, sqe, address.span(), token)?;
 
         match res {
             Response::Regular(res, _) => Error::demux(res),
@@ -2263,7 +2252,7 @@ fn uid_gid_hack_merge([uid, gid]: [u32; 2]) -> u64 {
     u64::from(uid) | (u64::from(gid) << 32)
 }
 fn current_uid_gid(token: &mut CleanLockToken) -> [u32; 2] {
-    match context::current().read(token.token()) {
-        ref p => [p.euid, p.egid],
-    }
+    let ctx = context::current();
+    let p = &ctx.read(token.token());
+    [p.euid, p.egid]
 }

@@ -28,12 +28,12 @@ pub fn ipi(kind: IpiKind, target: IpiTarget) {
 
     #[cfg(feature = "profiling")]
     if matches!(kind, IpiKind::Profile) {
-        let icr = (target as u64) << 18 | 1 << 14 | 0b100 << 8;
+        let icr = ((target as u64) << 18) | (1 << 14) | (0b100 << 8);
         unsafe { the_local_apic().set_icr(icr) };
         return;
     }
 
-    let icr = (target as u64) << 18 | 1 << 14 | (kind as u64);
+    let icr = ((target as u64) << 18) | (1 << 14) | (kind as u64);
     unsafe { the_local_apic().set_icr(icr) };
 }
 

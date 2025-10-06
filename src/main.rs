@@ -17,8 +17,8 @@
 #![allow(clippy::or_fun_call)]
 // This is needed in some cases, like for syscall
 #![allow(clippy::too_many_arguments)]
-// There is no harm in this being done
-#![allow(clippy::useless_format)]
+// Used to allow stuff like 1 << 0 and 1 * 1024 * 1024
+#![allow(clippy::identity_op)]
 // TODO: address ocurrances and then deny
 #![warn(clippy::not_unsafe_ptr_arg_deref)]
 // TODO: address ocurrances and then deny

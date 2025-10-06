@@ -95,7 +95,7 @@ unsafe fn debug_caps(hpet: &mut Hpet) {
         );
         // The NUM_TIM_CAP field contains the index of the last timer.
         // Add 1 to get the amount of timers.
-        trace!("    timers: {}", (capability >> 8) as u8 & 0x1F + 1);
+        trace!("    timers: {}", ((capability >> 8) as u8 & 0x1F) + 1);
 
         let t0_capabilities = hpet.read_u64(T0_CONFIG_CAPABILITY_OFFSET);
         trace!(

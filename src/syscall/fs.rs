@@ -76,8 +76,10 @@ fn is_legacy(path_buf: &String) -> bool {
 
 /// Open syscall
 pub fn open(raw_path: UserSliceRo, flags: usize, token: &mut CleanLockToken) -> Result<FileHandle> {
-    let (pid, uid, gid, scheme_ns) = match context::current().read(token.token()) {
-        ref cx => (cx.pid.into(), cx.euid, cx.egid, cx.ens),
+    let (pid, uid, gid, scheme_ns) = {
+        let ctx = context::current();
+        let cx = &ctx.read(token.token());
+        (cx.pid, cx.euid, cx.egid, cx.ens)
     };
 
     // TODO: BorrowedHtBuf!
@@ -91,7 +93,7 @@ pub fn open(raw_path: UserSliceRo, flags: usize, token: &mut CleanLockToken) -> 
     // Display a deprecation warning for any usage of the legacy scheme syntax (scheme:/path)
     // FIXME remove entries from this list as the respective programs get updated
     if path_buf.contains(':') && !is_legacy(&path_buf) {
-        let name = context::current().read(token.token()).name.clone();
+        let name = context::current().read(token.token()).name;
         if name.contains("cosmic") && (path_buf == "event:" || path_buf.starts_with("time:")) {
             // FIXME cosmic apps likely need crate updates
         } else {
@@ -200,8 +202,10 @@ pub fn openat(
 }
 /// rmdir syscall
 pub fn rmdir(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match context::current().read(token.token()) {
-        ref cx => (cx.ens, cx.caller_ctx()),
+    let (scheme_ns, caller_ctx) = {
+        let ctx = context::current();
+        let cx = &ctx.read(token.token());
+        (cx.ens, cx.caller_ctx())
     };
 
     /*
@@ -224,8 +228,10 @@ pub fn rmdir(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
 
 /// Unlink syscall
 pub fn unlink(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = match context::current().read(token.token()) {
-        ref cx => (cx.ens, cx.caller_ctx()),
+    let (scheme_ns, caller_ctx) = {
+        let ctx = context::current();
+        let cx = &ctx.read(token.token());
+        (cx.ens, cx.caller_ctx())
     };
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -424,14 +430,9 @@ fn fdwrite_inner(
         let (scheme, number) = {
             let current_lock = context::current();
             let current = current_lock.read(token.token());
-            match current
-                .get_file(socket)
-                .ok_or(Error::new(EBADF))?
-                .description
-                .read()
-            {
-                ref desc => (desc.scheme, desc.number),
-            }
+            let file_descriptor = current.get_file(socket).ok_or(Error::new(EBADF))?;
+            let desc = &file_descriptor.description.read();
+            (desc.scheme, desc.number)
         };
         let scheme = scheme::schemes(token.token())
             .get(scheme)
@@ -483,14 +484,9 @@ fn call_fdread(
         let (scheme, number) = {
             let current_lock = context::current();
             let current = current_lock.read(token.token());
-            match current
-                .get_file(fd)
-                .ok_or(Error::new(EBADF))?
-                .description
-                .read()
-            {
-                ref desc => (desc.scheme, desc.number),
-            }
+            let file_descriptor = current.get_file(fd).ok_or(Error::new(EBADF))?;
+            let desc = file_descriptor.description.read();
+            (desc.scheme, desc.number)
         };
         let scheme = scheme::schemes(token.token())
             .get(scheme)
@@ -588,8 +584,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 }
 
 pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, scheme_ns) = match context::current().read(token.token()) {
-        ref cx => (cx.caller_ctx(), cx.ens),
+    let (caller_ctx, scheme_ns) = {
+        let ctx = context::current();
+        let cx = &ctx.read(token.token());
+        (cx.caller_ctx(), cx.ens)
     };
     let file = context::current()
         .read(token.token())
@@ -622,8 +620,10 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, scheme_ns) = match context::current().read(token.token()) {
-        ref cx => (cx.caller_ctx(), cx.ens),
+    let (caller_ctx, scheme_ns) = {
+        let ctx = context::current();
+        let cx = &ctx.read(token.token());
+        (cx.caller_ctx(), cx.ens)
     };
     let file = context::current()
         .read(token.token())
@@ -844,9 +844,8 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) ->
             ))
         })?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
-        match desc_arc.write().offset {
-            ref mut offset => *offset = offset.saturating_add(bytes_read as u64),
-        }
+        let offset = &mut desc_arc.write().offset;
+        *offset = offset.saturating_add(bytes_read as u64)
     }
     Ok(bytes_read)
 }
@@ -865,9 +864,8 @@ pub fn sys_write(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -
             ))
         })?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
-        match desc_arc.write().offset {
-            ref mut offset => *offset = offset.saturating_add(bytes_written as u64),
-        }
+        let offset = &mut desc_arc.write().offset;
+        *offset = offset.saturating_add(bytes_written as u64)
     }
     Ok(bytes_written)
 }

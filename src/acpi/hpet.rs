@@ -2,9 +2,12 @@ use core::{mem, ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::memory::{map_device_memory, PhysicalAddress, PAGE_SIZE};
+use crate::{
+    find_one_sdt,
+    memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
+};
 
-use super::{find_sdt, sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
+use super::{sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug)]
@@ -24,13 +27,7 @@ pub struct Hpet {
 
 impl Hpet {
     pub fn init() {
-        let hpet_sdt = find_sdt("HPET");
-        let hpet = if hpet_sdt.len() == 1 {
-            Hpet::new(hpet_sdt[0])
-        } else {
-            println!("Unable to find HPET");
-            return;
-        };
+        let hpet = Hpet::new(find_one_sdt!("HPET"));
 
         if let Some(hpet) = hpet {
             println!("  HPET: {:X}", hpet.hpet_number);

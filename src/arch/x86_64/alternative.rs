@@ -126,7 +126,7 @@ pub unsafe fn early_init(bsp: bool) {
             return;
         }
 
-        overwrite(&relocs, enable);
+        overwrite(relocs, enable);
 
         if cfg!(not(feature = "self_modifying")) {
             assert!(

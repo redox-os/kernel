@@ -1,6 +1,6 @@
-///! This module provides a context-switching mechanism that utilizes a simple round-robin scheduler.
-///! The scheduler iterates over available contexts, selecting the next context to run, while
-///! handling process states and synchronization.
+//! This module provides a context-switching mechanism that utilizes a simple round-robin scheduler.
+//! The scheduler iterates over available contexts, selecting the next context to run, while
+//! handling process states and synchronization.
 use core::{
     cell::{Cell, RefCell},
     hint, mem,
@@ -16,7 +16,6 @@ use crate::{
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
-    ptrace,
     sync::CleanLockToken,
     time,
 };
@@ -208,7 +207,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
                 // Check if the context is runnable and can be switched to.
                 if let UpdateResult::CanSwitch =
-                    unsafe { update_runnable(&mut *next_context_guard, cpu_id) }
+                    unsafe { update_runnable(&mut next_context_guard, cpu_id) }
                 {
                     // Store locks for previous and next context and break out from loop
                     // for the switch

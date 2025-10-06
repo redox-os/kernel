@@ -225,13 +225,10 @@ impl<L: Level, T> Mutex<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<MutexGuard<'a, L, T>> {
-        match self.inner.try_lock() {
-            Some(inner) => Some(MutexGuard {
-                inner,
-                lock_token: LockToken::downgraded(lock_token),
-            }),
-            None => None,
-        }
+        self.inner.try_lock().map(|inner| MutexGuard {
+            inner,
+            lock_token: LockToken::downgraded(lock_token),
+        })
     }
 
     /// Consumes this Mutex, returning the underlying data.
@@ -356,7 +353,7 @@ pub struct RwLockWriteGuard<'a, L: Level, T> {
     lock_token: LockToken<'a, L>,
 }
 
-impl<'a, L: Level, T> RwLockWriteGuard<'a, L, T> {
+impl<L: Level, T> RwLockWriteGuard<'_, L, T> {
     /// Split the guard into two parts, the first a mutable reference to the held content
     /// the second a [`LockToken`] that can be used for further locking
     pub fn token_split(&mut self) -> (&mut T, LockToken<'_, L>) {
@@ -364,7 +361,7 @@ impl<'a, L: Level, T> RwLockWriteGuard<'a, L, T> {
     }
 }
 
-impl<'a, L: Level, T> core::ops::Deref for RwLockWriteGuard<'a, L, T> {
+impl<L: Level, T> core::ops::Deref for RwLockWriteGuard<'_, L, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -372,7 +369,7 @@ impl<'a, L: Level, T> core::ops::Deref for RwLockWriteGuard<'a, L, T> {
     }
 }
 
-impl<'a, L: Level, T> core::ops::DerefMut for RwLockWriteGuard<'a, L, T> {
+impl<L: Level, T> core::ops::DerefMut for RwLockWriteGuard<'_, L, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner.deref_mut()
     }
@@ -384,7 +381,7 @@ pub struct RwLockReadGuard<'a, L: Level, T> {
     lock_token: LockToken<'a, L>,
 }
 
-impl<'a, L: Level, T> RwLockReadGuard<'a, L, T> {
+impl<L: Level, T> RwLockReadGuard<'_, L, T> {
     /// Split the guard into two parts, the first a reference to the held content
     /// the second a [`LockToken`] that can be used for further locking
     pub fn token_split(&mut self) -> (&T, LockToken<'_, L>) {
@@ -392,7 +389,7 @@ impl<'a, L: Level, T> RwLockReadGuard<'a, L, T> {
     }
 }
 
-impl<'a, L: Level, T> core::ops::Deref for RwLockReadGuard<'a, L, T> {
+impl<L: Level, T> core::ops::Deref for RwLockReadGuard<'_, L, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

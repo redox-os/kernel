@@ -403,7 +403,7 @@ macro_rules! interrupt_stack {
             inner = sym inner,
             IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
 
-            PCR_GDT_OFFSET = const(core::mem::offset_of!(crate::gdt::ProcessorControlRegion, gdt)),
+            PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::gdt::ProcessorControlRegion, gdt)),
             );
         }
     };

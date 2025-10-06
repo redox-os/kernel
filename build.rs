@@ -23,6 +23,7 @@ fn parse_kconfig(arch: &str) -> Option<()> {
         .as_table()
         .unwrap();
 
+    #[expect(clippy::format_collect)] // TODO: remove once version is bumped
     let features_list = altfeatures
         .keys()
         .map(|feat| format!(", {feat:?}"))

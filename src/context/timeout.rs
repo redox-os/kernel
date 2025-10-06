@@ -30,7 +30,7 @@ fn init_registry() -> Mutex<L1, Registry> {
 }
 
 /// Get the global timeouts list
-fn registry<'a>(token: LockToken<'a, L0>) -> MutexGuard<'a, L1, Registry> {
+fn registry(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, Registry> {
     REGISTRY.call_once(init_registry).lock(token)
 }
 

@@ -27,7 +27,7 @@ impl StackTrace {
             let fp = *(self.fp as *const usize);
             let pc_ptr = fp.checked_add(mem::size_of::<usize>())?;
             Some(Self {
-                fp: fp,
+                fp,
                 pc_ptr: pc_ptr as *const usize,
             })
         }

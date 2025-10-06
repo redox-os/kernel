@@ -1,6 +1,7 @@
 use core::{cell::SyncUnsafeCell, mem};
 
-use super::{find_sdt, sdt::Sdt};
+use super::sdt::Sdt;
+use crate::find_one_sdt;
 
 /// The Multiple APIC Descriptor Table
 #[derive(Clone, Copy, Debug)]
@@ -30,13 +31,7 @@ pub const FLAG_PCAT: u32 = 1;
 
 impl Madt {
     pub fn init() {
-        let madt_sdt = find_sdt("APIC");
-        let madt = if madt_sdt.len() == 1 {
-            Madt::new(madt_sdt[0])
-        } else {
-            println!("Unable to find MADT");
-            return;
-        };
+        let madt = Madt::new(find_one_sdt!("APIC"));
 
         if let Some(madt) = madt {
             // safe because no APs have been started yet.

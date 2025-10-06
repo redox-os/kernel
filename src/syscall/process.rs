@@ -52,7 +52,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         guard.owner_proc_id
     };
     if let Some(owner) = owner {
-        let _ = event::trigger(
+        event::trigger(
             GlobalSchemes::Proc.scheme_id(),
             owner.get(),
             EventFlags::EVENT_READ,
@@ -129,15 +129,14 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
 
     // Start in a minimal environment without any stack.
 
-    match context::current()
-        .write(token.token())
+    let ctx = context::current();
+    let mut lock = ctx.write(token.token());
+    let regs = &mut lock
         .regs_mut()
-        .expect("bootstrap needs registers to be available")
+        .expect("bootstrap needs registers to be available");
     {
-        ref mut regs => {
-            regs.init();
-            regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
-        }
+        regs.init();
+        regs.set_instr_pointer(bootstrap_entry.try_into().unwrap());
     }
 }
 

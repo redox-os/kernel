@@ -151,13 +151,10 @@ impl KernelScheme for RootScheme {
             handles
                 .iter()
                 .find_map(|(_id, handle)| {
-                    match handle {
-                        Handle::Scheme(inner) => {
-                            if path == inner.name.as_ref() {
-                                return Some(inner.clone());
-                            }
+                    if let Handle::Scheme(inner) = handle {
+                        if path == inner.name.as_ref() {
+                            return Some(inner.clone());
                         }
-                        _ => (),
                     }
                     None
                 })
@@ -248,11 +245,8 @@ impl KernelScheme for RootScheme {
             .write(token.token())
             .remove(&file)
             .ok_or(Error::new(EBADF))?;
-        match handle {
-            Handle::Scheme(inner) => {
-                scheme::schemes_mut(token.token()).remove(inner.scheme_id);
-            }
-            _ => (),
+        if let Handle::Scheme(inner) = handle {
+            scheme::schemes_mut(token.token()).remove(inner.scheme_id);
         }
         Ok(())
     }

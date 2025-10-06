@@ -117,7 +117,7 @@ pub struct SerialPort {
 impl SerialPort {
     pub const fn new(base: usize, cts_event_walkaround: bool) -> SerialPort {
         SerialPort {
-            base: base,
+            base,
             data_reg: 0x00,
             rcv_stat_reg: 0x04,
             flag_reg: 0x18,
@@ -133,7 +133,7 @@ impl SerialPort {
             dma_ctrl_reg: 0x48,
             ifls: 0x12, // RX4_8 | TX4_8
             fifo_size: 32,
-            cts_event_walkaround: cts_event_walkaround,
+            cts_event_walkaround,
         }
     }
 
