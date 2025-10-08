@@ -184,6 +184,19 @@ pub unsafe fn user_stack_trace(start_rbp: usize) {
 
             println!("  FP {:>016x}: PC {:>016x}", rbp, rip);
 
+            let next_rbp = match read_from_user_space(rbp, page_tables) {
+                Some(val) => val,
+                None => {
+                    println!("  {:>016x}: <Failed to read next FP>", rbp);
+                    break;
+                }
+            };
+
+            if next_rbp <= rbp {
+                println!("  <Invalid next frame pointer; stack walk ended>");
+                break;
+            }
+
             rbp = match read_from_user_space(rbp, page_tables) {
                 Some(val) => val,
                 None => {
@@ -200,33 +213,18 @@ fn read_from_user_space(
     user_vaddr: usize,
     page_tables: &PageMapper<X8664Arch, TheFrameAllocator>,
 ) -> Option<usize> {
-    // 1. Convert the raw address into a `VirtualAddress` struct.
+    use crate::{arch::paging::Page, memory::PAGE_SIZE};
+
     let virt_addr = VirtualAddress::new(user_vaddr);
+    let offset = user_vaddr % PAGE_SIZE;
 
-    // 2. Use the `translate` method of the user's page table.
-    // This is the most important step. It checks if the address is mapped
-    // and returns the corresponding physical address if it is.
-    // If the address is invalid, it will safely return `None`.
-    if let Some(phys_addr) = page_tables.translate(virt_addr) {
-        // 3. Convert the physical address to a virtual address that the kernel can access.
-        // The kernel maps all physical memory at a high virtual offset (`KERNEL_OFFSET`).
-
-        use crate::arch::consts::KERNEL_OFFSET;
-        let kernel_vaddr = KERNEL_OFFSET + phys_addr.data();
-
-        // 4. Now that we have a valid kernel virtual address, we can safely
-        // dereference it. We use `read_volatile` to prevent the compiler
-        // from making optimizations that might be invalid for memory-mapped I/O
-        // or shared memory.
-        unsafe {
-            // It's a good practice to check for null pointers, even though a translated
-            // address is unlikely to be null.
-            if kernel_vaddr != 0 {
-                return Some((kernel_vaddr as *const usize).read_volatile());
-            }
+    unsafe {
+        if let Some(frame) = page_tables.table().index_of(virt_addr) {
+            use rmm::{FrameAllocator, PageFlags};
+            let entry = page_tables.table().entry(frame).unwrap();
+            return Some(entry.data());
         }
     }
 
-    // If the address translation failed, the pointer is invalid. Return None.
     None
 }
