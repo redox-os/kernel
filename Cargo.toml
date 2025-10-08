@@ -2,7 +2,7 @@
 name = "kernel"
 version = "0.5.12"
 build = "build.rs"
-edition = "2021"
+edition = "2024"
 
 [build-dependencies]
 cc = "1.0"
@@ -10,26 +10,23 @@ rustc-cfg = "0.5"
 toml = "0.8"
 
 [dependencies]
-bitflags = "2"
+arrayvec = { version = "0.7.4", default-features = false }
 bitfield = "0.13.2"
+bitflags = "2"
 hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "inline-more"] }
 linked_list_allocator = "0.9.0"
-log = "0.4"
 redox-path = "0.2.0"
 redox_syscall = { git = "https://gitlab.redox-os.org/redox-os/syscall.git", branch = "master", default-features = false }
-slab_allocator = { path = "slab_allocator", optional = true }
-spin = "0.9.8"
-spinning_top = { version = "0.3", features = ["arc_lock"] }
 rmm = { path = "rmm", default-features = false }
-arrayvec = { version = "0.7.4", default-features = false }
 slab = { version = "0.4", default-features = false }
+spin = { version = "0.9.8" }
 # TODO: Remove
 indexmap = { version = "2.5.0", default-features = false }
 
-[dependencies.goblin]
-version = "0.2.1"
+[dependencies.object]
+version = "0.37.1"
 default-features = false
-features = ["elf32", "elf64"]
+features = ["read_core", "elf"]
 
 [dependencies.rustc-demangle]
 version = "0.1.16"
@@ -49,10 +46,8 @@ sbi-rt = "0.0.3"
 [features]
 default = [
   "acpi",
-  #TODO: issues with Alder Lake and newer CPUs:
-  #This may be because of mismatch between cpu id and apic id
+  #"debugger",
   "multi_core",
-  "graphical_debug",
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
@@ -63,7 +58,6 @@ default = [
 self_modifying = []
 
 acpi = []
-graphical_debug = []
 lpss_debug = []
 multi_core = ["acpi"]
 profiling = []
@@ -72,7 +66,6 @@ pti = []
 qemu_debug = []
 serial_debug = []
 system76_ec_debug = []
-slab = ["slab_allocator"]
 sys_stat = []
 x86_kvm_pv = []
 

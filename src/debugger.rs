@@ -1,266 +1,64 @@
 use crate::{
-    context::Context,
+    context::{context::SyscallFrame, Context, ContextLock},
+    memory::{get_page_info, the_zeroed_frame, Frame, RefCount},
     paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
+    sync::CleanLockToken,
 };
-use spinning_top::RwSpinlock;
+use alloc::sync::Arc;
+use hashbrown::{HashMap, HashSet};
 
-//TODO: combine arches into one function (aarch64 one is newest)
-
-// Super unsafe due to page table switching and raw pointers!
-#[cfg(target_arch = "aarch64")]
-pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
-    use hashbrown::HashSet;
-
-    use crate::memory::{get_page_info, RefCount};
-
-    println!("DEBUGGER START");
-    println!();
-
-    let mut tree = HashMap::new();
-
-    let old_table = RmmA::table(TableKind::User);
-
-    let mut spaces = HashSet::new();
-
-    for (id, context_lock) in crate::context::contexts().iter() {
-        if target_id.map_or(false, |target_id| *id != target_id) {
-            continue;
-        }
-        let context = context_lock.read();
-        println!("{}: {}", (*id).get(), context.name);
-
-        println!("status: {:?}", context.status);
-        if !context.status_reason.is_empty() {
-            println!("reason: {}", context.status_reason);
-        }
-
-        // Switch to context page table to ensure syscall debug and stack dump will work
-        if let Some(ref space) = context.addr_space {
-            let new_as = spaces.insert(space.acquire_read().table.utable.table().phys().data());
-
-            RmmA::set_table(
-                TableKind::User,
-                space.acquire_read().table.utable.table().phys(),
-            );
-            check_consistency(&mut *space.acquire_write(), new_as, &mut tree);
-
-            if let Some([a, b, c, d, e, f]) = context.current_syscall() {
-                println!(
-                    "syscall: {}",
-                    crate::syscall::debug::format_call(a, b, c, d, e, f)
-                );
-            }
-
-            {
-                let space = space.acquire_read();
-                if !space.grants.is_empty() {
-                    println!("grants:");
-                    for (base, grant) in space.grants.iter() {
-                        println!(
-                            "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
-                            base.start_address().data(),
-                            base.next_by(grant.page_count() - 1).start_address().data() + 0xFFF,
-                            grant.page_count() * PAGE_SIZE,
-                            grant.provider,
-                        );
-                    }
-                }
-            }
-
-            if let Some(regs) = context.regs() {
-                println!("regs:");
-                regs.dump();
-
-                let mut sp = regs.iret.sp_el0;
-                println!("stack: {:>016x}", sp);
-                //Maximum 64 usizes
-                for _ in 0..64 {
-                    if context.addr_space.as_ref().map_or(false, |space| {
-                        space
-                            .acquire_read()
-                            .table
-                            .utable
-                            .translate(crate::paging::VirtualAddress::new(sp))
-                            .is_some()
-                    }) {
-                        let value = *(sp as *const usize);
-                        println!("    {:>016x}: {:>016x}", sp, value);
-                        if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
-                            sp = next_sp;
-                        } else {
-                            println!("    {:>016x}: OVERFLOW", sp);
-                            break;
-                        }
-                    } else {
-                        println!("    {:>016x}: GUARD PAGE", sp);
-                        break;
-                    }
-                }
-            }
-
-            // Switch to original page table
-            RmmA::set_table(TableKind::User, old_table);
-        }
-
-        println!();
-    }
-    for (frame, (count, p)) in tree {
-        let rc = get_page_info(frame).unwrap().refcount();
-        let c = match rc {
-            RefCount::Zero => 0,
-            RefCount::One => 1,
-            RefCount::Cow(c) => c.get(),
-            RefCount::Shared(s) => s.get(),
-        };
-        if c < count {
-            println!("undercounted frame {:?} ({} < {})", frame, c, count);
-        }
-    }
-
-    println!("DEBUGGER END");
-}
-
-// Super unsafe due to page table switching and raw pointers!
-#[cfg(target_arch = "x86")]
-pub unsafe fn debugger(target_id: Option<crate::context::ContextId>) {
-    println!("DEBUGGER START");
-    println!();
-
-    let old_table = RmmA::table(TableKind::User);
-
-    for (id, context_lock) in crate::context::contexts().iter() {
-        if target_id.map_or(false, |target_id| *id != target_id) {
-            continue;
-        }
-        let context = context_lock.read();
-        println!("{}: {}", (*id).get(), context.name);
-
-        // Switch to context page table to ensure syscall debug and stack dump will work
-        if let Some(ref space) = context.addr_space {
-            RmmA::set_table(
-                TableKind::User,
-                space.acquire_read().table.utable.table().phys(),
-            );
-            //TODO check_consistency(&mut space.write());
-        }
-
-        println!("status: {:?}", context.status);
-        if !context.status_reason.is_empty() {
-            println!("reason: {}", context.status_reason);
-        }
-        if let Some([a, b, c, d, e, f]) = context.current_syscall() {
-            println!(
-                "syscall: {}",
-                crate::syscall::debug::format_call(a, b, c, d, e, f)
-            );
-        }
-        if let Some(ref addr_space) = context.addr_space {
-            let addr_space = addr_space.acquire_read();
-            if !addr_space.grants.is_empty() {
-                println!("grants:");
-                for (base, grant) in addr_space.grants.iter() {
-                    println!(
-                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {:?}",
-                        base.start_address().data(),
-                        base.next_by(grant.page_count()).start_address().data() + 0xFFF,
-                        grant.page_count() * crate::memory::PAGE_SIZE,
-                        grant.provider,
-                    );
-                }
-            }
-        }
-        if let Some(regs) = context.regs() {
-            println!("regs:");
-            regs.dump();
-
-            let mut sp = regs.iret.esp;
-            println!("stack: {:>08x}", sp);
-            //Maximum 64 dwords
-            for _ in 0..64 {
-                if context.addr_space.as_ref().map_or(false, |space| {
-                    space
-                        .acquire_read()
-                        .table
-                        .utable
-                        .translate(crate::paging::VirtualAddress::new(sp))
-                        .is_some()
-                }) {
-                    let value = *(sp as *const usize);
-                    println!("    {:>08x}: {:>08x}", sp, value);
-                    if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
-                        sp = next_sp;
-                    } else {
-                        println!("    {:>08x}: OVERFLOW", sp);
-                        break;
-                    }
-                } else {
-                    println!("    {:>08x}: GUARD PAGE", sp);
-                    break;
-                }
-            }
-        }
-
-        // Switch to original page table
-        RmmA::set_table(TableKind::User, old_table);
-
-        println!();
-    }
-
-    println!("DEBUGGER END");
-}
-
-// Super unsafe due to page table switching and raw pointers!
-#[cfg(target_arch = "x86_64")]
-pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
-    use core::sync::atomic::Ordering;
-
-    use alloc::sync::Arc;
-    use hashbrown::HashSet;
-
-    use crate::memory::{get_page_info, the_zeroed_frame, RefCount};
-
-    unsafe {
-        x86::bits64::rflags::stac();
-    }
-
+/// Super unsafe due to page table switching and raw pointers!
+pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanLockToken) {
     println!("DEBUGGER START");
     println!();
 
     let mut tree = HashMap::new();
     let mut spaces = HashSet::new();
-
-    let mut temporarily_taken_htbufs = 0;
 
     tree.insert(the_zeroed_frame().0, (1, false));
 
-    let old_table = RmmA::table(TableKind::User);
+    let old_table = unsafe { RmmA::table(TableKind::User) };
 
-    for context_lock in crate::context::contexts().iter() {
+    let mut contexts_guard = crate::context::contexts(token.token());
+    let (contexts, mut context_token) = contexts_guard.token_split();
+    for context_lock in contexts.iter() {
         if target_id.map_or(false, |target_id| Arc::as_ptr(&context_lock.0) != target_id) {
             continue;
         }
-        let context = context_lock.0.read();
+        let context = context_lock.0.read(context_token.token());
         println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
 
-        if let Some(ref head) = context.syscall_head {
-            tree.insert(head.get(), (1, false));
-        } else {
-            temporarily_taken_htbufs += 1;
+        let mut mark_frame_use = |frame| {
+            tree.entry(frame).or_insert((0, false)).0 += 1;
+        };
+
+        match &context.syscall_head {
+            SyscallFrame::Free(head) => mark_frame_use(head.get()),
+            SyscallFrame::Used { _frame: head } => mark_frame_use(*head),
+            SyscallFrame::Dummy => {}
         }
-        if let Some(ref tail) = context.syscall_tail {
-            tree.insert(tail.get(), (1, false));
-        } else {
-            temporarily_taken_htbufs += 1;
+        match &context.syscall_tail {
+            SyscallFrame::Free(tail) => mark_frame_use(tail.get()),
+            SyscallFrame::Used { _frame: tail } => mark_frame_use(*tail),
+            SyscallFrame::Dummy => {}
+        }
+
+        if let Some(sig) = &context.sig {
+            mark_frame_use(sig.proc_control.get());
+            mark_frame_use(sig.thread_control.get());
         }
 
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
             let was_new = spaces.insert(space.acquire_read().table.utable.table().phys().data());
-            RmmA::set_table(
-                TableKind::User,
-                space.acquire_read().table.utable.table().phys(),
-            );
-            check_consistency(&mut space.acquire_write(), was_new, &mut tree);
+            unsafe {
+                RmmA::set_table(
+                    TableKind::User,
+                    space.acquire_read().table.utable.table().phys(),
+                );
+                #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+                check_page_table_consistency(&mut space.acquire_write(), was_new, &mut tree);
+            }
         }
 
         println!("status: {:?}", context.status);
@@ -279,6 +77,28 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
                 println!("grants:");
                 for (base, info) in addr_space.grants.iter() {
                     let size = info.page_count() * PAGE_SIZE;
+
+                    #[cfg(target_arch = "aarch64")]
+                    println!(
+                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
+                        base.start_address().data(),
+                        base.next_by(info.page_count() - 1).start_address().data() + 0xFFF,
+                        size,
+                        info.provider,
+                    );
+
+                    // FIXME riscv64 implementation
+
+                    #[cfg(target_arch = "x86")]
+                    println!(
+                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {:?}",
+                        base.start_address().data(),
+                        base.next_by(info.page_count()).start_address().data() + 0xFFF,
+                        size,
+                        info.provider,
+                    );
+
+                    #[cfg(target_arch = "x86_64")]
                     println!(
                         "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
                         base.start_address().data(),
@@ -293,76 +113,91 @@ pub unsafe fn debugger(target_id: Option<*const RwSpinlock<Context>>) {
             println!("regs:");
             regs.dump();
 
-            let mut rsp = regs.iret.rsp;
-            println!("stack: {:>016x}", rsp);
-            //Maximum 64 qwords
-            for _ in 0..64 {
-                if context.addr_space.as_ref().map_or(false, |space| {
-                    space
-                        .acquire_read()
-                        .table
-                        .utable
-                        .translate(crate::paging::VirtualAddress::new(rsp))
-                        .is_some()
-                }) {
-                    let value = *(rsp as *const usize);
-                    println!("    {:>016x}: {:>016x}", rsp, value);
-                    if let Some(next_rsp) = rsp.checked_add(core::mem::size_of::<usize>()) {
-                        rsp = next_rsp;
-                    } else {
-                        println!("    {:>016x}: OVERFLOW", rsp);
-                        break;
-                    }
-                } else {
-                    println!("    {:>016x}: GUARD PAGE", rsp);
-                    break;
+            #[cfg(target_arch = "aarch64")]
+            dump_stack(&*context, regs.iret.sp_el0);
+
+            // FIXME riscv64 implementation
+
+            #[cfg(target_arch = "x86")]
+            dump_stack(&*context, regs.iret.esp);
+
+            #[cfg(target_arch = "x86_64")]
+            {
+                unsafe {
+                    x86::bits64::rflags::stac();
+                }
+                dump_stack(&*context, regs.iret.rsp);
+                unsafe {
+                    x86::bits64::rflags::clac();
                 }
             }
         }
 
         // Switch to original page table
-        RmmA::set_table(TableKind::User, old_table);
+        unsafe { RmmA::set_table(TableKind::User, old_table) };
 
         println!();
     }
-    crate::scheme::proc::foreach_addrsp(|addrsp| {
+    drop(contexts_guard);
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    crate::scheme::proc::foreach_addrsp(token, |addrsp| {
         let was_new = spaces.insert(addrsp.acquire_read().table.utable.table().phys().data());
-        check_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree);
+        unsafe { check_page_table_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree) };
     });
     for (frame, (count, p)) in tree {
         let Some(info) = get_page_info(frame) else {
             assert!(p);
             continue;
         };
-        let rc = info.refcount();
-        let (c, s) = match rc {
-            None => (0, false),
-            Some(RefCount::One) => (1, false),
-            Some(RefCount::Cow(c)) => (c.get(), false),
-            Some(RefCount::Shared(s)) => (s.get(), true),
+        let (c, s) = match info.refcount() {
+            None => (0, ""),
+            Some(RefCount::One) => (1, ""),
+            Some(RefCount::Cow(c)) => (c.get(), " cow"),
+            Some(RefCount::Shared(s)) => (s.get(), " shared"),
         };
         if c != count {
             println!(
-                "frame refcount mismatch for {:?} ({} != {} s {})",
+                "frame refcount mismatch for {:?} ({} != {}{})",
                 frame, c, count, s
             );
         }
     }
-    println!(
-        "({} kernel-owned references were not counted)",
-        temporarily_taken_htbufs
-    );
 
     println!("DEBUGGER END");
-    unsafe {
-        x86::bits64::rflags::clac();
+}
+
+fn dump_stack(context: &Context, mut sp: usize) {
+    let width = size_of::<usize>();
+
+    println!("stack: {:>0width$x}", sp, width = width);
+
+    //Maximum 64 usizes
+    for _ in 0..64 {
+        if context.addr_space.as_ref().map_or(false, |space| {
+            space
+                .acquire_read()
+                .table
+                .utable
+                .translate(crate::paging::VirtualAddress::new(sp))
+                .is_some()
+        }) {
+            let value = unsafe { *(sp as *const usize) };
+            println!("    {:>0width$x}: {:>0width$x}", sp, value, width = width);
+            if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
+                sp = next_sp;
+            } else {
+                println!("    {:>0width$x}: OVERFLOW", sp, width = width);
+                break;
+            }
+        } else {
+            println!("    {:>0width$x}: GUARD PAGE", sp, width = width);
+            break;
+        }
     }
 }
-#[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-use {crate::memory::Frame, hashbrown::HashMap};
 
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-pub unsafe fn check_consistency(
+unsafe fn check_page_table_consistency(
     addr_space: &mut crate::context::memory::AddrSpace,
     new_as: bool,
     tree: &mut HashMap<Frame, (usize, bool)>,
@@ -376,25 +211,25 @@ pub unsafe fn check_consistency(
     let p4 = addr_space.table.utable.table();
 
     for p4i in 0..256 {
-        let p3 = match p4.next(p4i) {
+        let p3 = match unsafe { p4.next(p4i) } {
             Some(p3) => p3,
             None => continue,
         };
 
         for p3i in 0..512 {
-            let p2 = match p3.next(p3i) {
+            let p2 = match unsafe { p3.next(p3i) } {
                 Some(p2) => p2,
                 None => continue,
             };
 
             for p2i in 0..512 {
-                let p1 = match p2.next(p2i) {
+                let p1 = match unsafe { p2.next(p2i) } {
                     Some(p1) => p1,
                     None => continue,
                 };
 
                 for p1i in 0..512 {
-                    let (physaddr, flags) = match p1.entry(p1i) {
+                    let (physaddr, flags) = match unsafe { p1.entry(p1i) } {
                         Some(e) => {
                             if let Ok(address) = e.address() {
                                 (address, e.flags())
@@ -413,7 +248,7 @@ pub unsafe fn check_consistency(
                     {
                         Some(g) => g,
                         None => {
-                            log::error!(
+                            error!(
                                 "ADDRESS {:p} LACKING GRANT BUT MAPPED TO {:#0x} FLAGS {:?}!",
                                 address.data() as *const u8,
                                 physaddr.data(),
@@ -427,7 +262,7 @@ pub unsafe fn check_consistency(
                     if grant.flags().write(false).data() & !EXCLUDE
                         != flags.write(false).data() & !EXCLUDE
                     {
-                        log::error!(
+                        error!(
                             "FLAG MISMATCH: {:?} != {:?}, address {:p} in grant at {:?}",
                             grant.flags(),
                             flags,
@@ -472,7 +307,7 @@ pub unsafe fn check_consistency(
             let _entry = match addr_space.table.utable.translate(page.start_address()) {
                 Some(e) => e,
                 None => {
-                    log::error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", span, page.start_address().data() as *const u8);
+                    error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", span, page.start_address().data() as *const u8);
                     continue;
                 }
             };

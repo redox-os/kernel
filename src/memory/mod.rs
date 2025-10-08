@@ -21,6 +21,7 @@ use crate::{
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     paging::{entry::EntryFlags, Page, PageFlags},
+    sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
 use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress};
@@ -73,22 +74,19 @@ pub fn allocate_p2frame_complex(
 ) -> Option<(Frame, usize)> {
     let mut freelist = FREELIST.lock();
 
-    let Some((frame_order, frame)) = freelist
+    let (frame_order, frame) = freelist
         .for_orders
         .iter()
         .enumerate()
         .skip(min_order as usize)
-        .find_map(|(i, f)| f.map(|f| (i as u32, f)))
-    else {
-        return None;
-    };
+        .find_map(|(i, f)| f.map(|f| (i as u32, f)))?;
 
     let info = get_page_info(frame)
         .unwrap_or_else(|| panic!("no page info for allocated frame {frame:?}"))
         .as_free()
         .expect("freelist frames must not be marked used!");
     let next_free = info.next();
-    //log::info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
+    //info!("FREE {frame:?} ORDER {frame_order} NEXT_FREE {next_free:?}");
 
     debug_assert_eq!(
         next_free.order(),
@@ -111,13 +109,13 @@ pub fn allocate_p2frame_complex(
     freelist.for_orders[frame_order as usize] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
-    //log::info!("MIN{min_order}FRAMEORD{frame_order}");
+    //info!("MIN{min_order}FRAMEORD{frame_order}");
     for order in (min_order..frame_order).rev() {
-        //log::info!("SPLIT ORDER {order}");
+        //info!("SPLIT ORDER {order}");
         let order_page_count = 1 << order;
 
         let hi = frame.next_by(order_page_count);
-        //log::info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
+        //info!("SPLIT INTO {frame:?}:{hi:?} ORDER {order}");
 
         debug_assert_eq!(freelist.for_orders[order as usize], None);
 
@@ -182,10 +180,10 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             break;
         }
         debug_assert!(
-            !(sib_info.next().order() > merge_order),
+            (sib_info.next().order() <= merge_order),
             "sibling page has unaligned order or contains current page"
         );
-        //log::info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
+        //info!("MERGED {lo:?} WITH {hi:?} ORDER {order}");
 
         if let Some(sib_prev) = sib_info.prev().frame() {
             get_free_alloc_page_info(sib_prev).set_next(sib_info.next());
@@ -194,7 +192,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             debug_assert!(sib_info
                 .next()
                 .frame()
-                .map_or(true, |f| f.is_aligned_to_order(merge_order)));
+                .is_none_or(|f| f.is_aligned_to_order(merge_order)));
             debug_assert_eq!(sib_info.next().order(), merge_order);
             freelist.for_orders[merge_order as usize] = sib_info.next().frame();
         }
@@ -216,7 +214,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     debug_assert!(new_head.is_aligned_to_order(largest_order));
 
     if let Some(old_head) = freelist.for_orders[largest_order as usize].replace(new_head) {
-        //log::info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
+        //info!("HEAD {:p} FREED {:p} BARRIER {:p}", get_page_info(old_head).unwrap(), get_page_info(frame).unwrap(), unsafe { ALLOCATOR_DATA.abs_off as *const u8 });
         let old_head_info = get_free_alloc_page_info(old_head);
         let new_head_info = get_free_alloc_page_info(new_head);
 
@@ -225,34 +223,36 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         old_head_info.set_prev(P2Frame::new(Some(new_head), largest_order));
     }
 
-    //log::info!("FREED {frame:?}+2^{order}");
+    //info!("FREED {frame:?}+2^{order}");
     freelist.used_frames -= 1 << order;
 }
 
 pub unsafe fn deallocate_frame(frame: Frame) {
-    deallocate_p2frame(frame, 0)
+    unsafe { deallocate_p2frame(frame, 0) }
 }
 
 // Helper function for quickly mapping device memory
 pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAddress {
-    let mut mapper_lock = KernelMapper::lock();
-    let mapper = mapper_lock
-        .get_mut()
-        .expect("KernelMapper mapper locked re-entrant in map_device_memory");
-    let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
-    let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
-    for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
-        let (_, flush) = mapper
-            .map_linearly(
-                base.add(page_idx * crate::memory::PAGE_SIZE),
-                PageFlags::new()
-                    .write(true)
-                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
-            )
-            .expect("failed to linearly map SDT");
-        flush.flush();
+    unsafe {
+        let mut mapper_lock = KernelMapper::lock();
+        let mapper = mapper_lock
+            .get_mut()
+            .expect("KernelMapper mapper locked re-entrant in map_device_memory");
+        let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
+        let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
+        for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
+            let (_, flush) = mapper
+                .map_linearly(
+                    base.add(page_idx * crate::memory::PAGE_SIZE),
+                    PageFlags::new()
+                        .write(true)
+                        .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                )
+                .expect("failed to linearly map SDT");
+            flush.flush();
+        }
+        RmmA::phys_to_virt(addr)
     }
-    RmmA::phys_to_virt(addr)
 }
 
 const ORDER_COUNT: u32 = 11;
@@ -382,7 +382,7 @@ impl Drop for RaiiFrame {
         if get_page_info(self.inner)
             .expect("RaiiFrame lacking PageInfo")
             .remove_ref()
-            == None
+            .is_none()
         {
             unsafe {
                 deallocate_frame(self.inner);
@@ -623,7 +623,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             if frame.base() >= allocator.abs_offset() {
                 break 'sections;
             }
-            //log::info!("MARKING {frame:?} AS USED");
+            //info!("MARKING {frame:?} AS USED");
             page_info
                 .refcount
                 .store(RC_USED_NOT_FREE, Ordering::Relaxed);
@@ -685,13 +685,13 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                 frames[0].next.store(order as usize, Ordering::Relaxed);
                 // The first section page is not aligned to the next order size.
 
-                //log::info!("ORDER {order}: FIRST {base:?}");
+                //info!("ORDER {order}: FIRST {base:?}");
                 append_page(base, &frames[0], order);
 
                 base = base.next_by(pages_for_current_order);
                 frames = &frames[pages_for_current_order..];
             } else {
-                //log::info!("ORDER {order}: FIRST SKIP");
+                //info!("ORDER {order}: FIRST SKIP");
             }
 
             if !frames.is_empty()
@@ -705,12 +705,12 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
                 frames[off].next.store(order as usize, Ordering::Relaxed);
 
-                //log::info!("ORDER {order}: LAST {final_page:?}");
+                //info!("ORDER {order}: LAST {final_page:?}");
                 append_page(final_page, &frames[off], order);
 
                 frames = &frames[..off];
             } else {
-                //log::info!("ORDER {order}: LAST SKIP");
+                //info!("ORDER {order}: LAST SKIP");
             }
 
             if frames.is_empty() {
@@ -728,7 +728,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             }
         }
 
-        //log::info!("SECTION from {:?}, {} pages, array at {:p}", section.base, section.frames.len(), section.frames);
+        //info!("SECTION from {:?}, {} pages, array at {:p}", section.base, section.frames.len(), section.frames);
     }
     for (order, tuple_opt) in last_pages.iter().enumerate() {
         let Some((frame, info)) = tuple_opt else {
@@ -743,7 +743,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     FREELIST.lock().for_orders = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
     //debug_freelist();
-    log::info!("Initial freelist consistent");
+    info!("Initial freelist consistent");
 }
 
 #[cold]
@@ -863,7 +863,7 @@ impl PageInfoFree<'_> {
     fn set_next(&self, next: P2Frame) {
         debug_assert!(next
             .frame()
-            .map_or(true, |f| f.is_aligned_to_order(next.order())));
+            .is_none_or(|f| f.is_aligned_to_order(next.order())));
         self.next.store(next.0, Ordering::Relaxed)
     }
     fn prev(&self) -> P2Frame {
@@ -872,7 +872,7 @@ impl PageInfoFree<'_> {
     fn set_prev(&self, prev: P2Frame) {
         debug_assert!(prev
             .frame()
-            .map_or(true, |f| f.is_aligned_to_order(prev.order())));
+            .is_none_or(|f| f.is_aligned_to_order(prev.order())));
         self.prev.store(prev.0, Ordering::Relaxed)
     }
     fn mark_used(&self) {
@@ -1012,7 +1012,8 @@ pub fn page_fault_handler(
     }
 
     if address_is_user && (caused_by_user || is_usercopy) {
-        match context::memory::try_correcting_page_tables(faulting_page, mode) {
+        let mut token = unsafe { CleanLockToken::new() };
+        match context::memory::try_correcting_page_tables(faulting_page, mode, &mut token) {
             Ok(()) => return Ok(()),
             Err(PfError::Oom) => todo!("oom"),
             Err(PfError::Segv | PfError::RecursionLimitExceeded) => (),
@@ -1063,8 +1064,10 @@ impl FrameAllocator for TheFrameAllocator {
         allocate_p2frame(order).map(|f| f.base())
     }
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        let order = count.data().next_power_of_two().trailing_zeros();
-        deallocate_p2frame(Frame::containing(address), order)
+        unsafe {
+            let order = count.data().next_power_of_two().trailing_zeros();
+            deallocate_p2frame(Frame::containing(address), order)
+        }
     }
     unsafe fn usage(&self) -> FrameUsage {
         FrameUsage::new(

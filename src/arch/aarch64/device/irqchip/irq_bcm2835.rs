@@ -1,11 +1,13 @@
 use core::ptr::{read_volatile, write_volatile};
 use fdt::{node::FdtNode, Fdt};
-use log::{debug, error, info};
 
 use super::InterruptController;
-use crate::dtb::{
-    get_interrupt, get_mmio_address,
-    irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+use crate::{
+    dtb::{
+        get_interrupt, get_mmio_address,
+        irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+    },
+    sync::CleanLockToken,
 };
 use syscall::{
     error::{Error, EINVAL},
@@ -72,47 +74,55 @@ impl Bcm2835ArmInterruptController {
         }
     }
     unsafe fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
-        //assert address_cells == 0x1, size_cells == 0x1
-        let mem = node.reg().unwrap().nth(0).unwrap();
-        let base = get_mmio_address(fdt, node, &mem).unwrap();
-        let size = mem.size.unwrap() as u32;
-        let mut ret_virq = None;
+        unsafe {
+            //assert address_cells == 0x1, size_cells == 0x1
+            let mem = node.reg().unwrap().nth(0).unwrap();
+            let base = get_mmio_address(fdt, node, &mem).unwrap();
+            let size = mem.size.unwrap() as u32;
+            let mut ret_virq = None;
 
-        if let Some(interrupt_parent) = node.property("interrupt-parent") {
-            let phandle = interrupt_parent.as_usize().unwrap() as u32;
-            let irq = get_interrupt(fdt, node, 0).unwrap();
-            let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
-            //PHYS_NONSECURE_PPI only
-            let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                .ic
-                .irq_xlate(irq)
-                .unwrap();
-            info!(
-                "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
-                ic_idx, virq
-            );
-            ret_virq = Some(virq);
+            if let Some(interrupt_parent) = node.property("interrupt-parent") {
+                let phandle = interrupt_parent.as_usize().unwrap() as u32;
+                let irq = get_interrupt(fdt, node, 0).unwrap();
+                let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
+                //PHYS_NONSECURE_PPI only
+                let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                    .ic
+                    .irq_xlate(irq)
+                    .unwrap();
+                info!(
+                    "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
+                    ic_idx, virq
+                );
+                ret_virq = Some(virq);
+            }
+            Ok((base as usize, size as usize, ret_virq))
         }
-        Ok((base as usize, size as usize, ret_virq))
     }
 
     unsafe fn init(&mut self) {
-        debug!("IRQ BCM2835 INIT");
-        //disable all interrupt
-        self.write(DISABLE_0, 0xffff_ffff);
-        self.write(DISABLE_1, 0xffff_ffff);
-        self.write(DISABLE_2, 0xffff_ffff);
+        unsafe {
+            debug!("IRQ BCM2835 INIT");
+            //disable all interrupt
+            self.write(DISABLE_0, 0xffff_ffff);
+            self.write(DISABLE_1, 0xffff_ffff);
+            self.write(DISABLE_2, 0xffff_ffff);
 
-        debug!("IRQ BCM2835 END");
+            debug!("IRQ BCM2835 END");
+        }
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
-        let val = read_volatile((self.address + reg as usize) as *const u32);
-        val
+        unsafe {
+            let val = read_volatile((self.address + reg as usize) as *const u32);
+            val
+        }
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
-        write_volatile((self.address + reg as usize) as *mut u32, value);
+        unsafe {
+            write_volatile((self.address + reg as usize) as *mut u32, value);
+        }
     }
 }
 
@@ -271,14 +281,14 @@ impl InterruptController for Bcm2835ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2835ArmInterruptController {
-    fn irq_handler(&mut self, _irq: u32) {
+    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
         unsafe {
             let irq = self.irq_ack();
             if let Some(virq) = self.irq_to_virq(irq)
                 && virq < 1024
             {
                 if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
-                    handler.irq_handler(virq as u32);
+                    handler.irq_handler(virq as u32, token);
                 }
             } else {
                 error!("unexpected irq num {}", irq);

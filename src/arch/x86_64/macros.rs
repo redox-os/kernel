@@ -1,28 +1,11 @@
-/// Print to console
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => ({
-        use core::fmt::Write;
-        let _ = write!($crate::arch::debug::Writer::new(), $($arg)*);
-    });
-}
-
-/// Print with new line to console
-#[macro_export]
-macro_rules! println {
-    () => (print!("\n"));
-    ($fmt:expr) => (print!(concat!($fmt, "\n")));
-    ($fmt:expr, $($arg:tt)*) => (print!(concat!($fmt, "\n"), $($arg)*));
-}
-
 macro_rules! expand_bool(
-    ($value:expr) => {
+    ($value:expr_2021) => {
         concat!($value)
     }
 );
 
 macro_rules! alternative(
-    (feature: $feature:literal, then: [$($then:expr),*], default: [$($default:expr),*]) => {
+    (feature: $feature:literal, then: [$($then:expr_2021),*], default: [$($default:expr_2021),*]) => {
         alternative2!(feature1: $feature, then1: [$($then),*], feature2: "", then2: [""], default: [$($default),*])
     }
 );
@@ -39,7 +22,7 @@ macro_rules! saturating_sub(
 //
 // An empty string as feature is equivalent with "never".
 macro_rules! alternative2(
-    (feature1: $feature1:literal, then1: [$($then1:expr),*], feature2: $feature2:literal, then2: [$($then2:expr),*], default: [$($default:expr),*]) => {
+    (feature1: $feature1:literal, then1: [$($then1:expr_2021),*], feature2: $feature2:literal, then2: [$($then2:expr_2021),*], default: [$($default:expr_2021),*]) => {
         concat!("
             .set true, 1
             .set false, 0
@@ -70,7 +53,7 @@ macro_rules! alternative2(
     };
 );
 macro_rules! alternative_auto(
-    ($first_digit:literal, $feature:literal, [$($then:expr),*]) => { concat!(
+    ($first_digit:literal, $feature:literal, [$($then:expr_2021),*]) => { concat!(
         ".if ", expand_bool!(cfg!(cpu_feature_auto = $feature)), "
         .pushsection .altcode.", $feature, ",\"a\"
         ", $first_digit, "0:

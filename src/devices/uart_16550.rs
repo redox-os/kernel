@@ -67,14 +67,14 @@ impl SerialPort<Pio<u8>> {
 impl SerialPort<Mmio<u32>> {
     #[allow(dead_code)]
     pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u32>> {
-        &mut *(base as *mut Self)
+        unsafe { &mut *(base as *mut Self) }
     }
 }
 
 impl SerialPort<Mmio<u8>> {
     #[allow(dead_code)]
     pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u8>> {
-        &mut *(base as *mut Self)
+        unsafe { &mut *(base as *mut Self) }
     }
 }
 
@@ -82,19 +82,39 @@ impl<T: Io> SerialPort<T>
 where
     T::Value: From<u8> + TryInto<u8>,
 {
-    pub fn init(&mut self) {
+    pub fn init(&mut self) -> Result<(), ()> {
         unsafe {
             //TODO: Cleanup
             // FIXME: Fix UB if unaligned
-            (&mut *addr_of_mut!(self.int_en)).write(0x00.into());
-            (&mut *addr_of_mut!(self.line_ctrl)).write(0x80.into());
-            (&mut *addr_of_mut!(self.data)).write(0x01.into());
-            (&mut *addr_of_mut!(self.int_en)).write(0x00.into());
-            (&mut *addr_of_mut!(self.line_ctrl)).write(0x03.into());
-            (&mut *addr_of_mut!(self.fifo_ctrl)).write(0xC7.into());
-            (&mut *addr_of_mut!(self.modem_ctrl)).write(0x0B.into());
-            (&mut *addr_of_mut!(self.int_en)).write(0x01.into());
+            // Disable all interrupts
+            (*addr_of_mut!(self.int_en)).write(0x00.into());
+            // Set baud rate divisor
+            (*addr_of_mut!(self.line_ctrl)).write(0x80.into());
+            // Set divisor to 1 (115200 baud)
+            (*addr_of_mut!(self.data)).write(0x01.into());
+            (*addr_of_mut!(self.int_en)).write(0x00.into());
+            // Use 8 data bits, no parity, one stop bit
+            (*addr_of_mut!(self.line_ctrl)).write(0x03.into());
+            // Enable and clear FIFOs with 14-byte threshold
+            (*addr_of_mut!(self.fifo_ctrl)).write(0xC7.into());
+
+            // Enable loopback
+            (*addr_of_mut!(self.modem_ctrl)).write(0x10.into());
+            // Perform loopback test with even/odd pattern
+            for &byte in &[0x55, 0xAA] {
+                (*addr_of_mut!(self.data)).write(byte.into());
+                if (*addr_of_mut!(self.data)).read() != byte.into() {
+                    return Err(());
+                }
+            }
+
+            // Enable DTR, RTS, OUT1, and OUT2, disable loopback
+            (*addr_of_mut!(self.modem_ctrl)).write(0x0F.into());
+            // Enable receive interrupt
+            (*addr_of_mut!(self.int_en)).write(0x01.into());
         }
+
+        Ok(())
     }
 
     fn line_sts(&self) -> LineStsFlags {

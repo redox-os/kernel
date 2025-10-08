@@ -108,7 +108,7 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
         }
     }
     pub unsafe fn read_exact<T>(self) -> Result<T> {
-        let mut t: T = core::mem::zeroed();
+        let mut t: T = unsafe { core::mem::zeroed() };
         let slice = unsafe {
             core::slice::from_raw_parts_mut(
                 (&mut t as *mut T).cast::<u8>(),
@@ -159,7 +159,7 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
 impl<const READ: bool> UserSlice<READ, true> {
     pub fn copy_from_slice(self, slice: &[u8]) -> Result<()> {
         // A zero sized slice will like have 0x1 as address
-        debug_assert!(is_kernel_mem(slice) || slice.len() == 0);
+        debug_assert!(is_kernel_mem(slice) || slice.is_empty());
 
         if self.len != slice.len() {
             return Err(Error::new(EINVAL));

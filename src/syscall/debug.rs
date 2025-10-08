@@ -1,5 +1,5 @@
 use alloc::{string::String, vec::Vec};
-use core::{ascii, mem};
+use core::{ascii, fmt::Debug, mem};
 
 use super::{
     copy_path_to_buf,
@@ -9,11 +9,11 @@ use super::{
     usercopy::UserSlice,
 };
 
-use crate::syscall::error::Result;
+use crate::{sync::CleanLockToken, syscall::error::Result};
 
 struct ByteStr<'a>(&'a [u8]);
 
-impl<'a> ::core::fmt::Debug for ByteStr<'a> {
+impl Debug for ByteStr<'_> {
     fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
         write!(f, "\"")?;
         for i in self.0 {
@@ -38,7 +38,7 @@ fn debug_buf(ptr: usize, len: usize) -> Result<Vec<u8>> {
     })
 }
 unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
-    UserSlice::ro(ptr, mem::size_of::<T>()).and_then(|slice| slice.read_exact::<T>())
+    unsafe { UserSlice::ro(ptr, mem::size_of::<T>()).and_then(|slice| slice.read_exact::<T>()) }
 }
 
 //TODO: calling format_call with arguments from another process space will not work
@@ -61,13 +61,13 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         SYS_DUP => format!(
             "dup({}, {:?})",
             b,
-            debug_buf(c, d).as_ref().map(|b| ByteStr(&*b)),
+            debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
         ),
         SYS_DUP2 => format!(
             "dup2({}, {}, {:?})",
             b,
             c,
-            debug_buf(d, e).as_ref().map(|b| ByteStr(&*b)),
+            debug_buf(d, e).as_ref().map(|b| ByteStr(b)),
         ),
         SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
@@ -191,25 +191,45 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-#[cfg(feature = "syscall_debug")]
 pub struct SyscallDebugInfo {
     this_switch_time: u128,
     accumulated_time: u128,
     do_debug: bool,
 }
-#[cfg(feature = "syscall_debug")]
 impl SyscallDebugInfo {
+    pub const fn default() -> Self {
+        Self {
+            this_switch_time: 0,
+            accumulated_time: 0,
+            do_debug: false,
+        }
+    }
+
+    #[cfg(feature = "syscall_debug")]
     pub fn on_switch_from(&mut self) {
         let now = crate::time::monotonic();
         self.accumulated_time += now - core::mem::replace(&mut self.this_switch_time, now);
     }
+    #[cfg(feature = "syscall_debug")]
     pub fn on_switch_to(&mut self) {
         self.this_switch_time = crate::time::monotonic();
     }
 }
-#[cfg(feature = "syscall_debug")]
-pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
-    let do_debug = if false && crate::context::current().read().name.contains("init") {
+
+#[cfg_attr(feature = "syscall_debug", inline)]
+pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
+    if cfg!(not(feature = "syscall_debug")) {
+        return;
+    }
+
+    #[expect(clippy::overly_complex_bool_expr)]
+    #[expect(clippy::needless_bool)]
+    let do_debug = if false
+        && crate::context::current()
+            .read(token.token())
+            .name
+            .contains("init")
+    {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
@@ -224,7 +244,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
     let debug_start = if do_debug {
         let context_lock = crate::context::current();
         {
-            let context = context_lock.read();
+            let context = context_lock.read(token.token());
             print!("{} (*{}*): ", context.name, context.pid,);
         }
 
@@ -246,8 +266,17 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6]) {
             do_debug,
         });
 }
-#[cfg(feature = "syscall_debug")]
-pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
+
+#[cfg_attr(feature = "syscall_debug", inline)]
+pub fn debug_end(
+    [a, b, c, d, e, f]: [usize; 6],
+    result: Result<usize>,
+    token: &mut CleanLockToken,
+) {
+    if cfg!(not(feature = "syscall_debug")) {
+        return;
+    }
+
     let debug_info = crate::percpu::PercpuBlock::current()
         .syscall_debug_info
         .take();
@@ -260,7 +289,7 @@ pub fn debug_end([a, b, c, d, e, f]: [usize; 6], result: Result<usize>) {
 
     let context_lock = crate::context::current();
     {
-        let context = context_lock.read();
+        let context = context_lock.read(token.token());
         print!("{} (*{}*): ", context.name, context.pid,);
     }
 

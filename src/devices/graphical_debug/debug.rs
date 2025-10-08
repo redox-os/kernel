@@ -1,6 +1,13 @@
-use core::{cmp, ptr};
+use core::ptr;
 
-use super::Display;
+pub(super) struct Display {
+    pub(super) width: usize,
+    pub(super) height: usize,
+    pub(super) stride: usize,
+    onscreen_ptr: *mut u32,
+}
+
+unsafe impl Send for Display {}
 
 static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
 
@@ -13,7 +20,19 @@ pub struct DebugDisplay {
 }
 
 impl DebugDisplay {
-    pub(super) fn new(display: Display) -> DebugDisplay {
+    pub(super) fn new(
+        width: usize,
+        height: usize,
+        stride: usize,
+        onscreen_ptr: *mut u32,
+    ) -> DebugDisplay {
+        let display = Display {
+            width,
+            height,
+            stride,
+            onscreen_ptr,
+        };
+
         let w = display.width / 8;
         let h = display.height / 16;
         DebugDisplay {
@@ -25,49 +44,47 @@ impl DebugDisplay {
         }
     }
 
-    fn write_char(&mut self, c: char) {
-        if self.x >= self.w || c == '\n' {
-            self.x = 0;
-            self.y += 1;
-        }
-
-        if self.y >= self.h {
-            let new_y = self.h - 1;
-            let d_y = self.y - new_y;
-
-            self.scroll(d_y * 16);
-
-            unsafe {
-                self.display.sync_screen();
+    pub fn write(&mut self, buf: &[u8]) {
+        for &b in buf {
+            if self.x >= self.w || b == b'\n' {
+                self.x = 0;
+                self.y = (self.y + 1) % self.h;
             }
 
-            self.y = new_y;
-        }
-
-        if c != '\n' {
-            self.char(self.x * 8, self.y * 16, c, 0xFFFFFF);
-
-            unsafe {
-                self.display.sync(self.x * 8, self.y * 16, 8, 16);
+            if b == b'\n' {
+                continue;
             }
+
+            if self.x == 0 {
+                self.clear_row(self.y);
+                self.clear_row((self.y + 1) % self.h);
+            }
+
+            self.char(self.x * 8, self.y * 16, b as char, 0xFFFFFF);
 
             self.x += 1;
         }
     }
 
-    pub fn write(&mut self, buf: &[u8]) {
-        for &b in buf {
-            self.write_char(b as char);
+    fn clear_row(&mut self, y: usize) {
+        for row in y * 16..(y + 1) * 16 {
+            unsafe {
+                ptr::write_bytes(
+                    self.display.onscreen_ptr.add(row * self.display.stride),
+                    0,
+                    self.display.width,
+                );
+            }
         }
     }
 
     /// Draw a character
     fn char(&mut self, x: usize, y: usize, character: char, color: u32) {
         if x + 8 <= self.display.width && y + 16 <= self.display.height {
-            let phys_y = (self.display.offset_y + y) % self.display.height;
+            let phys_y = y % self.display.height;
             let mut dst = unsafe {
                 self.display
-                    .data_mut()
+                    .onscreen_ptr
                     .add(phys_y * self.display.stride + x)
             };
 
@@ -86,26 +103,10 @@ impl DebugDisplay {
                     let next_phys_y = (phys_y + row + 1) % self.display.height;
                     dst = unsafe {
                         self.display
-                            .data_mut()
+                            .onscreen_ptr
                             .add(next_phys_y * self.display.stride + x)
                     };
                 }
-            }
-        }
-    }
-
-    /// Scroll the screen
-    fn scroll(&mut self, lines: usize) {
-        let lines = cmp::min(self.h * 16, lines); // clamp
-        self.display.offset_y = (self.display.offset_y + lines) % self.display.height;
-
-        // clear the new lines
-        let start_y = (self.display.offset_y + self.h * 16 - lines) % self.display.height;
-        for row in 0..lines {
-            let y = (start_y + row) % self.display.height;
-            unsafe {
-                let ptr = self.display.data_mut().add(y * self.display.stride);
-                ptr::write_bytes(ptr, 0, self.display.stride);
             }
         }
     }

@@ -6,7 +6,10 @@ use core::{
 use crate::syscall::FloatRegisters;
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PageMapper},
+    arch::{
+        interrupt::InterruptStack,
+        paging::{PageMapper, ENTRY_COUNT},
+    },
     context::{context::Kstack, memory::Table},
     memory::RmmA,
 };
@@ -100,7 +103,7 @@ impl Context {
                 // Zero-initialize InterruptStack registers.
                 stack_top = stack_top.sub(INT_REGS_SIZE);
                 stack_top.write_bytes(0_u8, INT_REGS_SIZE);
-                (&mut *stack_top.cast::<InterruptStack>()).init();
+                (*stack_top.cast::<InterruptStack>()).init();
 
                 stack_top = stack_top.sub(core::mem::size_of::<usize>());
                 stack_top
@@ -196,10 +199,10 @@ impl super::Context {
             && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))
         {
             unsafe {
-                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
+                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase);
                 // We have to write to KERNEL_GSBASE, because when the kernel returns to
                 // userspace, it will have executed SWAPGS first.
-                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
+                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase);
             }
             self.arch.fsbase = regs.fsbase as usize;
             self.arch.gsbase = regs.gsbase as usize;
@@ -227,56 +230,59 @@ pub static EMPTY_CR3: Once<rmm::PhysicalAddress> = Once::new();
 
 // SAFETY: EMPTY_CR3 must be initialized.
 pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
-    debug_assert!(EMPTY_CR3.poll().is_some());
-    *EMPTY_CR3.get_unchecked()
+    unsafe {
+        debug_assert!(EMPTY_CR3.poll().is_some());
+        *EMPTY_CR3.get_unchecked()
+    }
 }
 
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
-    // Update contexts' timestamps
-    let switch_time = crate::time::monotonic();
-    prev.cpu_time += switch_time.saturating_sub(prev.switch_time);
-    next.switch_time = switch_time;
+    unsafe {
+        // Update contexts' timestamps
+        let switch_time = crate::time::monotonic();
+        prev.cpu_time += switch_time.saturating_sub(prev.switch_time);
+        next.switch_time = switch_time;
 
-    let pcr = crate::gdt::pcr();
+        let pcr = crate::gdt::pcr();
 
-    if let Some(ref stack) = next.kstack {
-        crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
-    }
-    crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
+        if let Some(ref stack) = next.kstack {
+            crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
+        }
+        crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
-    core::arch::asm!(
-        alternative2!(
-            feature1: "xsaveopt",
-            then1: ["
+        core::arch::asm!(
+            alternative2!(
+                feature1: "xsaveopt",
+                then1: ["
                 mov eax, 0xffffffff
                 mov edx, eax
                 xsaveopt64 [{prev_fx}]
                 xrstor64 [{next_fx}]
             "],
-            feature2: "xsave",
-            then2: ["
+                feature2: "xsave",
+                then2: ["
                 mov eax, 0xffffffff
                 mov edx, eax
                 xsave64 [{prev_fx}]
                 xrstor64 [{next_fx}]
             "],
-            default: ["
+                default: ["
                 fxsave64 [{prev_fx}]
                 fxrstor64 [{next_fx}]
             "]
-        ),
-        prev_fx = in(reg) prev.kfx.as_mut_ptr(),
-        next_fx = in(reg) next.kfx.as_ptr(),
-        out("eax") _,
-        out("edx") _,
-    );
+            ),
+            prev_fx = in(reg) prev.kfx.as_mut_ptr(),
+            next_fx = in(reg) next.kfx.as_ptr(),
+            out("eax") _,
+            out("edx") _,
+        );
 
-    {
-        core::arch::asm!(
-            alternative!(
-                feature: "fsgsbase",
-                then: ["
+        {
+            core::arch::asm!(
+                alternative!(
+                    feature: "fsgsbase",
+                    then: ["
                     mov rax, [{next}+{fsbase_off}]
                     mov rcx, [{next}+{gsbase_off}]
 
@@ -290,10 +296,10 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
                     mov [{prev}+{fsbase_off}], rdx
                     mov [{prev}+{gsbase_off}], rax
                 "],
-                // TODO: Most applications will set FSBASE, but won't touch GSBASE. Maybe avoid
-                // wrmsr or even the swapgs+rdgsbase+wrgsbase+swapgs sequence if they are already
-                // equal?
-                default: ["
+                    // TODO: Most applications will set FSBASE, but won't touch GSBASE. Maybe avoid
+                    // wrmsr or even the swapgs+rdgsbase+wrgsbase+swapgs sequence if they are already
+                    // equal?
+                    default: ["
                     mov ecx, {MSR_FSBASE}
                     mov rdx, [{next}+{fsbase_off}]
                     mov eax, edx
@@ -308,24 +314,25 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
                     // {prev}
                 "]
-            ),
-            out("rax") _,
-            out("rdx") _,
-            out("ecx") _, prev = in(reg) addr_of_mut!(prev.arch), next = in(reg) addr_of!(next.arch),
-            MSR_FSBASE = const msr::IA32_FS_BASE,
-            MSR_KERNEL_GSBASE = const msr::IA32_KERNEL_GSBASE,
-            gsbase_off = const offset_of!(Context, gsbase),
-            fsbase_off = const offset_of!(Context, fsbase),
-        );
+                ),
+                out("rax") _,
+                out("rdx") _,
+                out("ecx") _, prev = in(reg) addr_of_mut!(prev.arch), next = in(reg) addr_of!(next.arch),
+                MSR_FSBASE = const msr::IA32_FS_BASE,
+                MSR_KERNEL_GSBASE = const msr::IA32_KERNEL_GSBASE,
+                gsbase_off = const offset_of!(Context, gsbase),
+                fsbase_off = const offset_of!(Context, fsbase),
+            );
+        }
+
+        (*pcr).percpu.new_addrsp_tmp.set(next.addr_space.clone());
+
+        switch_to_inner(&mut prev.arch, &mut next.arch)
     }
-
-    (*pcr).percpu.new_addrsp_tmp.set(next.addr_space.clone());
-
-    switch_to_inner(&mut prev.arch, &mut next.arch)
 }
 
 // Check disassembly!
-#[naked]
+#[unsafe(naked)]
 unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
     use Context as Cx;
 
@@ -400,29 +407,14 @@ pub fn setup_new_utable() -> Result<Table> {
         PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))?
     };
 
-    {
+    // Copy higher half (kernel) mappings
+    unsafe {
         let active_ktable = KernelMapper::lock();
-
-        let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable
-                .table()
-                .entry(p4_no)
-                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
-
-            utable.table().set_entry(p4_no, entry)
-        };
-        // TODO: Just copy all 256 mappings? Or copy KERNEL_PML4+KERNEL_PERCPU_PML4 (needed for
-        // paranoid ISRs which can occur anywhere; we don't want interrupts to triple fault!) and
-        // map lazily via page faults in the kernel.
-
-        // Copy kernel image mapping
-        copy_mapping(crate::KERNEL_PML4);
-
-        // Copy kernel heap mapping
-        copy_mapping(crate::KERNEL_HEAP_PML4);
-
-        // Copy physmap mapping
-        copy_mapping(crate::PHYS_PML4);
+        for pde_no in ENTRY_COUNT / 2..ENTRY_COUNT {
+            if let Some(entry) = active_ktable.table().entry(pde_no) {
+                utable.table().set_entry(pde_no, entry);
+            }
+        }
     }
 
     Ok(Table { utable })

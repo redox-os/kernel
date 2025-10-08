@@ -360,14 +360,11 @@ macro_rules! nop {
 macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
     // use idents directly instead.
-    ($name:ident, $save1:ident!, $save2:ident!, $rstor2:ident!, $rstor1:ident!, is_paranoid: $is_paranoid:expr, |$stack:ident| $code:block) => {
-        #[naked]
+    ($name:ident, $save1:ident!, $save2:ident!, $rstor2:ident!, $rstor1:ident!, is_paranoid: $is_paranoid:expr_2021, |$stack:ident| $code:block) => {
+        #[unsafe(naked)]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    $code
-                }
+                $code
             }
             core::arch::naked_asm!(concat!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
@@ -406,7 +403,7 @@ macro_rules! interrupt_stack {
             inner = sym inner,
             IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
 
-            PCR_GDT_OFFSET = const(core::mem::offset_of!(crate::gdt::ProcessorControlRegion, gdt)),
+            PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::gdt::ProcessorControlRegion, gdt)),
             );
         }
     };
@@ -417,7 +414,7 @@ macro_rules! interrupt_stack {
 #[macro_export]
 macro_rules! interrupt {
     ($name:ident, || $code:block) => {
-        #[naked]
+        #[unsafe(naked)]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner() {
                 $code
@@ -457,13 +454,10 @@ macro_rules! interrupt {
 #[macro_export]
 macro_rules! interrupt_error {
     ($name:ident, |$stack:ident, $error_code:ident| $code:block) => {
-        #[naked]
+        #[unsafe(naked)]
         pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    $code
-                }
+                $code
             }
 
             core::arch::naked_asm!(concat!(

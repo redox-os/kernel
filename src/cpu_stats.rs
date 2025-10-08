@@ -1,15 +1,18 @@
-use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use alloc::{string::String, vec::Vec};
+use alloc::string::String;
+#[cfg(feature = "sys_stat")]
+use alloc::vec::Vec;
 
 use crate::cpu_set::LogicalCpuId;
 
+// Note: Using AtomicUsize rather than AtomicU64 as 32bit x86 doesn't support the latter
 /// The number of times (overall) where a CPU switched from one context to another.
-static CONTEXT_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
+static CONTEXT_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Number of times each Interrupt happened.
-static IRQ_COUNT: [AtomicU64; 256] = [const { AtomicU64::new(0) }; 256];
+static IRQ_COUNT: [AtomicUsize; 256] = [const { AtomicUsize::new(0) }; 256];
 /// Number of contexts that were created.
-static CONTEXTS_COUNT: AtomicU64 = AtomicU64::new(0);
+static CONTEXTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Current state of a CPU
 #[repr(u8)]
@@ -41,6 +44,19 @@ pub struct CpuStats {
     state: AtomicU8,
 }
 
+impl CpuStats {
+    pub const fn default() -> Self {
+        Self {
+            user: AtomicUsize::new(0),
+            nice: AtomicUsize::new(0),
+            kernel: AtomicUsize::new(0),
+            idle: AtomicUsize::new(0),
+            irq: AtomicUsize::new(0),
+            state: AtomicU8::new(0),
+        }
+    }
+}
+
 pub struct CpuStatsData {
     /// Number of ticks spent on userspace contexts
     pub user: usize,
@@ -59,7 +75,12 @@ impl CpuStats {
     ///
     /// # Parameters
     /// * `new_state` - The state of the CPU for the following ticks.
+    #[inline]
     pub fn set_state(&self, new_state: CpuState) {
+        if cfg!(not(feature = "sys_stat")) {
+            return;
+        }
+
         self.state.store(new_state as u8, Ordering::Relaxed);
     }
 
@@ -69,7 +90,12 @@ impl CpuStats {
     ///
     /// # Parameters
     /// * `ticks` - NUmber of ticks to add.
+    #[inline]
     pub fn add_time(&self, ticks: usize) {
+        if cfg!(not(feature = "sys_stat")) {
+            return;
+        }
+
         match self.state.load(Ordering::Relaxed) {
             val if val == CpuState::Idle as u8 => self.idle.fetch_add(ticks, Ordering::Relaxed),
             val if val == CpuState::User as u8 => self.user.fetch_add(ticks, Ordering::Relaxed),
@@ -85,7 +111,12 @@ impl CpuStats {
     ///
     /// # Parameters
     /// * `irq` - The ID of the interrupt that happened.
+    #[inline]
     pub fn add_irq(&self, irq: u8) {
+        if cfg!(not(feature = "sys_stat")) {
+            return;
+        }
+
         IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
         self.irq.fetch_add(1, Ordering::Relaxed);
     }
@@ -105,39 +136,52 @@ impl CpuStatsData {
     }
 }
 
-impl Into<CpuStatsData> for &CpuStats {
-    fn into(self) -> CpuStatsData {
+impl From<&CpuStats> for CpuStatsData {
+    fn from(val: &CpuStats) -> Self {
         CpuStatsData {
-            user: self.user.load(Ordering::Relaxed),
-            nice: self.nice.load(Ordering::Relaxed),
-            kernel: self.kernel.load(Ordering::Relaxed),
-            idle: self.idle.load(Ordering::Relaxed),
-            irq: self.irq.load(Ordering::Relaxed),
+            user: val.user.load(Ordering::Relaxed),
+            nice: val.nice.load(Ordering::Relaxed),
+            kernel: val.kernel.load(Ordering::Relaxed),
+            idle: val.idle.load(Ordering::Relaxed),
+            irq: val.irq.load(Ordering::Relaxed),
         }
     }
 }
 
 /// Add a context switch to the count.
+#[inline]
 pub fn add_context_switch() {
+    if cfg!(not(feature = "sys_stat")) {
+        return;
+    }
+
     CONTEXT_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Get the number of context switches.
+#[cfg(feature = "sys_stat")]
 pub fn get_context_switch_count() -> u64 {
     CONTEXT_SWITCH_COUNT.load(Ordering::Relaxed)
 }
 
 /// Add a context creation to the count.
+#[inline]
 pub fn add_context() {
+    if cfg!(not(feature = "sys_stat")) {
+        return;
+    }
+
     CONTEXTS_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Get the number of contexts created.
+#[cfg(feature = "sys_stat")]
 pub fn get_contexts_count() -> u64 {
     CONTEXTS_COUNT.load(Ordering::Relaxed)
 }
 
 /// Get the count of each interrupt.
+#[cfg(feature = "sys_stat")]
 pub fn irq_counts() -> Vec<u64> {
     IRQ_COUNT
         .iter()

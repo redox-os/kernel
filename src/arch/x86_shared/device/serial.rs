@@ -1,45 +1,64 @@
-#[cfg(feature = "lpss_debug")]
-use crate::syscall::io::Mmio;
-use crate::{devices::uart_16550::SerialPort, syscall::io::Pio};
+use crate::{
+    devices::{serial::SerialKind, uart_16550::SerialPort},
+    syscall::io::{Mmio, Pio},
+};
 use spin::Mutex;
 
-pub static COM1: Mutex<SerialPort<Pio<u8>>> = Mutex::new(SerialPort::<Pio<u8>>::new(0x3F8));
-pub static COM2: Mutex<SerialPort<Pio<u8>>> = Mutex::new(SerialPort::<Pio<u8>>::new(0x2F8));
-// pub static COM3: Mutex<SerialPort<Pio<u8>>> = Mutex::new(SerialPort::<Pio<u8>>::new(0x3E8));
-// pub static COM4: Mutex<SerialPort<Pio<u8>>> = Mutex::new(SerialPort::<Pio<u8>>::new(0x2E8));
+pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
+pub static COM2: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 
-#[cfg(feature = "lpss_debug")]
-pub static LPSS: Mutex<Option<&'static mut SerialPort<Mmio<u32>>>> = Mutex::new(None);
+pub static LPSS: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 
 pub unsafe fn init() {
-    COM1.lock().init();
-    COM2.lock().init();
+    #[cfg(feature = "system76_ec_debug")]
+    super::system76_ec::init();
 
-    #[cfg(feature = "lpss_debug")]
+    if cfg!(not(feature = "serial_debug")) {
+        // FIXME remove serial_debug feature once ACPI SPCR is respected on UEFI boots.
+        return;
+    }
+
+    let mut com1 = SerialPort::<Pio<u8>>::new(0x3F8);
+    if com1.init().is_ok() {
+        *COM1.lock() = SerialKind::Ns16550Pio(com1);
+    }
+    let mut com2 = SerialPort::<Pio<u8>>::new(0x2F8);
+    if com2.init().is_ok() {
+        *COM2.lock() = SerialKind::Ns16550Pio(com2);
+    }
+
+    // FIXME remove explicit LPSS handling once ACPI SPCR is supported
+    if cfg!(not(feature = "lpss_debug")) {
+        return;
+    }
+
+    // TODO: Make this configurable
+    let address = crate::PHYS_OFFSET + 0xFE032000;
+
     {
-        // TODO: Make this configurable
-        let address = crate::PHYS_OFFSET + 0xFE032000;
+        use rmm::PageFlags;
 
-        {
-            use crate::{
-                memory::{Frame, PhysicalAddress},
-                paging::{entry::EntryFlags, ActivePageTable, Page, VirtualAddress},
-            };
+        use crate::{
+            memory::{KernelMapper, PhysicalAddress},
+            paging::VirtualAddress,
+        };
 
-            let mut active_table = ActivePageTable::new();
-            let page = Page::containing_address(VirtualAddress::new(address));
-            let frame = Frame::containing(PhysicalAddress::new(address - crate::PHYS_OFFSET));
-            let result = active_table.map_to(
-                page,
-                frame,
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
-            );
-            result.flush(&mut active_table);
+        let mut mapper = KernelMapper::lock();
+        let virt = VirtualAddress::new(address);
+        let phys = PhysicalAddress::new(address - crate::PHYS_OFFSET);
+        let flags = PageFlags::new().write(true).execute(false);
+        unsafe {
+            mapper
+                .get_mut()
+                .unwrap()
+                .map_phys(virt, phys, flags)
+                .expect("failed to map frame")
+                .flush();
         }
+    }
 
-        let lpss = SerialPort::<Mmio<u32>>::new(crate::PHYS_OFFSET + 0xFE032000);
-        lpss.init();
-
-        *LPSS.lock() = Some(lpss);
+    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(address) };
+    if lpss.init().is_ok() {
+        *LPSS.lock() = SerialKind::Ns16550u32(lpss);
     }
 }

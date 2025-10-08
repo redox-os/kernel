@@ -7,11 +7,13 @@ pub mod debug;
 /// Devices
 pub mod device;
 
+/// Global descriptor table
+pub mod gdt;
+
 /// Interrupt descriptor table
 pub mod idt;
 
 /// Interrupt instructions
-#[macro_use]
 pub mod interrupt;
 
 /// Inter-processor interrupts

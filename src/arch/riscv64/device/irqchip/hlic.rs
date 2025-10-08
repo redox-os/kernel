@@ -1,4 +1,7 @@
-use crate::dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP};
+use crate::{
+    dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+    sync::CleanLockToken,
+};
 use alloc::vec::Vec;
 use core::arch::asm;
 use fdt::{node::NodeProperty, Fdt};
@@ -24,32 +27,40 @@ fn acknowledge(interrupt: usize) {
     }
 }
 
-pub unsafe fn interrupt(hart: usize, interrupt: usize) {
-    assert!(
-        hart < CPU_INTERRUPT_HANDLERS.len(),
-        "Unexpected hart in interrupt routine"
-    );
-    acknowledge(interrupt);
-    let ic_idx = CPU_INTERRUPT_HANDLERS[hart].unwrap_or_else(|| {
-        panic!(
-            "No hlic connected to hart {} yet interrupt {} occurred",
-            hart, interrupt
-        )
-    });
-    let virq = IRQ_CHIP
-        .irq_to_virq(ic_idx, interrupt as u32)
-        .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
-    if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
-        handler.irq_handler(virq as u32);
-    } else if let Some(ic_idx) = IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
-        IRQ_CHIP.irq_chip_list.chips[ic_idx]
-            .ic
-            .irq_handler(virq as u32);
-    } else {
-        panic!(
-            "Unconnected interrupt {} occurred on hlic connected to hart {}",
-            interrupt, hart
+pub unsafe fn interrupt(hart: usize, interrupt: usize, token: &mut CleanLockToken) {
+    unsafe {
+        assert!(
+            hart < CPU_INTERRUPT_HANDLERS.len(),
+            "Unexpected hart in interrupt routine"
         );
+        acknowledge(interrupt);
+        let ic_idx = CPU_INTERRUPT_HANDLERS[hart].unwrap_or_else(|| {
+            panic!(
+                "No hlic connected to hart {} yet interrupt {} occurred",
+                hart, interrupt
+            )
+        });
+        let virq = IRQ_CHIP
+            .irq_to_virq(ic_idx, interrupt as u32)
+            .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
+        match &mut IRQ_CHIP.irq_desc[virq].handler {
+            Some(handler) => {
+                handler.irq_handler(virq as u32, token);
+            }
+            _ => match IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
+                Some(ic_idx) => {
+                    IRQ_CHIP.irq_chip_list.chips[ic_idx]
+                        .ic
+                        .irq_handler(virq as u32, token);
+                }
+                _ => {
+                    panic!(
+                        "Unconnected interrupt {} occurred on hlic connected to hart {}",
+                        interrupt, hart
+                    );
+                }
+            },
+        }
     }
 }
 
@@ -75,10 +86,10 @@ impl Hlic {
     }
 }
 impl InterruptHandler for Hlic {
-    fn irq_handler(&mut self, irq: u32) {
+    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
         assert!(irq < 16, "Unsupported HLIC interrupt raised!");
         unsafe {
-            IRQ_CHIP.trigger_virq(self.virq_base as u32 + irq);
+            IRQ_CHIP.trigger_virq(self.virq_base as u32 + irq, token);
         }
     }
 }

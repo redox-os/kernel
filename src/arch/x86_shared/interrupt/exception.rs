@@ -2,21 +2,15 @@ use syscall::Exception;
 use x86::irq::PageFaultError;
 
 use crate::{
-    arch::x86_shared::interrupt,
-    context::signal::excp_handler,
-    interrupt_error, interrupt_stack,
-    memory::GenericPfFlags,
-    paging::VirtualAddress,
-    panic::{stack_trace, user_stack_trace},
-    ptrace,
-    syscall::flag::*,
+    arch::x86_shared::interrupt, context::signal::excp_handler, interrupt_error, interrupt_stack,
+    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace,
+    sync::CleanLockToken, syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {
     println!("Divide by zero");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 0,
         ..Default::default()
@@ -29,10 +23,14 @@ interrupt_stack!(debug, @paranoid, |stack| {
     // Disable singlestep before there is a breakpoint, since the breakpoint
     // handler might end up setting it again but unless it does we want the
     // default to be false.
+    #[cfg(target_arch = "x86")]
+    let had_singlestep = stack.iret.eflags & (1 << 8) == 1 << 8;
+    #[cfg(target_arch = "x86_64")]
     let had_singlestep = stack.iret.rflags & (1 << 8) == 1 << 8;
     stack.set_singlestep(false);
 
-    if ptrace::breakpoint_callback(PTRACE_STOP_SINGLESTEP, None).is_some() {
+    let mut token = unsafe { CleanLockToken::new() };
+    if ptrace::breakpoint_callback(PTRACE_STOP_SINGLESTEP, None, &mut token).is_some() {
         handled = true;
     } else {
         // There was no breakpoint, restore original value
@@ -51,7 +49,7 @@ interrupt_stack!(debug, @paranoid, |stack| {
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
     #[cfg(feature = "profiling")]
-    crate::profiling::nmi_handler(stack);
+    unsafe { crate::profiling::nmi_handler(stack) };
 
     #[cfg(not(feature = "profiling"))]
     {
@@ -62,7 +60,7 @@ interrupt_stack!(non_maskable, @paranoid, |stack| {
 });
 
 interrupt_stack!(breakpoint, |stack| {
-    // The processor lets RIP point to the instruction *after* int3, so
+    // The processor lets EIP/RIP point to the instruction *after* int3, so
     // unhandled breakpoint interrupt don't go in an infinite loop. But we
     // throw SIGTRAP anyway, so that's not a problem.
     //
@@ -73,9 +71,17 @@ interrupt_stack!(breakpoint, |stack| {
     //
     // Let's just follow Linux convention and let RIP be RIP-1, point to the
     // int3 instruction. After all, it's the sanest thing to do.
-    stack.iret.rip -= 1;
+    #[cfg(target_arch = "x86")]
+    {
+        stack.iret.eip -= 1;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        stack.iret.rip -= 1;
+    }
 
-    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None).is_none() {
+    let mut token = unsafe { CleanLockToken::new() };
+    if ptrace::breakpoint_callback(PTRACE_STOP_BREAKPOINT, None, &mut token).is_none() {
         println!("Breakpoint trap");
         stack.dump();
         excp_handler(Exception {
@@ -88,8 +94,7 @@ interrupt_stack!(breakpoint, |stack| {
 interrupt_stack!(overflow, |stack| {
     println!("Overflow trap");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 4,
         ..Default::default()
@@ -99,8 +104,7 @@ interrupt_stack!(overflow, |stack| {
 interrupt_stack!(bound_range, |stack| {
     println!("Bound range exceeded fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 5,
         ..Default::default()
@@ -110,8 +114,7 @@ interrupt_stack!(bound_range, |stack| {
 interrupt_stack!(invalid_opcode, |stack| {
     println!("Invalid opcode fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 6,
         ..Default::default()
@@ -121,8 +124,7 @@ interrupt_stack!(invalid_opcode, |stack| {
 interrupt_stack!(device_not_available, |stack| {
     println!("Device not available fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 7,
         ..Default::default()
@@ -132,19 +134,19 @@ interrupt_stack!(device_not_available, |stack| {
 interrupt_error!(double_fault, |stack, _code| {
     println!("Double fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
-    loop {
-        interrupt::disable();
-        interrupt::halt();
+    unsafe {
+        stack_trace();
+        loop {
+            interrupt::disable();
+            interrupt::halt();
+        }
     }
 });
 
 interrupt_error!(invalid_tss, |stack, code| {
     println!("Invalid TSS fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 10,
         code,
@@ -155,8 +157,7 @@ interrupt_error!(invalid_tss, |stack, code| {
 interrupt_error!(segment_not_present, |stack, code| {
     println!("Segment not present fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 11,
         code,
@@ -167,8 +168,7 @@ interrupt_error!(segment_not_present, |stack, code| {
 interrupt_error!(stack_segment, |stack, code| {
     println!("Stack segment fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 12,
         code,
@@ -179,8 +179,7 @@ interrupt_error!(stack_segment, |stack, code| {
 interrupt_error!(protection, |stack, code| {
     println!("Protection fault code={:#0x}", code);
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 13,
         code,
@@ -214,11 +213,23 @@ interrupt_error!(page, |stack, code| {
         arch_flags.contains(PageFaultError::ID),
     );
 
+    #[cfg(target_arch = "x86")]
+    if crate::memory::page_fault_handler(&mut stack.inner, generic_flags, cr2).is_err() {
+        println!("Page fault: {:>08X} {:#?}", cr2.data(), arch_flags);
+        stack.dump();
+        unsafe { stack_trace() };
+        excp_handler(Exception {
+            kind: 14,
+            code,
+            address: cr2.data(),
+        });
+    }
+
+    #[cfg(target_arch = "x86_64")]
     if crate::memory::page_fault_handler(stack, generic_flags, cr2).is_err() {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
-        stack_trace();
-        user_stack_trace(stack.preserved.rbp);
+        unsafe { stack_trace() };
         excp_handler(Exception {
             kind: 14,
             code,
@@ -230,8 +241,7 @@ interrupt_error!(page, |stack, code| {
 interrupt_stack!(fpu_fault, |stack| {
     println!("FPU floating point fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 16,
         ..Default::default()
@@ -241,8 +251,7 @@ interrupt_stack!(fpu_fault, |stack| {
 interrupt_error!(alignment_check, |stack, code| {
     println!("Alignment check fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 17,
         code,
@@ -253,10 +262,12 @@ interrupt_error!(alignment_check, |stack, code| {
 interrupt_stack!(machine_check, @paranoid, |stack| {
     println!("Machine check fault");
     stack.dump();
-    stack_trace();
-    loop {
-        interrupt::disable();
-        interrupt::halt();
+    unsafe {
+        stack_trace();
+        loop {
+            interrupt::disable();
+            interrupt::halt();
+        }
     }
 });
 
@@ -264,10 +275,9 @@ interrupt_stack!(simd, |stack| {
     println!("SIMD floating point fault");
     stack.dump();
     let mut mxcsr = 0_usize;
-    core::arch::asm!("stmxcsr [{}]", in(reg) core::ptr::addr_of_mut!(mxcsr));
+    unsafe { core::arch::asm!("stmxcsr [{}]", in(reg) core::ptr::addr_of_mut!(mxcsr)) };
     println!("MXCSR {:#0x}", mxcsr);
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 19,
         ..Default::default()
@@ -277,21 +287,23 @@ interrupt_stack!(simd, |stack| {
 interrupt_stack!(virtualization, |stack| {
     println!("Virtualization fault");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
-    loop {
-        interrupt::disable();
-        interrupt::halt();
+    unsafe {
+        stack_trace();
+        loop {
+            interrupt::disable();
+            interrupt::halt();
+        }
     }
 });
 
 interrupt_error!(security, |stack, _code| {
     println!("Security exception");
     stack.dump();
-    stack_trace();
-    user_stack_trace(stack.preserved.rbp);
-    loop {
-        interrupt::disable();
-        interrupt::halt();
+    unsafe {
+        stack_trace();
+        loop {
+            interrupt::disable();
+            interrupt::halt();
+        }
     }
 });

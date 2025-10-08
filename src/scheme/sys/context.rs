@@ -4,9 +4,9 @@ use alloc::{
 };
 use core::fmt::Write;
 
-use crate::{context, paging::PAGE_SIZE, syscall::error::Result};
+use crate::{context, paging::PAGE_SIZE, sync::CleanLockToken, syscall::error::Result};
 
-pub fn resource() -> Result<Vec<u8>> {
+pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
         "{:<6}{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
         "PID", "EUID", "EGID", "ENS", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
@@ -14,21 +14,23 @@ pub fn resource() -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let contexts = context::contexts();
+        let mut contexts = context::contexts(token.token());
+        let (contexts, mut token) = contexts.token_split();
         for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
-            let context = context_ref.read();
+            let context = context_ref.read(token.token());
 
             let mut stat_string = String::new();
             // TODO: All user programs must have some grant in order for executable memory to even
             // exist, but is this a good indicator of whether it is user or kernel?
-            stat_string.push(if let Ok(addr_space) = context.addr_space() {
-                if addr_space.acquire_read().grants.is_empty() {
-                    'K'
-                } else {
-                    'U'
+            stat_string.push(match context.addr_space() {
+                Ok(addr_space) => {
+                    if addr_space.acquire_read().grants.is_empty() {
+                        'K'
+                    } else {
+                        'U'
+                    }
                 }
-            } else {
-                'R'
+                _ => 'R',
             });
             match context.status {
                 context::Status::Runnable => {
@@ -49,10 +51,13 @@ pub fn resource() -> Result<Vec<u8>> {
                 stat_string.push('+');
             }
 
-            let cpu_string = if let Some(cpu_id) = context.cpu_id {
-                format!("{}", cpu_id)
-            } else {
-                format!("?")
+            let cpu_string = match context.cpu_id {
+                Some(cpu_id) => {
+                    format!("{}", cpu_id)
+                }
+                _ => {
+                    format!("?")
+                }
             };
             let affinity = context.sched_affinity.to_string();
 

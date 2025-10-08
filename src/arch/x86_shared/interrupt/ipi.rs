@@ -1,24 +1,28 @@
-use crate::{context, device::local_apic::the_local_apic, percpu::PercpuBlock};
+use crate::{
+    context, device::local_apic::the_local_apic, percpu::PercpuBlock, sync::CleanLockToken,
+};
 
 interrupt!(wakeup, || {
-    the_local_apic().eoi();
+    unsafe { the_local_apic().eoi() };
 });
 
 interrupt!(tlb, || {
     PercpuBlock::current().maybe_handle_tlb_shootdown();
 
-    the_local_apic().eoi();
+    unsafe { the_local_apic().eoi() };
 });
 
 interrupt!(switch, || {
-    the_local_apic().eoi();
+    unsafe { the_local_apic().eoi() };
 
-    let _ = context::switch();
+    let mut token = unsafe { CleanLockToken::new() };
+    let _ = context::switch(&mut token);
 });
 
 interrupt!(pit, || {
-    the_local_apic().eoi();
+    unsafe { the_local_apic().eoi() };
 
     // Switch after a sufficient amount of time since the last switch.
-    context::switch::tick();
+    let mut token = unsafe { CleanLockToken::new() };
+    context::switch::tick(&mut token);
 });

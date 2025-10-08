@@ -266,8 +266,8 @@ macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
     // use idents directly instead.
     ($name:ident, |$stack:ident| $code:block) => {
-        #[naked]
-        pub unsafe extern "C" fn $name() {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name() { unsafe {
             unsafe extern "fastcall" fn inner($stack: &mut $crate::arch::x86::interrupt::InterruptStack) {
                 // TODO: Force the declarations to specify unsafe?
 
@@ -308,7 +308,7 @@ macro_rules! interrupt_stack {
             ),
             inner = sym inner,
             );
-        }
+        }}
     };
     ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, |$stack| $code); };
     ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, |$stack| $code); }
@@ -317,8 +317,8 @@ macro_rules! interrupt_stack {
 #[macro_export]
 macro_rules! interrupt {
     ($name:ident, || $code:block) => {
-        #[naked]
-        pub unsafe extern "C" fn $name() {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name() { unsafe {
             unsafe extern "C" fn inner() {
                 $code
             }
@@ -350,20 +350,18 @@ macro_rules! interrupt {
             ),
             inner = sym inner,
             );
-        }
+        }}
     };
 }
 
 #[macro_export]
 macro_rules! interrupt_error {
-    ($name:ident, |$stack:ident| $code:block) => {
-        #[naked]
-        pub unsafe extern "C" fn $name() {
+    ($name:ident, |$stack:ident, $error_code:ident| $code:block) => {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name() { unsafe {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86::interrupt::handler::InterruptErrorStack) {
-                #[allow(unused_unsafe)]
-                unsafe {
-                    $code
-                }
+                let $error_code: usize = $stack.code;
+                $code
             }
 
             core::arch::naked_asm!(concat!(
@@ -408,20 +406,22 @@ macro_rules! interrupt_error {
                 "iretd\n",
             ),
             inner = sym inner);
-        }
+        }}
     };
 }
-#[naked]
+#[unsafe(naked)]
 unsafe extern "C" fn usercopy_trampoline() {
-    core::arch::naked_asm!(
-        "
+    unsafe {
+        core::arch::naked_asm!(
+            "
         pop esi
         pop edi
 
         mov eax, 1
         ret
     "
-    );
+        );
+    }
 }
 
 impl ArchIntCtx for InterruptStack {
@@ -441,17 +441,19 @@ impl ArchIntCtx for InterruptStack {
     }
 }
 
-#[naked]
+#[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode() {
-    core::arch::naked_asm!(concat!(
-        // TODO: Unmap PTI
-        // $crate::arch::x86::pti::unmap();
+    unsafe {
+        core::arch::naked_asm!(concat!(
+            // TODO: Unmap PTI
+            // $crate::arch::x86::pti::unmap();
 
-        // Exit kernel TLS segment
-        exit_gs!(),
-        // Restore all userspace registers
-        pop_preserved!(),
-        pop_scratch!(),
-        "iretd\n",
-    ))
+            // Exit kernel TLS segment
+            exit_gs!(),
+            // Restore all userspace registers
+            pop_preserved!(),
+            pop_scratch!(),
+            "iretd\n",
+        ))
+    }
 }

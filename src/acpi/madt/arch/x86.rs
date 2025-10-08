@@ -1,11 +1,15 @@
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::{
+    hint,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 use crate::{
+    arch::start::KernelArgsAp,
+    cpu_set::LogicalCpuId,
     device::local_apic::the_local_apic,
-    interrupt,
     memory::{allocate_p2frame, Frame, KernelMapper},
     paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
-    start::{kstart_ap, AP_READY, CPU_COUNT},
+    start::{kstart_ap, AP_READY},
 };
 
 use super::{Madt, MadtEntry};
@@ -42,108 +46,110 @@ pub(super) fn init(madt: Madt) {
         result.flush();
 
         // Write trampoline, make sure TRAMPOLINE page is free for use
-        for i in 0..TRAMPOLINE_DATA.len() {
+        for (i, val) in TRAMPOLINE_DATA.iter().enumerate() {
             unsafe {
                 (*((TRAMPOLINE as *mut u8).add(i) as *const AtomicU8))
-                    .store(TRAMPOLINE_DATA[i], Ordering::SeqCst);
+                    .store(*val, Ordering::SeqCst);
             }
         }
 
         for madt_entry in madt.iter() {
             println!("      {:x?}", madt_entry);
-            match madt_entry {
-                MadtEntry::LocalApic(ap_local_apic) => {
-                    if u32::from(ap_local_apic.id) == me.get() {
-                        println!("        This is my local APIC");
-                    } else {
-                        if ap_local_apic.flags & 1 == 1 {
-                            // Increase CPU ID
-                            CPU_COUNT.fetch_add(1, Ordering::SeqCst);
+            if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
+                if u32::from(ap_local_apic.id) == me.get() {
+                    println!("        This is my local APIC");
+                } else if ap_local_apic.flags & 1 == 1 {
+                    let cpu_id = LogicalCpuId::next();
 
-                            // Allocate a stack
-                            let stack_start = allocate_p2frame(4)
-                                .expect("no more frames in acpi stack_start")
-                                .base()
-                                .data()
-                                + crate::PHYS_OFFSET;
-                            let stack_end = stack_start + (PAGE_SIZE << 4);
+                    // Allocate a stack
+                    let stack_start = allocate_p2frame(4)
+                        .expect("no more frames in acpi stack_start")
+                        .base()
+                        .data()
+                        + crate::PHYS_OFFSET;
+                    let stack_end = stack_start + (PAGE_SIZE << 4);
 
-                            let ap_ready = (TRAMPOLINE + 8) as *mut u64;
-                            let ap_cpu_id = unsafe { ap_ready.add(1) };
-                            let ap_page_table = unsafe { ap_ready.add(2) };
-                            let ap_stack_start = unsafe { ap_ready.add(3) };
-                            let ap_stack_end = unsafe { ap_ready.add(4) };
-                            let ap_code = unsafe { ap_ready.add(5) };
+                    let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
 
-                            // Set the ap_ready to 0, volatile
-                            unsafe {
-                                ap_ready.write(0);
-                                ap_cpu_id.write(ap_local_apic.processor.into());
-                                ap_page_table.write(page_table_physaddr as u64);
-                                ap_stack_start.write(stack_start as u64);
-                                ap_stack_end.write(stack_end as u64);
-                                ap_code.write(kstart_ap as u64);
+                    let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
 
-                                // TODO: Is this necessary (this fence)?
-                                core::arch::asm!("");
-                            };
-                            AP_READY.store(false, Ordering::SeqCst);
+                    let args = KernelArgsAp {
+                        cpu_id,
+                        page_table: page_table_physaddr,
+                        pcr_ptr,
+                        idt_ptr,
+                    };
 
-                            print!(
-                                "        AP {} APIC {}:",
-                                ap_local_apic.processor, ap_local_apic.id
-                            );
+                    let ap_ready = (TRAMPOLINE + 8) as *mut u64;
+                    let ap_args_ptr = unsafe { ap_ready.add(1) };
+                    let ap_page_table = unsafe { ap_ready.add(2) };
+                    let ap_stack_end = unsafe { ap_ready.add(3) };
+                    let ap_code = unsafe { ap_ready.add(4) };
 
-                            // Send INIT IPI
-                            {
-                                let mut icr = 0x4500;
-                                if local_apic.x2 {
-                                    icr |= u64::from(ap_local_apic.id) << 32;
-                                } else {
-                                    icr |= u64::from(ap_local_apic.id) << 56;
-                                }
-                                print!(" IPI...");
-                                local_apic.set_icr(icr);
-                            }
+                    // Set the ap_ready to 0, volatile
+                    unsafe {
+                        ap_ready.write(0);
+                        ap_args_ptr.write(&args as *const _ as u64);
+                        ap_page_table.write(page_table_physaddr as u64);
+                        ap_stack_end.write(stack_end as u64);
+                        #[expect(clippy::fn_to_numeric_cast)]
+                        ap_code.write(kstart_ap as u64);
 
-                            // Send START IPI
-                            {
-                                //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
-                                let ap_segment = (TRAMPOLINE >> 12) & 0xFF;
-                                let mut icr = 0x4600 | ap_segment as u64;
+                        // TODO: Is this necessary (this fence)?
+                        core::arch::asm!("");
+                    };
+                    AP_READY.store(false, Ordering::SeqCst);
 
-                                if local_apic.x2 {
-                                    icr |= u64::from(ap_local_apic.id) << 32;
-                                } else {
-                                    icr |= u64::from(ap_local_apic.id) << 56;
-                                }
+                    print!(
+                        "        AP {} APIC {}:",
+                        ap_local_apic.processor, ap_local_apic.id
+                    );
 
-                                print!(" SIPI...");
-                                local_apic.set_icr(icr);
-                            }
-
-                            // Wait for trampoline ready
-                            print!(" Wait...");
-                            while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) }
-                                == 0
-                            {
-                                interrupt::pause();
-                            }
-                            print!(" Trampoline...");
-                            while !AP_READY.load(Ordering::SeqCst) {
-                                interrupt::pause();
-                            }
-                            println!(" Ready");
-
-                            unsafe {
-                                RmmA::invalidate_all();
-                            }
+                    // Send INIT IPI
+                    {
+                        let mut icr = 0x4500;
+                        if local_apic.x2 {
+                            icr |= u64::from(ap_local_apic.id) << 32;
                         } else {
-                            println!("        CPU Disabled");
+                            icr |= u64::from(ap_local_apic.id) << 56;
                         }
+                        print!(" IPI...");
+                        local_apic.set_icr(icr);
                     }
+
+                    // Send START IPI
+                    {
+                        //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
+                        let ap_segment = (TRAMPOLINE >> 12) & 0xFF;
+                        let mut icr = 0x4600 | ap_segment as u64;
+
+                        if local_apic.x2 {
+                            icr |= u64::from(ap_local_apic.id) << 32;
+                        } else {
+                            icr |= u64::from(ap_local_apic.id) << 56;
+                        }
+
+                        print!(" SIPI...");
+                        local_apic.set_icr(icr);
+                    }
+
+                    // Wait for trampoline ready
+                    print!(" Wait...");
+                    while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) } == 0 {
+                        hint::spin_loop();
+                    }
+                    print!(" Trampoline...");
+                    while !AP_READY.load(Ordering::SeqCst) {
+                        hint::spin_loop();
+                    }
+                    println!(" Ready");
+
+                    unsafe {
+                        RmmA::invalidate_all();
+                    }
+                } else {
+                    println!("        CPU Disabled");
                 }
-                _ => (),
             }
         }
 

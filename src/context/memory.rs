@@ -21,6 +21,7 @@ use crate::{
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
+    sync::CleanLockToken,
 };
 
 use super::{context::HardBlockedReason, file::FileDescription};
@@ -51,7 +52,7 @@ pub struct UnmapResult {
     pub flags: MunmapFlags,
 }
 impl UnmapResult {
-    pub fn unmap(mut self) -> Result<()> {
+    pub fn unmap(mut self, token: &mut CleanLockToken) -> Result<()> {
         let Some(GrantFileRef {
             base_offset,
             description,
@@ -60,18 +61,18 @@ impl UnmapResult {
             return Ok(());
         };
 
-        let (scheme_id, number) = match description.write() {
-            ref desc => (desc.scheme, desc.number),
+        let (scheme_id, number) = {
+            let desc = description.write();
+            (desc.scheme, desc.number)
         };
 
-        let funmap_result = scheme::schemes()
-            .get(scheme_id)
-            .cloned()
+        let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
+        let funmap_result = scheme_opt
             .ok_or(Error::new(ENODEV))
-            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags));
+            .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
-            fd.into_inner().try_close()?;
+            fd.into_inner().try_close(token)?;
         }
         funmap_result?;
 
@@ -177,7 +178,7 @@ impl AddrSpaceWrapper {
                 } => continue,
 
                 Provider::PhysBorrowed { base } => Grant::physmap(
-                    base.clone(),
+                    base,
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
                     &mut new.inner.get_mut().table.utable,
@@ -221,7 +222,7 @@ impl AddrSpaceWrapper {
                     src_base,
                     ..
                 } => Grant::borrow_grant(
-                    Arc::clone(&address_space),
+                    Arc::clone(address_space),
                     src_base,
                     grant_base,
                     grant_info,
@@ -263,13 +264,13 @@ impl AddrSpaceWrapper {
                 .grants
                 .remove(grant_span.base)
                 .expect("grant cannot magically disappear while we hold the lock!");
-            //log::info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
+            //info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
 
             let (before, mut grant, after) = grant
                 .extract(intersection)
                 .expect("failed to extract grant");
-            //log::info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
+            //info!("Sliced into\n\n{:#?}\n\n{:#?}\n\n{:#?}", before, grant, after);
 
             if let Some(before) = before {
                 guard.grants.insert(before);
@@ -295,7 +296,7 @@ impl AddrSpaceWrapper {
             // think), execute-only memory is also supported.
 
             grant.remap(mapper, &mut flusher, new_flags);
-            //log::info!("Mprotect grant became {:#?}", grant);
+            //info!("Mprotect grant became {:#?}", grant);
             guard.grants.insert(grant);
         }
         Ok(())
@@ -316,7 +317,7 @@ impl AddrSpaceWrapper {
     }
     pub fn r#move(
         &self,
-        mut src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
+        src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
         src_span: PageSpan,
         requested_dst_base: Option<Page>,
         new_page_count: usize,
@@ -327,16 +328,14 @@ impl AddrSpaceWrapper {
         let mut dst = dst_lock.acquire_write();
         let dst = &mut *dst;
 
-        let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| {
-            (
-                &mut a.grants,
-                &mut a.table.utable,
-                Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack),
-            )
-        });
-        let mut src_opt = src_owned_opt
-            .as_mut()
-            .map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+        let mut src_flusher;
+        let mut src_opt = match src_opt {
+            Some((aw, a)) => {
+                src_flusher = Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack);
+                Some((&mut a.grants, &mut a.table.utable, &mut src_flusher))
+            }
+            None => None,
+        };
         let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
 
         let dst_base = match requested_dst_base {
@@ -372,10 +371,10 @@ impl AddrSpaceWrapper {
             }
         };
 
-        let (src_grants, src_mapper, src_flusher) = src_opt.as_mut().map_or(
-            (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
-            |(g, m, f)| (&mut *g, &mut *m, &mut *f),
-        );
+        let (src_grants, src_mapper, src_flusher) = match &mut src_opt {
+            Some((g, m, f)) => (&mut **g, &mut **m, &mut **f),
+            None => (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
+        };
 
         if src_grants
             .conflicts(src_span)
@@ -433,10 +432,9 @@ impl AddrSpaceWrapper {
                 )?);
             }
 
-            let (src_grants, _, _) = src_opt.as_mut().map_or(
-                (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
-                |(g, m, f)| (&mut *g, &mut *m, &mut *f),
-            );
+            let src_grants = src_opt
+                .as_mut()
+                .map_or(&mut dst.grants, |(g, _, _)| &mut *g);
             let grant = src_grants
                 .remove(grant_base)
                 .expect("grant cannot disappear");
@@ -454,10 +452,6 @@ impl AddrSpaceWrapper {
 
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
-
-            let mut src_opt = src_opt
-                .as_mut()
-                .map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
 
             dst.grants.insert(match src_opt.as_mut() {
                 Some((_, other_mapper, other_flusher)) => middle.transfer(
@@ -502,7 +496,11 @@ impl AddrSpaceWrapper {
     }
     /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
     /// is intended to be used for user-kernel shared memory.
-    pub fn borrow_frame_enforce_rw_allocated(self: &Arc<Self>, page: Page) -> Result<RaiiFrame> {
+    pub fn borrow_frame_enforce_rw_allocated(
+        self: &Arc<Self>,
+        page: Page,
+        token: &mut CleanLockToken,
+    ) -> Result<RaiiFrame> {
         let mut guard = self.acquire_write();
 
         let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
@@ -519,8 +517,9 @@ impl AddrSpaceWrapper {
         {
             Frame::containing(f)
         } else {
-            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
-                .map_err(|_| Error::new(ENOMEM))?;
+            let (frame, flush, new_guard) =
+                correct_inner(self, guard, page, AccessMode::Write, 0, token)
+                    .map_err(|_| Error::new(ENOMEM))?;
             flush.flush();
             guard = new_guard;
 
@@ -1175,7 +1174,7 @@ impl Grant {
 
         for i in 0..span.count {
             if let Some(info) = get_page_info(phys.next_by(i)) {
-                log::warn!("Driver tried to physmap the allocator-frame {phys:?} (info {info:?})!");
+                warn!("Driver tried to physmap the allocator-frame {phys:?} (info {info:?})!");
                 return Err(Error::new(EPERM));
             }
         }
@@ -1211,7 +1210,7 @@ impl Grant {
         flusher: &mut Flusher,
     ) -> Result<Grant, Enomem> {
         if !span.count.is_power_of_two() {
-            log::warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
+            warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
         }
 
         let alloc_order = span.count.next_power_of_two().trailing_zeros();
@@ -1333,6 +1332,7 @@ impl Grant {
         lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
+        token: &mut CleanLockToken,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
@@ -1359,6 +1359,7 @@ impl Grant {
                                     src_page,
                                     AccessMode::Read,
                                     0,
+                                    token,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
@@ -1383,6 +1384,7 @@ impl Grant {
                                     src_page,
                                     AccessMode::Read,
                                     0,
+                                    token,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
@@ -1503,23 +1505,17 @@ impl Grant {
             let prev_span = prev_span.replace(grant_span);
 
             if prev_span.is_none() && src_grant_base > src_base {
-                log::warn!(
+                warn!(
                     "Grant too far away, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}",
-                    prev_span,
-                    src_base,
-                    src_grant_base,
-                    src_grant
+                    prev_span, src_base, src_grant_base, src_grant
                 );
                 return Err(Error::new(EINVAL));
             } else if let Some(prev) = prev_span
                 && prev.end() != src_grant_base
             {
-                log::warn!(
+                warn!(
                     "Hole between grants, prev_span {:?} src_base {:?} grant base {:?} grant {:#?}",
-                    prev_span,
-                    src_base,
-                    src_grant_base,
-                    src_grant
+                    prev_span, src_base, src_grant_base, src_grant
                 );
                 return Err(Error::new(EINVAL));
             }
@@ -1538,12 +1534,12 @@ impl Grant {
         }
 
         let Some(last_span) = prev_span else {
-            log::warn!("Called Grant::borrow, but no grants were there!");
+            warn!("Called Grant::borrow, but no grants were there!");
             return Err(Error::new(EINVAL));
         };
 
         if last_span.end() < src_span.end() {
-            log::warn!("Requested end page too far away from last grant");
+            warn!("Requested end page too far away from last grant");
             return Err(Error::new(EINVAL));
         }
         if eager {
@@ -1828,7 +1824,7 @@ impl Grant {
                     continue;
                 };
                 flush.ignore();
-                //log::info!("Remapped page {:?} (frame {:?})", page, Frame::containing(mapper.translate(page.start_address()).unwrap().0));
+                //info!("Remapped page {:?} (frame {:?})", page, Frame::containing(mapper.translate(page.start_address()).unwrap().0));
                 flusher.queue(
                     Frame::containing(phys),
                     None,
@@ -2000,9 +1996,7 @@ impl Grant {
                     Provider::AllocatedShared { .. } => Provider::AllocatedShared {
                         is_pinned_userscheme_borrow: false,
                     },
-                    Provider::PhysBorrowed { base } => {
-                        Provider::PhysBorrowed { base: base.clone() }
-                    }
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base },
                     Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
                         file_ref: file_ref.clone(),
                         pin_refcount: 0,
@@ -2102,7 +2096,7 @@ impl GrantInfo {
         )
     }
     pub fn can_extract(&self, unpin: bool) -> bool {
-        !(self.is_pinned() && !unpin)
+        (!self.is_pinned() || unpin)
             | matches!(
                 self.provider,
                 Provider::Allocated {
@@ -2206,15 +2200,13 @@ impl GrantInfo {
         flags
     }
     pub fn file_ref(&self) -> Option<&GrantFileRef> {
-        if let Provider::FmapBorrowed { ref file_ref, .. }
-        | Provider::Allocated {
-            cow_file_ref: Some(ref file_ref),
-            ..
-        } = self.provider
-        {
-            Some(file_ref)
-        } else {
-            None
+        match self.provider {
+            Provider::FmapBorrowed { ref file_ref, .. }
+            | Provider::Allocated {
+                cow_file_ref: Some(ref file_ref),
+                ..
+            } => Some(file_ref),
+            _ => None,
         }
     }
 }
@@ -2240,6 +2232,9 @@ pub struct Table {
 
 impl Drop for AddrSpace {
     fn drop(&mut self) {
+        //TODO: DANGER: unmap requires a CleanLockToken, this cheats!
+        let mut token = unsafe { CleanLockToken::new() };
+
         for mut grant in core::mem::take(&mut self.grants).into_iter() {
             // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
             // prevent unmapping the mapped range twice (which would corrupt only the scheme
@@ -2253,7 +2248,7 @@ impl Drop for AddrSpace {
             // the underlying pages (and send some funmaps).
             let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
 
-            let _ = res.unmap();
+            let _ = res.unmap(&mut token);
         }
     }
 }
@@ -2380,14 +2375,18 @@ pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
     }
 }
 
-pub fn try_correcting_page_tables(faulting_page: Page, access: AccessMode) -> Result<(), PfError> {
+pub fn try_correcting_page_tables(
+    faulting_page: Page,
+    access: AccessMode,
+    token: &mut CleanLockToken,
+) -> Result<(), PfError> {
     let Ok(addr_space_lock) = AddrSpace::current() else {
-        log::debug!("User page fault without address space being set.");
+        debug!("User page fault without address space being set.");
         return Err(PfError::Segv);
     };
 
     let lock = &addr_space_lock;
-    let (_, flush, _) = correct_inner(lock, lock.acquire_write(), faulting_page, access, 0)?;
+    let (_, flush, _) = correct_inner(lock, lock.acquire_write(), faulting_page, access, 0, token)?;
 
     flush.flush();
 
@@ -2399,12 +2398,13 @@ fn correct_inner<'l>(
     faulting_page: Page,
     access: AccessMode,
     recursion_level: u32,
+    token: &mut CleanLockToken,
 ) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
     let mut addr_space = &mut *addr_space_guard;
     let mut flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
-        log::debug!("Lacks grant");
+        debug!("Lacks grant");
         return Err(PfError::Segv);
     };
 
@@ -2416,11 +2416,11 @@ fn correct_inner<'l>(
         AccessMode::Read => (),
 
         AccessMode::Write if !grant_flags.has_write() => {
-            log::debug!("Write, but grant was not PROT_WRITE.");
+            debug!("Write, but grant was not PROT_WRITE.");
             return Err(PfError::Segv);
         }
         AccessMode::InstrFetch if !grant_flags.has_execute() => {
-            log::debug!("Instuction fetch, but grant was not PROT_EXEC.");
+            debug!("Instuction fetch, but grant was not PROT_EXEC.");
             return Err(PfError::Segv);
         }
 
@@ -2513,94 +2513,100 @@ fn correct_inner<'l>(
             let mut guard = foreign_address_space.acquire_upgradeable_read();
             let src_page = src_base.next_by(pages_from_grant_start);
 
-            if let Some(_) = guard.grants.contains(src_page) {
-                let src_frame = if let Some((phys, _)) =
-                    guard.table.utable.translate(src_page.start_address())
-                {
-                    Frame::containing(phys)
-                } else {
-                    // Grant was valid (TODO check), but we need to correct the underlying page.
-                    // TODO: Access mode
+            match guard.grants.contains(src_page) {
+                Some(_) => {
+                    let src_frame = match guard.table.utable.translate(src_page.start_address()) {
+                        Some((phys, _)) => Frame::containing(phys),
+                        _ => {
+                            // Grant was valid (TODO check), but we need to correct the underlying page.
+                            // TODO: Access mode
 
-                    // TODO: Reasonable maximum?
-                    let new_recursion_level = recursion_level
-                        .checked_add(1)
-                        .filter(|new_lvl| *new_lvl < 16)
-                        .ok_or(PfError::RecursionLimitExceeded)?;
+                            // TODO: Reasonable maximum?
+                            let new_recursion_level = recursion_level
+                                .checked_add(1)
+                                .filter(|new_lvl| *new_lvl < 16)
+                                .ok_or(PfError::RecursionLimitExceeded)?;
 
-                    drop(guard);
-                    drop(flusher);
-                    drop(addr_space_guard);
+                            drop(guard);
+                            drop(flusher);
+                            drop(addr_space_guard);
 
-                    // FIXME: Can this result in invalid address space state?
-                    let ext_addrspace = &foreign_address_space;
-                    let (frame, _, _) = {
-                        let g = ext_addrspace.acquire_write();
-                        correct_inner(
-                            ext_addrspace,
-                            g,
-                            src_page,
-                            AccessMode::Read,
-                            new_recursion_level,
-                        )?
+                            // FIXME: Can this result in invalid address space state?
+                            let ext_addrspace = &foreign_address_space;
+                            let (frame, _, _) = {
+                                let g = ext_addrspace.acquire_write();
+                                correct_inner(
+                                    ext_addrspace,
+                                    g,
+                                    src_page,
+                                    AccessMode::Read,
+                                    new_recursion_level,
+                                    token,
+                                )?
+                            };
+
+                            addr_space_guard = addr_space_lock.acquire_write();
+                            addr_space = &mut *addr_space_guard;
+                            flusher = Flusher::with_cpu_set(
+                                &mut addr_space.used_by,
+                                &addr_space_lock.tlb_ack,
+                            );
+                            guard = foreign_address_space.acquire_upgradeable_read();
+
+                            frame
+                        }
                     };
 
-                    addr_space_guard = addr_space_lock.acquire_write();
-                    addr_space = &mut *addr_space_guard;
-                    flusher =
-                        Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
-                    guard = foreign_address_space.acquire_upgradeable_read();
+                    let info =
+                        get_page_info(src_frame).expect("all allocated frames need a PageInfo");
 
-                    frame
-                };
+                    match info.add_ref(RefKind::Shared) {
+                        Ok(()) => src_frame,
+                        Err(AddRefError::CowToShared) => {
+                            let CowResult {
+                                new_frame,
+                                old_frame,
+                            } = cow(src_frame, info, RefKind::Shared)?;
 
-                let info = get_page_info(src_frame).expect("all allocated frames need a PageInfo");
+                            if let Some(old_frame) = old_frame {
+                                flusher.queue(old_frame, None, TlbShootdownActions::FREE);
+                                flusher.flush();
+                            }
 
-                match info.add_ref(RefKind::Shared) {
-                    Ok(()) => src_frame,
-                    Err(AddRefError::CowToShared) => {
-                        let CowResult {
-                            new_frame,
-                            old_frame,
-                        } = cow(src_frame, info, RefKind::Shared)?;
+                            let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
-                        if let Some(old_frame) = old_frame {
-                            flusher.queue(old_frame, None, TlbShootdownActions::FREE);
-                            flusher.flush();
+                            // TODO: flusher
+                            unsafe {
+                                guard
+                                    .table
+                                    .utable
+                                    .remap_with_full(src_page.start_address(), |_, f| {
+                                        (new_frame.base(), f)
+                                    });
+                            }
+
+                            new_frame
                         }
-
-                        let mut guard = RwLockUpgradableGuard::upgrade(guard);
-
-                        // TODO: flusher
-                        unsafe {
-                            guard
-                                .table
-                                .utable
-                                .remap_with_full(src_page.start_address(), |_, f| {
-                                    (new_frame.base(), f)
-                                });
-                        }
-
-                        new_frame
+                        Err(AddRefError::SharedToCow) => unreachable!(),
+                        Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                     }
-                    Err(AddRefError::SharedToCow) => unreachable!(),
-                    Err(AddRefError::RcOverflow) => return Err(PfError::Oom),
                 }
-            } else {
-                // Grant did not exist, but we did own a Provider::External mapping, and cannot
-                // simply let the current context fail. TODO: But all borrowed memory shouldn't
-                // really be lazy though? TODO: Should a grant be created?
+                _ => {
+                    // Grant did not exist, but we did own a Provider::External mapping, and cannot
+                    // simply let the current context fail. TODO: But all borrowed memory shouldn't
+                    // really be lazy though? TODO: Should a grant be created?
 
-                let mut guard = RwLockUpgradableGuard::upgrade(guard);
+                    let mut guard = RwLockUpgradableGuard::upgrade(guard);
 
-                // TODO: Should this be called?
-                log::warn!("Mapped zero page since grant didn't exist");
-                map_zeroed(
-                    &mut guard.table.utable,
-                    src_page,
-                    grant_flags,
-                    access == AccessMode::Write,
-                )?
+                    // TODO: Should this be called?
+                    warn!("Mapped zero page since grant didn't exist");
+                    map_zeroed(
+                        &mut guard.table.utable,
+                        src_page,
+                        grant_flags,
+                        access == AccessMode::Write,
+                    )?
+                }
             }
         }
         // TODO: NonfatalInternalError if !MAP_LAZY and this page fault occurs.
@@ -2610,10 +2616,11 @@ fn correct_inner<'l>(
             drop(flusher);
             drop(addr_space_guard);
 
-            let (scheme_id, scheme_number) = match file_ref.description.read() {
-                ref desc => (desc.scheme, desc.number),
+            let (scheme_id, scheme_number) = {
+                let desc = &file_ref.description.read();
+                (desc.scheme, desc.number)
             };
-            let user_inner = scheme::schemes()
+            let user_inner = scheme::schemes(token.token())
                 .get(scheme_id)
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
@@ -2626,18 +2633,18 @@ fn correct_inner<'l>(
 
             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
             user_inner
-                .request_fmap(scheme_number, offset, 1, flags)
+                .request_fmap(scheme_number, offset, 1, flags, token)
                 .unwrap();
 
             let context_lock = crate::context::current();
             context_lock
-                .write()
+                .write(token.token())
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
-            super::switch();
+            super::switch(token);
 
             let frame = context_lock
-                .write()
+                .write(token.token())
                 .fmap_ret
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;
@@ -2646,7 +2653,7 @@ fn correct_inner<'l>(
             addr_space = &mut *addr_space_guard;
             flusher = Flusher::with_cpu_set(&mut addr_space.used_by, &addr_space_lock.tlb_ack);
 
-            log::info!("Got frame {:?} from external fmap", frame);
+            info!("Got frame {:?} from external fmap", frame);
 
             frame
         }
@@ -2681,9 +2688,9 @@ pub struct BorrowedFmapSource<'a> {
     pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
 }
 
-pub fn handle_notify_files(notify_files: Vec<UnmapResult>) {
+pub fn handle_notify_files(notify_files: Vec<UnmapResult>, token: &mut CleanLockToken) {
     for file in notify_files {
-        let _ = file.unmap();
+        let _ = file.unmap(token);
     }
 }
 
@@ -2735,7 +2742,7 @@ fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) 
         let Some(info) = get_page_info(base) else {
             return;
         };
-        if info.remove_ref() == None {
+        if info.remove_ref().is_none() {
             unsafe {
                 deallocate_frame(base);
             }
@@ -2793,6 +2800,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
     pub fn flush(&mut self) {
         let pages = core::mem::take(&mut self.state.pagequeue);
 
+        #[expect(clippy::bool_comparison)]
         if pages.is_empty() && core::mem::replace(&mut self.state.dirty, false) == false {
             return;
         }

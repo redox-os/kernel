@@ -7,17 +7,18 @@ use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::vec::Vec;
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use spin::RwLock;
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::arch::interrupt;
 use crate::{
     context::file::InternalFlags,
+    sync::{CleanLockToken, RwLock, L1},
     syscall::{
         data::Stat,
         error::{Error, Result, EBADF, ENOENT},
@@ -56,18 +57,18 @@ enum Handle {
 }
 
 enum Kind {
-    Rd(fn() -> Result<Vec<u8>>),
-    Wr(fn(&[u8]) -> Result<usize>),
+    Rd(fn(&mut CleanLockToken) -> Result<Vec<u8>>),
+    Wr(fn(&[u8], &mut CleanLockToken) -> Result<usize>),
 }
 use Kind::*;
 
 /// System information scheme
 pub struct SysScheme;
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-// Using BTreeMap as hashbrown doesn't have a const constructor.
-static HANDLES: RwLock<BTreeMap<usize, Handle>> = RwLock::new(BTreeMap::new());
+static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
-const FILES: &[(&'static str, Kind)] = &[
+const FILES: &[(&str, Kind)] = &[
     ("block", Rd(block::resource)),
     ("context", Rd(context::resource)),
     ("cpu", Rd(cpu::resource)),
@@ -81,15 +82,15 @@ const FILES: &[(&'static str, Kind)] = &[
     ("scheme_num", Rd(scheme_num::resource)),
     ("syscall", Rd(syscall::resource)),
     ("uname", Rd(uname::resource)),
-    ("env", Rd(|| Ok(Vec::from(crate::init_env())))),
+    ("env", Rd(|_| Ok(Vec::from(crate::init_env())))),
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     ("spurious_irq", Rd(interrupt::irq::spurious_irq_resource)),
     #[cfg(feature = "sys_stat")]
     ("stat", Rd(stat::resource)),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
     /*
-    ("trigger_debugger", Rd(|| unsafe {
-        crate::debugger::debugger(None);
+    ("trigger_debugger", Rd(|token| unsafe {
+        crate::debugger::debugger(None, token);
         Ok(Vec::new())
     })),
     */
@@ -99,9 +100,9 @@ const FILES: &[(&'static str, Kind)] = &[
     ),
     (
         "kstop",
-        Wr(|arg| unsafe {
+        Wr(|arg, token| unsafe {
             match arg.trim_ascii() {
-                b"shutdown" => crate::stop::kstop(),
+                b"shutdown" => crate::stop::kstop(token),
                 b"reset" => crate::stop::kreset(),
                 b"emergency_reset" => crate::stop::emergency_reset(),
                 _ => Err(Error::new(EINVAL)),
@@ -111,13 +112,19 @@ const FILES: &[(&'static str, Kind)] = &[
 ];
 
 impl KernelScheme for SysScheme {
-    fn kopen(&self, path: &str, _flags: usize, ctx: CallerCtx) -> Result<OpenResult> {
+    fn kopen(
+        &self,
+        path: &str,
+        _flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
         let path = path.trim_matches('/');
 
         if path.is_empty() {
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
-            HANDLES.write().insert(id, Handle::TopLevel);
+            HANDLES.write(token.token()).insert(id, Handle::TopLevel);
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         } else {
@@ -133,10 +140,10 @@ impl KernelScheme for SysScheme {
 
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             let data = match entry.1 {
-                Rd(r) => Some(r()?),
+                Rd(r) => Some(r(token)?),
                 Wr(_) => None,
             };
-            HANDLES.write().insert(
+            HANDLES.write(token.token()).insert(
                 id,
                 Handle::Resource {
                     path: entry.0,
@@ -147,19 +154,26 @@ impl KernelScheme for SysScheme {
         }
     }
 
-    fn fsize(&self, id: usize) -> Result<u64> {
-        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+    fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
+        match HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        {
             Handle::TopLevel => Ok(0),
             Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
         }
     }
 
-    fn close(&self, id: usize) -> Result<()> {
-        HANDLES.write().remove(&id).ok_or(Error::new(EBADF))?;
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        HANDLES
+            .write(token.token())
+            .remove(&id)
+            .ok_or(Error::new(EBADF))?;
         Ok(())
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo) -> Result<usize> {
-        let handles = HANDLES.read();
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        let handles = HANDLES.read(token.token());
         let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => "",
             Handle::Resource { path, .. } => path,
@@ -181,16 +195,19 @@ impl KernelScheme for SysScheme {
         pos: u64,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let Ok(pos) = usize::try_from(pos) else {
             return Ok(0);
         };
 
-        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
-            Handle::TopLevel | Handle::Resource { data: None, .. } => {
-                return Err(Error::new(EISDIR))
-            }
-            Handle::Resource {
+        match HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::TopLevel | Handle::Resource { data: None, .. } => Err(Error::new(EISDIR)),
+            &Handle::Resource {
                 data: Some(ref data),
                 ..
             } => {
@@ -207,8 +224,13 @@ impl KernelScheme for SysScheme {
         _pos: u64,
         _flags: u32,
         _stored_flags: u32,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
-        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+        let (handler, intermediate, len) = match HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        {
             Handle::TopLevel | Handle::Resource { data: Some(_), .. } => {
                 return Err(Error::new(EISDIR))
             }
@@ -222,9 +244,10 @@ impl KernelScheme for SysScheme {
                 else {
                     return Err(Error::new(EBADFD))?;
                 };
-                handler(&intermediate[..len])
+                (handler, intermediate, len)
             }
-        }
+        };
+        handler(&intermediate[..len], token)
     }
     fn getdents(
         &self,
@@ -232,12 +255,17 @@ impl KernelScheme for SysScheme {
         buf: UserSliceWo,
         header_size: u16,
         first_index: u64,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let Ok(first_index) = usize::try_from(first_index) else {
             return Ok(0);
         };
-        match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
-            Handle::Resource { .. } => return Err(Error::new(ENOTDIR)),
+        match HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::Resource { .. } => Err(Error::new(ENOTDIR)),
             Handle::TopLevel => {
                 let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
                 for (this_idx, (name, _)) in FILES.iter().enumerate().skip(first_index) {
@@ -253,8 +281,12 @@ impl KernelScheme for SysScheme {
         }
     }
 
-    fn kfstat(&self, id: usize, buf: UserSliceWo) -> Result<()> {
-        let stat = match HANDLES.read().get(&id).ok_or(Error::new(EBADF))? {
+    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
+        let stat = match HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+        {
             Handle::Resource { data, .. } => Stat {
                 st_mode: 0o666 | MODE_FILE,
                 st_uid: 0,

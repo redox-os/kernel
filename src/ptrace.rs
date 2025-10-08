@@ -6,7 +6,7 @@ use crate::{
     event,
     percpu::PercpuBlock,
     scheme::GlobalSchemes,
-    sync::WaitCondition,
+    sync::{CleanLockToken, WaitCondition},
     syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };
 
@@ -104,9 +104,9 @@ impl Session {
 /// Remove the session from the list of open sessions and notify any
 /// waiting processes
 // TODO
-pub fn close_session(session: &Session) {
-    session.tracer.notify();
-    session.tracee.notify();
+pub fn close_session(session: &Session, token: &mut CleanLockToken) {
+    session.tracer.notify(token);
+    session.tracee.notify(token);
 }
 
 /// Wake up the tracer to make sure it catches on that the tracee is dead. This
@@ -115,8 +115,8 @@ pub fn close_session(session: &Session) {
 /// session will *actually* be closed. This is partly to ensure ENOSRCH is
 /// returned rather than ENODEV (which occurs when there's no session - should
 /// never really happen).
-pub fn close_tracee(session: &Session) {
-    session.tracer.notify();
+pub fn close_tracee(session: &Session, token: &mut CleanLockToken) {
+    session.tracer.notify(token);
 
     let data = session.data.lock();
     proc_trigger_event(data.file_id, EVENT_READ);
@@ -130,7 +130,7 @@ fn proc_trigger_event(file_id: usize, flags: EventFlags) {
 /// Dispatch an event to any tracer tracing `self`. This will cause
 /// the tracer to wake up and poll for events. Returns Some(()) if an
 /// event was sent.
-pub fn send_event(event: PtraceEvent) -> Option<()> {
+pub fn send_event(event: PtraceEvent, token: &mut CleanLockToken) -> Option<()> {
     let session = Session::current()?;
     let mut data = session.data.lock();
     let breakpoint = data.breakpoint.as_ref()?;
@@ -142,7 +142,7 @@ pub fn send_event(event: PtraceEvent) -> Option<()> {
     // Add event to queue
     data.add_event(event);
     // Notify tracer
-    session.tracer.notify();
+    session.tracer.notify(token);
 
     Some(())
 }
@@ -165,7 +165,7 @@ pub(crate) struct Breakpoint {
 ///
 /// Note: Don't call while holding any locks or allocated data, this will
 /// switch contexts and may in fact just never terminate.
-pub fn wait(session: Arc<Session>) -> Result<()> {
+pub fn wait(session: Arc<Session>, token: &mut CleanLockToken) -> Result<()> {
     loop {
         // Lock the data, to make sure we're reading the final value before going
         // to sleep.
@@ -178,7 +178,7 @@ pub fn wait(session: Arc<Session>) -> Result<()> {
 
         // Go to sleep, and drop the lock on our data, which will allow other the
         // tracer to wake us up.
-        if session.tracer.wait(data, "ptrace::wait") {
+        if session.tracer.wait(data, "ptrace::wait", token) {
             // We successfully waited, wake up!
             break;
         }
@@ -196,6 +196,7 @@ pub fn wait(session: Arc<Session>) -> Result<()> {
 pub fn breakpoint_callback(
     match_flags: PtraceFlags,
     event: Option<PtraceEvent>,
+    token: &mut CleanLockToken,
 ) -> Option<PtraceFlags> {
     loop {
         let percpu = PercpuBlock::current();
@@ -221,9 +222,12 @@ pub fn breakpoint_callback(
         data.add_event(event.unwrap_or(ptrace_event!(match_flags)));
 
         // Wake up sleeping tracer
-        session.tracer.notify();
+        session.tracer.notify(token);
 
-        if session.tracee.wait(data, "ptrace::breakpoint_callback") {
+        if session
+            .tracee
+            .wait(data, "ptrace::breakpoint_callback", token)
+        {
             // We successfully waited, wake up!
             break Some(breakpoint.flags);
         }

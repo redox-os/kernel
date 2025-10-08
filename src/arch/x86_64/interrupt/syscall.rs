@@ -1,6 +1,8 @@
 use crate::{
     arch::{gdt, interrupt::InterruptStack},
-    ptrace, syscall,
+    ptrace,
+    sync::CleanLockToken,
+    syscall,
     syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
 };
 use core::mem::offset_of;
@@ -11,78 +13,86 @@ use x86::{
 };
 
 pub unsafe fn init() {
-    // IA32_STAR[31:0] are reserved.
+    unsafe {
+        // IA32_STAR[31:0] are reserved.
 
-    // The base selector of the two consecutive segments for kernel code and the immediately
-    // suceeding stack (data).
-    let syscall_cs_ss_base = (gdt::GDT_KERNEL_CODE as u16) << 3;
-    // The base selector of the three consecutive segments (of which two are used) for user code
-    // and user data. It points to a 32-bit code segment, which must be followed by a data segment
-    // (stack), and a 64-bit code segment.
-    let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | 3;
-    let star_high = u32::from(syscall_cs_ss_base) | (u32::from(sysret_cs_ss_base) << 16);
+        // The base selector of the two consecutive segments for kernel code and the immediately
+        // suceeding stack (data).
+        let syscall_cs_ss_base = (gdt::GDT_KERNEL_CODE as u16) << 3;
+        // The base selector of the three consecutive segments (of which two are used) for user code
+        // and user data. It points to a 32-bit code segment, which must be followed by a data segment
+        // (stack), and a 64-bit code segment.
+        let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | 3;
+        let star_high = u32::from(syscall_cs_ss_base) | (u32::from(sysret_cs_ss_base) << 16);
 
-    msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
-    msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
+        msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
+        #[expect(clippy::fn_to_numeric_cast)]
+        msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
 
-    // DF needs to be cleared, required by the compiler ABI. If DF were not part of FMASK,
-    // userspace would be able to reverse the direction of in-kernel REP MOVS/STOS/(CMPS/SCAS), and
-    // cause all sorts of memory corruption.
-    //
-    // IF needs to be cleared, as the kernel currently assumes interrupts are disabled except in
-    // usermode and in kmain.
-    //
-    // TF needs to be cleared, as enabling userspace-rflags-controlled singlestep in the kernel
-    // would be a bad idea.
-    //
-    // AC it should always be cleared when entering the kernel (and never be set except in usercopy
-    // functions), if for some reason AC was set before entering userspace (AC can only be modified
-    // by kernel code).
-    //
-    // The other flags could indeed be preserved and excluded from FMASK, but since they are not
-    // used to pass data to the kernel, they might as well be masked with *marginal* security
-    // benefits.
-    //
-    // Flags not included here are IOPL (not relevant to the kernel at all), "CPUID flag" (not used
-    // at all in 64-bit mode), RF (not used yet, but DR breakpoints would remain enabled both in
-    // user and kernel mode), VM8086 (not used at all), and VIF/VIP (system-level status flags?).
+        // DF needs to be cleared, required by the compiler ABI. If DF were not part of FMASK,
+        // userspace would be able to reverse the direction of in-kernel REP MOVS/STOS/(CMPS/SCAS), and
+        // cause all sorts of memory corruption.
+        //
+        // IF needs to be cleared, as the kernel currently assumes interrupts are disabled except in
+        // usermode and in kmain.
+        //
+        // TF needs to be cleared, as enabling userspace-rflags-controlled singlestep in the kernel
+        // would be a bad idea.
+        //
+        // AC it should always be cleared when entering the kernel (and never be set except in usercopy
+        // functions), if for some reason AC was set before entering userspace (AC can only be modified
+        // by kernel code).
+        //
+        // The other flags could indeed be preserved and excluded from FMASK, but since they are not
+        // used to pass data to the kernel, they might as well be masked with *marginal* security
+        // benefits.
+        //
+        // Flags not included here are IOPL (not relevant to the kernel at all), "CPUID flag" (not used
+        // at all in 64-bit mode), RF (not used yet, but DR breakpoints would remain enabled both in
+        // user and kernel mode), VM8086 (not used at all), and VIF/VIP (system-level status flags?).
 
-    let mask_critical = RFlags::FLAGS_DF | RFlags::FLAGS_IF | RFlags::FLAGS_TF | RFlags::FLAGS_AC;
-    let mask_other = RFlags::FLAGS_CF
-        | RFlags::FLAGS_PF
-        | RFlags::FLAGS_AF
-        | RFlags::FLAGS_ZF
-        | RFlags::FLAGS_SF
-        | RFlags::FLAGS_OF;
-    msr::wrmsr(msr::IA32_FMASK, (mask_critical | mask_other).bits());
+        let mask_critical =
+            RFlags::FLAGS_DF | RFlags::FLAGS_IF | RFlags::FLAGS_TF | RFlags::FLAGS_AC;
+        let mask_other = RFlags::FLAGS_CF
+            | RFlags::FLAGS_PF
+            | RFlags::FLAGS_AF
+            | RFlags::FLAGS_ZF
+            | RFlags::FLAGS_SF
+            | RFlags::FLAGS_OF;
+        msr::wrmsr(msr::IA32_FMASK, (mask_critical | mask_other).bits());
 
-    let efer = msr::rdmsr(msr::IA32_EFER);
-    msr::wrmsr(msr::IA32_EFER, efer | 1);
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
-    let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None)
-        .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
-
-    if allowed.unwrap_or(true) {
-        let scratch = &(*stack).scratch;
-
-        let ret = syscall::syscall(
-            scratch.rax,
-            scratch.rdi,
-            scratch.rsi,
-            scratch.rdx,
-            scratch.r10,
-            scratch.r8,
-        );
-        (*stack).scratch.rax = ret;
+        let efer = msr::rdmsr(msr::IA32_EFER);
+        msr::wrmsr(msr::IA32_EFER, efer | 1);
     }
-
-    ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None);
 }
 
-#[naked]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack) {
+    unsafe {
+        let mut token = CleanLockToken::new();
+        let allowed = ptrace::breakpoint_callback(PTRACE_STOP_PRE_SYSCALL, None, &mut token)
+            .and_then(|_| ptrace::next_breakpoint().map(|f| !f.contains(PTRACE_FLAG_IGNORE)));
+
+        if allowed.unwrap_or(true) {
+            let scratch = &(*stack).scratch;
+
+            let ret = syscall::syscall(
+                scratch.rax,
+                scratch.rdi,
+                scratch.rsi,
+                scratch.rdx,
+                scratch.r10,
+                scratch.r8,
+                &mut token,
+            );
+            (*stack).scratch.rax = ret;
+        }
+
+        ptrace::breakpoint_callback(PTRACE_STOP_POST_SYSCALL, None, &mut token);
+    }
+}
+
+#[unsafe(naked)]
 #[allow(named_asm_labels)]
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(concat!(
@@ -191,7 +201,7 @@ pub unsafe extern "C" fn syscall_instruction() {
     cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
     );
 }
-extern "C" {
+unsafe extern "C" {
     // TODO: macro?
     pub fn enter_usermode();
 }
