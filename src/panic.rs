@@ -223,6 +223,8 @@ fn read_from_user_space(
     user_vaddr: usize,
     page_tables: &PageMapper<X8664Arch, TheFrameAllocator>,
 ) -> Option<usize> {
+    use rmm::Arch;
+
     use crate::{arch::paging::Page, memory::PAGE_SIZE};
 
     let virt_addr = VirtualAddress::new(user_vaddr);
