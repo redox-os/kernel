@@ -16,6 +16,8 @@ use rmm::VirtualAddress;
 use rmm::{PageMapper, X8664Arch};
 use rustc_demangle::demangle;
 
+#[cfg(target_arch = "x86")]
+use crate::arch::interrupt::handler::InterruptErrorStack;
 #[cfg(target_arch = "x86_64")]
 use crate::memory::TheFrameAllocator;
 
@@ -157,7 +159,7 @@ pub unsafe fn user_stack_trace(_stack: &InterruptStack) {
 }
 
 #[cfg(target_arch = "x86")]
-pub unsafe fn user_stack_trace(_stack: &&mut InterruptStack) {
+pub unsafe fn user_stack_trace(_stack: &&mut InterruptErrorStack) {
     // unimplemented
 }
 

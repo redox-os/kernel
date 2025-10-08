@@ -16,10 +16,7 @@ use crate::{
 interrupt_stack!(divide_by_zero, |stack| {
     println!("Divide by zero");
     stack.dump();
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 0,
         ..Default::default()
@@ -103,10 +100,7 @@ interrupt_stack!(breakpoint, |stack| {
 interrupt_stack!(overflow, |stack| {
     println!("Overflow trap");
     stack.dump();
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 4,
         ..Default::default()
@@ -116,10 +110,7 @@ interrupt_stack!(overflow, |stack| {
 interrupt_stack!(bound_range, |stack| {
     println!("Bound range exceeded fault");
     stack.dump();
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 5,
         ..Default::default()
@@ -129,10 +120,7 @@ interrupt_stack!(bound_range, |stack| {
 interrupt_stack!(invalid_opcode, |stack| {
     println!("Invalid opcode fault");
     stack.dump();
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 6,
         ..Default::default()
@@ -142,10 +130,7 @@ interrupt_stack!(invalid_opcode, |stack| {
 interrupt_stack!(device_not_available, |stack| {
     println!("Device not available fault");
     stack.dump();
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 7,
         ..Default::default()
@@ -281,10 +266,7 @@ interrupt_error!(page, |stack, code| {
 interrupt_stack!(fpu_fault, |stack| {
     println!("FPU floating point fault");
     stack.dump();
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 16,
         ..Default::default()
@@ -309,7 +291,6 @@ interrupt_stack!(machine_check, @paranoid, |stack| {
     println!("Machine check fault");
     stack.dump();
     unsafe {
-        user_stack_trace(&stack);
         stack_trace();
         loop {
             interrupt::disable();
@@ -324,10 +305,7 @@ interrupt_stack!(simd, |stack| {
     let mut mxcsr = 0_usize;
     unsafe { core::arch::asm!("stmxcsr [{}]", in(reg) core::ptr::addr_of_mut!(mxcsr)) };
     println!("MXCSR {:#0x}", mxcsr);
-    unsafe {
-        user_stack_trace(&stack);
-        stack_trace()
-    };
+    unsafe { stack_trace() };
     excp_handler(Exception {
         kind: 19,
         ..Default::default()
@@ -338,7 +316,6 @@ interrupt_stack!(virtualization, |stack| {
     println!("Virtualization fault");
     stack.dump();
     unsafe {
-        user_stack_trace(&stack);
         stack_trace();
         loop {
             interrupt::disable();
