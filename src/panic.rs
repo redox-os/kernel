@@ -3,8 +3,12 @@
 use core::{panic::PanicInfo, slice, str, sync::atomic::Ordering};
 use goblin::elf::sym;
 use rmm::VirtualAddress;
+#[cfg(target_arch = "x86_64")]
+use rmm::{PageMapper, X8664Arch};
 use rustc_demangle::demangle;
 
+#[cfg(target_arch = "x86_64")]
+use crate::memory::TheFrameAllocator;
 use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
     context, cpu_id,
@@ -93,6 +97,91 @@ pub unsafe fn stack_trace() {
         }
     }
 }
+
+#[cfg(not(target_arch = "x86_64"))]
+pub unsafe fn user_stack_trace(start_rbp: usize) {
+    // unimplemented
+}
+
+/// Get a user stack trace
+#[inline(never)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn user_stack_trace(start_rbp: usize) {
+    let mut rbp = start_rbp;
+
+    let context_lock = crate::context::current();
+    let context = context_lock.read();
+
+    if let Ok(addr_space) = context.addr_space() {
+        let page_tables = &addr_space.acquire_read().table.utable;
+
+        for i in 0..64 {
+            if rbp == 0 || rbp >= crate::USER_END_OFFSET {
+                break; // end of stack or pointing into kernel
+            }
+
+            let rip_addr = rbp + mem::size_of::<usize>();
+            let rip = match read_from_user_space(rip_addr, page_tables) {
+                Some(val) => val,
+                None => {
+                    println!("  {:>016x}: <Failed to read RIP at {:016x}>", rbp, rip_addr);
+                    break;
+                }
+            };
+
+            if rip == 0 {
+                break;
+            }
+
+            println!("  FP {:>016x}: PC {:>016x}", rbp, rip);
+
+            rbp = match read_from_user_space(rbp, page_tables) {
+                Some(val) => val,
+                None => {
+                    println!("  {:>016x}: <Failed to read next FP>", rbp);
+                    break;
+                }
+            };
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn read_from_user_space(
+    user_vaddr: usize,
+    page_tables: &PageMapper<X8664Arch, TheFrameAllocator>,
+) -> Option<usize> {
+    // 1. Convert the raw address into a `VirtualAddress` struct.
+    let virt_addr = VirtualAddress::new(user_vaddr);
+
+    // 2. Use the `translate` method of the user's page table.
+    // This is the most important step. It checks if the address is mapped
+    // and returns the corresponding physical address if it is.
+    // If the address is invalid, it will safely return `None`.
+    if let Some(phys_addr) = page_tables.translate(virt_addr) {
+        // 3. Convert the physical address to a virtual address that the kernel can access.
+        // The kernel maps all physical memory at a high virtual offset (`KERNEL_OFFSET`).
+
+        use crate::arch::consts::KERNEL_OFFSET;
+        let kernel_vaddr = KERNEL_OFFSET + phys_addr.data();
+
+        // 4. Now that we have a valid kernel virtual address, we can safely
+        // dereference it. We use `read_volatile` to prevent the compiler
+        // from making optimizations that might be invalid for memory-mapped I/O
+        // or shared memory.
+        unsafe {
+            // It's a good practice to check for null pointers, even though a translated
+            // address is unlikely to be null.
+            if kernel_vaddr != 0 {
+                return Some((kernel_vaddr as *const usize).read_volatile());
+            }
+        }
+    }
+
+    // If the address translation failed, the pointer is invalid. Return None.
+    None
+}
+
 ///
 /// Get a symbol
 //TODO: Do not create Elf object for every symbol lookup

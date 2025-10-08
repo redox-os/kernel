@@ -2,14 +2,21 @@ use syscall::Exception;
 use x86::irq::PageFaultError;
 
 use crate::{
-    arch::x86_shared::interrupt, context::signal::excp_handler, interrupt_error, interrupt_stack,
-    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace, syscall::flag::*,
+    arch::x86_shared::interrupt,
+    context::signal::excp_handler,
+    interrupt_error, interrupt_stack,
+    memory::GenericPfFlags,
+    paging::VirtualAddress,
+    panic::{stack_trace, user_stack_trace},
+    ptrace,
+    syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {
     println!("Divide by zero");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 0,
         ..Default::default()
@@ -82,6 +89,7 @@ interrupt_stack!(overflow, |stack| {
     println!("Overflow trap");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 4,
         ..Default::default()
@@ -92,6 +100,7 @@ interrupt_stack!(bound_range, |stack| {
     println!("Bound range exceeded fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 5,
         ..Default::default()
@@ -102,6 +111,7 @@ interrupt_stack!(invalid_opcode, |stack| {
     println!("Invalid opcode fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 6,
         ..Default::default()
@@ -112,6 +122,7 @@ interrupt_stack!(device_not_available, |stack| {
     println!("Device not available fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 7,
         ..Default::default()
@@ -122,6 +133,7 @@ interrupt_error!(double_fault, |stack, _code| {
     println!("Double fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     loop {
         interrupt::disable();
         interrupt::halt();
@@ -132,6 +144,7 @@ interrupt_error!(invalid_tss, |stack, code| {
     println!("Invalid TSS fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 10,
         code,
@@ -143,6 +156,7 @@ interrupt_error!(segment_not_present, |stack, code| {
     println!("Segment not present fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 11,
         code,
@@ -154,6 +168,7 @@ interrupt_error!(stack_segment, |stack, code| {
     println!("Stack segment fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 12,
         code,
@@ -165,6 +180,7 @@ interrupt_error!(protection, |stack, code| {
     println!("Protection fault code={:#0x}", code);
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 13,
         code,
@@ -202,6 +218,7 @@ interrupt_error!(page, |stack, code| {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
         stack_trace();
+        user_stack_trace(stack.preserved.rbp);
         excp_handler(Exception {
             kind: 14,
             code,
@@ -214,6 +231,7 @@ interrupt_stack!(fpu_fault, |stack| {
     println!("FPU floating point fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 16,
         ..Default::default()
@@ -224,6 +242,7 @@ interrupt_error!(alignment_check, |stack, code| {
     println!("Alignment check fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 17,
         code,
@@ -248,6 +267,7 @@ interrupt_stack!(simd, |stack| {
     core::arch::asm!("stmxcsr [{}]", in(reg) core::ptr::addr_of_mut!(mxcsr));
     println!("MXCSR {:#0x}", mxcsr);
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     excp_handler(Exception {
         kind: 19,
         ..Default::default()
@@ -258,6 +278,7 @@ interrupt_stack!(virtualization, |stack| {
     println!("Virtualization fault");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     loop {
         interrupt::disable();
         interrupt::halt();
@@ -268,6 +289,7 @@ interrupt_error!(security, |stack, _code| {
     println!("Security exception");
     stack.dump();
     stack_trace();
+    user_stack_trace(stack.preserved.rbp);
     loop {
         interrupt::disable();
         interrupt::halt();
