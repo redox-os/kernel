@@ -17,7 +17,7 @@ use rmm::{PageMapper, X8664Arch};
 use rustc_demangle::demangle;
 
 #[cfg(target_arch = "x86_64")]
-use crate::memory::TheFrameAllocator;
+use crate::{arch::interrupt::InterruptStack, memory::TheFrameAllocator};
 use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
     context, cpu_id, interrupt,
@@ -155,8 +155,18 @@ pub unsafe fn user_stack_trace(start_rbp: usize) {
 /// Get a user stack trace
 #[inline(never)]
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn user_stack_trace(start_rbp: usize) {
-    let mut rbp = start_rbp;
+pub unsafe fn user_stack_trace(stack: &InterruptStack) {
+    let mut rbp = stack.preserved.rbp;
+    let rsp = stack.iret.rsp;
+
+    if rbp < rsp {
+        println!("  <Unable to generate stack while frame pointers omitted>");
+        return;
+    }
+    if rbp >= crate::USER_END_OFFSET {
+        return;
+    }
+
     let mut token = unsafe { CleanLockToken::new() };
     let context_lock = crate::context::current();
     let context = context_lock.read(token.token());
@@ -164,46 +174,28 @@ pub unsafe fn user_stack_trace(start_rbp: usize) {
     if let Ok(addr_space) = context.addr_space() {
         let page_tables = &addr_space.acquire_read().table.utable;
 
-        for i in 0..64 {
+        for _ in 0..64 {
             if rbp == 0 || rbp >= crate::USER_END_OFFSET {
-                break; // end of stack or pointing into kernel
+                break;
             }
-
             let rip_addr = rbp + size_of::<usize>();
             let rip = match read_from_user_space(rip_addr, page_tables) {
                 Some(val) => val,
                 None => {
-                    println!("  {:>016x}: <Failed to read RIP at {:016x}>", rbp, rip_addr);
+                    println!("  <Failed to read RIP 0x{:>016x}>", rbp);
                     break;
                 }
             };
-
-            if rip == 0 {
-                break;
-            }
-
             println!("  FP {:>016x}: PC {:>016x}", rbp, rip);
-
             let next_rbp = match read_from_user_space(rbp, page_tables) {
                 Some(val) => val,
-                None => {
-                    println!("  {:>016x}: <Failed to read next FP>", rbp);
-                    break;
-                }
+                None => break,
             };
-
             if next_rbp <= rbp {
                 println!("  <Invalid next frame pointer; stack walk ended>");
                 break;
             }
-
-            rbp = match read_from_user_space(rbp, page_tables) {
-                Some(val) => val,
-                None => {
-                    println!("  {:>016x}: <Failed to read next FP>", rbp);
-                    break;
-                }
-            };
+            rbp = next_rbp;
         }
     }
 }
