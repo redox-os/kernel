@@ -17,9 +17,13 @@ use rmm::{PageMapper, X8664Arch};
 use rustc_demangle::demangle;
 
 #[cfg(target_arch = "x86_64")]
-use crate::{arch::interrupt::InterruptStack, memory::TheFrameAllocator};
+use crate::memory::TheFrameAllocator;
+
 use crate::{
-    arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
+    arch::{
+        consts::USER_END_OFFSET,
+        interrupt::{trace::StackTrace, InterruptStack},
+    },
     context, cpu_id, interrupt,
     memory::KernelMapper,
     sync::CleanLockToken,
