@@ -198,12 +198,19 @@ pub unsafe fn user_stack_trace(stack: &InterruptStack) {
                 }
             };
             println!("  FP {:>016x}: PC {:>016x}", rbp, rip);
+            if rip == 0 {
+                break;
+            }
+
             let next_rbp = match read_from_user_space(rbp, page_tables) {
                 Some(val) => val,
                 None => break,
             };
             if next_rbp <= rbp {
-                println!("  <Invalid next frame pointer; stack walk ended>");
+                println!(
+                    "  <Invalid next frame pointer 0x{:>016x}; stack walk ended>",
+                    next_rbp
+                );
                 break;
             }
             rbp = next_rbp;
@@ -219,13 +226,14 @@ fn read_from_user_space(
     use crate::{arch::paging::Page, memory::PAGE_SIZE};
 
     let virt_addr = VirtualAddress::new(user_vaddr);
-    let offset = user_vaddr % PAGE_SIZE;
+    let offset = user_vaddr % X8664Arch::PAGE_ENTRY_SIZE;
 
     unsafe {
         if let Some(frame) = page_tables.table().index_of(virt_addr) {
-            use rmm::{FrameAllocator, PageFlags};
-            let entry = page_tables.table().entry(frame).unwrap();
-            return Some(entry.data());
+            use rmm::{FrameAllocator, PageFlags, PageTable};
+            let entry = page_tables.table().entry_virt(frame).unwrap();
+            let addr = entry.data();
+            return Some(core::ptr::read::<usize>((addr + offset) as *const usize));
         }
     }
 
