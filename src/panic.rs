@@ -157,7 +157,7 @@ pub unsafe fn user_stack_trace(_stack: &InterruptStack) {
 }
 
 #[cfg(target_arch = "x86")]
-pub unsafe fn user_stack_trace(_stack: &&InterruptStack) {
+pub unsafe fn user_stack_trace(_stack: &&mut InterruptStack) {
     // unimplemented
 }
 
