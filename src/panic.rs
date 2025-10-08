@@ -148,7 +148,7 @@ pub unsafe fn stack_trace() {
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-pub unsafe fn user_stack_trace(start_rbp: usize) {
+pub unsafe fn user_stack_trace(_stack: &InterruptStack) {
     // unimplemented
 }
 
