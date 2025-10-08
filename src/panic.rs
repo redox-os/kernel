@@ -151,8 +151,13 @@ pub unsafe fn stack_trace() {
     }
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
 pub unsafe fn user_stack_trace(_stack: &InterruptStack) {
+    // unimplemented
+}
+
+#[cfg(target_arch = "x86")]
+pub unsafe fn user_stack_trace(_stack: &&InterruptStack) {
     // unimplemented
 }
 
