@@ -12,8 +12,12 @@ use object::{
     NativeEndian,
 };
 use rmm::VirtualAddress;
+#[cfg(target_arch = "x86_64")]
+use rmm::{PageMapper, X8664Arch};
 use rustc_demangle::demangle;
 
+#[cfg(target_arch = "x86_64")]
+use crate::memory::TheFrameAllocator;
 use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
     context, cpu_id, interrupt,
@@ -155,7 +159,7 @@ pub unsafe fn user_stack_trace(start_rbp: usize) {
     let mut rbp = start_rbp;
     let mut token = unsafe { CleanLockToken::new() };
     let context_lock = crate::context::current();
-    let context = context_lock.read(token);
+    let context = context_lock.read(token.token());
 
     if let Ok(addr_space) = context.addr_space() {
         let page_tables = &addr_space.acquire_read().table.utable;
@@ -165,7 +169,7 @@ pub unsafe fn user_stack_trace(start_rbp: usize) {
                 break; // end of stack or pointing into kernel
             }
 
-            let rip_addr = rbp + mem::size_of::<usize>();
+            let rip_addr = rbp + size_of::<usize>();
             let rip = match read_from_user_space(rip_addr, page_tables) {
                 Some(val) => val,
                 None => {

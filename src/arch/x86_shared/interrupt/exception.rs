@@ -3,7 +3,7 @@ use x86::irq::PageFaultError;
 
 use crate::{
     arch::x86_shared::interrupt, context::signal::excp_handler, interrupt_error, interrupt_stack,
-    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace,
+    memory::GenericPfFlags, paging::VirtualAddress, panic::{stack_trace, user_stack_trace}, ptrace,
     sync::CleanLockToken, syscall::flag::*,
 };
 
