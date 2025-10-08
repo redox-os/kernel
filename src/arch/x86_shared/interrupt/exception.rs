@@ -10,7 +10,10 @@ use crate::{
 interrupt_stack!(divide_by_zero, |stack| {
     println!("Divide by zero");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 0,
         ..Default::default()
@@ -94,7 +97,10 @@ interrupt_stack!(breakpoint, |stack| {
 interrupt_stack!(overflow, |stack| {
     println!("Overflow trap");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 4,
         ..Default::default()
@@ -104,7 +110,10 @@ interrupt_stack!(overflow, |stack| {
 interrupt_stack!(bound_range, |stack| {
     println!("Bound range exceeded fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 5,
         ..Default::default()
@@ -114,7 +123,10 @@ interrupt_stack!(bound_range, |stack| {
 interrupt_stack!(invalid_opcode, |stack| {
     println!("Invalid opcode fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 6,
         ..Default::default()
@@ -124,7 +136,10 @@ interrupt_stack!(invalid_opcode, |stack| {
 interrupt_stack!(device_not_available, |stack| {
     println!("Device not available fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 7,
         ..Default::default()
@@ -135,6 +150,7 @@ interrupt_error!(double_fault, |stack, _code| {
     println!("Double fault");
     stack.dump();
     unsafe {
+        user_stack_trace(stack.preserved.rbp);
         stack_trace();
         loop {
             interrupt::disable();
@@ -146,7 +162,10 @@ interrupt_error!(double_fault, |stack, _code| {
 interrupt_error!(invalid_tss, |stack, code| {
     println!("Invalid TSS fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 10,
         code,
@@ -157,7 +176,10 @@ interrupt_error!(invalid_tss, |stack, code| {
 interrupt_error!(segment_not_present, |stack, code| {
     println!("Segment not present fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 11,
         code,
@@ -168,7 +190,10 @@ interrupt_error!(segment_not_present, |stack, code| {
 interrupt_error!(stack_segment, |stack, code| {
     println!("Stack segment fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 12,
         code,
@@ -179,7 +204,10 @@ interrupt_error!(stack_segment, |stack, code| {
 interrupt_error!(protection, |stack, code| {
     println!("Protection fault code={:#0x}", code);
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 13,
         code,
@@ -217,7 +245,10 @@ interrupt_error!(page, |stack, code| {
     if crate::memory::page_fault_handler(&mut stack.inner, generic_flags, cr2).is_err() {
         println!("Page fault: {:>08X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
-        unsafe { stack_trace() };
+        unsafe {
+            user_stack_trace(stack.preserved.rbp);
+            stack_trace()
+        };
         excp_handler(Exception {
             kind: 14,
             code,
@@ -229,7 +260,10 @@ interrupt_error!(page, |stack, code| {
     if crate::memory::page_fault_handler(stack, generic_flags, cr2).is_err() {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
-        unsafe { stack_trace() };
+        unsafe {
+            user_stack_trace(stack.preserved.rbp);
+            stack_trace()
+        };
         excp_handler(Exception {
             kind: 14,
             code,
@@ -241,7 +275,10 @@ interrupt_error!(page, |stack, code| {
 interrupt_stack!(fpu_fault, |stack| {
     println!("FPU floating point fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 16,
         ..Default::default()
@@ -251,7 +288,10 @@ interrupt_stack!(fpu_fault, |stack| {
 interrupt_error!(alignment_check, |stack, code| {
     println!("Alignment check fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 17,
         code,
@@ -263,6 +303,7 @@ interrupt_stack!(machine_check, @paranoid, |stack| {
     println!("Machine check fault");
     stack.dump();
     unsafe {
+        user_stack_trace(stack.preserved.rbp);
         stack_trace();
         loop {
             interrupt::disable();
@@ -277,7 +318,10 @@ interrupt_stack!(simd, |stack| {
     let mut mxcsr = 0_usize;
     unsafe { core::arch::asm!("stmxcsr [{}]", in(reg) core::ptr::addr_of_mut!(mxcsr)) };
     println!("MXCSR {:#0x}", mxcsr);
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(stack.preserved.rbp);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 19,
         ..Default::default()
@@ -288,6 +332,7 @@ interrupt_stack!(virtualization, |stack| {
     println!("Virtualization fault");
     stack.dump();
     unsafe {
+        user_stack_trace(stack.preserved.rbp);
         stack_trace();
         loop {
             interrupt::disable();
@@ -300,6 +345,7 @@ interrupt_error!(security, |stack, _code| {
     println!("Security exception");
     stack.dump();
     unsafe {
+        user_stack_trace(stack.preserved.rbp);
         stack_trace();
         loop {
             interrupt::disable();

@@ -153,9 +153,9 @@ pub unsafe fn user_stack_trace(start_rbp: usize) {
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn user_stack_trace(start_rbp: usize) {
     let mut rbp = start_rbp;
-
+    let mut token = unsafe { CleanLockToken::new() };
     let context_lock = crate::context::current();
-    let context = context_lock.read();
+    let context = context_lock.read(token);
 
     if let Ok(addr_space) = context.addr_space() {
         let page_tables = &addr_space.acquire_read().table.utable;
