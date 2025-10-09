@@ -46,7 +46,8 @@ use crate::{
 use super::{CallerCtx, FileHandle, KernelScheme, OpenResult};
 
 pub struct UserInner {
-    handle_id: usize,
+    root_id: SchemeId,
+    handle_id: SchemeId,
     pub scheme_id: SchemeId,
     v2: bool,
     supports_on_close: bool,
@@ -200,6 +201,7 @@ impl ParsedCqe {
 
 impl UserInner {
     pub fn new(
+        root_id: SchemeId,
         scheme_id: SchemeId,
         v2: bool,
         new_close: bool,
@@ -207,6 +209,7 @@ impl UserInner {
         context: Weak<ContextLock>,
     ) -> UserInner {
         UserInner {
+            root_id,
             handle_id,
             v2,
             supports_on_close: new_close,

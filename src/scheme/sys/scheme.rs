@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 
 use crate::{context, scheme, sync::CleanLockToken, syscall::error::Result};
 
+/*
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let scheme_ns = context::current().read(token.token()).ens;
 
@@ -15,3 +16,4 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     Ok(data)
 }
+*/
