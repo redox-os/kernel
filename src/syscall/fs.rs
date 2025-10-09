@@ -3,7 +3,6 @@
 use core::{mem::size_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
-use redox_path::RedoxPath;
 use spin::RwLock;
 
 use crate::{
@@ -13,7 +12,7 @@ use crate::{
         memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
+    scheme::{self, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     sync::CleanLockToken,
     syscall::{data::Stat, error::*, flag::*},
 };
@@ -47,7 +46,7 @@ pub fn file_op_generic_ext<T>(
     };
 
     let scheme = scheme::schemes(token.token())
-        .get(desc.scheme, token)
+        .get(&desc.scheme)
         .ok_or(Error::new(EBADF))?
         .clone();
 
@@ -100,7 +99,7 @@ pub fn openat(
 
     let new_description = {
         let scheme = scheme::schemes(token.token())
-            .get(description.scheme, token)
+            .get(&description.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 
@@ -219,7 +218,7 @@ fn duplicate_file(
 
         let new_description = {
             let scheme = scheme::schemes(token.token())
-                .get(description.scheme, token)
+                .get(&description.scheme)
                 .ok_or(Error::new(EBADF))?
                 .clone();
 
@@ -321,7 +320,7 @@ fn call_normal(
         (desc.scheme, desc.number)
     };
     let scheme = scheme::schemes(token.token())
-        .get(scheme_id, token)
+        .get(&scheme_id)
         .ok_or(Error::new(EBADFD))?
         .clone();
 
@@ -373,7 +372,7 @@ fn fdwrite_inner(
             }
         };
         let scheme = scheme::schemes(token.token())
-            .get(scheme, token)
+            .get(&scheme)
             .ok_or(Error::new(ENODEV))?
             .clone();
 
@@ -432,7 +431,7 @@ fn call_fdread(
             }
         };
         let scheme = scheme::schemes(token.token())
-            .get(scheme, token)
+            .get(&scheme)
             .ok_or(Error::new(ENODEV))?
             .clone();
 
@@ -485,7 +484,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     // Communicate fcntl with scheme
     if cmd != F_GETFD && cmd != F_SETFD {
         let scheme = scheme::schemes(token.token())
-            .get(description.scheme, token)
+            .get(&description.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 

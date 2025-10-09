@@ -12,12 +12,12 @@ pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
 
-pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region};
+pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_region};
 
 use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
-    error::{Error, Result, ENOSYS, EOVERFLOW},
+    error::{Error, Result, ENOSYS},
     flag::{EventFlags, MapFlags},
     number::*,
     usercopy::UserSlice,
@@ -38,9 +38,6 @@ pub mod fs;
 
 /// Fast userspace mutex
 pub mod futex;
-
-/// Privilege syscalls
-pub mod privilege;
 
 /// Process syscalls
 pub mod process;

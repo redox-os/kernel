@@ -65,7 +65,9 @@ impl UnmapResult {
             ref desc => (desc.scheme, desc.number),
         };
 
-        let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
+        let scheme_opt = scheme::schemes(token.token())
+            .get(scheme_id, token)
+            .cloned();
         let funmap_result = scheme_opt
             .ok_or(Error::new(ENODEV))
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));
@@ -2628,7 +2630,7 @@ fn correct_inner<'l>(
                 ref desc => (desc.scheme, desc.number),
             };
             let user_inner = scheme::schemes(token.token())
-                .get(scheme_id)
+                .get(scheme_id, token)
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
                         user.inner.upgrade()

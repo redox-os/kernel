@@ -8,39 +8,30 @@
 
 // TODO: Move handling of the global namespace to userspace.
 
-use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
+use alloc::{
+    boxed::Box,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 use core::{
     hash::BuildHasherDefault,
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
-use indexmap::IndexMap;
+use hashbrown::HashMap;
 use spin::{Once, RwLock as SpinRwLock};
+use syscall::error::*;
 use syscall::{data::GlobalSchemes, CallFlags, EventFlags, MunmapFlags};
-use syscall::{
-    dirent::{DirEntry, DirentBuf, DirentKind},
-    O_EXLOCK, O_FSYNC,
-};
 
 use crate::{
     context::{
         self,
         file::{FileDescription, InternalFlags},
         memory::AddrSpaceWrapper,
-    },
-    scheme::{
-        self,
-        user::{UserInner, UserScheme},
-        FileDescription, SchemeId, SchemeNamespace,
+        ContextLock,
     },
     sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L0, L1},
-    syscall::{
-        data::Stat,
-        error::*,
-        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT, O_RDWR},
-        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
-    },
+    syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
 };
 
 #[cfg(feature = "acpi")]
@@ -77,9 +68,6 @@ pub mod pipe;
 
 /// `proc:` - allows tracing processes and reading/writing their memory
 pub mod proc;
-
-/// `:` - allows the creation of userspace schemes, tightly dependent on `user`
-pub mod root;
 
 /// `serio:` - provides access to ps/2 devices
 pub mod serio;
@@ -155,7 +143,7 @@ enum Handle {
 /// Scheme list type
 pub struct SchemeList {
     handles: RwLock<L1, HashMap<SchemeId, Handle>>,
-    next_id: usize,
+    next_id: AtomicUsize,
 }
 impl SchemeList {
     /// Create a new scheme list.
@@ -181,7 +169,7 @@ impl SchemeList {
 
         let list = SchemeList {
             handles: RwLock::new(handles),
-            next_id: MAX_GLOBAL_SCHEMES,
+            next_id: AtomicUsize::new(MAX_GLOBAL_SCHEMES),
         };
 
         list
@@ -193,29 +181,29 @@ impl SchemeList {
     }
 
     /// Get the UserInner
-    pub fn get_user_inner(
-        &self,
-        id: SchemeId,
-        token: &mut CleanLockToken,
-    ) -> Option<Arc<UserInner>> {
-        match self.handles.read(token.token()).get(&id) {
-            Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
+    pub fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
+        match self.handles.read(token.token()).get(&SchemeId(id)) {
+            Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => inner.upgrade(),
             _ => None,
         }
     }
 
     /// Create a new scheme.
-    pub fn insert(&mut self, context: Weak<ContextLock>) -> Result<SchemeId> {
-        if self.next_id >= SCHEME_MAX_SCHEMES {
-            self.next_id = 1;
+    pub fn insert(&self, context: Weak<ContextLock>) -> Result<SchemeId> {
+        if self.next_id.load(Ordering::Acquire) >= SCHEME_MAX_SCHEMES {
+            self.next_id
+                .store(MAX_GLOBAL_SCHEMES + 1, Ordering::Release);
         }
 
-        while self.handles.contains_key(&SchemeId(self.next_id)) {
-            self.next_id += 1;
+        while self
+            .handles
+            .contains_key(&SchemeId(self.next_id.load(Ordering::Acquire)))
+        {
+            self.next_id.fetch_add(1, Ordering::Release);
         }
 
-        let id = SchemeId(self.next_id);
-        self.next_id += 1;
+        let id = SchemeId(self.next_id.load(Ordering::Acquire));
+        self.next_id.fetch_add(1, Ordering::Release);
 
         let inner = Arc::new(UserInner::new(
             id,
@@ -230,22 +218,22 @@ impl SchemeList {
 
     /// Remove a scheme
     pub fn remove(&mut self, id: SchemeId, token: &mut CleanLockToken) {
-        assert!(self.handles.write(token.token())remove(&id).is_some());
+        assert!(self.handles.write(token.token()).remove(&id).is_some());
     }
 }
 
 /// Schemes list
-static SCHEMES: Once<RwLock<L1, Arc<SchemeList>>> = Once::new();
+static SCHEMES: Once<L1, Arc<SchemeList>> = Once::new();
 
 /// Initialize schemes, called if needed
-fn init_schemes() -> RwLock<L1, Arc<SchemeList>> {
+fn init_schemes() -> Arc<SchemeList> {
     let list = Arc::new(SchemeList::new());
     {
         let mut inner_list = list.clone();
         let self_wrapper = KernelSchemes::SchemeMgr(list.clone());
-        /// Safety: This initialization function is guaranteed by Once::call_once to run in a single,
-        /// uncontended thread. We assume no previous locks were acquired in this thread,
-        /// and that no other CleanLockToken instances exist before this point
+        // Safety: This initialization function is guaranteed by Once::call_once to run in a single,
+        // uncontended thread. We assume no previous locks were acquired in this thread,
+        // and that no other CleanLockToken instances exist before this point
         let token = unsafe { CleanLockToken::new() };
         inner_list
             .handles
@@ -254,17 +242,19 @@ fn init_schemes() -> RwLock<L1, Arc<SchemeList>> {
         inner_list.next_id += 1;
     }
 
-    RwLock::new(list)
+    list
 }
 
 /// Get the global schemes list, const
-pub fn schemes<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, SchemeList> {
-    SCHEMES.call_once(init_schemes).read(token)
+pub fn schemes<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>> {
+    SCHEMES.call_once(init_schemes).handles.read(token)
 }
 
 /// Get the global schemes list, mutable
-pub fn schemes_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, Arc<SchemeList>> {
-    SCHEMES.call_once(init_schemes).write(token)
+pub fn schemes_mut<'a>(
+    token: LockToken<'a, L0>,
+) -> RwLockWriteGuard<'a, L1, HashMap<SchemeId, Handle>> {
+    SCHEMES.call_once(init_schemes).handles.write(token)
 }
 
 #[derive(Clone)]
@@ -504,7 +494,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<spin::RwLock<FileDescription>>>,
+        descs: Vec<Arc<SpinRwLock<FileDescription>>>,
         flags: CallFlags,
         args: u64,
         metadata: &[u64],
@@ -527,7 +517,7 @@ pub trait KernelScheme: Send + Sync + 'static {
 #[derive(Debug)]
 pub enum OpenResult {
     SchemeLocal(usize, InternalFlags),
-    External(Arc<spin::RwLock<FileDescription>>),
+    External(Arc<SpinRwLock<FileDescription>>),
 }
 pub struct CallerCtx {
     pub pid: usize,
@@ -610,25 +600,26 @@ impl KernelScheme for SchemeList {
         &self,
         scheme_id: usize,
         buf: UserSliceRo,
-        _caller: CallerCtx,
+        caller: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        let scheme_id = SchemeId(scheme_id);
         match self
             .handles
             .read(token.token())
-            .get(&old_id)
+            .get(&scheme_id)
             .ok_or(Error::new(EBADF))?
         {
             Handle::Scheme(KernelSchemes::User(UserScheme { inner })) => {
                 assert!(scheme_id == inner.scheme_id.get());
-                let scheme = SchemeId(scheme_id);
+                let scheme = scheme_id;
                 let number = buf.read_usize()?;
                 return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
                     FileDescription {
                         scheme,
                         number,
                         offset: 0,
-                        flags: (O_CREAT | O_RDWR) as u32,
+                        flags: 0,
                         internal_flags: InternalFlags::empty(),
                     },
                 ))));
@@ -637,7 +628,7 @@ impl KernelScheme for SchemeList {
             _ => return Err(Error::new(EBADF)),
         };
 
-        if ctx.uid != 0 {
+        if caller.uid != 0 {
             return Err(Error::new(EACCES));
         };
 
@@ -656,7 +647,7 @@ impl KernelScheme for SchemeList {
         flags: EventFlags,
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        match self.get_user_inner(id, token) {
+        match self.get_user_inner(file, token) {
             Some(inner) => inner.fevent(flags),
             _ => return Err(Error::new(EBADF)),
         }
@@ -706,7 +697,7 @@ impl KernelScheme for SchemeList {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<spin::RwLock<FileDescription>>>,
+        descs: Vec<Arc<SpinRwLock<FileDescription>>>,
         flags: CallFlags,
         arg: u64,
         metadata: &[u64],
