@@ -9,20 +9,36 @@
 // TODO: Move handling of the global namespace to userspace.
 
 use alloc::{boxed::Box, string::ToString, sync::Arc, vec::Vec};
-use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
+use core::{
+    hash::BuildHasherDefault,
+    str,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
-use spin::Once;
+use spin::{Once, RwLock as SpinRwLock};
 use syscall::{data::GlobalSchemes, CallFlags, EventFlags, MunmapFlags};
+use syscall::{
+    dirent::{DirEntry, DirentBuf, DirentKind},
+    O_EXLOCK, O_FSYNC,
+};
 
 use crate::{
     context::{
+        self,
         file::{FileDescription, InternalFlags},
         memory::AddrSpaceWrapper,
     },
+    scheme::{
+        self,
+        user::{UserInner, UserScheme},
+        FileDescription, SchemeId, SchemeNamespace,
+    },
     sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L0, L1},
     syscall::{
+        data::Stat,
         error::*,
+        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT, O_RDWR},
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
@@ -132,28 +148,22 @@ impl<'a> Iterator for SchemeIter<'a> {
     }
 }
 
+enum Handle {
+    SchemeCreationCapability,
+    UserScheme(KernelSchemes),
+}
 /// Scheme list type
 pub struct SchemeList {
-    map: HashMap<SchemeId, KernelSchemes>,
-    pub(crate) names: HashMap<SchemeNamespace, IndexMap<Box<str>, SchemeId, DefaultHashBuilder>>,
-    next_ns: usize,
+    handles: RwLock<L1, HashMap<SchemeId, Handle>>,
     next_id: usize,
 }
 impl SchemeList {
     /// Create a new scheme list.
     pub fn new() -> Self {
-        let mut list = SchemeList {
-            map: HashMap::new(),
-            names: HashMap::new(),
-            // Scheme namespaces always start at 1. 0 is a reserved namespace, the null namespace
-            next_ns: 1,
-            next_id: MAX_GLOBAL_SCHEMES,
-        };
-
+        let mut handles = HashMap::new();
         let mut insert_globals = |globals: &[GlobalSchemes]| {
             for &g in globals {
-                list.map
-                    .insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
+                handles.insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
             }
         };
 
@@ -169,204 +179,82 @@ impl SchemeList {
             insert_globals(&[Dtb]);
         }
 
-        list.new_null();
-        list.new_root();
+        let list = SchemeList {
+            handles: RwLock::new(handles),
+            next_id: MAX_GLOBAL_SCHEMES,
+        };
+
         list
     }
 
-    /// Initialize the null namespace
-    fn new_null(&mut self) {
-        let ns = SchemeNamespace(0);
-        self.names
-            .insert(ns, IndexMap::with_hasher(BuildHasherDefault::default()));
-
-        //TODO: Only memory: is in the null namespace right now. It should be removed when
-        //anonymous mmap's are implemented
-        self.insert_global(ns, "memory", GlobalSchemes::Memory);
-        self.insert_global(ns, "pipe", GlobalSchemes::Pipe);
-    }
-
-    /// Initialize a new namespace
-    fn new_ns(&mut self) -> SchemeNamespace {
-        let ns = SchemeNamespace(self.next_ns);
-        self.next_ns += 1;
-        self.names
-            .insert(ns, IndexMap::with_hasher(BuildHasherDefault::default()));
-
-        self.insert(ns, "", |scheme_id| {
-            KernelSchemes::Root(Arc::new(RootScheme::new(ns, scheme_id)))
-        })
-        .unwrap();
-        self.insert_global(ns, "event", GlobalSchemes::Event);
-        self.insert_global(ns, "memory", GlobalSchemes::Memory);
-        self.insert_global(ns, "pipe", GlobalSchemes::Pipe);
-        self.insert_global(ns, "sys", GlobalSchemes::Sys);
-        self.insert_global(ns, "time", GlobalSchemes::Time);
-
-        ns
-    }
-
-    /// Initialize the root namespace
-    fn new_root(&mut self) {
-        // Do common namespace initialization
-        let ns = self.new_ns();
-
-        // These schemes should only be available on the root
-        #[cfg(dtb)]
-        self.insert_global(ns, "kernel.dtb", GlobalSchemes::Dtb);
-        #[cfg(feature = "acpi")]
-        self.insert_global(ns, "kernel.acpi", GlobalSchemes::Acpi);
-        self.insert_global(ns, "debug", GlobalSchemes::Debug);
-        self.insert_global(ns, "irq", GlobalSchemes::Irq);
-        self.insert_global(ns, "kernel.proc", GlobalSchemes::Proc);
-        self.insert_global(ns, "serio", GlobalSchemes::Serio);
-    }
-
-    pub fn make_ns(
-        &mut self,
-        from: SchemeNamespace,
-        names: impl IntoIterator<Item = Box<str>>,
-    ) -> Result<SchemeNamespace> {
-        // Create an empty namespace
-        let to = self.new_ns();
-
-        // Copy requested scheme IDs
-        for name in names {
-            let Some((id, _scheme)) = self.get_name(from, &name) else {
-                return Err(Error::new(ENODEV));
-            };
-
-            match self.names.get_mut(&to) {
-                Some(ref mut names) => {
-                    if names
-                        .insert(name.to_string().into_boxed_str(), id)
-                        .is_some()
-                    {
-                        return Err(Error::new(EEXIST));
-                    }
-                }
-                _ => {
-                    panic!("scheme namespace not found");
-                }
-            }
-        }
-
-        Ok(to)
-    }
-
-    pub fn iter_name(&self, ns: SchemeNamespace) -> SchemeIter {
-        SchemeIter {
-            inner: self.names.get(&ns).map(|names| names.iter()),
-        }
-    }
-
     /// Get the nth scheme.
-    pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
-        self.map.get(&id)
+    pub fn get(&self, id: SchemeId, token: &mut CleanLockToken) -> Option<&KernelSchemes> {
+        self.handles.read(token.token().get(&id))
     }
 
-    pub fn get_name(&self, ns: SchemeNamespace, name: &str) -> Option<(SchemeId, &KernelSchemes)> {
-        if let Some(names) = self.names.get(&ns) {
-            if let Some(&id) = names.get(name) {
-                return self.get(id).map(|scheme| (id, scheme));
-            }
-        }
-        None
-    }
-
-    fn insert_global(&mut self, ns: SchemeNamespace, name: &str, global: GlobalSchemes) {
-        let prev = self
-            .names
-            .get_mut(&ns)
-            .ok_or(Error::new(ENODEV))
-            .unwrap()
-            .insert(name.into(), global.scheme_id());
-
-        if prev.is_some() {
-            panic!("global already exists");
+    /// Get the UserInner
+    pub fn get_user_inner(
+        &self,
+        id: SchemeId,
+        token: &mut CleanLockToken,
+    ) -> Option<Arc<UserInner>> {
+        match self.handles.read(token.token()).get(&id) {
+            Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
+            _ => None,
         }
     }
 
     /// Create a new scheme.
-    pub fn insert(
-        &mut self,
-        ns: SchemeNamespace,
-        name: &str,
-        scheme_fn: impl FnOnce(SchemeId) -> KernelSchemes,
-    ) -> Result<SchemeId> {
-        self.insert_and_pass(ns, name, |id| (scheme_fn(id), ()))
-            .map(|(id, ())| id)
-    }
-
-    pub fn insert_and_pass<T>(
-        &mut self,
-        ns: SchemeNamespace,
-        name: &str,
-        scheme_fn: impl FnOnce(SchemeId) -> (KernelSchemes, T),
-    ) -> Result<(SchemeId, T)> {
-        if let Some(names) = self.names.get(&ns) {
-            if names.contains_key(name) {
-                return Err(Error::new(EEXIST));
-            }
-        }
-
+    pub fn insert(&mut self, context: Weak<ContextLock>) -> Result<SchemeId> {
         if self.next_id >= SCHEME_MAX_SCHEMES {
             self.next_id = 1;
         }
 
-        while self.map.contains_key(&SchemeId(self.next_id)) {
+        while self.handles.contains_key(&SchemeId(self.next_id)) {
             self.next_id += 1;
         }
-
-        /* Allow scheme list to grow if required
-        if self.next_id >= SCHEME_MAX_SCHEMES {
-            return Err(Error::new(EAGAIN));
-        }
-        */
 
         let id = SchemeId(self.next_id);
         self.next_id += 1;
 
-        let (new_scheme, t) = scheme_fn(id);
-
-        assert!(self.map.insert(id, new_scheme).is_none());
-        match self.names.get_mut(&ns) {
-            Some(ref mut names) => {
-                assert!(names
-                    .insert(name.to_string().into_boxed_str(), id)
-                    .is_none());
-            }
-            _ => {
-                // Nonexistent namespace, posssibly null namespace
-                return Err(Error::new(ENODEV));
-            }
-        }
-        Ok((id, t))
+        let inner = Arc::new(UserInner::new(
+            id,
+            // TODO: This is a hack, but eventually the legacy interface will be
+            // removed.
+            false, false, id, context,
+        ));
+        let new_scheme = UserScheme::new(Arc::downgrade(&inner));
+        assert!(self.handles.insert(id, new_scheme).is_none());
+        Ok(id)
     }
 
     /// Remove a scheme
-    pub fn remove(&mut self, id: SchemeId) {
-        assert!(self.map.remove(&id).is_some());
-        for (_ns, names) in self.names.iter_mut() {
-            let mut remove = Vec::with_capacity(1);
-            for (name, name_id) in names.iter() {
-                if name_id == &id {
-                    remove.push(name.clone());
-                }
-            }
-            for name in remove {
-                assert!(names.swap_remove(&name).is_some());
-            }
-        }
+    pub fn remove(&mut self, id: SchemeId, token: &mut CleanLockToken) {
+        assert!(self.handles.write(token.token())remove(&id).is_some());
     }
 }
 
 /// Schemes list
-static SCHEMES: Once<RwLock<L1, SchemeList>> = Once::new();
+static SCHEMES: Once<RwLock<L1, Arc<SchemeList>>> = Once::new();
 
 /// Initialize schemes, called if needed
-fn init_schemes() -> RwLock<L1, SchemeList> {
-    RwLock::new(SchemeList::new())
+fn init_schemes() -> RwLock<L1, Arc<SchemeList>> {
+    let list = Arc::new(SchemeList::new());
+    {
+        let mut inner_list = list.clone();
+        let self_wrapper = KernelSchemes::SchemeMgr(list.clone());
+        /// Safety: This initialization function is guaranteed by Once::call_once to run in a single,
+        /// uncontended thread. We assume no previous locks were acquired in this thread,
+        /// and that no other CleanLockToken instances exist before this point
+        let token = unsafe { CleanLockToken::new() };
+        inner_list
+            .handles
+            .write(token.token())
+            .insert(SchemeId(inner_list.next_id), self_wrapper);
+        inner_list.next_id += 1;
+    }
+
+    RwLock::new(list)
 }
 
 /// Get the global schemes list, const
@@ -375,8 +263,28 @@ pub fn schemes<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, SchemeLi
 }
 
 /// Get the global schemes list, mutable
-pub fn schemes_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, SchemeList> {
+pub fn schemes_mut<'a>(token: LockToken<'a, L0>) -> RwLockWriteGuard<'a, L1, Arc<SchemeList>> {
     SCHEMES.call_once(init_schemes).write(token)
+}
+
+#[derive(Clone)]
+pub enum KernelSchemes {
+    SchemeMgr(Arc<SchemeList>),
+    User(UserScheme),
+    Global(GlobalSchemes),
+}
+
+impl core::ops::Deref for KernelSchemes {
+    type Target = dyn KernelScheme;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::SchemeMgr(scheme) => &**scheme,
+            Self::User(scheme) => scheme,
+
+            Self::Global(global) => &**global,
+        }
+    }
 }
 
 #[allow(unused_variables)]
@@ -627,25 +535,6 @@ pub struct CallerCtx {
     pub gid: u32,
 }
 
-#[derive(Clone)]
-pub enum KernelSchemes {
-    Root(Arc<RootScheme>),
-    User(UserScheme),
-    Global(GlobalSchemes),
-}
-impl core::ops::Deref for KernelSchemes {
-    type Target = dyn KernelScheme;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Self::Root(scheme) => &**scheme,
-            Self::User(scheme) => scheme,
-
-            Self::Global(global) => global.as_scheme(),
-        }
-    }
-}
-
 pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = &[
     GlobalSchemes::Debug,
     GlobalSchemes::Event,
@@ -707,4 +596,139 @@ pub fn init_globals() {
         DtbScheme::init();
     }
     IrqScheme::init();
+}
+
+impl KernelScheme for SchemeList {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.handles
+            .write(token.token())
+            .insert(id, Handle::SchemeCreationCapability);
+        Ok(id)
+    }
+    fn kdup(
+        &self,
+        scheme_id: usize,
+        buf: UserSliceRo,
+        _caller: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        match self
+            .handles
+            .read(token.token())
+            .get(&old_id)
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::Scheme(KernelSchemes::User(UserScheme { inner })) => {
+                assert!(scheme_id == inner.scheme_id.get());
+                let scheme = SchemeId(scheme_id);
+                let number = buf.read_usize()?;
+                return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
+                    FileDescription {
+                        scheme,
+                        number,
+                        offset: 0,
+                        flags: (O_CREAT | O_RDWR) as u32,
+                        internal_flags: InternalFlags::empty(),
+                    },
+                ))));
+            }
+            Handle::SchemeCreationCapability => (),
+            _ => return Err(Error::new(EBADF)),
+        };
+
+        if ctx.uid != 0 {
+            return Err(Error::new(EACCES));
+        };
+
+        let context = Arc::downgrade(&context::current());
+
+        let scheme_id = self.insert(context)?;
+        Ok(OpenResult::SchemeLocal(
+            scheme_id.get(),
+            InternalFlags::empty(),
+        ))
+    }
+
+    fn fevent(
+        &self,
+        file: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
+        match self.get_user_inner(id, token) {
+            Some(inner) => inner.fevent(flags),
+            _ => return Err(Error::new(EBADF)),
+        }
+    }
+
+    fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
+        match self.get_user_inner(id, token) {
+            Some(inner) => inner.fsync(),
+            None => return Err(Error::new(EBADF)),
+        }
+    }
+
+    fn close(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
+        self.remove(&file, token);
+        Ok(())
+    }
+
+    fn kreadoff(
+        &self,
+        file: usize,
+        buf: UserSliceWo,
+        _offset: u64,
+        flags: u32,
+        _stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        match self.get_user_inner(id, token) {
+            Some(inner) => inner.read(buf, flags, token),
+            None => return Err(Error::new(EBADF)),
+        }
+    }
+
+    fn kwrite(
+        &self,
+        file: usize,
+        buf: UserSliceRo,
+        _flags: u32,
+        _stored_flags: u32,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        match self.get_user_inner(id, token) {
+            Some(inner) => inner.write(buf, token),
+            None => return Err(Error::new(EBADF)),
+        }
+    }
+
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<spin::RwLock<FileDescription>>>,
+        flags: CallFlags,
+        arg: u64,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        match self.get_user_inner(id, token) {
+            Some(inner) => inner.call_fdwrite(descs, flags, arg, metadata),
+            None => Err(Error::new(EBADF)),
+        }
+    }
+
+    fn kfdread(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        match self.get_user_inner(id, token) {
+            Some(inner) => inner.call_fdread(payload, flags, metadata, token),
+            None => Err(Error::new(EBADF)),
+        }
+    }
 }

@@ -1,4 +1,5 @@
 //! Filesystem syscalls
+//
 use core::{mem::size_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
@@ -237,7 +238,7 @@ pub fn unlink(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
 
     let scheme = {
         let schemes = scheme::schemes(token.token());
-        let (_scheme_id, scheme) = schemes
+        let (_scheme_id, scheme) = schemesSchemeId
             .get_name(scheme_ns, scheme_name.as_ref())
             .ok_or(Error::new(ENODEV))?;
         scheme.clone()
