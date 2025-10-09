@@ -221,7 +221,7 @@ impl SchemeList {
             self.id, id,
             // TODO: This is a hack, but eventually the legacy interface will be
             // removed.
-            false, false, id, context,
+            false, false, context,
         ));
         let new_scheme =
             Handle::Scheme(KernelSchemes::User(UserScheme::new(Arc::downgrade(&inner))));
@@ -307,7 +307,7 @@ impl KernelScheme for SchemeList {
                     Some(inner) => inner,
                     None => return Err(Error::new(EBADF)),
                 };
-                assert!(scheme_id == *inner.scheme_id.get());
+                assert!(scheme_id == inner.scheme_id.get());
                 let scheme = scheme_id;
                 let number = buf.read_usize()?;
                 return Ok(OpenResult::External(Arc::new(SpinRwLock::new(

@@ -47,7 +47,6 @@ use super::{CallerCtx, FileHandle, KernelScheme, OpenResult};
 
 pub struct UserInner {
     root_id: SchemeId,
-    handle_id: SchemeId,
     pub scheme_id: SchemeId,
     v2: bool,
     supports_on_close: bool,
@@ -205,12 +204,10 @@ impl UserInner {
         scheme_id: SchemeId,
         v2: bool,
         new_close: bool,
-        handle_id: usize,
         context: Weak<ContextLock>,
     ) -> UserInner {
         UserInner {
             root_id,
-            handle_id,
             v2,
             supports_on_close: new_close,
             scheme_id,
@@ -229,7 +226,7 @@ impl UserInner {
         unsafe { self.todo.condition.notify_signal(token) };
 
         // Tell the scheme handler to read
-        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
 
         //TODO: wait for all todo and done to be processed?
         Ok(())
@@ -323,7 +320,7 @@ impl UserInner {
         }
         self.todo.send(sqe, token);
 
-        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
 
         loop {
             context::switch(token);
@@ -401,7 +398,7 @@ impl UserInner {
                                 },
                                 token,
                             );
-                            event::trigger(self.root_id, self.handle_id, EVENT_READ);
+                            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
                             {
                                 context::current()
                                     .write(token.token())
@@ -958,7 +955,7 @@ impl UserInner {
             },
             token,
         );
-        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
 
         Ok(())
     }
