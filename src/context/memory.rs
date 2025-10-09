@@ -65,9 +65,7 @@ impl UnmapResult {
             ref desc => (desc.scheme, desc.number),
         };
 
-        let scheme_opt = scheme::schemes(token.token())
-            .get(scheme_id, token)
-            .cloned();
+        let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
         let funmap_result = scheme_opt
             .ok_or(Error::new(ENODEV))
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));

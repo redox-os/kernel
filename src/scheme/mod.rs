@@ -40,8 +40,16 @@ use self::acpi::AcpiScheme;
 use self::dtb::DtbScheme;
 
 use self::{
-    debug::DebugScheme, event::EventScheme, irq::IrqScheme, memory::MemoryScheme, pipe::PipeScheme,
-    proc::ProcScheme, serio::SerioScheme, sys::SysScheme, time::TimeScheme, user::UserScheme,
+    debug::DebugScheme,
+    event::EventScheme,
+    irq::IrqScheme,
+    memory::MemoryScheme,
+    pipe::PipeScheme,
+    proc::ProcScheme,
+    serio::SerioScheme,
+    sys::SysScheme,
+    time::TimeScheme,
+    user::{UserInner, UserScheme},
 };
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
@@ -137,7 +145,7 @@ impl<'a> Iterator for SchemeIter<'a> {
 
 enum Handle {
     SchemeCreationCapability,
-    UserScheme(KernelSchemes),
+    Scheme(KernelSchemes),
 }
 /// Scheme list type
 pub struct SchemeList {
@@ -150,7 +158,10 @@ impl SchemeList {
         let mut handles = HashMap::new();
         let mut insert_globals = |globals: &[GlobalSchemes]| {
             for &g in globals {
-                handles.insert(SchemeId::from(g as usize), KernelSchemes::Global(g));
+                handles.insert(
+                    SchemeId::from(g as usize),
+                    Handle::Scheme(KernelSchemes::Global(g)),
+                );
             }
         };
 
@@ -188,21 +199,26 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    pub fn insert(&self, context: Weak<ContextLock>) -> Result<SchemeId> {
-        if self.next_id.load(Ordering::Acquire) >= SCHEME_MAX_SCHEMES {
-            self.next_id
-                .store(MAX_GLOBAL_SCHEMES + 1, Ordering::Release);
-        }
+    pub fn insert(
+        &self,
+        context: Weak<ContextLock>,
+        token: &mut CleanLockToken,
+    ) -> Result<SchemeId> {
+        let mut handles = self.handles.write(token.token());
+        let id = loop {
+            let mut id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
-        while self
-            .handles
-            .contains_key(&SchemeId(self.next_id.load(Ordering::Acquire)))
-        {
-            self.next_id.fetch_add(1, Ordering::Release);
-        }
+            if id >= SCHEME_MAX_SCHEMES {
+                id = MAX_GLOBAL_SCHEMES;
+                self.next_id.store(id, Ordering::Relaxed);
+            }
 
-        let id = SchemeId(self.next_id.load(Ordering::Acquire));
-        self.next_id.fetch_add(1, Ordering::Release);
+            let id = SchemeId(id);
+
+            if !handles.contains_key(&candidate_id) {
+                break id;
+            }
+        };
 
         let inner = Arc::new(UserInner::new(
             id,
@@ -211,18 +227,22 @@ impl SchemeList {
             false, false, id, context,
         ));
         let new_scheme = UserScheme::new(Arc::downgrade(&inner));
-        assert!(self.handles.insert(id, new_scheme).is_none());
+        assert!(handles.insert(id, new_scheme).is_none());
         Ok(id)
     }
 
     /// Remove a scheme
-    pub fn remove(&mut self, id: SchemeId, token: &mut CleanLockToken) {
-        assert!(self.handles.write(token.token()).remove(&id).is_some());
+    pub fn remove(&mut self, id: usize, token: &mut CleanLockToken) {
+        assert!(self
+            .handles
+            .write(token.token())
+            .remove(&SchemeId(id))
+            .is_some());
     }
 }
 
 /// Schemes list
-static SCHEMES: Once<L1, Arc<SchemeList>> = Once::new();
+static SCHEMES: Once<Arc<SchemeList>> = Once::new();
 
 /// Initialize schemes, called if needed
 fn init_schemes() -> Arc<SchemeList> {
@@ -245,15 +265,18 @@ fn init_schemes() -> Arc<SchemeList> {
 }
 
 /// Get the global schemes list, const
-pub fn schemes<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>> {
-    SCHEMES.call_once(init_schemes).handles.read(token)
+pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
+    SchemesView(SCHEMES.call_once(init_schemes).handles.read(token))
 }
 
-/// Get the global schemes list, mutable
-pub fn schemes_mut<'a>(
-    token: LockToken<'a, L0>,
-) -> RwLockWriteGuard<'a, L1, HashMap<SchemeId, Handle>> {
-    SCHEMES.call_once(init_schemes).handles.write(token)
+pub struct SchemesView<'a>(RwLockReadGuard<'a, HashMap<SchemeId, Handle>>);
+impl<'a> SchemesView<'a> {
+    pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
+        match self.0.get(id) {
+            Some(Handle::Scheme(scheme)) => Some(&scheme),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -589,7 +612,7 @@ pub fn init_globals() {
 
 impl KernelScheme for SchemeList {
     fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = SchemeId(self.next_id.fetch_add(1, Ordering::Relaxed));
         self.handles
             .write(token.token())
             .insert(id, Handle::SchemeCreationCapability);
@@ -642,31 +665,31 @@ impl KernelScheme for SchemeList {
 
     fn fevent(
         &self,
-        file: usize,
+        id: usize,
         flags: EventFlags,
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        match self.get_user_inner(file, token) {
+        match self.get_user_inner(id, token) {
             Some(inner) => inner.fevent(flags),
             _ => return Err(Error::new(EBADF)),
         }
     }
 
-    fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
+    fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         match self.get_user_inner(id, token) {
             Some(inner) => inner.fsync(),
             None => return Err(Error::new(EBADF)),
         }
     }
 
-    fn close(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
-        self.remove(&file, token);
+    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        self.remove(&id, token);
         Ok(())
     }
 
     fn kreadoff(
         &self,
-        file: usize,
+        id: usize,
         buf: UserSliceWo,
         _offset: u64,
         flags: u32,
@@ -681,7 +704,7 @@ impl KernelScheme for SchemeList {
 
     fn kwrite(
         &self,
-        file: usize,
+        id: usize,
         buf: UserSliceRo,
         _flags: u32,
         _stored_flags: u32,
