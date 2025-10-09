@@ -185,8 +185,8 @@ pub fn syscall(
                     .fevent(number, EventFlags::from_bits_truncate(c), token)?
                     .bits())
             }),
-            SYS_FLINK => flink(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
-            SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
+            // SYS_FLINK => flink(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
+            // SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
             SYS_FUNMAP => funmap(b, c, token),
 
             SYS_FSYNC => file_op_generic(fd, token, |scheme, number, token| {
@@ -206,10 +206,10 @@ pub fn syscall(
                 token,
             ),
 
-            SYS_OPEN => open(UserSlice::ro(b, c)?, d, token).map(FileHandle::into),
+            // SYS_OPEN => open(UserSlice::ro(b, c)?, d, token).map(FileHandle::into),
             SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _, token).map(FileHandle::into),
-            SYS_RMDIR => rmdir(UserSlice::ro(b, c)?, token).map(|()| 0),
-            SYS_UNLINK => unlink(UserSlice::ro(b, c)?, token).map(|()| 0),
+            // SYS_RMDIR => rmdir(UserSlice::ro(b, c)?, token).map(|()| 0),
+            // SYS_UNLINK => unlink(UserSlice::ro(b, c)?, token).map(|()| 0),
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, core::mem::size_of::<TimeSpec>())?,
@@ -223,14 +223,6 @@ pub fn syscall(
             SYS_FUTEX => futex(b, c, d, e, f, token),
 
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
-            SYS_MKNS => mkns(
-                UserSlice::ro(
-                    b,
-                    c.checked_mul(core::mem::size_of::<[usize; 2]>())
-                        .ok_or(Error::new(EOVERFLOW))?,
-                )?,
-                token,
-            ),
             SYS_MREMAP => mremap(b, c, d, e, f, token),
 
             _ => return Err(Error::new(ENOSYS)),
