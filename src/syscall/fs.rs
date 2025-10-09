@@ -46,7 +46,7 @@ pub fn file_op_generic_ext<T>(
     };
 
     let scheme = scheme::schemes(token.token())
-        .get(&desc.scheme)
+        .get(desc.scheme)
         .ok_or(Error::new(EBADF))?
         .clone();
 
@@ -99,7 +99,7 @@ pub fn openat(
 
     let new_description = {
         let scheme = scheme::schemes(token.token())
-            .get(&description.scheme)
+            .get(description.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 
@@ -218,7 +218,7 @@ fn duplicate_file(
 
         let new_description = {
             let scheme = scheme::schemes(token.token())
-                .get(&description.scheme)
+                .get(description.scheme)
                 .ok_or(Error::new(EBADF))?
                 .clone();
 
@@ -320,7 +320,7 @@ fn call_normal(
         (desc.scheme, desc.number)
     };
     let scheme = scheme::schemes(token.token())
-        .get(&scheme_id)
+        .get(scheme_id)
         .ok_or(Error::new(EBADFD))?
         .clone();
 
@@ -372,7 +372,7 @@ fn fdwrite_inner(
             }
         };
         let scheme = scheme::schemes(token.token())
-            .get(&scheme)
+            .get(scheme)
             .ok_or(Error::new(ENODEV))?
             .clone();
 
@@ -431,7 +431,7 @@ fn call_fdread(
             }
         };
         let scheme = scheme::schemes(token.token())
-            .get(&scheme)
+            .get(scheme)
             .ok_or(Error::new(ENODEV))?
             .clone();
 
@@ -484,7 +484,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     // Communicate fcntl with scheme
     if cmd != F_GETFD && cmd != F_SETFD {
         let scheme = scheme::schemes(token.token())
-            .get(&description.scheme)
+            .get(description.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 

@@ -75,7 +75,7 @@ impl FileDescription {
         event::unregister_file(self.scheme, self.number);
 
         let scheme = scheme::schemes(token.token())
-            .get(&self.scheme)
+            .get(self.scheme)
             .ok_or(Error::new(EBADF))?
             .clone();
 

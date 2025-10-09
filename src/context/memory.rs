@@ -2628,7 +2628,7 @@ fn correct_inner<'l>(
                 ref desc => (desc.scheme, desc.number),
             };
             let user_inner = scheme::schemes(token.token())
-                .get(scheme_id, token)
+                .get(scheme_id)
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
                         user.inner.upgrade()

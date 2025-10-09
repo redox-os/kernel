@@ -215,7 +215,7 @@ impl SchemeList {
 
             let id = SchemeId(id);
 
-            if !handles.contains_key(&candidate_id) {
+            if !handles.contains_key(&id) {
                 break id;
             }
         };
@@ -269,10 +269,10 @@ pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
     SchemesView(SCHEMES.call_once(init_schemes).handles.read(token))
 }
 
-pub struct SchemesView<'a>(RwLockReadGuard<'a, HashMap<SchemeId, Handle>>);
+pub struct SchemesView<'a>(RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>>);
 impl<'a> SchemesView<'a> {
     pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
-        match self.0.get(id) {
+        match self.0.get(&id) {
             Some(Handle::Scheme(scheme)) => Some(&scheme),
             _ => None,
         }
@@ -633,7 +633,7 @@ impl KernelScheme for SchemeList {
             .ok_or(Error::new(EBADF))?
         {
             Handle::Scheme(KernelSchemes::User(UserScheme { inner })) => {
-                assert!(scheme_id == inner.scheme_id.get());
+                assert!(scheme_id == *inner.scheme_id.get());
                 let scheme = scheme_id;
                 let number = buf.read_usize()?;
                 return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
@@ -656,7 +656,7 @@ impl KernelScheme for SchemeList {
 
         let context = Arc::downgrade(&context::current());
 
-        let scheme_id = self.insert(context)?;
+        let scheme_id = self.insert(context, token)?;
         Ok(OpenResult::SchemeLocal(
             scheme_id.get(),
             InternalFlags::empty(),
@@ -683,7 +683,7 @@ impl KernelScheme for SchemeList {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        self.remove(&id, token);
+        self.remove(id, token);
         Ok(())
     }
 
