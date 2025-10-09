@@ -18,7 +18,7 @@ use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use hashbrown::HashMap;
+use hashbrown::hash_map::{DefaultHashBuilder, HashMap};
 use spin::{Once, RwLock as SpinRwLock};
 use syscall::error::*;
 use syscall::{data::GlobalSchemes, CallFlags, EventFlags, MunmapFlags};
@@ -41,8 +41,7 @@ use self::dtb::DtbScheme;
 
 use self::{
     debug::DebugScheme, event::EventScheme, irq::IrqScheme, memory::MemoryScheme, pipe::PipeScheme,
-    proc::ProcScheme, root::RootScheme, serio::SerioScheme, sys::SysScheme, time::TimeScheme,
-    user::UserScheme,
+    proc::ProcScheme, serio::SerioScheme, sys::SysScheme, time::TimeScheme, user::UserScheme,
 };
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
