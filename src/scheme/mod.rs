@@ -217,8 +217,9 @@ impl SchemeList {
             }
         };
 
+        let root_id = SchemeId(self.id.load(Ordering::Relaxed));
         let inner = Arc::new(UserInner::new(
-            self.id, id,
+            root_id, id,
             // TODO: This is a hack, but eventually the legacy interface will be
             // removed.
             false, false, context,
@@ -246,7 +247,7 @@ static SCHEMES: Once<Arc<SchemeList>> = Once::new();
 fn init_schemes() -> Arc<SchemeList> {
     let list = Arc::new(SchemeList::new());
     {
-        let mut inner_list = list.clone();
+        let inner_list = list.clone();
         let self_wrapper = Handle::Scheme(KernelSchemes::SchemeMgr(list.clone()));
 
         // Safety: This initialization function is guaranteed by Once::call_once to run in a single,
@@ -307,7 +308,7 @@ impl KernelScheme for SchemeList {
                     Some(inner) => inner,
                     None => return Err(Error::new(EBADF)),
                 };
-                assert!(scheme_id == inner.scheme_id.get());
+                assert!(scheme_id == inner.scheme_id);
                 let scheme = scheme_id;
                 let number = buf.read_usize()?;
                 return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
