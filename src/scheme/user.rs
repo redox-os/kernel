@@ -1858,7 +1858,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        event::trigger(inner.root_id, inner.scheme_id, EVENT_READ);
+        event::trigger(inner.root_id, inner.scheme_id.get(), EVENT_READ);
 
         Ok(())
     }
