@@ -88,9 +88,9 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
-    let insert_fd = |scheme, number| {
+    let insert_fd = |scheme, number, token| {
         context::current()
-            .write(token.token())
+            .write(token)
             .add_file_min(
                 FileDescriptor {
                     description: Arc::new(RwLock::new(FileDescription {
@@ -157,7 +157,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    insert_fd(scheme.scheme_id(), cap_fd)
+                    insert_fd(scheme.scheme_id(), cap_fd, token.token())
                 },
             };
         }
@@ -169,7 +169,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 Ok(fd) => fd,
                 Err(_) => usize::MAX,
             };
-            insert_fd(scheme_id, cap_fd)
+            insert_fd(scheme_id, cap_fd, token.token())
         };
 
         let kernel_schemes_info_page = addr_space
