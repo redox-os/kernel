@@ -153,9 +153,11 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
-                    let cap_fd = match scheme.as_scheme().root_cap(token) {
-                        Ok(fd) => fd,
-                        Err(_) => usize::MAX,
+                    let cap_fd = {
+                        match scheme.as_scheme().root_cap(token) {
+                            Ok(fd) => fd,
+                            Err(_) => usize::MAX,
+                        }
                     };
                     insert_fd(scheme.scheme_id(), cap_fd, token.token())
                 },
@@ -165,9 +167,11 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let scheme_creation_cap = {
             let scheme = scheme_list(token.token());
             let scheme_id = scheme.id();
-            let cap_fd = match scheme.root_cap(token) {
-                Ok(fd) => fd,
-                Err(_) => usize::MAX,
+            let cap_fd = {
+                match scheme.root_cap(token) {
+                    Ok(fd) => fd,
+                    Err(_) => usize::MAX,
+                }
             };
             insert_fd(scheme_id, cap_fd, token.token())
         };
