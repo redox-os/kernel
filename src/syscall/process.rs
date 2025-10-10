@@ -21,7 +21,9 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{scheme_list, KernelScheme, SchemeExt, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT},
+    scheme::{
+        scheme_list, KernelScheme, SchemeExt, SchemeId, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
+    },
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
