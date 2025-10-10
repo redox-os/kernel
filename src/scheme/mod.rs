@@ -21,7 +21,10 @@ use core::{
 use hashbrown::hash_map::{DefaultHashBuilder, HashMap};
 use spin::{Once, RwLock as SpinRwLock};
 use syscall::error::*;
-use syscall::{data::GlobalSchemes, CallFlags, EventFlags, MunmapFlags};
+use syscall::{
+    data::{GlobalSchemes, NewFdParams},
+    CallFlags, EventFlags, MunmapFlags,
+};
 
 use crate::{
     context::{
@@ -319,14 +322,15 @@ impl KernelScheme for SchemeList {
                 };
                 assert!(scheme_id == inner.scheme_id);
                 let scheme = scheme_id;
-                let number = buf.read_usize()?;
+                let params = unsafe { buf.read_exact::<NewFdParams>()? };
+
                 return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
                     FileDescription {
                         scheme,
-                        number,
-                        offset: 0,
-                        flags: 0,
-                        internal_flags: InternalFlags::empty(),
+                        number: params.number,
+                        offset: params.offset,
+                        flags: params.flags,
+                        internal_flags: InternalFlags::from_extra0(params.internal_flags),
                     },
                 ))));
             }
