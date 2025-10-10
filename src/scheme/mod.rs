@@ -280,7 +280,7 @@ pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
 }
 /// Get the scheme list directly
 pub fn scheme_list<'a>(token: LockToken<'a, L0>) -> &'a SchemeList {
-    SCHES.call_once(init_schemes)
+    SCHEMES.call_once(init_schemes)
 }
 
 pub struct SchemesView<'a>(RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>>);
@@ -329,8 +329,9 @@ impl KernelScheme for SchemeList {
                         scheme,
                         number: params.number,
                         offset: params.offset,
-                        flags: params.flags,
-                        internal_flags: InternalFlags::from_extra0(params.internal_flags),
+                        flags: params.flags as u32,
+                        internal_flags: InternalFlags::from_extra0(params.internal_flags)
+                            .ok_or(Error::new(EINVAL))?,
                     },
                 ))));
             }

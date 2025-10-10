@@ -21,7 +21,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{scheme_list, SchemeExt, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT},
+    scheme::{scheme_list, KernelScheme, SchemeExt, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT},
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -88,21 +88,21 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
-    let insert_fd = |scheme_id, number| {
+    let insert_fd = |scheme, number| {
         context::current()
             .write(token.token())
             .add_file_min(
                 FileDescriptor {
                     description: Arc::new(RwLock::new(FileDescription {
-                        scheme: scheme_id,
-                        number: cap_fd,
+                        scheme,
+                        number,
                         offset: 0,
                         flags: (O_CREAT | O_RDWR) as u32,
                         internal_flags: InternalFlags::empty(),
                     })),
                     cloexec: false,
                 },
-                syscall::flag::UPPER_FDTBL_TAG + scheme_id.get(),
+                syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
             )
             .expect("failed to create pipe scheme")
             .get()
@@ -162,7 +162,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             };
         }
         // Insert a scheme creation capability for the usermode bootstrap.
-        let (scheme_creation_cap) = {
+        let scheme_creation_cap = {
             let scheme = scheme_list(token.token());
             let scheme_id = scheme.id();
             let cap_fd = match scheme.root_cap(token) {
