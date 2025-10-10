@@ -21,7 +21,7 @@ use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{SchemeExt, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT},
+    scheme::{scheme_list, SchemeExt, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT},
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -88,6 +88,26 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
+    let insert_fd = |scheme_id, number| {
+        context::current()
+            .write(token.token())
+            .add_file_min(
+                FileDescriptor {
+                    description: Arc::new(RwLock::new(FileDescription {
+                        scheme: scheme_id,
+                        number: cap_fd,
+                        offset: 0,
+                        flags: (O_CREAT | O_RDWR) as u32,
+                        internal_flags: InternalFlags::empty(),
+                    })),
+                    cloexec: false,
+                },
+                syscall::flag::UPPER_FDTBL_TAG + scheme_id.get(),
+            )
+            .expect("failed to create pipe scheme")
+            .get()
+    };
+
     {
         let addr_space = Arc::clone(
             context::current()
@@ -126,6 +146,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             )
             .expect("Failed to allocate bootstrap pages");
 
+        // Insert kernel schemes root capabilities.
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
         for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
@@ -136,26 +157,20 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    context::current()
-                        .write(token.token())
-                        .add_file_min(
-                            FileDescriptor {
-                                description: Arc::new(RwLock::new(FileDescription {
-                                    scheme: scheme.scheme_id(),
-                                    number: cap_fd,
-                                    offset: 0,
-                                    flags: (O_CREAT | O_RDWR) as u32,
-                                    internal_flags: InternalFlags::empty(),
-                                })),
-                                cloexec: false,
-                            },
-                            syscall::flag::UPPER_FDTBL_TAG + scheme.scheme_id().get(),
-                        )
-                        .expect("failed to create pipe scheme")
-                        .get()
+                    insert_fd(scheme.scheme_id(), cap_fd)
                 },
             };
         }
+        // Insert a scheme creation capability for the usermode bootstrap.
+        let (scheme_creation_cap) = {
+            let scheme = scheme_list(token.token());
+            let scheme_id = scheme.id();
+            let cap_fd = match scheme.root_cap(token) {
+                Ok(fd) => fd,
+                Err(_) => usize::MAX,
+            };
+            insert_fd(scheme_id, cap_fd)
+        };
 
         let kernel_schemes_info_page = addr_space
             .acquire_write()
@@ -180,11 +195,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             )
             .expect("Failed to allocate kernel scheme info page");
 
+        let mut cursor = kernel_schemes_info_page.start_address().data();
         const HEADER_SIZE: usize = mem::size_of::<usize>();
-        UserSliceWo::new(kernel_schemes_info_page.start_address().data(), HEADER_SIZE)
+        UserSliceWo::new(cursor, HEADER_SIZE)
             .expect("failed to create kernel schemes header user slice")
             .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
             .expect("failed to copy kernel schemes count");
+        cursor += HEADER_SIZE;
         let info_bytes = unsafe {
             core::slice::from_raw_parts(
                 kernel_schemes_infos.as_ptr() as *const u8,
@@ -192,12 +209,17 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             )
         };
         UserSliceWo::new(
-            kernel_schemes_info_page.start_address().data() + HEADER_SIZE,
+            cursor,
             KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
         )
         .expect("failed to create kernel schemes info user slice")
         .copy_common_bytes_from_slice(info_bytes)
         .expect("failed to copy kernel schemes info");
+        cursor += KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
+        UserSliceWo::new(cursor, mem::size_of::<usize>())
+            .expect("failed to create scheme creation cap user slice")
+            .copy_common_bytes_from_slice(&scheme_creation_cap.to_ne_bytes())
+            .expect("failed to copy scheme creation cap");
 
         mprotect(
             KERNEL_METADATA_BASE,

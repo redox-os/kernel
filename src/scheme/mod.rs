@@ -187,6 +187,11 @@ impl SchemeList {
         list
     }
 
+    /// Get the id of the scheme list
+    pub fn id(&self) -> SchemeId {
+        SchemeId(self.id.load(Ordering::Relaxed))
+    }
+
     /// Get the UserInner
     pub fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
         match self.handles.read(token.token()).get(&SchemeId(id)) {
@@ -269,6 +274,10 @@ fn init_schemes() -> Arc<SchemeList> {
 /// Get the global schemes list, const
 pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
     SchemesView(SCHEMES.call_once(init_schemes).handles.read(token))
+}
+/// Get the scheme list directly
+pub fn scheme_list<'a>(token: LockToken<'a, L0>) -> &'a SchemeList {
+    SCHES.call_once(init_schemes)
 }
 
 pub struct SchemesView<'a>(RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>>);
