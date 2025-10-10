@@ -230,7 +230,7 @@ impl SchemeList {
             root_id, id,
             // TODO: This is a hack, but eventually the legacy interface will be
             // removed.
-            false, false, context,
+            true, true, context,
         ));
         let new_scheme =
             Handle::Scheme(KernelSchemes::User(UserScheme::new(Arc::downgrade(&inner))));
