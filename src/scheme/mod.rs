@@ -304,7 +304,7 @@ impl KernelScheme for SchemeList {
     fn kdup(
         &self,
         scheme_id: usize,
-        buf: UserSliceRo,
+        user_buf: UserSliceRo,
         caller: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
@@ -322,7 +322,7 @@ impl KernelScheme for SchemeList {
                 };
                 assert!(scheme_id == inner.scheme_id);
                 let scheme = scheme_id;
-                let params = unsafe { buf.read_exact::<NewFdParams>()? };
+                let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
 
                 return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
                     FileDescription {
@@ -338,6 +338,13 @@ impl KernelScheme for SchemeList {
             Handle::SchemeCreationCapability => (),
             _ => return Err(Error::new(EBADF)),
         };
+
+        let expected = b"create-scheme";
+        let mut buf = [0u8; 13];
+
+        if user_buf.copy_common_bytes_to_slice(&mut buf)? < 13 || buf != *b"create-scheme" {
+            return Err(Error::new(EINVAL));
+        }
 
         if caller.uid != 0 {
             return Err(Error::new(EACCES));
