@@ -279,7 +279,7 @@ pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
     SchemesView(SCHEMES.call_once(init_schemes).handles.read(token))
 }
 /// Get the scheme list directly
-pub fn scheme_list<'a>(token: LockToken<'a, L0>) -> &'a SchemeList {
+pub fn scheme_list<'a>() -> &'a SchemeList {
     SCHEMES.call_once(init_schemes)
 }
 
