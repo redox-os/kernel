@@ -88,26 +88,6 @@ const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_S
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
-    let insert_fd = |scheme, number, token| {
-        context::current()
-            .write(token)
-            .add_file_min(
-                FileDescriptor {
-                    description: Arc::new(RwLock::new(FileDescription {
-                        scheme,
-                        number,
-                        offset: 0,
-                        flags: (O_CREAT | O_RDWR) as u32,
-                        internal_flags: InternalFlags::empty(),
-                    })),
-                    cloexec: false,
-                },
-                syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
-            )
-            .expect("failed to create pipe scheme")
-            .get()
-    };
-
     {
         let addr_space = Arc::clone(
             context::current()
@@ -153,13 +133,11 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
                 scheme_id: scheme.scheme_id().get() as u8,
                 fd: {
-                    let cap_fd = {
-                        match scheme.as_scheme().root_cap(token) {
-                            Ok(fd) => fd,
-                            Err(_) => usize::MAX,
-                        }
+                    let cap_fd = match scheme.as_scheme().root_cap(token) {
+                        Ok(fd) => fd,
+                        Err(_) => usize::MAX,
                     };
-                    insert_fd(scheme.scheme_id(), cap_fd, token.token())
+                    insert_fd(scheme.scheme_id(), cap_fd, token)
                 },
             };
         }
@@ -167,13 +145,11 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let scheme_creation_cap = {
             let scheme = scheme_list(token.token());
             let scheme_id = scheme.id();
-            let cap_fd = {
-                match scheme.root_cap(token) {
-                    Ok(fd) => fd,
-                    Err(_) => usize::MAX,
-                }
+            let cap_fd = match scheme.root_cap(token) {
+                Ok(fd) => fd,
+                Err(_) => usize::MAX,
             };
-            insert_fd(scheme_id, cap_fd, token.token())
+            insert_fd(scheme_id, cap_fd, token)
         };
 
         let kernel_schemes_info_page = addr_space
@@ -265,4 +241,24 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
             bootstrap.page_count * PAGE_SIZE,
         )
     }
+}
+
+pub fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usize {
+    context::current()
+        .write(token.token())
+        .add_file_min(
+            FileDescriptor {
+                description: Arc::new(RwLock::new(FileDescription {
+                    scheme,
+                    number,
+                    offset: 0,
+                    flags: (O_CREAT | O_RDWR) as u32,
+                    internal_flags: InternalFlags::empty(),
+                })),
+                cloexec: false,
+            },
+            syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
+        )
+        .expect("failed to create pipe scheme")
+        .get()
 }
