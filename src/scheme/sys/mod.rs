@@ -40,8 +40,8 @@ mod exe;
 mod iostat;
 mod irq;
 mod log;
-mod scheme;
-mod scheme_num;
+// mod scheme;
+// mod scheme_num;
 mod syscall;
 mod uname;
 
@@ -80,8 +80,8 @@ const FILES: &[(&'static str, Kind)] = &[
     ("iostat", Rd(iostat::resource)),
     ("irq", Rd(irq::resource)),
     ("log", Rd(log::resource)),
-    ("scheme", Rd(scheme::resource)),
-    ("scheme_num", Rd(scheme_num::resource)),
+    // ("scheme", Rd(scheme::resource)),
+    // ("scheme_num", Rd(scheme_num::resource)),
     ("syscall", Rd(syscall::resource)),
     ("uname", Rd(uname::resource)),
     ("env", Rd(|_| Ok(Vec::from(crate::init_env())))),
