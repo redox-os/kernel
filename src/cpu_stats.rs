@@ -160,7 +160,7 @@ pub fn add_context_switch() {
 
 /// Get the number of context switches.
 #[cfg(feature = "sys_stat")]
-pub fn get_context_switch_count() -> u64 {
+pub fn get_context_switch_count() -> usize {
     CONTEXT_SWITCH_COUNT.load(Ordering::Relaxed)
 }
 
@@ -176,13 +176,13 @@ pub fn add_context() {
 
 /// Get the number of contexts created.
 #[cfg(feature = "sys_stat")]
-pub fn get_contexts_count() -> u64 {
+pub fn get_contexts_count() -> usize {
     CONTEXTS_COUNT.load(Ordering::Relaxed)
 }
 
 /// Get the count of each interrupt.
 #[cfg(feature = "sys_stat")]
-pub fn irq_counts() -> Vec<u64> {
+pub fn irq_counts() -> Vec<usize> {
     IRQ_COUNT
         .iter()
         .map(|count| count.load(Ordering::Relaxed))
