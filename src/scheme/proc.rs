@@ -1070,7 +1070,13 @@ impl ContextHandle {
                     },
                 };
 
-                Ok(3 * mem::size_of::<usize>())
+                let written = if arg1.is_some() {
+                    4 * mem::size_of::<usize>()
+                } else {
+                    3 * mem::size_of::<usize>()
+                };
+
+                Ok(written)
             }
             Self::MmapMinAddr(ref addrspace) => {
                 let val = buf.read_usize()?;
