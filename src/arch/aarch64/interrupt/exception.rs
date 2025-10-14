@@ -7,7 +7,7 @@ use crate::{
     memory::{ArchIntCtx, GenericPfFlags},
     panic::stack_trace,
     sync::CleanLockToken,
-    syscall::{self, flag::*},
+    syscall,
 };
 
 use super::InterruptStack;
