@@ -23,7 +23,9 @@ use crate::{
 
 use crate::syscall::{
     data::Stat,
-    error::{Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS},
+    error::{
+        Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EPERM, EROFS,
+    },
     flag::{
         EventFlags, EVENT_READ, MODE_CHR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY,
         O_EXCL, O_RDONLY, O_STAT, O_SYMLINK,
@@ -31,7 +33,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;

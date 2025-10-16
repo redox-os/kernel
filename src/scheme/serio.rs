@@ -15,11 +15,13 @@ use crate::{
     syscall::{
         error::*,
         flag::{EventFlags, EVENT_READ, O_NONBLOCK},
-        usercopy::{StrOrBytes, UserSliceWo},
+        usercopy::UserSliceWo,
     },
 };
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
+
+use super::StrOrBytes;
 
 /// Input queue
 static INPUT: [WaitQueue<u8>; 2] = [WaitQueue::new(), WaitQueue::new()];

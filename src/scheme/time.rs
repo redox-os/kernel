@@ -69,11 +69,13 @@ impl KernelScheme for TimeScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if !matches!(handle, Handle::RootCapability) {
-            return Err(Error::new(EBADF));
+            if !matches!(handle, Handle::RootCapability) {
+                return Err(Error::new(EBADF));
+            }
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
