@@ -166,7 +166,9 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        if handle.num == SpecialFds::DisableGraphicalDebug as usize {
+        if handle.num == SpecialFds::DisableGraphicalDebug as usize
+            || handle.num == SpecialFds::RootCapability as usize
+        {
             return Err(Error::new(EBADF));
         }
 
