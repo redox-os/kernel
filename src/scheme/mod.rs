@@ -232,8 +232,7 @@ impl SchemeList {
             // removed.
             true, true, context,
         ));
-        let new_scheme =
-            Handle::Scheme(KernelSchemes::User(UserScheme::new(Arc::downgrade(&inner))));
+        let new_scheme = Handle::Scheme(KernelSchemes::User(UserScheme::new(inner)));
         assert!(handles.insert(id, new_scheme).is_none());
         Ok(id)
     }
@@ -340,9 +339,9 @@ impl KernelScheme for SchemeList {
         };
 
         let expected = b"create-scheme";
-        let mut buf = [0u8; 13];
+        let mut buf = [0u8; expected.len()];
 
-        if user_buf.copy_common_bytes_to_slice(&mut buf)? < 13 || buf != *b"create-scheme" {
+        if user_buf.copy_common_bytes_to_slice(&mut buf)? < expected.len() || buf != *expected {
             return Err(Error::new(EINVAL));
         }
 

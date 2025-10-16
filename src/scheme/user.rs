@@ -1612,11 +1612,11 @@ fn page_range_containing(base: usize, size: usize) -> (Page, usize, usize) {
 /// `UserInner` has to be wrapped
 #[derive(Clone)]
 pub struct UserScheme {
-    pub(crate) inner: Weak<UserInner>,
+    pub(crate) inner: Arc<UserInner>,
 }
 
 impl UserScheme {
-    pub fn new(inner: Weak<UserInner>) -> UserScheme {
+    pub fn new(inner: Arc<UserInner>) -> UserScheme {
         UserScheme { inner }
     }
 }
@@ -1629,7 +1629,7 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         match inner.call_extended(
             ctx,
@@ -1660,7 +1660,7 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         let result = inner.call_extended(
             ctx,
@@ -1687,7 +1687,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn rmdir(&self, path: &str, _ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         inner.call(
             Opcode::Rmdir,
@@ -1699,7 +1699,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn unlink(&self, path: &str, _ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         inner.call(
             Opcode::Unlink,
@@ -1711,7 +1711,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         if !inner.v2 {
             return Err(Error::new(ESPIPE));
         }
@@ -1721,7 +1721,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn fchmod(&self, file: usize, mode: u16, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         inner.call(
             Opcode::Fchmod,
             [file, mode as usize],
@@ -1742,7 +1742,7 @@ impl KernelScheme for UserScheme {
             }
         }
 
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         inner.call(
             Opcode::Fchown,
             [file, uid as usize, gid as usize],
@@ -1759,7 +1759,7 @@ impl KernelScheme for UserScheme {
         arg: usize,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         inner.call(
             Opcode::Fcntl,
             [file, cmd, arg],
@@ -1774,7 +1774,7 @@ impl KernelScheme for UserScheme {
         flags: EventFlags,
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         inner
             .call(
                 Opcode::Fevent,
@@ -1792,7 +1792,7 @@ impl KernelScheme for UserScheme {
         _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         inner.call(
             Opcode::Flink,
@@ -1810,7 +1810,7 @@ impl KernelScheme for UserScheme {
         _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         inner.call(
             Opcode::Frename,
@@ -1822,13 +1822,13 @@ impl KernelScheme for UserScheme {
     }
 
     fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         inner.call(Opcode::Fsync, [file], &mut PageSpan::empty(), token)?;
         Ok(())
     }
 
     fn ftruncate(&self, file: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         inner.call(
             Opcode::Ftruncate,
             [file, len],
@@ -1839,9 +1839,9 @@ impl KernelScheme for UserScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         if !inner.supports_on_close {
-            let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+            let inner = self.inner.clone();
             inner.call(Opcode::Close, [id], &mut PageSpan::empty(), token)?;
             return Ok(());
         }
@@ -1869,7 +1869,7 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.capture_user(buf, token)?;
         let result = inner.call_extended(
             ctx,
@@ -1895,7 +1895,7 @@ impl KernelScheme for UserScheme {
         }
     }
     fn kfpath(&self, file: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.capture_user(buf, token)?;
         let result = inner.call(
             Opcode::Fpath,
@@ -1916,7 +1916,7 @@ impl KernelScheme for UserScheme {
         stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
 
         if call_flags != stored_flags && !inner.v2 {
             self.fcntl(file, F_SETFL, call_flags as usize, token)?;
@@ -1953,7 +1953,7 @@ impl KernelScheme for UserScheme {
         stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         if call_flags != stored_flags && !inner.v2 {
             self.fcntl(file, F_SETFL, call_flags as usize, token)?;
         }
@@ -1986,7 +1986,7 @@ impl KernelScheme for UserScheme {
         whence: usize,
         token: &mut CleanLockToken,
     ) -> Option<Result<usize>> {
-        let inner = self.inner.upgrade()?;
+        let inner = self.inner.clone();
         if inner.v2 {
             return None;
         }
@@ -2003,7 +2003,7 @@ impl KernelScheme for UserScheme {
         buf: UserSliceRo,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.capture_user(buf, token)?;
         let result = inner.call(
             Opcode::Futimens,
@@ -2022,7 +2022,7 @@ impl KernelScheme for UserScheme {
         opaque_id_start: u64,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.capture_user(buf, token)?;
         // TODO: Support passing the 16-byte record_len of the last dent, to make it possible to
         // iterate backwards without first interating forward? The last entry will contain the
@@ -2044,7 +2044,7 @@ impl KernelScheme for UserScheme {
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.capture_user(stat, token)?;
         let result = inner.call(
             Opcode::Fstat,
@@ -2056,7 +2056,7 @@ impl KernelScheme for UserScheme {
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         let mut address = inner.capture_user(stat, token)?;
         let result = inner.call(
             Opcode::Fstatvfs,
@@ -2075,7 +2075,7 @@ impl KernelScheme for UserScheme {
         _consume: bool,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
 
         inner.fmap_inner(Arc::clone(addr_space), file, map, token)
     }
@@ -2087,7 +2087,7 @@ impl KernelScheme for UserScheme {
         flags: MunmapFlags,
         token: &mut CleanLockToken,
     ) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let res = inner.call_extended(
@@ -2113,7 +2113,7 @@ impl KernelScheme for UserScheme {
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
 
         let mut address = inner.capture_user(payload, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
@@ -2155,7 +2155,7 @@ impl KernelScheme for UserScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
 
         let mut sendfd_flags = SendFdFlags::empty();
         if flags.contains(CallFlags::FD_EXCLUSIVE) {
@@ -2187,7 +2187,7 @@ impl KernelScheme for UserScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+        let inner = self.inner.clone();
         if payload.len() % mem::size_of::<usize>() != 0 {
             return Err(Error::new(EINVAL));
         }
