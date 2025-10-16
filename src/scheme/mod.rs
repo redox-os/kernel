@@ -198,7 +198,7 @@ impl SchemeList {
     /// Get the UserInner
     pub fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
         match self.handles.read(token.token()).get(&SchemeId(id)) {
-            Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => inner.upgrade(),
+            Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
             _ => None,
         }
     }
@@ -315,10 +315,7 @@ impl KernelScheme for SchemeList {
             .ok_or(Error::new(EBADF))?
         {
             Handle::Scheme(KernelSchemes::User(UserScheme { inner })) => {
-                let inner = match inner.upgrade() {
-                    Some(inner) => inner,
-                    None => return Err(Error::new(EBADF)),
-                };
+                let inner = inner.clone();
                 assert!(scheme_id == inner.scheme_id);
                 let scheme = scheme_id;
                 let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
@@ -338,10 +335,10 @@ impl KernelScheme for SchemeList {
             _ => return Err(Error::new(EBADF)),
         };
 
-        let expected = b"create-scheme";
-        let mut buf = [0u8; expected.len()];
+        const EXPECTED: &'static [u8] = b"create-scheme";
+        let mut buf = [0u8; EXPECTED.len()];
 
-        if user_buf.copy_common_bytes_to_slice(&mut buf)? < expected.len() || buf != *expected {
+        if user_buf.copy_common_bytes_to_slice(&mut buf)? < EXPECTED.len() || buf != *EXPECTED {
             return Err(Error::new(EINVAL));
         }
 
