@@ -13,7 +13,6 @@ use crate::{
     scheme::*,
     sync::{CleanLockToken, RwLock, WaitQueue, L1},
     syscall::{
-        error::*,
         flag::{EventFlags, EVENT_READ, O_NONBLOCK},
         usercopy::UserSliceWo,
     },
@@ -102,11 +101,13 @@ impl KernelScheme for SerioScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        if handle.kind != HandleKind::RootCapability {
-            return Err(Error::new(ENOTDIR));
+            if handle.kind != HandleKind::RootCapability {
+                return Err(Error::new(ENOTDIR));
+            }
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;

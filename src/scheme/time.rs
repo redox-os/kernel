@@ -55,7 +55,9 @@ impl KernelScheme for TimeScheme {
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, clock);
+        HANDLES
+            .write(token.token())
+            .insert(id, Handle::Clock(clock));
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
