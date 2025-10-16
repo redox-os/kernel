@@ -46,6 +46,7 @@ enum HandleKind {
     TopLevel,
     Rxsdt,
     ShutdownPipe,
+    RootCapability,
 }
 
 static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
@@ -111,6 +112,20 @@ impl AcpiScheme {
 }
 
 impl KernelScheme for AcpiScheme {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let fd = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
+        let mut handles_guard = HANDLES.write(token.token());
+
+        let _ = handles_guard.insert(
+            fd,
+            Handle {
+                kind: HandleKind::RootCapability,
+                stat: false,
+            },
+        );
+
+        Ok(fd)
+    }
     fn kopen(
         &self,
         path: &str,
@@ -169,6 +184,30 @@ impl KernelScheme for AcpiScheme {
 
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: StrOrBytes,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?
+                .kind,
+            HandleKind::RootCapability
+        ) {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, flags, ctx, token)
+    }
+
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let mut handles = HANDLES.write(token.token());
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -181,6 +220,7 @@ impl KernelScheme for AcpiScheme {
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len() as u64,
             HandleKind::ShutdownPipe => 1,
             HandleKind::TopLevel => 0,
+            HandleKind::RootCapability => return Err(Error::new(EBADF))?,
         })
     }
     // TODO
@@ -247,6 +287,7 @@ impl KernelScheme for AcpiScheme {
             }
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
             HandleKind::TopLevel => return Err(Error::new(EISDIR)),
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
         };
 
         let src_offset = core::cmp::min(offset, data.len());
@@ -315,6 +356,7 @@ impl KernelScheme for AcpiScheme {
                 st_size: 1,
                 ..Default::default()
             },
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())

@@ -22,6 +22,7 @@ pub struct DtbScheme;
 #[derive(Eq, PartialEq)]
 enum HandleKind {
     RawData,
+    RootCapability,
 }
 
 struct Handle {
@@ -51,6 +52,20 @@ impl DtbScheme {
 }
 
 impl KernelScheme for DtbScheme {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
+
+        let mut handles_guard = HANDLES.write(token.token());
+
+        let _ = handles_guard.insert(
+            id,
+            Handle {
+                kind: HandleKind::RootCapability,
+                stat: false,
+            },
+        );
+        Ok(id)
+    }
     fn kopen(
         &self,
         path: &str,
@@ -78,6 +93,30 @@ impl KernelScheme for DtbScheme {
         Err(Error::new(ENOENT))
     }
 
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: StrOrBytes,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?
+                .kind,
+            HandleKind::RootCapability
+        ) {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, flags, ctx, token)
+    }
+
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let mut handles = HANDLES.write(token.token());
         let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
@@ -88,6 +127,7 @@ impl KernelScheme for DtbScheme {
 
         let file_len = match handle.kind {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?.len(),
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
         };
 
         Ok(file_len as u64)
@@ -118,6 +158,7 @@ impl KernelScheme for DtbScheme {
 
         let data = match handle.kind {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?,
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
         };
 
         let src_offset = core::cmp::min(offset.try_into().unwrap(), data.len());
@@ -142,6 +183,7 @@ impl KernelScheme for DtbScheme {
                     ..Default::default()
                 }
             }
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())

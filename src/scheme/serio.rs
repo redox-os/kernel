@@ -5,6 +5,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -12,8 +13,9 @@ use crate::{
     scheme::*,
     sync::{CleanLockToken, RwLock, WaitQueue, L1},
     syscall::{
+        error::*,
         flag::{EventFlags, EVENT_READ, O_NONBLOCK},
-        usercopy::UserSliceWo,
+        usercopy::{StrOrBytes, UserSliceWo},
     },
 };
 
@@ -22,9 +24,15 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 /// Input queue
 static INPUT: [WaitQueue<u8>; 2] = [WaitQueue::new(), WaitQueue::new()];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HandleKind {
+    Device(usize),
+    RootCapability,
+}
+
 #[derive(Clone, Copy)]
 struct Handle {
-    index: usize,
+    kind: HandleKind,
 }
 
 static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
@@ -45,6 +53,17 @@ pub fn serio_input(index: usize, data: u8, token: &mut CleanLockToken) {
 pub struct SerioScheme;
 
 impl KernelScheme for SerioScheme {
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write(token.token()).insert(
+            id,
+            Handle {
+                kind: HandleKind::RootCapability,
+            },
+        );
+        Ok(id)
+    }
+
     fn kopen(
         &self,
         path: &str,
@@ -62,9 +81,34 @@ impl KernelScheme for SerioScheme {
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, Handle { index });
+        HANDLES.write(token.token()).insert(
+            id,
+            Handle {
+                kind: HandleKind::Device(index),
+            },
+        );
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+    }
+
+    fn kopenat(
+        &self,
+        id: usize,
+        user_buf: StrOrBytes,
+        flags: usize,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        let handles = HANDLES.read(token.token());
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+        if handle.kind != HandleKind::RootCapability {
+            return Err(Error::new(ENOTDIR));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
+        self.kopen(path, flags, ctx, token)
     }
 
     fn fevent(
@@ -73,32 +117,30 @@ impl KernelScheme for SerioScheme {
         _flags: EventFlags,
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        let _handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handles = HANDLES.read(token.token());
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        Ok(EventFlags::empty())
+        if let HandleKind::Device(_) = handle.kind {
+            Ok(EventFlags::empty())
+        } else {
+            Err(Error::new(EBADF))
+        }
     }
 
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let _handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
-
+        let handles = HANDLES.read(token.token());
+        handles.get(&id).ok_or(Error::new(EBADF))?;
         Ok(())
     }
 
-    /// Close the file `number`
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let _handle = {
-            let mut handles = HANDLES.write(token.token());
-            handles.remove(&id).ok_or(Error::new(EBADF))?
-        };
-
+        HANDLES
+            .write(token.token())
+            .remove(&id)
+            .ok_or(Error::new(EBADF))?;
         Ok(())
     }
+
     fn kread(
         &self,
         id: usize,
@@ -112,7 +154,12 @@ impl KernelScheme for SerioScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        INPUT[handle.index].receive_into_user(
+        let index = match handle.kind {
+            HandleKind::Device(index) => index,
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+        };
+
+        INPUT[index].receive_into_user(
             buf,
             flags & O_NONBLOCK as u32 == 0,
             "SerioScheme::read",
@@ -125,7 +172,11 @@ impl KernelScheme for SerioScheme {
             let handles = HANDLES.read(token.token());
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
-        let path = format!("serio:{}", handle.index).into_bytes();
+
+        let path = match handle.kind {
+            HandleKind::Device(index) => format!("serio:{}", index).into_bytes(),
+            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+        };
 
         buf.copy_common_bytes_from_slice(&path)
     }
