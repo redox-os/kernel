@@ -28,7 +28,7 @@ static INPUT: [WaitQueue<u8>; 2] = [WaitQueue::new(), WaitQueue::new()];
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum HandleKind {
     Device(usize),
-    RootCapability,
+    SchemeRoot,
 }
 
 #[derive(Clone, Copy)]
@@ -54,12 +54,12 @@ pub fn serio_input(index: usize, data: u8, token: &mut CleanLockToken) {
 pub struct SerioScheme;
 
 impl KernelScheme for SerioScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(
             id,
             Handle {
-                kind: HandleKind::RootCapability,
+                kind: HandleKind::SchemeRoot,
             },
         );
         Ok(id)
@@ -105,7 +105,7 @@ impl KernelScheme for SerioScheme {
             let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-            if handle.kind != HandleKind::RootCapability {
+            if handle.kind != HandleKind::SchemeRoot {
                 return Err(Error::new(ENOTDIR));
             }
         }
@@ -159,7 +159,7 @@ impl KernelScheme for SerioScheme {
 
         let index = match handle.kind {
             HandleKind::Device(index) => index,
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         INPUT[index].receive_into_user(
@@ -178,7 +178,7 @@ impl KernelScheme for SerioScheme {
 
         let path = match handle.kind {
             HandleKind::Device(index) => format!("serio:{}", index).into_bytes(),
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         buf.copy_common_bytes_from_slice(&path)

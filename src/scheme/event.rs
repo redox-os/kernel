@@ -18,7 +18,7 @@ use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {
-    fn root_cap(&self, _token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
         Ok(usize::MAX)
     }
     fn kopen(

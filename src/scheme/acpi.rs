@@ -48,7 +48,7 @@ enum HandleKind {
     TopLevel,
     Rxsdt,
     ShutdownPipe,
-    RootCapability,
+    SchemeRoot,
 }
 
 static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
@@ -114,14 +114,14 @@ impl AcpiScheme {
 }
 
 impl KernelScheme for AcpiScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let fd = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
         let mut handles_guard = HANDLES.write(token.token());
 
         let _ = handles_guard.insert(
             fd,
             Handle {
-                kind: HandleKind::RootCapability,
+                kind: HandleKind::SchemeRoot,
                 stat: false,
             },
         );
@@ -201,7 +201,7 @@ impl KernelScheme for AcpiScheme {
                 .get(&id)
                 .ok_or(Error::new(EBADF))?
                 .kind,
-            HandleKind::RootCapability
+            HandleKind::SchemeRoot
         ) {
             return Err(Error::new(EPERM));
         }
@@ -222,7 +222,7 @@ impl KernelScheme for AcpiScheme {
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len() as u64,
             HandleKind::ShutdownPipe => 1,
             HandleKind::TopLevel => 0,
-            HandleKind::RootCapability => return Err(Error::new(EBADF))?,
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF))?,
         })
     }
     // TODO
@@ -289,7 +289,7 @@ impl KernelScheme for AcpiScheme {
             }
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
             HandleKind::TopLevel => return Err(Error::new(EISDIR)),
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let src_offset = core::cmp::min(offset, data.len());
@@ -358,7 +358,7 @@ impl KernelScheme for AcpiScheme {
                 st_size: 1,
                 ..Default::default()
             },
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())

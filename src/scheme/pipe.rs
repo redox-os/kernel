@@ -30,7 +30,7 @@ static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
 enum Handle {
     Pipe(Arc<Pipe>),
-    RootCapability,
+    SchemeRoot,
 }
 
 // TODO: SLOB?
@@ -82,11 +82,9 @@ impl PipeScheme {
 }
 
 impl KernelScheme for PipeScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        PIPES
-            .write(token.token())
-            .insert(id, Handle::RootCapability);
+        PIPES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
     fn fevent(
@@ -205,7 +203,7 @@ impl KernelScheme for PipeScheme {
 
         {
             let guard = PIPES.read(token.token());
-            if let Some(Handle::RootCapability) = guard.get(&key) {
+            if let Some(Handle::SchemeRoot) = guard.get(&key) {
             } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
                 let pipe = Arc::clone(pipe_arc);
                 drop(guard);

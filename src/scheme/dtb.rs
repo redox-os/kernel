@@ -22,7 +22,7 @@ pub struct DtbScheme;
 #[derive(Eq, PartialEq)]
 enum HandleKind {
     RawData,
-    RootCapability,
+    SchemeRoot,
 }
 
 struct Handle {
@@ -52,7 +52,7 @@ impl DtbScheme {
 }
 
 impl KernelScheme for DtbScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
 
         let mut handles_guard = HANDLES.write(token.token());
@@ -60,7 +60,7 @@ impl KernelScheme for DtbScheme {
         let _ = handles_guard.insert(
             id,
             Handle {
-                kind: HandleKind::RootCapability,
+                kind: HandleKind::SchemeRoot,
                 stat: false,
             },
         );
@@ -108,7 +108,7 @@ impl KernelScheme for DtbScheme {
                 .get(&id)
                 .ok_or(Error::new(EBADF))?
                 .kind,
-            HandleKind::RootCapability
+            HandleKind::SchemeRoot
         ) {
             return Err(Error::new(EPERM));
         }
@@ -127,7 +127,7 @@ impl KernelScheme for DtbScheme {
 
         let file_len = match handle.kind {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?.len(),
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         Ok(file_len as u64)
@@ -158,7 +158,7 @@ impl KernelScheme for DtbScheme {
 
         let data = match handle.kind {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?,
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let src_offset = core::cmp::min(offset.try_into().unwrap(), data.len());
@@ -183,7 +183,7 @@ impl KernelScheme for DtbScheme {
                     ..Default::default()
                 }
             }
-            HandleKind::RootCapability => return Err(Error::new(EBADF)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())

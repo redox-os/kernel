@@ -293,7 +293,7 @@ impl<'a> SchemesView<'a> {
 }
 
 impl KernelScheme for SchemeList {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = SchemeId(0);
         self.handles
             .write(token.token())
@@ -523,7 +523,7 @@ pub fn init_globals() {
 
 #[allow(unused_variables)]
 pub trait KernelScheme: Send + Sync + 'static {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
 

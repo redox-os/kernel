@@ -49,16 +49,16 @@ enum SpecialFds {
     #[cfg(feature = "profiling")]
     CtlProfiling = !0 - 3,
 
-    RootCapability = !0 - 4,
+    SchemeRoot = !0 - 4,
 }
 
 impl KernelScheme for DebugScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(
             id,
             Handle {
-                num: SpecialFds::RootCapability as usize,
+                num: SpecialFds::SchemeRoot as usize,
             },
         );
 
@@ -113,7 +113,7 @@ impl KernelScheme for DebugScheme {
             .get(&id)
             .ok_or(Error::new(EBADF))?
             .num
-            != SpecialFds::RootCapability as usize
+            != SpecialFds::SchemeRoot as usize
         {
             return Err(Error::new(EPERM));
         }
@@ -167,7 +167,7 @@ impl KernelScheme for DebugScheme {
         };
 
         if handle.num == SpecialFds::DisableGraphicalDebug as usize
-            || handle.num == SpecialFds::RootCapability as usize
+            || handle.num == SpecialFds::SchemeRoot as usize
         {
             return Err(Error::new(EBADF));
         }

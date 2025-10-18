@@ -21,7 +21,7 @@ use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Handle {
-    RootCapability,
+    SchemeRoot,
     Clock(usize),
 }
 
@@ -32,11 +32,9 @@ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
 pub struct TimeScheme;
 
 impl KernelScheme for TimeScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES
-            .write(token.token())
-            .insert(id, Handle::RootCapability);
+        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
     fn kopen(
@@ -75,7 +73,7 @@ impl KernelScheme for TimeScheme {
             let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-            if !matches!(handle, Handle::RootCapability) {
+            if !matches!(handle, Handle::SchemeRoot) {
                 return Err(Error::new(EBADF));
             }
         }
@@ -136,7 +134,7 @@ impl KernelScheme for TimeScheme {
             .ok_or(Error::new(EBADF))?
         {
             Handle::Clock(clock_id) => *clock_id,
-            Handle::RootCapability => return Err(Error::new(EBADF)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let mut bytes_read = 0;
@@ -173,7 +171,7 @@ impl KernelScheme for TimeScheme {
             .ok_or(Error::new(EBADF))?
         {
             Handle::Clock(clock_id) => *clock_id,
-            Handle::RootCapability => return Err(Error::new(EBADF)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let mut bytes_written = 0;
@@ -195,7 +193,7 @@ impl KernelScheme for TimeScheme {
             .ok_or(Error::new(EBADF))?
         {
             Handle::Clock(clock_id) => *clock_id,
-            Handle::RootCapability => return Err(Error::new(EBADF)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let scheme_path = format!("time:{}", clock).into_bytes();

@@ -55,7 +55,7 @@ enum Handle {
         path: &'static str,
         data: Option<Vec<u8>>,
     },
-    RootCapability,
+    SchemeRoot,
 }
 
 enum Kind {
@@ -114,11 +114,9 @@ const FILES: &[(&'static str, Kind)] = &[
 ];
 
 impl KernelScheme for SysScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES
-            .write(token.token())
-            .insert(id, Handle::RootCapability);
+        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
     fn kopen(
@@ -175,7 +173,7 @@ impl KernelScheme for SysScheme {
             .read(token.token())
             .get(&id)
             .ok_or(Error::new(EBADF))?
-            != Handle::RootCapability
+            != Handle::SchemeRoot
         {
             return Err(Error::new(EPERM));
         }
@@ -192,7 +190,7 @@ impl KernelScheme for SysScheme {
         {
             Handle::TopLevel => Ok(0),
             Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
-            Handle::RootCapability => Err(Error::new(EBADF)),
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -208,7 +206,7 @@ impl KernelScheme for SysScheme {
         let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => "",
             Handle::Resource { path, .. } => path,
-            Handle::RootCapability => return Err(Error::new(EBADF)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         const FIRST: &[u8] = b"sys:";
@@ -249,7 +247,7 @@ impl KernelScheme for SysScheme {
 
                 buffer.copy_common_bytes_from_slice(avail_buf)
             }
-            Handle::RootCapability => Err(Error::new(EBADF)),
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
     fn kwriteoff(
@@ -281,7 +279,7 @@ impl KernelScheme for SysScheme {
                 };
                 (handler, intermediate, len)
             }
-            Handle::RootCapability => return Err(Error::new(EBADF)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
         handler(&intermediate[..len], token)
     }
@@ -314,7 +312,7 @@ impl KernelScheme for SysScheme {
                 }
                 Ok(buf.finalize())
             }
-            Handle::RootCapability => Err(Error::new(EBADF)),
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -338,7 +336,7 @@ impl KernelScheme for SysScheme {
                 st_size: 0,
                 ..Default::default()
             },
-            Handle::RootCapability => return Err(Error::new(EBADF)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         buf.copy_exactly(&stat)?;

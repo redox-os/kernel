@@ -72,7 +72,7 @@ pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
 
 #[allow(dead_code)]
 enum Handle {
-    RootCapability,
+    SchemeRoot,
     Irq { ack: AtomicUsize, irq: u8 },
     Avail(LogicalCpuId),
     TopLevel,
@@ -210,11 +210,9 @@ const fn vector_to_irq(vector: u8) -> u8 {
 }
 
 impl crate::scheme::KernelScheme for IrqScheme {
-    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_FD.fetch_add(1, Ordering::Relaxed);
-        HANDLES
-            .write(token.token())
-            .insert(id, Handle::RootCapability);
+        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
     fn kopen(
@@ -329,7 +327,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-            if !matches!(handle, Handle::RootCapability) {
+            if !matches!(handle, Handle::SchemeRoot) {
                 return Err(Error::new(EBADF));
             }
         }
@@ -579,10 +577,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 buffer.write_u32(LogicalCpuId::BSP.get())?;
                 Ok(mem::size_of::<usize>())
             }
-            Handle::Avail(_)
-            | Handle::TopLevel
-            | Handle::Phandle(_, _)
-            | Handle::RootCapability => Err(Error::new(EISDIR)),
+            Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) | Handle::SchemeRoot => {
+                Err(Error::new(EISDIR))
+            }
         }
     }
 }
