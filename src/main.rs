@@ -46,7 +46,6 @@
 #![feature(iter_next_chunk)]
 #![feature(iterator_try_collect)]
 #![feature(sync_unsafe_cell)]
-#![feature(thread_local)]
 #![feature(variant_count)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
