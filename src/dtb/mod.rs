@@ -4,7 +4,6 @@ use crate::{
     dtb::irqchip::IrqCell,
     startup::memory::{register_memory_region, BootloaderMemoryKind},
 };
-use byteorder::{ByteOrder, BE};
 use core::slice;
 use fdt::{
     node::{FdtNode, NodeProperty},
@@ -74,8 +73,8 @@ pub fn travel_interrupt_ctrl(fdt: &Fdt) {
                     if let Some(intr_data) = _intr_data {
                         debug!("interrupt-parent = 0x{:08x}", intr);
                         debug!("interrupts begin:");
-                        for chunk in intr_data.value.chunks(4) {
-                            debug!("0x{:08x}, ", BE::read_u32(chunk));
+                        for &chunk in intr_data.value.as_chunks::<4>().0 {
+                            debug!("0x{:08x}, ", u32::from_be_bytes(chunk));
                         }
                     }
                     debug!("interrupts end");
@@ -205,7 +204,7 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
         .as_chunks::<4>()
         .0
         .iter()
-        .map(|f| BE::read_u32(f))
+        .map(|&f| u32::from_be_bytes(f))
         .skip(parent_interrupt_cells * idx);
     match parent_interrupt_cells {
         1 => Some(IrqCell::L1(intr.next()?)),

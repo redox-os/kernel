@@ -4,7 +4,6 @@ use crate::{
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
-use byteorder::{ByteOrder, BE};
 use fdt::{node::NodeProperty, Fdt};
 use syscall::{Error, Result, EINVAL};
 
@@ -119,7 +118,12 @@ impl IrqChipList {
                     && let Some(intr_data) = node.property("interrupts")
                 {
                     // FIXME use interrupts() helper when fixed (see gh#12)
-                    let mut intr_data = intr_data.value.chunks(4).map(|x| BE::read_u32(x));
+                    let mut intr_data = intr_data
+                        .value
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&x| u32::from_be_bytes(x));
                     let parent_phandle = parent
                         .property("phandle")
                         .and_then(NodeProperty::as_usize)
@@ -142,7 +146,12 @@ impl IrqChipList {
                     // FIXME use the helper when fixed (see gh#37)
                     // Shouldn't matter much since ARM seems to not use extended interrupt and
                     // RISC-V seems to not use 3-sized interrupt addresses
-                    let mut intr_data = intr_data.value.chunks(4).map(|x| BE::read_u32(x));
+                    let mut intr_data = intr_data
+                        .value
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|&x| u32::from_be_bytes(x));
                     while let Some(parent_phandle) = intr_data.next()
                         && let Some(parent) = fdt.find_phandle(parent_phandle)
                         && let Some(parent_interrupt_cells) = parent.interrupt_cells()
