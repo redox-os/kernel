@@ -292,9 +292,8 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
 #[unsafe(naked)]
 unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
-    unsafe {
-        core::arch::naked_asm!(
-            "
+    core::arch::naked_asm!(
+        "
         str x19, [x0, #{off_x19}]
         ldr x19, [x1, #{off_x19}]
 
@@ -368,29 +367,28 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
 
         b {switch_hook}
         ",
-            off_x19 = const(offset_of!(Context, x19)),
-            off_x20 = const(offset_of!(Context, x20)),
-            off_x21 = const(offset_of!(Context, x21)),
-            off_x22 = const(offset_of!(Context, x22)),
-            off_x23 = const(offset_of!(Context, x23)),
-            off_x24 = const(offset_of!(Context, x24)),
-            off_x25 = const(offset_of!(Context, x25)),
-            off_x26 = const(offset_of!(Context, x26)),
-            off_x27 = const(offset_of!(Context, x27)),
-            off_x28 = const(offset_of!(Context, x28)),
-            off_x29 = const(offset_of!(Context, fp)),
-            off_x30 = const(offset_of!(Context, lr)),
-            off_elr_el1 = const(offset_of!(Context, elr_el1)),
-            off_sp_el0 = const(offset_of!(Context, sp_el0)),
-            off_tpidr_el0 = const(offset_of!(Context, tpidr_el0)),
-            off_tpidrro_el0 = const(offset_of!(Context, tpidrro_el0)),
-            off_spsr_el1 = const(offset_of!(Context, spsr_el1)),
-            off_esr_el1 = const(offset_of!(Context, esr_el1)),
-            off_sp = const(offset_of!(Context, sp)),
+        off_x19 = const(offset_of!(Context, x19)),
+        off_x20 = const(offset_of!(Context, x20)),
+        off_x21 = const(offset_of!(Context, x21)),
+        off_x22 = const(offset_of!(Context, x22)),
+        off_x23 = const(offset_of!(Context, x23)),
+        off_x24 = const(offset_of!(Context, x24)),
+        off_x25 = const(offset_of!(Context, x25)),
+        off_x26 = const(offset_of!(Context, x26)),
+        off_x27 = const(offset_of!(Context, x27)),
+        off_x28 = const(offset_of!(Context, x28)),
+        off_x29 = const(offset_of!(Context, fp)),
+        off_x30 = const(offset_of!(Context, lr)),
+        off_elr_el1 = const(offset_of!(Context, elr_el1)),
+        off_sp_el0 = const(offset_of!(Context, sp_el0)),
+        off_tpidr_el0 = const(offset_of!(Context, tpidr_el0)),
+        off_tpidrro_el0 = const(offset_of!(Context, tpidrro_el0)),
+        off_spsr_el1 = const(offset_of!(Context, spsr_el1)),
+        off_esr_el1 = const(offset_of!(Context, esr_el1)),
+        off_sp = const(offset_of!(Context, sp)),
 
-            switch_hook = sym crate::context::switch_finish_hook,
-        );
-    }
+        switch_hook = sym crate::context::switch_finish_hook,
+    );
 }
 
 /// Allocates a new empty utable
