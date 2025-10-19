@@ -8,7 +8,6 @@ use crate::{
         ioapic, local_apic, pic, pit,
         serial::{COM1, COM2},
     },
-    interrupt, interrupt_stack,
     ipi::{ipi, IpiKind, IpiTarget},
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},

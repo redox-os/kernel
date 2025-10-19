@@ -101,7 +101,7 @@ impl MemoryMap {
         }
     }
 
-    fn iter(&self) -> Iter<MemoryEntry> {
+    fn iter(&self) -> Iter<'_, MemoryEntry> {
         self.entries[0..self.size].iter()
     }
 
