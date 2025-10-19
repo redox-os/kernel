@@ -11,7 +11,6 @@ trampoline:
     .ready: dq 0
     .args_ptr: dq 0
     .page_table: dq 0
-    .stack_end: dq 0
     .code: dq 0
 
 startup_ap:
@@ -74,9 +73,6 @@ long_mode_ap:
     mov fs, rax
     mov gs, rax
     mov ss, rax
-
-    mov rcx, [trampoline.stack_end]
-    lea rsp, [rcx - 256]
 
     mov rdi, [trampoline.args_ptr]
 

@@ -41,11 +41,6 @@ impl KernelArgs {
             self.kernel_base + self.kernel_size
         );
         info!(
-            "Stack: {:X}:{:X}",
-            { self.stack_base },
-            self.stack_base + self.stack_size
-        );
-        info!(
             "Env: {:X}:{:X}",
             { self.env_base },
             self.env_base + self.env_size

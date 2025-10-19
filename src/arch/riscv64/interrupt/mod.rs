@@ -7,6 +7,7 @@ mod exception;
 pub mod syscall;
 pub mod trace;
 
+pub use exception::exception_handler;
 pub use handler::InterruptStack;
 
 /// Clear interrupts
@@ -41,16 +42,4 @@ pub unsafe fn enable_and_nop() {
 #[inline(always)]
 pub unsafe fn halt() {
     unsafe { asm!("wfi", options(nomem, nostack)) }
-}
-
-#[inline(always)]
-pub unsafe fn init() {
-    unsafe {
-        // Setup interrupt handlers
-        asm!(
-            "la t0, {}", // WARL=0 - direct mode combined handler
-            "csrw stvec, t0",
-            sym exception::exception_handler,
-        );
-    }
 }

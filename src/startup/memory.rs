@@ -156,11 +156,6 @@ fn register_memory_from_kernel_args(args: &KernelArgs) {
         BootloaderMemoryKind::Kernel,
     );
     register_memory_region(
-        args.stack_base as usize,
-        args.stack_size as usize,
-        BootloaderMemoryKind::IdentityMap,
-    );
-    register_memory_region(
         args.env_base as usize,
         args.env_size as usize,
         BootloaderMemoryKind::IdentityMap,

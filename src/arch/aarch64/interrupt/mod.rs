@@ -47,17 +47,3 @@ pub unsafe fn halt() {
         asm!("wfi");
     }
 }
-
-#[inline(always)]
-pub unsafe fn init() {
-    unsafe {
-        // Setup interrupt handlers
-        asm!(
-            "
-        ldr {tmp}, =exception_vector_base
-        msr vbar_el1, {tmp}
-        ",
-            tmp = out(reg) _,
-        );
-    }
-}
