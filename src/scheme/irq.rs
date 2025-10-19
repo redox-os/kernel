@@ -170,7 +170,7 @@ impl IrqScheme {
             let addr: Vec<u32> = path_str
                 .split(',')
                 .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
-                .try_collect()?;
+                .collect::<Result<_, _>>()?;
             let ic_idx = IRQ_CHIP
                 .phandle_to_ic_idx(phandle as u32)
                 .ok_or(Error::new(ENOENT))?;
