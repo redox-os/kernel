@@ -19,25 +19,23 @@ pub mod flags {
 #[unsafe(naked)]
 #[unsafe(link_section = ".usercopy-fns")]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    unsafe {
-        core::arch::naked_asm!(
-            "
-            push edi
-            push esi
+    core::arch::naked_asm!(
+        "
+        push edi
+        push esi
 
-            mov edi, [esp + 12] # dst
-            mov esi, [esp + 16] # src
-            mov ecx, [esp + 20] # len
-            rep movsb
+        mov edi, [esp + 12] # dst
+        mov esi, [esp + 16] # src
+        mov ecx, [esp + 20] # len
+        rep movsb
 
-            pop esi
-            pop edi
+        pop esi
+        pop edi
 
-            xor eax, eax
-            ret
+        xor eax, eax
+        ret
     "
-        );
-    }
+    );
 }
 pub use arch_copy_to_user as arch_copy_from_user;
 
