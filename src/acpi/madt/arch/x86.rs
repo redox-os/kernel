@@ -82,8 +82,8 @@ pub(super) fn init(madt: Madt) {
                 let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
 
                 let args = KernelArgsAp {
+                    stack_end: stack_end as *mut u8,
                     cpu_id,
-                    page_table: page_table_physaddr,
                     pcr_ptr,
                     idt_ptr,
                 };
@@ -91,16 +91,13 @@ pub(super) fn init(madt: Madt) {
                 let ap_ready = (TRAMPOLINE + 8) as *mut u64;
                 let ap_args_ptr = unsafe { ap_ready.add(1) };
                 let ap_page_table = unsafe { ap_ready.add(2) };
-                let ap_stack_end = unsafe { ap_ready.add(3) };
-                let ap_code = unsafe { ap_ready.add(4) };
+                let ap_code = unsafe { ap_ready.add(3) };
 
                 // Set the ap_ready to 0, volatile
                 unsafe {
                     ap_ready.write(0);
                     ap_args_ptr.write(&args as *const _ as u64);
                     ap_page_table.write(page_table_physaddr as u64);
-                    ap_stack_end.write(stack_end as u64);
-                    #[expect(clippy::fn_to_numeric_cast)]
                     ap_code.write(kstart_ap as u64);
 
                     // TODO: Is this necessary (this fence)?
@@ -127,7 +124,6 @@ pub(super) fn init(madt: Madt) {
 
                 // Send START IPI
                 {
-                    //Start at 0x0800:0000 => 0x8000. Hopefully the bootloader code is still there
                     let ap_segment = (TRAMPOLINE >> 12) & 0xFF;
                     let mut icr = 0x4600 | ap_segment as u64;
 

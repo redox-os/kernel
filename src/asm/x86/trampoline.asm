@@ -11,7 +11,6 @@ trampoline:
     .ready: dq 0
     .args_ptr: dq 0
     .page_table: dq 0
-    .stack_end: dq 0
     .code: dq 0
 
 startup_ap:
@@ -68,19 +67,11 @@ protected_mode_ap:
     mov gs, eax
     mov ss, eax
 
-    mov eax, [trampoline.stack_end]
-    lea esp, [eax - 256]
-
-    mov eax, [trampoline.args_ptr]
-    push eax
+    mov edi, [trampoline.args_ptr]
 
     mov eax, [trampoline.code]
     mov dword [trampoline.ready], 1
-    call eax
-.halt:
-    cli
-    hlt
-    jmp .halt
+    jmp eax
 
 struc GDTEntry
     .limitl resw 1

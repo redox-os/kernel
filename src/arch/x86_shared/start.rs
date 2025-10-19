@@ -6,6 +6,7 @@ use core::{
     arch::global_asm,
     cell::SyncUnsafeCell,
     hint,
+    mem::offset_of,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -13,13 +14,8 @@ use core::{
 use crate::acpi;
 
 use crate::{
-    allocator,
-    cpu_set::LogicalCpuId,
-    device,
-    devices::graphical_debug,
-    gdt, idt, interrupt,
-    paging::{self, PhysicalAddress, RmmA, RmmArch, TableKind},
-    startup::KernelArgs,
+    allocator, cpu_set::LogicalCpuId, device, devices::graphical_debug, gdt, idt, interrupt,
+    paging, startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -171,14 +167,51 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 }
 
 pub struct KernelArgsAp {
+    pub stack_end: *mut u8,
     pub cpu_id: LogicalCpuId,
-    pub page_table: usize,
     pub pcr_ptr: *mut gdt::ProcessorControlRegion,
     pub idt_ptr: *mut idt::Idt,
 }
 
+// FIXME use extern "custom"
+unsafe extern "C" {
+    pub fn kstart_ap();
+}
+
+#[cfg(target_arch = "x86")]
+global_asm!("
+    .globl kstart_ap
+    kstart_ap:
+        mov esp, dword ptr [edi + {args_stack}]
+        mov [esp + 4], edi
+        mov [esp + 8], esp
+
+        jmp {start_ap}
+    ",
+    args_stack = const offset_of!(KernelArgsAp, stack_end),
+    start_ap = sym start_ap,
+);
+
+#[cfg(target_arch = "x86_64")]
+global_asm!("
+    .globl kstart_ap
+    kstart_ap:
+        // Note: The System V ABI requires the stack to be aligned to 16 bytes
+        // before the call instruction. As we jump rather than call it has to
+        // be offset by 8 bytes. Additionally reserve a bit more space at the
+        // end of the stack to ensure that the start function returns to
+        // address 0.
+        mov rax, qword ptr [rdi + {args_stack}]
+        lea rsp, [rax - 24]
+
+        jmp {start_ap}
+    ",
+    args_stack = const offset_of!(KernelArgsAp, stack_end),
+    start_ap = sym start_ap,
+);
+
 /// Entry to rust for an AP
-pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
+unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {
     unsafe {
         let cpu_id = {
             let args = &*args_ptr;
@@ -190,7 +223,6 @@ pub unsafe extern "C" fn kstart_ap(args_ptr: *const KernelArgsAp) -> ! {
             idt::install_idt(args.idt_ptr);
 
             // Initialize paging
-            RmmA::set_table(TableKind::Kernel, PhysicalAddress::new(args.page_table));
             paging::init();
 
             #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
