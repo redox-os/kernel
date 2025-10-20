@@ -173,7 +173,7 @@ impl KernelScheme for PipeScheme {
             return Err(Error::new(EBADF));
         }
 
-        println!("PipeScheme::opena called, pid={}, writer={}", ctx.pid, key);
+        println!("PipeScheme::dup called, pid={}, writer={}", ctx.pid, key);
 
         Ok(OpenResult::SchemeLocal(
             key | WRITE_NOT_READ_BIT,
@@ -376,6 +376,7 @@ impl KernelScheme for PipeScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        println!("PipeScheme::kfdwrite called, id={}", id);
         let (is_write_not_read, key) = from_raw_id(id);
 
         if !is_write_not_read {
@@ -414,6 +415,10 @@ impl KernelScheme for PipeScheme {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify(token);
 
+                println!(
+                    "PipeScheme::kfdwrite, id={}, fds_to_written={}",
+                    id, fds_written
+                );
                 return Ok(fds_written);
             }
 
@@ -430,6 +435,7 @@ impl KernelScheme for PipeScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        println!("PipeScheme::kfdread called, id={}", id);
         let (is_write_not_read, key) = from_raw_id(id);
 
         if is_write_not_read {
@@ -468,6 +474,10 @@ impl KernelScheme for PipeScheme {
                 );
                 pipe.write_condition.notify(token);
 
+                println!(
+                    "PipeScheme::kfdread, id={}, fds_to_read={}",
+                    id, fds_to_read
+                );
                 return Ok(fds_to_read);
             }
 
