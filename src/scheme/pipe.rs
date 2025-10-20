@@ -153,7 +153,7 @@ impl KernelScheme for PipeScheme {
     ) -> Result<OpenResult> {
         println!(
             "PipeScheme::kdup called, pid={}, reader={}",
-            ctx.pid, reader
+            ctx.pid, old_id
         );
         let (is_writer_not_reader, key) = from_raw_id(old_id);
 
@@ -279,7 +279,7 @@ impl KernelScheme for PipeScheme {
                 );
                 pipe.write_condition.notify(token);
 
-                println!("PipeScheme::kread, id={}, bytes_read={}", bytes_read);
+                println!("PipeScheme::kread, id={}, bytes_read={}", id, bytes_read);
                 return Ok(bytes_read);
             } else if user_buf.is_empty() {
                 return Ok(0);
@@ -343,7 +343,10 @@ impl KernelScheme for PipeScheme {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify(token);
 
-                println!("PipeScheme::kwrite, id={}, bytes_written={}", bytes_written);
+                println!(
+                    "PipeScheme::kwrite, id={}, bytes_written={}",
+                    id, bytes_written
+                );
                 return Ok(bytes_written);
             } else if user_buf.is_empty() {
                 return Ok(0);
