@@ -9,6 +9,7 @@ use alloc::boxed::Box;
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
 use syscall::{
+    data::GlobalSchemes,
     dirent::{DirEntry, DirentBuf, DirentKind},
     EIO,
 };
@@ -30,7 +31,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;

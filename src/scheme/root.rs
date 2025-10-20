@@ -4,6 +4,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::HashMap;
+use spin::RwLock as SpinRwLock;
 use syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     O_EXLOCK, O_FSYNC,
@@ -20,7 +21,7 @@ use crate::{
     syscall::{
         data::Stat,
         error::*,
-        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT},
+        flag::{CallFlags, EventFlags, MODE_DIR, MODE_FILE, O_CREAT, O_RDWR},
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
@@ -138,6 +139,34 @@ impl KernelScheme for RootScheme {
                 .insert(id, Handle::File(inner));
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         }
+    }
+
+    fn kdup(
+        &self,
+        old_id: usize,
+        buf: UserSliceRo,
+        _caller: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<OpenResult> {
+        let scheme = match self
+            .handles
+            .read(token.token())
+            .get(&old_id)
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::Scheme(inner) => inner.scheme_id,
+            _ => return Err(Error::new(EBADF)),
+        };
+        let number = buf.read_usize()?;
+        Ok(OpenResult::External(Arc::new(SpinRwLock::new(
+            FileDescription {
+                scheme,
+                number,
+                offset: 0,
+                flags: (O_CREAT | O_RDWR) as u32,
+                internal_flags: InternalFlags::empty(),
+            },
+        ))))
     }
 
     fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {

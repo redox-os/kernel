@@ -22,7 +22,7 @@ use crate::{
 
 use crate::context::context::FdTbl;
 
-use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
+use super::{CallerCtx, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
@@ -34,12 +34,13 @@ use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
     slice, str,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
+use syscall::data::GlobalSchemes;
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -129,6 +130,7 @@ enum ContextHandle {
         new: Arc<AddrSpaceWrapper>,
         new_sp: usize,
         new_ip: usize,
+        arg1: Option<usize>,
     },
 
     CurrentFiletable,
@@ -368,20 +370,7 @@ impl ProcScheme {
 }
 
 impl KernelScheme for ProcScheme {
-    fn kopen(
-        &self,
-        path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if path != "authority" {
-            return Err(Error::new(ENOENT));
-        }
-        static LOCK: AtomicBool = AtomicBool::new(false);
-        if LOCK.swap(true, Ordering::Relaxed) {
-            return Err(Error::new(EEXIST));
-        }
+    fn root_cap(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(
             id,
@@ -391,7 +380,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::Authority,
             },
         );
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(id)
     }
 
     fn fevent(
@@ -420,12 +409,19 @@ impl KernelScheme for ProcScheme {
                         new,
                         new_sp,
                         new_ip,
+                        arg1,
                     },
             } => {
                 let _ = try_stop_context(context, token, |context: &mut Context| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
+                    #[cfg(any(
+                        target_arch = "x86_64",
+                        target_arch = "aarch64",
+                        target_arch = "riscv64"
+                    ))]
+                    regs.set_arg1(arg1);
 
                     Ok(context.set_addr_space(Some(new)))
                 })?;
@@ -1037,6 +1033,7 @@ impl ContextHandle {
                 let addrspace_fd = iter.next().ok_or(Error::new(EINVAL))??;
                 let sp = iter.next().ok_or(Error::new(EINVAL))??;
                 let ip = iter.next().ok_or(Error::new(EINVAL))??;
+                let arg1 = iter.next().transpose()?;
 
                 let (hopefully_this_scheme, number) = extract_scheme_number(addrspace_fd, token)?;
                 verify_scheme(hopefully_this_scheme)?;
@@ -1056,10 +1053,17 @@ impl ContextHandle {
                         new: Arc::clone(addrspace),
                         new_sp: sp,
                         new_ip: ip,
+                        arg1,
                     },
                 };
 
-                Ok(3 * mem::size_of::<usize>())
+                let written = if arg1.is_some() {
+                    4 * mem::size_of::<usize>()
+                } else {
+                    3 * mem::size_of::<usize>()
+                };
+
+                Ok(written)
             }
             Self::MmapMinAddr(ref addrspace) => {
                 let val = buf.read_usize()?;

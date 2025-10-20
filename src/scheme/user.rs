@@ -21,7 +21,7 @@ use syscall::{
 use crate::{
     context::{
         self,
-        context::HardBlockedReason,
+        context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
         file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
@@ -1443,9 +1443,9 @@ impl UserInner {
         };
 
         let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
-            Self::bulk_insert_fds(descriptions, payload, token)?
+            bulk_insert_fds(descriptions, payload, token)?
         } else {
-            Self::bulk_add_fds(descriptions, payload, token)?
+            bulk_add_fds(descriptions, payload, token)?
         };
 
         Ok(num_fds)
@@ -2218,9 +2218,9 @@ impl KernelScheme for UserScheme {
 
         let num_fds = if let Some(descriptions) = descriptions_opt {
             if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
-                UserInner::bulk_insert_fds(descriptions, payload, token)?
+                bulk_insert_fds(descriptions, payload, token)?
             } else {
-                UserInner::bulk_add_fds(descriptions, payload, token)?
+                bulk_add_fds(descriptions, payload, token)?
             }
         } else {
             0

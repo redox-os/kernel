@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
+use syscall::data::GlobalSchemes;
 
 use crate::{
     devices::graphical_debug,

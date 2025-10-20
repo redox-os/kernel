@@ -5,6 +5,8 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use syscall::data::GlobalSchemes;
+
 use crate::{
     event,
     scheme::*,
