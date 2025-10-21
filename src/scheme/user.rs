@@ -396,7 +396,7 @@ impl UserInner {
                             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
                             context::current()
                                 .write(token.token())
-                                .block("UserInner::call")
+                                .block("UserInner::call");
                         }
 
                         // invalid state
