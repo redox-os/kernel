@@ -1156,7 +1156,11 @@ impl ContextHandle {
                         );
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
-                            println!("KERNEL: ForceKill target is current context, calling exit_this_context");
+                            trace!(
+                                "KERNEL: FORCEKILL SELF {} {}",
+                                context.read(token.token()).debug_id,
+                                context.read(token.token()).pid
+                            );
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
@@ -1181,9 +1185,14 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            println!("KERNEL: ForceKill target is NOT current context. Setting being_sigkilled=true for context {}", context.read(token.token()).debug_id);
                             let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                            println!(
+                                "KERNEL:FORCEKILL NONSELF={} {}, SELF={}",
+                                ctxt.debug_id,
+                                ctxt.pid,
+                                context::current().read(token.token()).debug_id
+                            );
                             ctxt.status = context::Status::Runnable;
                             ctxt.being_sigkilled = true;
                             Ok(mem::size_of::<usize>())
