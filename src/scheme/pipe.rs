@@ -148,13 +148,9 @@ impl KernelScheme for PipeScheme {
         &self,
         old_id: usize,
         user_buf: UserSliceRo,
-        ctx: CallerCtx,
+        _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        println!(
-            "PipeScheme::kdup called, pid={}, reader={}",
-            ctx.pid, old_id
-        );
         let (is_writer_not_reader, key) = from_raw_id(old_id);
 
         if is_writer_not_reader {
@@ -173,8 +169,6 @@ impl KernelScheme for PipeScheme {
             return Err(Error::new(EBADF));
         }
 
-        println!("PipeScheme::dup called, pid={}, writer={}", ctx.pid, key);
-
         Ok(OpenResult::SchemeLocal(
             key | WRITE_NOT_READ_BIT,
             InternalFlags::empty(),
@@ -184,7 +178,7 @@ impl KernelScheme for PipeScheme {
         &self,
         path: &str,
         _flags: usize,
-        ctx: CallerCtx,
+        _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if !path.trim_start_matches('/').is_empty() {
@@ -192,6 +186,7 @@ impl KernelScheme for PipeScheme {
         }
 
         let (read_id, _) = pipe(token)?;
+
         Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
     }
 
@@ -201,7 +196,7 @@ impl KernelScheme for PipeScheme {
         user_buf: StrOrBytes,
         _flags: usize,
         _fcntl_flags: u32,
-        ctx: CallerCtx,
+        _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let (_, key) = from_raw_id(id);
@@ -232,7 +227,7 @@ impl KernelScheme for PipeScheme {
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, ctx, token)
+        self.kopen(path, 0, _ctx, token)
     }
 
     fn kread(
@@ -243,7 +238,6 @@ impl KernelScheme for PipeScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        println!("PipeScheme::kread called, id={}", id);
         let (is_write_not_read, key) = from_raw_id(id);
 
         if is_write_not_read {
@@ -279,7 +273,6 @@ impl KernelScheme for PipeScheme {
                 );
                 pipe.write_condition.notify(token);
 
-                println!("PipeScheme::kread, id={}, bytes_read={}", id, bytes_read);
                 return Ok(bytes_read);
             } else if user_buf.is_empty() {
                 return Ok(0);
@@ -302,7 +295,6 @@ impl KernelScheme for PipeScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        println!("PipeScheme::kwrite called, id={}", id);
         let (is_write_not_read, key) = from_raw_id(id);
 
         if !is_write_not_read {
@@ -343,10 +335,6 @@ impl KernelScheme for PipeScheme {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify(token);
 
-                println!(
-                    "PipeScheme::kwrite, id={}, bytes_written={}",
-                    id, bytes_written
-                );
                 return Ok(bytes_written);
             } else if user_buf.is_empty() {
                 return Ok(0);
@@ -376,7 +364,6 @@ impl KernelScheme for PipeScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        println!("PipeScheme::kfdwrite called, id={}", id);
         let (is_write_not_read, key) = from_raw_id(id);
 
         if !is_write_not_read {
@@ -415,10 +402,6 @@ impl KernelScheme for PipeScheme {
                 event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
                 pipe.read_condition.notify(token);
 
-                println!(
-                    "PipeScheme::kfdwrite, id={}, fds_to_written={}",
-                    id, fds_written
-                );
                 return Ok(fds_written);
             }
 
@@ -435,7 +418,6 @@ impl KernelScheme for PipeScheme {
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        println!("PipeScheme::kfdread called, id={}", id);
         let (is_write_not_read, key) = from_raw_id(id);
 
         if is_write_not_read {
@@ -474,10 +456,6 @@ impl KernelScheme for PipeScheme {
                 );
                 pipe.write_condition.notify(token);
 
-                println!(
-                    "PipeScheme::kfdread, id={}, fds_to_read={}",
-                    id, fds_to_read
-                );
                 return Ok(fds_to_read);
             }
 
