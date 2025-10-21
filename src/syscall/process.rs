@@ -22,7 +22,7 @@ use crate::{
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
-        scheme_list, KernelScheme, SchemeExt, SchemeId, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
+        KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
     },
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
@@ -145,10 +145,9 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         }
         // Insert a scheme creation capability for the usermode bootstrap.
         let scheme_creation_cap = {
-            let scheme = scheme_list();
-            let scheme_id = scheme.id();
-            let cap_fd = match scheme.scheme_root(token) {
-                Ok(fd) => fd,
+            let scheme_id = &SchemeList.id();
+            let cap_fd = match &SchemeList.scheme_root(token) {
+                Ok(fd) => *fd,
                 Err(_) => usize::MAX,
             };
             insert_fd(scheme_id, cap_fd, token)
