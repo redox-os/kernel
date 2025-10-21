@@ -1,8 +1,7 @@
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use syscall::data::GlobalSchemes;
-use syscall::CallFlags;
+use syscall::{data::GlobalSchemes, CallFlags};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, RwLock as SpinRwLock};

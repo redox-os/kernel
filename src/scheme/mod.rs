@@ -150,54 +150,73 @@ enum Handle {
     SchemeCreationCapability,
     Scheme(KernelSchemes),
 }
-/// Scheme list type
-pub struct SchemeList {
-    id: AtomicUsize,
-    handles: RwLock<L1, HashMap<SchemeId, Handle>>,
-    next_id: AtomicUsize,
-}
-impl SchemeList {
-    /// Create a new scheme list.
-    pub fn new() -> Self {
-        let mut handles = HashMap::new();
-        let mut insert_globals = |globals: &[GlobalSchemes]| {
-            for &g in globals {
-                handles.insert(
-                    SchemeId::from(g as usize),
-                    Handle::Scheme(KernelSchemes::Global(g)),
-                );
-            }
-        };
 
-        // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
-        {
-            use GlobalSchemes::*;
-            insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, Sys, Proc]);
+/// Schemes list
+static HANDLES: Once<RwLock<L1, HashMap<SchemeId, Handle>>> = Once::new();
+static SCHEME_LIST_NEXT_ID: AtomicUsize = AtomicUsize::new(MAX_GLOBAL_SCHEMES);
+static SCHEME_LIST_ID: AtomicUsize = AtomicUsize::new(0);
 
-            #[cfg(feature = "acpi")]
-            insert_globals(&[Acpi]);
-
-            #[cfg(dtb)]
-            insert_globals(&[Dtb]);
+/// Initialize schemes, called if needed
+fn init_schemes() -> RwLock<L1, HashMap<SchemeId, Handle>> {
+    let mut handles = HashMap::new();
+    let mut insert_globals = |globals: &[GlobalSchemes]| {
+        for &g in globals {
+            handles.insert(
+                SchemeId::from(g as usize),
+                Handle::Scheme(KernelSchemes::Global(g)),
+            );
         }
+    };
 
-        let list = SchemeList {
-            id: AtomicUsize::new(0),
-            handles: RwLock::new(handles),
-            next_id: AtomicUsize::new(MAX_GLOBAL_SCHEMES),
-        };
+    // TODO: impl TryFrom<SchemeId> and bypass map for global schemes?
+    {
+        use GlobalSchemes::*;
+        insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, Sys, Proc]);
 
-        list
+        #[cfg(feature = "acpi")]
+        insert_globals(&[Acpi]);
+
+        #[cfg(dtb)]
+        insert_globals(&[Dtb]);
     }
+    let next_id = SCHEME_LIST_NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    handles.insert(SchemeId(next_id), Handle::Scheme(KernelSchemes::SchemeMgr));
+    SCHEME_LIST_NEXT_ID.store(next_id, Ordering::Relaxed);
 
+    RwLock::new(handles)
+}
+
+/// Get the global schemes list, const
+pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
+    SchemesView(handles().read(token))
+}
+
+fn handles<'a>() -> &'a RwLock<L1, HashMap<SchemeId, Handle>> {
+    HANDLES.call_once(init_schemes)
+}
+
+pub struct SchemesView<'a>(RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>>);
+impl<'a> SchemesView<'a> {
+    pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
+        match self.0.get(&id) {
+            Some(Handle::Scheme(scheme)) => Some(&scheme),
+            _ => None,
+        }
+    }
+}
+
+/// Scheme list type
+pub struct SchemeList;
+
+impl SchemeList {
     /// Get the id of the scheme list
     pub fn id(&self) -> SchemeId {
-        SchemeId(self.id.load(Ordering::Relaxed))
+        SchemeId(SCHEME_LIST_ID.load(Ordering::Relaxed))
     }
 
     /// Get the UserInner
     pub fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
-        match self.handles.read(token.token()).get(&SchemeId(id)) {
+        match handles().read(token.token()).get(&SchemeId(id)) {
             Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
             _ => None,
         }
@@ -209,13 +228,13 @@ impl SchemeList {
         context: Weak<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<SchemeId> {
-        let mut handles = self.handles.write(token.token());
+        let mut handles = handles().write(token.token());
         let id = loop {
-            let mut id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            let mut id = SCHEME_LIST_NEXT_ID.fetch_add(1, Ordering::Relaxed);
 
             if id >= SCHEME_MAX_SCHEMES {
                 id = 1;
-                self.next_id.store(id, Ordering::Relaxed);
+                SCHEME_LIST_NEXT_ID.store(id, Ordering::Relaxed);
             }
 
             let id = SchemeId(id);
@@ -225,7 +244,7 @@ impl SchemeList {
             }
         };
 
-        let root_id = SchemeId(self.id.load(Ordering::Relaxed));
+        let root_id = SchemeId(SCHEME_LIST_ID.load(Ordering::Relaxed));
         let inner = Arc::new(UserInner::new(
             root_id, id,
             // TODO: This is a hack, but eventually the legacy interface will be
@@ -239,63 +258,17 @@ impl SchemeList {
 
     /// Remove a scheme
     pub fn remove(&self, id: usize, token: &mut CleanLockToken) {
-        assert!(self
-            .handles
+        assert!(handles()
             .write(token.token())
             .remove(&SchemeId(id))
             .is_some());
     }
 }
 
-/// Schemes list
-static SCHEMES: Once<Arc<SchemeList>> = Once::new();
-
-/// Initialize schemes, called if needed
-fn init_schemes() -> Arc<SchemeList> {
-    let list = Arc::new(SchemeList::new());
-    {
-        let inner_list = list.clone();
-        let self_wrapper = Handle::Scheme(KernelSchemes::SchemeMgr(list.clone()));
-
-        // Safety: This initialization function is guaranteed by Once::call_once to run in a single,
-        // uncontended thread. We assume no previous locks were acquired in this thread,
-        // and that no other CleanLockToken instances exist before this point
-        let mut token = unsafe { CleanLockToken::new() };
-
-        let new_id = inner_list.next_id.fetch_add(1, Ordering::Relaxed);
-        inner_list.id.store(new_id, Ordering::Relaxed);
-        inner_list
-            .handles
-            .write(token.token())
-            .insert(SchemeId(new_id), self_wrapper);
-    }
-
-    list
-}
-
-/// Get the global schemes list, const
-pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
-    SchemesView(SCHEMES.call_once(init_schemes).handles.read(token))
-}
-/// Get the scheme list directly
-pub fn scheme_list<'a>() -> &'a SchemeList {
-    SCHEMES.call_once(init_schemes)
-}
-
-pub struct SchemesView<'a>(RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>>);
-impl<'a> SchemesView<'a> {
-    pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
-        match self.0.get(&id) {
-            Some(Handle::Scheme(scheme)) => Some(&scheme),
-            _ => None,
-        }
-    }
-}
-
 impl KernelScheme for SchemeList {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = SchemeId(0);
-        self.handles
+        handles()
             .write(token.token())
             .insert(id, Handle::SchemeCreationCapability);
         Ok(id.get())
@@ -308,8 +281,7 @@ impl KernelScheme for SchemeList {
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let scheme_id = SchemeId(scheme_id);
-        match self
-            .handles
+        match handles()
             .read(token.token())
             .get(&scheme_id)
             .ok_or(Error::new(EBADF))?
@@ -335,7 +307,7 @@ impl KernelScheme for SchemeList {
             _ => return Err(Error::new(EBADF)),
         };
 
-        const EXPECTED: &'static [u8] = b"create-scheme";
+        const EXPECTED: &[u8] = b"create-scheme";
         let mut buf = [0u8; EXPECTED.len()];
 
         if user_buf.copy_common_bytes_to_slice(&mut buf)? < EXPECTED.len() || buf != *EXPECTED {
@@ -440,7 +412,7 @@ impl KernelScheme for SchemeList {
 
 #[derive(Clone)]
 pub enum KernelSchemes {
-    SchemeMgr(Arc<SchemeList>),
+    SchemeMgr,
     User(UserScheme),
     Global(GlobalSchemes),
 }
@@ -450,7 +422,7 @@ impl core::ops::Deref for KernelSchemes {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::SchemeMgr(scheme) => &**scheme,
+            Self::SchemeMgr => &SchemeList,
             Self::User(scheme) => scheme,
 
             Self::Global(global) => global.as_scheme(),
@@ -458,7 +430,7 @@ impl core::ops::Deref for KernelSchemes {
     }
 }
 
-pub const ALL_KERNEL_SCHEMES: &'static [GlobalSchemes] = &[
+pub const ALL_KERNEL_SCHEMES: &[GlobalSchemes] = &[
     GlobalSchemes::Debug,
     GlobalSchemes::Event,
     GlobalSchemes::Memory,
