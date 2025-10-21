@@ -150,7 +150,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 Ok(fd) => *fd,
                 Err(_) => usize::MAX,
             };
-            insert_fd(scheme_id, cap_fd, token)
+            insert_fd(*scheme_id, cap_fd, token)
         };
 
         let kernel_schemes_info_page = addr_space
