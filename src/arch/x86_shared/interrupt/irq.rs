@@ -8,7 +8,6 @@ use crate::{
         ioapic, local_apic, pic, pit,
         serial::{COM1, COM2},
     },
-    interrupt, interrupt_stack,
     ipi::{ipi, IpiKind, IpiTarget},
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},
@@ -309,7 +308,7 @@ interrupt!(lapic_timer, || {
 });
 #[cfg(feature = "profiling")]
 interrupt!(aux_timer, || {
-    lapic_eoi();
+    unsafe { lapic_eoi() };
     crate::ipi::ipi(IpiKind::Profile, IpiTarget::Other);
 });
 

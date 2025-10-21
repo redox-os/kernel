@@ -73,14 +73,12 @@ pub use self::arch::empty_cr3;
 static CONTEXTS: RwLock<L1, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 /// Get the global schemes list, const
-pub fn contexts<'a>(token: LockToken<'a, L0>) -> RwLockReadGuard<'a, L1, BTreeSet<ContextRef>> {
+pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
     CONTEXTS.read(token)
 }
 
 /// Get the global schemes list, mutable
-pub fn contexts_mut<'a>(
-    token: LockToken<'a, L0>,
-) -> RwLockWriteGuard<'a, L1, BTreeSet<ContextRef>> {
+pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
     CONTEXTS.write(token)
 }
 
@@ -115,7 +113,7 @@ pub fn init(token: &mut CleanLockToken) {
 pub fn current() -> Arc<ContextLock> {
     PercpuBlock::current()
         .switch_internals
-        .with_context(|context| Arc::clone(context))
+        .with_context(Arc::clone)
 }
 pub fn try_current() -> Option<Arc<ContextLock>> {
     PercpuBlock::current()

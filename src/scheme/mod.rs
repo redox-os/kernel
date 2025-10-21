@@ -20,9 +20,9 @@ use core::{
 };
 use hashbrown::hash_map::{DefaultHashBuilder, HashMap};
 use spin::{Once, RwLock as SpinRwLock};
-use syscall::error::*;
 use syscall::{
     data::{GlobalSchemes, NewFdParams},
+    error::*,
     CallFlags, EventFlags, MunmapFlags,
 };
 

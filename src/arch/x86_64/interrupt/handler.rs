@@ -366,8 +366,8 @@ macro_rules! interrupt_stack {
     // XXX: Apparently we cannot use $expr and check for bool exhaustiveness, so we will have to
     // use idents directly instead.
     ($name:ident, $save1:ident!, $save2:ident!, $rstor2:ident!, $rstor1:ident!, is_paranoid: $is_paranoid:expr_2021, |$stack:ident| $code:block) => {
-        #[naked]
-        pub unsafe extern "C" fn $name() { unsafe {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
                 $code
             }
@@ -408,9 +408,9 @@ macro_rules! interrupt_stack {
             inner = sym inner,
             IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
 
-            PCR_GDT_OFFSET = const(core::mem::offset_of!(crate::gdt::ProcessorControlRegion, gdt)),
+            PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::gdt::ProcessorControlRegion, gdt)),
             );
-        }}
+        }
     };
     ($name:ident, |$stack:ident| $code:block) => { interrupt_stack!($name, swapgs_iff_ring3_fast!, nop!, nop!, swapgs_iff_ring3_fast!, is_paranoid: false, |$stack| $code); };
     ($name:ident, @paranoid, |$stack:ident| $code:block) => { interrupt_stack!($name, nop!, conditional_swapgs_paranoid!, conditional_swapgs_back_paranoid!, nop!, is_paranoid: true, |$stack| $code); }
@@ -419,8 +419,8 @@ macro_rules! interrupt_stack {
 #[macro_export]
 macro_rules! interrupt {
     ($name:ident, || $code:block) => {
-        #[naked]
-        pub unsafe extern "C" fn $name() { unsafe {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner() {
                 $code
             }
@@ -452,15 +452,15 @@ macro_rules! interrupt {
 
             inner = sym inner,
             );
-        }}
+        }
     };
 }
 
 #[macro_export]
 macro_rules! interrupt_error {
     ($name:ident, |$stack:ident, $error_code:ident| $code:block) => {
-        #[naked]
-        pub unsafe extern "C" fn $name() { unsafe {
+        #[unsafe(naked)]
+        pub unsafe extern "C" fn $name() {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::handler::InterruptStack, $error_code: usize) {
                 $code
             }
@@ -505,7 +505,7 @@ macro_rules! interrupt_error {
             inner = sym inner,
             rax_offset = const(::core::mem::size_of::<$crate::interrupt::handler::PreservedRegisters>() + ::core::mem::size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
             );
-        }}
+        }
     };
 }
 

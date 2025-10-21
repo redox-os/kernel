@@ -136,14 +136,14 @@ impl CpuStatsData {
     }
 }
 
-impl Into<CpuStatsData> for &CpuStats {
-    fn into(self) -> CpuStatsData {
+impl From<&CpuStats> for CpuStatsData {
+    fn from(val: &CpuStats) -> Self {
         CpuStatsData {
-            user: self.user.load(Ordering::Relaxed),
-            nice: self.nice.load(Ordering::Relaxed),
-            kernel: self.kernel.load(Ordering::Relaxed),
-            idle: self.idle.load(Ordering::Relaxed),
-            irq: self.irq.load(Ordering::Relaxed),
+            user: val.user.load(Ordering::Relaxed),
+            nice: val.nice.load(Ordering::Relaxed),
+            kernel: val.kernel.load(Ordering::Relaxed),
+            idle: val.idle.load(Ordering::Relaxed),
+            irq: val.irq.load(Ordering::Relaxed),
         }
     }
 }
@@ -160,7 +160,7 @@ pub fn add_context_switch() {
 
 /// Get the number of context switches.
 #[cfg(feature = "sys_stat")]
-pub fn get_context_switch_count() -> u64 {
+pub fn get_context_switch_count() -> usize {
     CONTEXT_SWITCH_COUNT.load(Ordering::Relaxed)
 }
 
@@ -176,13 +176,13 @@ pub fn add_context() {
 
 /// Get the number of contexts created.
 #[cfg(feature = "sys_stat")]
-pub fn get_contexts_count() -> u64 {
+pub fn get_contexts_count() -> usize {
     CONTEXTS_COUNT.load(Ordering::Relaxed)
 }
 
 /// Get the count of each interrupt.
 #[cfg(feature = "sys_stat")]
-pub fn irq_counts() -> Vec<u64> {
+pub fn irq_counts() -> Vec<usize> {
     IRQ_COUNT
         .iter()
         .map(|count| count.load(Ordering::Relaxed))

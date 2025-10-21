@@ -2,9 +2,8 @@ use syscall::Exception;
 use x86::irq::PageFaultError;
 
 use crate::{
-    arch::x86_shared::interrupt, context::signal::excp_handler, interrupt_error, interrupt_stack,
-    memory::GenericPfFlags, paging::VirtualAddress, panic::stack_trace, ptrace,
-    sync::CleanLockToken, syscall::flag::*,
+    arch::x86_shared::interrupt, context::signal::excp_handler, memory::GenericPfFlags,
+    paging::VirtualAddress, panic::stack_trace, ptrace, sync::CleanLockToken, syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {
@@ -49,7 +48,7 @@ interrupt_stack!(debug, @paranoid, |stack| {
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
     #[cfg(feature = "profiling")]
-    crate::profiling::nmi_handler(stack);
+    unsafe { crate::profiling::nmi_handler(stack) };
 
     #[cfg(not(feature = "profiling"))]
     {

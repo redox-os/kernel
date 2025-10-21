@@ -50,6 +50,7 @@ default = [
   "multi_core",
   "serial_debug",
   "self_modifying",
+  "sys_stat",
   "x86_kvm_pv",
   #"syscall_debug"
 ]

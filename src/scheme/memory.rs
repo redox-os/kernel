@@ -91,7 +91,7 @@ impl MemoryScheme {
         }
 
         let page = addr_space.acquire_write().mmap(
-            &addr_space,
+            addr_space,
             (map.address != 0).then_some(span.base),
             page_count,
             map.flags,

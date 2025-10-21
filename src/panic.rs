@@ -25,7 +25,12 @@ use crate::{
 /// Required to handle panics
 #[cfg(not(test))]
 #[panic_handler]
-fn rust_begin_unwind(info: &PanicInfo) -> ! {
+fn panic_handler(info: &PanicInfo) -> ! {
+    panic_handler_inner(info)
+}
+
+#[cfg_attr(test, expect(dead_code))]
+fn panic_handler_inner(info: &PanicInfo) -> ! {
     println!("KERNEL PANIC: {}", info);
 
     unsafe {

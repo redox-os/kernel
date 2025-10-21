@@ -61,8 +61,9 @@ impl UnmapResult {
             return Ok(());
         };
 
-        let (scheme_id, number) = match description.write() {
-            ref desc => (desc.scheme, desc.number),
+        let (scheme_id, number) = {
+            let desc = description.write();
+            (desc.scheme, desc.number)
         };
 
         let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
@@ -177,7 +178,7 @@ impl AddrSpaceWrapper {
                 } => continue,
 
                 Provider::PhysBorrowed { base } => Grant::physmap(
-                    base.clone(),
+                    base,
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
                     &mut new.inner.get_mut().table.utable,
@@ -221,7 +222,7 @@ impl AddrSpaceWrapper {
                     src_base,
                     ..
                 } => Grant::borrow_grant(
-                    Arc::clone(&address_space),
+                    Arc::clone(address_space),
                     src_base,
                     grant_base,
                     grant_info,
@@ -316,7 +317,7 @@ impl AddrSpaceWrapper {
     }
     pub fn r#move(
         &self,
-        mut src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
+        src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
         src_span: PageSpan,
         requested_dst_base: Option<Page>,
         new_page_count: usize,
@@ -327,16 +328,14 @@ impl AddrSpaceWrapper {
         let mut dst = dst_lock.acquire_write();
         let dst = &mut *dst;
 
-        let mut src_owned_opt = src_opt.as_mut().map(|(aw, a)| {
-            (
-                &mut a.grants,
-                &mut a.table.utable,
-                Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack),
-            )
-        });
-        let mut src_opt = src_owned_opt
-            .as_mut()
-            .map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
+        let mut src_flusher;
+        let mut src_opt = match src_opt {
+            Some((aw, a)) => {
+                src_flusher = Flusher::with_cpu_set(&mut a.used_by, &aw.tlb_ack);
+                Some((&mut a.grants, &mut a.table.utable, &mut src_flusher))
+            }
+            None => None,
+        };
         let mut dst_flusher = Flusher::with_cpu_set(&mut dst.used_by, &dst_lock.tlb_ack);
 
         let dst_base = match requested_dst_base {
@@ -372,10 +371,10 @@ impl AddrSpaceWrapper {
             }
         };
 
-        let (src_grants, src_mapper, src_flusher) = src_opt.as_mut().map_or(
-            (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
-            |(g, m, f)| (&mut *g, &mut *m, &mut *f),
-        );
+        let (src_grants, src_mapper, src_flusher) = match &mut src_opt {
+            Some((g, m, f)) => (&mut **g, &mut **m, &mut **f),
+            None => (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
+        };
 
         if src_grants
             .conflicts(src_span)
@@ -433,10 +432,9 @@ impl AddrSpaceWrapper {
                 )?);
             }
 
-            let (src_grants, _, _) = src_opt.as_mut().map_or(
-                (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
-                |(g, m, f)| (&mut *g, &mut *m, &mut *f),
-            );
+            let src_grants = src_opt
+                .as_mut()
+                .map_or(&mut dst.grants, |(g, _, _)| &mut *g);
             let grant = src_grants
                 .remove(grant_base)
                 .expect("grant cannot disappear");
@@ -454,10 +452,6 @@ impl AddrSpaceWrapper {
 
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
-
-            let mut src_opt = src_opt
-                .as_mut()
-                .map(|(g, m, f)| (&mut *g, &mut *m, &mut *f));
 
             dst.grants.insert(match src_opt.as_mut() {
                 Some((_, other_mapper, other_flusher)) => middle.transfer(
@@ -2002,9 +1996,7 @@ impl Grant {
                     Provider::AllocatedShared { .. } => Provider::AllocatedShared {
                         is_pinned_userscheme_borrow: false,
                     },
-                    Provider::PhysBorrowed { base } => {
-                        Provider::PhysBorrowed { base: base.clone() }
-                    }
+                    Provider::PhysBorrowed { base } => Provider::PhysBorrowed { base },
                     Provider::FmapBorrowed { ref file_ref, .. } => Provider::FmapBorrowed {
                         file_ref: file_ref.clone(),
                         pin_refcount: 0,
@@ -2104,7 +2096,7 @@ impl GrantInfo {
         )
     }
     pub fn can_extract(&self, unpin: bool) -> bool {
-        !(self.is_pinned() && !unpin)
+        (!self.is_pinned() || unpin)
             | matches!(
                 self.provider,
                 Provider::Allocated {
@@ -2624,8 +2616,9 @@ fn correct_inner<'l>(
             drop(flusher);
             drop(addr_space_guard);
 
-            let (scheme_id, scheme_number) = match file_ref.description.read() {
-                ref desc => (desc.scheme, desc.number),
+            let (scheme_id, scheme_number) = {
+                let desc = &file_ref.description.read();
+                (desc.scheme, desc.number)
             };
             let user_inner = scheme::schemes(token.token())
                 .get(scheme_id)
@@ -2749,7 +2742,7 @@ fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) 
         let Some(info) = get_page_info(base) else {
             return;
         };
-        if info.remove_ref() == None {
+        if info.remove_ref().is_none() {
             unsafe {
                 deallocate_frame(base);
             }
@@ -2807,6 +2800,7 @@ impl<'guard, 'addrsp> Flusher<'guard, 'addrsp> {
     pub fn flush(&mut self) {
         let pages = core::mem::take(&mut self.state.pagequeue);
 
+        #[expect(clippy::bool_comparison)]
         if pages.is_empty() && core::mem::replace(&mut self.state.dirty, false) == false {
             return;
         }

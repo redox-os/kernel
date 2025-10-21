@@ -103,7 +103,7 @@ impl Context {
                 // Zero-initialize InterruptStack registers.
                 stack_top = stack_top.sub(INT_REGS_SIZE);
                 stack_top.write_bytes(0_u8, INT_REGS_SIZE);
-                (&mut *stack_top.cast::<InterruptStack>()).init();
+                (*stack_top.cast::<InterruptStack>()).init();
 
                 stack_top = stack_top.sub(core::mem::size_of::<usize>());
                 stack_top
@@ -199,10 +199,10 @@ impl super::Context {
             && RmmA::virt_is_valid(VirtualAddress::new(regs.gsbase as usize))
         {
             unsafe {
-                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase as u64);
+                x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase);
                 // We have to write to KERNEL_GSBASE, because when the kernel returns to
                 // userspace, it will have executed SWAPGS first.
-                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase as u64);
+                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase);
             }
             self.arch.fsbase = regs.fsbase as usize;
             self.arch.gsbase = regs.gsbase as usize;
@@ -332,19 +332,18 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 }
 
 // Check disassembly!
-#[naked]
+#[unsafe(naked)]
 unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
-    unsafe {
-        use Context as Cx;
+    use Context as Cx;
 
-        core::arch::naked_asm!(
-            // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
-            //
-            // - the current parameters are passed in the registers `rdi`, `rsi`,
-            // - we can modify scratch registers, e.g. rax
-            // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
-            //   store them here in the first place.
-            concat!("
+    core::arch::naked_asm!(
+        // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
+        //
+        // - the current parameters are passed in the registers `rdi`, `rsi`,
+        // - we can modify scratch registers, e.g. rax
+        // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
+        //   store them here in the first place.
+        concat!("
         // Save old registers, and load new ones
         mov [rdi + {off_rbx}], rbx
         mov rbx, [rsi + {off_rbx}]
@@ -386,19 +385,18 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 
         "),
 
-            off_rflags = const(offset_of!(Cx, rflags)),
+        off_rflags = const(offset_of!(Cx, rflags)),
 
-            off_rbx = const(offset_of!(Cx, rbx)),
-            off_r12 = const(offset_of!(Cx, r12)),
-            off_r13 = const(offset_of!(Cx, r13)),
-            off_r14 = const(offset_of!(Cx, r14)),
-            off_r15 = const(offset_of!(Cx, r15)),
-            off_rbp = const(offset_of!(Cx, rbp)),
-            off_rsp = const(offset_of!(Cx, rsp)),
+        off_rbx = const(offset_of!(Cx, rbx)),
+        off_r12 = const(offset_of!(Cx, r12)),
+        off_r13 = const(offset_of!(Cx, r13)),
+        off_r14 = const(offset_of!(Cx, r14)),
+        off_r15 = const(offset_of!(Cx, r15)),
+        off_rbp = const(offset_of!(Cx, rbp)),
+        off_rsp = const(offset_of!(Cx, rsp)),
 
-            switch_hook = sym crate::context::switch_finish_hook,
-        );
-    }
+        switch_hook = sym crate::context::switch_finish_hook,
+    );
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).

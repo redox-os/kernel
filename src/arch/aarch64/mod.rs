@@ -36,13 +36,12 @@ pub use ::rmm::AArch64Arch as CurrentRmmArch;
 
 pub use arch_copy_to_user as arch_copy_from_user;
 
-#[naked]
+#[unsafe(naked)]
 #[unsafe(link_section = ".usercopy-fns")]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
-    unsafe {
-        // x0, x1, x2
-        core::arch::naked_asm!(
-            "
+    // x0, x1, x2
+    core::arch::naked_asm!(
+        "
         mov x4, x0
         mov x0, 0
     2:
@@ -60,8 +59,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
     3:
         ret
     "
-        );
-    }
+    );
 }
 
 pub const KFX_SIZE: usize = 1024;

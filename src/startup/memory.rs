@@ -101,8 +101,8 @@ impl MemoryMap {
         }
     }
 
-    fn iter(&self) -> Iter<MemoryEntry> {
-        return self.entries[0..self.size].iter();
+    fn iter(&self) -> Iter<'_, MemoryEntry> {
+        self.entries[0..self.size].iter()
     }
 
     pub fn free(&self) -> impl Iterator<Item = &MemoryEntry> {
@@ -154,11 +154,6 @@ fn register_memory_from_kernel_args(args: &KernelArgs) {
         args.kernel_base as usize,
         args.kernel_size as usize,
         BootloaderMemoryKind::Kernel,
-    );
-    register_memory_region(
-        args.stack_base as usize,
-        args.stack_size as usize,
-        BootloaderMemoryKind::IdentityMap,
     );
     register_memory_region(
         args.env_base as usize,
@@ -386,7 +381,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
 
             let (phys, virt, size) = *FRAMEBUFFER.lock();
 
-            let pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+            let pages = size.div_ceil(PAGE_SIZE);
             for i in 0..pages {
                 let phys = PhysicalAddress::new(phys + i * PAGE_SIZE);
                 let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
@@ -449,7 +444,7 @@ pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Opti
             }
         }
 
-        info!("Memory: {} MB", (size + (MEGABYTE - 1)) / MEGABYTE);
+        info!("Memory: {} MB", size.div_ceil(MEGABYTE));
 
         // Create a basic allocator for the first pages
         let mut bump_allocator = BumpAllocator::<CurrentRmmArch>::new(areas, 0);
@@ -458,10 +453,7 @@ pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Opti
 
         // Create the physical memory map
         let offset = bump_allocator.offset();
-        info!(
-            "Permanently used: {} KB",
-            (offset + (KILOBYTE - 1)) / KILOBYTE
-        );
+        info!("Permanently used: {} KB", offset.div_ceil(KILOBYTE));
 
         crate::memory::init_mm(bump_allocator);
     }
