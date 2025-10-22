@@ -181,7 +181,7 @@ fn init_schemes() -> RwLock<L1, HashMap<SchemeId, Handle>> {
     }
     let next_id = SCHEME_LIST_NEXT_ID.fetch_add(1, Ordering::Relaxed);
     handles.insert(SchemeId(next_id), Handle::Scheme(KernelSchemes::SchemeMgr));
-    SCHEME_LIST_NEXT_ID.store(next_id, Ordering::Relaxed);
+    SCHEME_LIST_ID.store(next_id, Ordering::Relaxed);
 
     RwLock::new(handles)
 }
