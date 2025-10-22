@@ -145,11 +145,13 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         }
         // Insert a scheme creation capability for the usermode bootstrap.
         let scheme_creation_cap = {
-            let scheme_id = &SchemeList.id();
+            // First, get the scheme root to initialize the schemelist.
             let cap_fd = match &SchemeList.scheme_root(token) {
                 Ok(fd) => *fd,
                 Err(_) => usize::MAX,
             };
+            // Second, retrieve the scheme ID.
+            let scheme_id = &SchemeList.id();
             insert_fd(*scheme_id, cap_fd, token)
         };
 
