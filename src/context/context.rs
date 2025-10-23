@@ -122,8 +122,6 @@ pub struct Context {
     pub kfx: AlignedBox<[u8], { arch::KFX_ALIGN }>,
     /// Kernel stack, if located on the heap.
     pub kstack: Option<Kstack>,
-    /// The open files in the scheme
-    pub files: Arc<RwLock<FdTbl>>,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
     /// but can be None while the context is being reaped or when a new context is created but has
     /// not yet had its address space changed. Note that these are only for user mappings; kernel
@@ -131,6 +129,8 @@ pub struct Context {
     pub addr_space: Option<Arc<AddrSpaceWrapper>>,
     /// The name of the context
     pub name: ArrayString<CONTEXT_NAME_CAPAC>,
+    /// The open files in the scheme
+    pub files: Arc<RwLock<FdTbl>>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,

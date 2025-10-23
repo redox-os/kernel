@@ -2247,8 +2247,10 @@ impl Drop for AddrSpace {
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
             let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
+            println!("grant unmaped");
 
             let _ = res.unmap(&mut token);
+            println!("unmap result unmaped");
         }
     }
 }
