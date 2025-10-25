@@ -1,9 +1,12 @@
+use alloc::{
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 use core::{
     cell::{Cell, RefCell},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
-use alloc::sync::{Arc, Weak};
 use rmm::Arch;
 use syscall::PtraceFlags;
 
@@ -11,13 +14,10 @@ use crate::{
     arch::device::ArchPercpuMisc,
     context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
-    cpu_stats::CpuStats,
+    cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
     syscall::debug::SyscallDebugInfo,
 };
-
-#[cfg(feature = "sys_stat")]
-use {crate::cpu_stats::CpuStatsData, alloc::vec::Vec};
 
 /// The percpu block, that stored all percpu variables.
 pub struct PercpuBlock {
@@ -55,7 +55,6 @@ pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
     ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
 }
 
-#[cfg(feature = "sys_stat")]
 pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
     let mut res = ALL_PERCPU_BLOCKS
         .iter()

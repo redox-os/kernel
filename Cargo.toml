@@ -50,7 +50,6 @@ default = [
   "multi_core",
   "serial_debug",
   "self_modifying",
-  "sys_stat",
   "x86_kvm_pv",
   #"syscall_debug"
 ]
@@ -67,7 +66,6 @@ pti = []
 qemu_debug = []
 serial_debug = []
 system76_ec_debug = []
-sys_stat = []
 x86_kvm_pv = []
 
 debugger = ["syscall_debug"]
