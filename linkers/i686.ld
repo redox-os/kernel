@@ -33,11 +33,8 @@ SECTIONS {
 
     .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_OFFSET) {
         __rodata_end = .;
-        __data_start = .;
         *(.data*)
         . = ALIGN(4K);
-        __data_end = .;
-        __bss_start = .;
         *(.bss*)
         . = ALIGN(4K);
     }
