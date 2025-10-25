@@ -27,9 +27,6 @@ SECTIONS {
 	*(.early_init.text*)
 	. = ALIGN(4096);
         *(.text*)
-        __usercopy_start = .;
-        *(.usercopy-fns)
-        __usercopy_end = .;
 	. = ALIGN(4096);
         __text_end = .;
     }
@@ -42,18 +39,14 @@ SECTIONS {
     }
 
     .data : AT(ADDR(.data) - KERNEL_OFFSET) {
-        __data_start = .;
         *(.data*)
         *(.sdata*)
 	. = ALIGN(4096);
-        __data_end = .;
         *(.got*)
 	. = ALIGN(4096);
-        __bss_start = .;
         *(.bss*)
         *(.sbss*)
 	. = ALIGN(4096);
-        __bss_end = .;
     }
 
     __end = .;

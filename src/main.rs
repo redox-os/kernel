@@ -284,10 +284,6 @@ mod kernel_executable_offsets {
         __text_end,
         __rodata_start,
         __rodata_end,
-        __data_start,
-        __data_end,
-        __bss_start,
-        __bss_end,
         __usercopy_start,
         __usercopy_end
     );
