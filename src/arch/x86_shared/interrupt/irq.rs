@@ -319,30 +319,6 @@ interrupt!(lapic_error, || {
     unsafe { lapic_eoi() };
 });
 
-// XXX: This would look way prettier using const generics.
-
-#[cfg(target_arch = "x86")]
-macro_rules! allocatable_irq(
-    ( $idt:expr_2021, $number:literal, $name:ident ) => {
-        interrupt!($name, || {
-            unsafe { allocatable_irq_generic($number) };
-        });
-    }
-);
-
-#[cfg(target_arch = "x86")]
-pub unsafe fn allocatable_irq_generic(number: u8) {
-    unsafe {
-        let mut token = unsafe { CleanLockToken::new() };
-        irq_trigger(number - 32, &mut token);
-        lapic_eoi();
-    }
-}
-
-#[cfg(target_arch = "x86")]
-default_irqs!((), allocatable_irq);
-
-#[cfg(target_arch = "x86_64")]
 interrupt_error!(generic_irq, |_stack, code| {
     let mut token = unsafe { CleanLockToken::new() };
 
@@ -354,7 +330,6 @@ interrupt_error!(generic_irq, |_stack, code| {
     unsafe { lapic_eoi() };
 });
 
-#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!("
     .globl __generic_interrupts_start
     .globl __generic_interrupts_end
@@ -370,7 +345,6 @@ __generic_interrupts_start:
 __generic_interrupts_end:
 ", sym generic_irq);
 
-#[cfg(target_arch = "x86_64")]
 unsafe extern "C" {
     pub fn __generic_interrupts_start();
     pub fn __generic_interrupts_end();

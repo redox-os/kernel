@@ -12,9 +12,15 @@ use x86::{
     segmentation::Descriptor as X86IdtEntry,
 };
 
-#[cfg(target_arch = "x86_64")]
-use crate::interrupt::irq::{__generic_interrupts_end, __generic_interrupts_start};
-use crate::{cpu_set::LogicalCpuId, interrupt::*, ipi::IpiKind, memory::PAGE_SIZE};
+use crate::{
+    cpu_set::LogicalCpuId,
+    interrupt::{
+        irq::{__generic_interrupts_end, __generic_interrupts_start},
+        *,
+    },
+    ipi::IpiKind,
+    memory::PAGE_SIZE,
+};
 
 use spin::RwLock;
 
@@ -95,21 +101,6 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
     (32..=254).filter(move |&index| !is_reserved(cpu_id, index))
 }
-
-#[cfg(target_arch = "x86")]
-macro_rules! use_irq(
-    ( $idt: expr_2021, $number:literal, $func:ident ) => {{
-        $idt[$number].set_func($func);
-    }}
-);
-
-#[cfg(target_arch = "x86")]
-macro_rules! use_default_irqs(
-    ($idt:expr_2021) => {{
-        use crate::interrupt::irq::*;
-        default_irqs!($idt, use_irq);
-    }}
-);
 
 fn set_exceptions(idt: &mut [IdtEntry]) {
     // Set up exceptions
@@ -202,13 +193,11 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
     current_idt[8].set_ist(BACKUP_IST);
     current_idt[18].set_ist(BACKUP_IST);
 
-    #[cfg(target_arch = "x86_64")]
     assert_eq!(
         __generic_interrupts_end as usize - __generic_interrupts_start as usize,
         224 * 8
     );
 
-    #[cfg(target_arch = "x86_64")]
     for i in 0..224 {
         current_idt[i + 32].set_func(unsafe {
             mem::transmute::<usize, unsafe extern "C" fn()>(
@@ -250,9 +239,6 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
         // reserve bit 49
         *current_reservations[1].get_mut() |= 1 << 17;
     }
-
-    #[cfg(target_arch = "x86")]
-    use_default_irqs!(current_idt);
 
     // Set IPI handlers
     current_idt[IpiKind::Wakeup as usize].set_func(ipi::wakeup);

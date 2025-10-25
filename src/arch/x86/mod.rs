@@ -1,8 +1,5 @@
 pub use crate::arch::x86_shared::*;
 
-#[macro_use]
-pub mod macros;
-
 /// Constants like memory locations
 pub mod consts;
 
