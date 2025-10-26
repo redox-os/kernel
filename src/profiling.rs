@@ -167,19 +167,13 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
         return;
     }
     if stack.iret.cs & 0b00 == 0b11 {
-        profiling.nmi_ucount.store(
-            profiling.nmi_ucount.load(Ordering::Relaxed) + 1,
-            Ordering::Relaxed,
-        );
+        profiling.nmi_ucount.fetch_add(1, Ordering::Relaxed);
         return;
     } else if stack.iret.rflags & (1 << 9) != 0 {
         // Interrupts were enabled, i.e. we were in kmain, so ignore.
         return;
     } else {
-        profiling.nmi_kcount.store(
-            profiling.nmi_kcount.load(Ordering::Relaxed) + 1,
-            Ordering::Relaxed,
-        );
+        profiling.nmi_kcount.fetch_add(1, Ordering::Relaxed);
     };
 
     let mut buf = [0_usize; 32];
