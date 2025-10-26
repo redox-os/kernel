@@ -132,7 +132,6 @@ dependencies = [
  "redox-path",
  "redox_syscall",
  "rmm",
- "rustc-cfg",
  "rustc-demangle",
  "sbi-rt",
  "slab",
@@ -225,15 +224,6 @@ dependencies = [
 [[package]]
 name = "rmm"
 version = "0.1.0"
-
-[[package]]
-name = "rustc-cfg"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ddf7a5e441e8003a5a88aab97f1c6113043ddde252d789ef9dea3871b78633a"
-dependencies = [
- "thiserror",
-]
 
 [[package]]
 name = "rustc-demangle"
@@ -339,26 +329,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

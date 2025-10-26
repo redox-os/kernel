@@ -6,7 +6,6 @@ edition = "2024"
 
 [build-dependencies]
 cc = "1.0"
-rustc-cfg = "0.5"
 toml = "0.8"
 
 [dependencies]
