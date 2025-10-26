@@ -169,7 +169,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
             break;
         };
 
-        let PageInfoKind::Free(sib_info) = sib_info.kind() else {
+        let Some(sib_info) = sib_info.as_free() else {
             // The frame is currently in use (refcounted). It cannot be merged!
             break;
         };
@@ -416,14 +416,6 @@ pub struct PageInfo {
     pub next: AtomicUsize,
 }
 
-enum PageInfoKind<'info> {
-    Used(PageInfoUsed<'info>),
-    Free(PageInfoFree<'info>),
-}
-struct PageInfoUsed<'info> {
-    _refcount: &'info AtomicUsize,
-    _misc: &'info AtomicUsize,
-}
 struct PageInfoFree<'info> {
     prev: &'info AtomicUsize,
     next: &'info AtomicUsize,
@@ -767,25 +759,17 @@ pub enum AddRefError {
     RcOverflow,
 }
 impl PageInfo {
-    fn kind(&self) -> PageInfoKind<'_> {
-        let prev = self.refcount.load(Ordering::Relaxed);
+    fn as_free(&self) -> Option<PageInfoFree<'_>> {
+        let this = &self;
+        let prev = this.refcount.load(Ordering::Relaxed);
 
         if prev & RC_USED_NOT_FREE == RC_USED_NOT_FREE {
-            PageInfoKind::Used(PageInfoUsed {
-                _refcount: &self.refcount,
-                _misc: &self.next,
-            })
+            None
         } else {
-            PageInfoKind::Free(PageInfoFree {
-                prev: &self.refcount,
-                next: &self.next,
+            Some(PageInfoFree {
+                prev: &this.refcount,
+                next: &this.next,
             })
-        }
-    }
-    fn as_free(&self) -> Option<PageInfoFree<'_>> {
-        match self.kind() {
-            PageInfoKind::Free(f) => Some(f),
-            PageInfoKind::Used(_) => None,
         }
     }
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
