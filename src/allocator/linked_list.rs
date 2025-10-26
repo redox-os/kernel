@@ -1,7 +1,7 @@
 use crate::memory::KernelMapper;
 use core::{
     alloc::{GlobalAlloc, Layout},
-    ptr::{self, NonNull},
+    ptr::NonNull,
 };
 use linked_list_allocator::Heap;
 use spin::Mutex;
@@ -23,6 +23,7 @@ unsafe impl GlobalAlloc for Allocator {
         unsafe {
             while let Some(ref mut heap) = *HEAP.lock() {
                 match heap.allocate_first_fit(layout) {
+                    Ok(ptr) => return ptr.as_ptr(),
                     Err(()) => {
                         let size = heap.size();
                         super::map_heap(
@@ -32,11 +33,6 @@ unsafe impl GlobalAlloc for Allocator {
                         );
                         heap.extend(crate::KERNEL_HEAP_SIZE);
                     }
-                    other => {
-                        return other
-                            .ok()
-                            .map_or(ptr::null_mut(), |allocation| allocation.as_ptr())
-                    }
                 }
             }
             panic!("__rust_allocate: heap not initialized");
@@ -45,12 +41,10 @@ unsafe impl GlobalAlloc for Allocator {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         unsafe {
-            match *HEAP.lock() {
-                Some(ref mut heap) => heap.deallocate(NonNull::new_unchecked(ptr), layout),
-                _ => {
-                    panic!("__rust_deallocate: heap not initialized");
-                }
-            }
+            HEAP.lock()
+                .as_mut()
+                .expect("heap not initialized")
+                .deallocate(NonNull::new_unchecked(ptr), layout)
         }
     }
 }
