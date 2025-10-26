@@ -40,7 +40,6 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![warn(static_mut_refs)] // FIXME deny once all occurences are fixed
-#![feature(allocator_api)]
 #![feature(if_let_guard)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]

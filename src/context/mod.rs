@@ -4,7 +4,6 @@
 
 use alloc::{collections::BTreeSet, sync::Arc};
 use core::num::NonZeroUsize;
-use syscall::ENOMEM;
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -15,7 +14,7 @@ use crate::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
         L0, L1, L2,
     },
-    syscall::error::{Error, Result},
+    syscall::error::Result,
 };
 
 use self::context::Kstack;
@@ -159,8 +158,7 @@ pub fn spawn(
 ) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let context_lock = Arc::try_new(ContextLock::new(Context::new(owner_proc_id)?))
-        .map_err(|_| Error::new(ENOMEM))?;
+    let context_lock = Arc::new(ContextLock::new(Context::new(owner_proc_id)?));
 
     contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
 
