@@ -907,7 +907,7 @@ impl UserInner {
                         break;
                     }
                     Err(error) => {
-                        println!("(v2):write response error (returning): {}", error.text);
+                        println!("(v2):write response error (returning): {}", error.text());
                         return Err(error);
                     }
                 }
