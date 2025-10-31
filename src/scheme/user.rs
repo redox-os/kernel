@@ -167,8 +167,12 @@ impl ParsedCqe {
         })
     }
     fn parse_cqe(cqe: &Cqe) -> Result<Self> {
+        println!("parse_cqe: CqeOpcode: {}", cqe.flags & 0b111);
         Ok(
-            match CqeOpcode::try_from_raw(cqe.flags & 0b111).ok_or(Error::new(EINVAL))? {
+            match CqeOpcode::try_from_raw(cqe.flags & 0b111).ok_or_else(|| {
+                println!("parse_cqe: invalid CqeOpcode: {}", cqe.flags & 0b111);
+                Error::new(EINVAL)
+            })? {
                 CqeOpcode::RespondRegular => Self::RegularResponse {
                     tag: cqe.tag,
                     code: cqe.result as usize,
@@ -883,12 +887,29 @@ impl UserInner {
         let mut bytes_read = 0;
         if self.v2 {
             for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
-                match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
-                    .and_then(|p| self.handle_parsed(&p, token))
-                {
+                let cqe = match unsafe { chunk.read_exact::<Cqe>() } {
+                    Ok(cqe) => cqe,
+                    Err(error) => {
+                        println!(
+                            "(v2): write response error (read_exact failed): {:?}",
+                            error.text()
+                        );
+                        return Err(error);
+                    }
+                };
+                match ParsedCqe::parse_cqe(&cqe).and_then(|p| self.handle_parsed(&p, token)) {
                     Ok(()) => bytes_read += size_of::<Cqe>(),
-                    Err(_) if bytes_read > 0 => break,
-                    Err(error) => return Err(error),
+                    Err(error) if bytes_read > 0 => {
+                        println!(
+                            "(v2):write response error (breaking loop): {}",
+                            error.text()
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        println!("(v2):write response error (returning): {}", error.text);
+                        return Err(error);
+                    }
                 }
             }
         } else {
@@ -897,8 +918,14 @@ impl UserInner {
                     .and_then(|p| self.handle_parsed(&p, token))
                 {
                     Ok(()) => bytes_read += size_of::<Packet>(),
-                    Err(_) if bytes_read > 0 => break,
-                    Err(error) => return Err(error),
+                    Err(error) if bytes_read > 0 => {
+                        println!("(v1): write error (breaking loop): {}", error.text());
+                        break;
+                    }
+                    Err(error) => {
+                        println!("(v1):write error (returning): {}", error.text());
+                        return Err(error);
+                    }
                 }
             }
         }
@@ -1094,6 +1121,7 @@ impl UserInner {
                     // invalid scheme to kernel call
                     old_state @ (State::Responded(_) | State::Fmap(_)) => {
                         *o = old_state;
+                        println!("invalid scheme to kernel call");
                         return Err(Error::new(EINVAL));
                     }
 
