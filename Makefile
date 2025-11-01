@@ -10,8 +10,13 @@ endif
 
 ifeq ($(ARCH),riscv64gc)
 	override ARCH:=riscv64
+	GNU_TARGET=riscv64-unknown-redox
+else ifeq($(ARCH),i686)
+	override ARCH:=i586
+	GNU_TARGET=i686-unknown-redox
+else
+	GNU_TARGET=$(ARCH)-unknown-redox
 endif
-GNU_TARGET=$(ARCH)-unknown-redox
 
 
 all: $(BUILD)/kernel $(BUILD)/kernel.sym
