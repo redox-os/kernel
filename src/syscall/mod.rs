@@ -203,7 +203,10 @@ pub fn syscall(
                 token,
             ),
 
-            // SYS_OPEN => open(UserSlice::ro(b, c)?, d, token).map(FileHandle::into),
+            SYS_OPEN => {
+                println!("SYS_OPEN called");
+                Err(Error::new(ENOSYS))
+            }
             SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _, token).map(FileHandle::into),
             // SYS_RMDIR => rmdir(UserSlice::ro(b, c)?, token).map(|()| 0),
             // SYS_UNLINK => unlink(UserSlice::ro(b, c)?, token).map(|()| 0),
