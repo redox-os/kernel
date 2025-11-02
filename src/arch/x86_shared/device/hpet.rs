@@ -24,7 +24,7 @@ const PER_INT_CAP: u64 = 0x10;
 
 pub unsafe fn init(hpet: &mut Hpet) -> bool {
     unsafe {
-        info!("HPET @ {:#x}", { hpet.base_address.address });
+        debug!("HPET @ {:#x}", { hpet.base_address.address });
         debug_caps(hpet);
 
         trace!("HPET Before Init");

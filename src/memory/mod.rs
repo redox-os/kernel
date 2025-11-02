@@ -735,7 +735,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
     FREELIST.lock().for_orders = first_pages.map(|pair| pair.map(|(frame, _)| frame));
 
     //debug_freelist();
-    info!("Initial freelist consistent");
+    debug!("Initial freelist consistent");
 }
 
 #[cold]

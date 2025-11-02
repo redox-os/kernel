@@ -54,21 +54,21 @@ unsafe fn init_hpet() -> bool {
 
 pub unsafe fn init_noncore() {
     unsafe {
-        info!("Initializing system timer");
+        debug!("Initializing system timer");
 
         #[cfg(feature = "x86_kvm_pv")]
         if tsc::init() {
-            info!("TSC used as system clock source");
+            debug!("TSC used as system clock source");
         }
 
         if init_hpet() {
-            info!("HPET used as system timer");
+            debug!("HPET used as system timer");
         } else {
             pit::init();
-            info!("PIT used as system timer");
+            debug!("PIT used as system timer");
         }
 
-        info!("Finished initializing devices");
+        debug!("Finished initializing devices");
     }
 }
 

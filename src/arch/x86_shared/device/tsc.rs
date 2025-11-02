@@ -111,7 +111,7 @@ pub fn get_kvm_support() -> &'static Option<KvmSupport> {
 
         let supp_feats = KvmFeatureBits::from_bits_retain(res.eax);
 
-        info!("Detected KVM paravirtualization support, features {supp_feats:?}");
+        debug!("Detected KVM paravirtualization support, features {supp_feats:?}");
 
         Some(KvmSupport {
             max_leaf,

@@ -14,7 +14,7 @@ pub(super) fn init(madt: Madt) {
     let mut gicd_opt = None;
     let mut giccs = Vec::new();
     for madt_entry in madt.iter() {
-        println!("      {:#x?}", madt_entry);
+        debug!("      {:#x?}", madt_entry);
         match madt_entry {
             MadtEntry::Gicc(gicc) => {
                 giccs.push(gicc);

@@ -184,8 +184,8 @@ fn kmain(bootstrap: Bootstrap) -> ! {
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    info!("BSP: {}", cpu_count());
-    info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
+    info!("BSP: {} CPUs", cpu_count());
+    debug!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
 

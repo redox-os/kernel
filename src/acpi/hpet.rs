@@ -30,7 +30,7 @@ impl Hpet {
         let hpet = Hpet::new(find_one_sdt!("HPET"));
 
         if let Some(hpet) = hpet {
-            println!("  HPET: {:X}", hpet.hpet_number);
+            debug!("  HPET: {:X}", hpet.hpet_number);
 
             let mut hpet_t = ACPI_TABLE.hpet.write();
             *hpet_t = Some(hpet);

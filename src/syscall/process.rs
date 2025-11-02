@@ -123,7 +123,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         .expect("failed to copy memory to bootstrap");
 
     let bootstrap_entry = u64::from_le_bytes(bootstrap_slice[0x1a..0x22].try_into().unwrap());
-    info!("Bootstrap entry point: {:X}", bootstrap_entry);
+    debug!("Bootstrap entry point: {:X}", bootstrap_entry);
     assert_ne!(bootstrap_entry, 0);
     println!("\n");
 

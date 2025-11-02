@@ -35,27 +35,27 @@ pub(crate) struct KernelArgs {
 
 impl KernelArgs {
     pub(crate) fn print(&self) {
-        info!(
+        debug!(
             "Kernel: {:X}:{:X}",
             { self.kernel_base },
             self.kernel_base + self.kernel_size
         );
-        info!(
+        debug!(
             "Env: {:X}:{:X}",
             { self.env_base },
             self.env_base + self.env_size
         );
-        info!(
+        debug!(
             "HWDESC: {:X}:{:X}",
             { self.hwdesc_base },
             self.hwdesc_base + self.hwdesc_size
         );
-        info!(
+        debug!(
             "Areas: {:X}:{:X}",
             { self.areas_base },
             self.areas_base + self.areas_size
         );
-        info!(
+        debug!(
             "Bootstrap: {:X}:{:X}",
             { self.bootstrap_base },
             self.bootstrap_base + self.bootstrap_size

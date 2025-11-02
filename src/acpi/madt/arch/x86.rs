@@ -22,9 +22,9 @@ pub(super) fn init(madt: Madt) {
     let me = local_apic.id();
 
     if local_apic.x2 {
-        println!("    X2APIC {}", me.get());
+        debug!("    X2APIC {}", me.get());
     } else {
-        println!("    XAPIC {}: {:>08X}", me.get(), local_apic.address);
+        debug!("    XAPIC {}: {:>08X}", me.get(), local_apic.address);
     }
 
     if cfg!(not(feature = "multi_core")) {
@@ -62,10 +62,10 @@ pub(super) fn init(madt: Madt) {
     }
 
     for madt_entry in madt.iter() {
-        println!("      {:x?}", madt_entry);
+        debug!("      {:x?}", madt_entry);
         if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
             if u32::from(ap_local_apic.id) == me.get() {
-                println!("        This is my local APIC");
+                debug!("        This is my local APIC");
             } else if ap_local_apic.flags & 1 == 1 {
                 let cpu_id = LogicalCpuId::next();
 
@@ -105,11 +105,6 @@ pub(super) fn init(madt: Madt) {
                 };
                 AP_READY.store(false, Ordering::SeqCst);
 
-                print!(
-                    "        AP {} APIC {}:",
-                    ap_local_apic.processor, ap_local_apic.id
-                );
-
                 // Send INIT IPI
                 {
                     let mut icr = 0x4500;
@@ -118,7 +113,6 @@ pub(super) fn init(madt: Madt) {
                     } else {
                         icr |= u64::from(ap_local_apic.id) << 56;
                     }
-                    print!(" IPI...");
                     local_apic.set_icr(icr);
                 }
 
@@ -133,26 +127,20 @@ pub(super) fn init(madt: Madt) {
                         icr |= u64::from(ap_local_apic.id) << 56;
                     }
 
-                    print!(" SIPI...");
                     local_apic.set_icr(icr);
                 }
 
                 // Wait for trampoline ready
-                print!(" Wait...");
                 while unsafe { (*ap_ready.cast::<AtomicU8>()).load(Ordering::SeqCst) } == 0 {
                     hint::spin_loop();
                 }
-                print!(" Trampoline...");
                 while !AP_READY.load(Ordering::SeqCst) {
                     hint::spin_loop();
                 }
-                println!(" Ready");
 
                 unsafe {
                     RmmA::invalidate_all();
                 }
-            } else {
-                println!("        CPU Disabled");
             }
         }
     }

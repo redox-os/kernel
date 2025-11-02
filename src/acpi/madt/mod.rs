@@ -37,7 +37,7 @@ impl Madt {
             // safe because no APs have been started yet.
             unsafe { MADT.get().write(Some(madt)) };
 
-            println!("  APIC: {:>08X}: {}", madt.local_address, madt.flags);
+            debug!("  APIC: {:>08X}: {}", madt.local_address, madt.flags);
 
             arch::init(madt);
         }
