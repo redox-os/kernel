@@ -1,5 +1,5 @@
 use alloc::{string::String, vec::Vec};
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, AtomicU64, Ordering};
 
 use crate::cpu_set::LogicalCpuId;
 
@@ -28,15 +28,15 @@ pub enum CpuState {
 #[derive(Debug, Default)]
 pub struct CpuStats {
     /// Number of ticks spent on userspace contexts
-    user: AtomicUsize,
+    user: AtomicU64,
     /// Number of ticks spent on Niced userspace contexts
-    nice: AtomicUsize,
+    nice: AtomicU64,
     /// Number of ticks spent on kernel contexts
-    kernel: AtomicUsize,
+    kernel: AtomicU64,
     /// Number of ticks spent idle
-    idle: AtomicUsize,
+    idle: AtomicU64,
     /// Number of times the CPU handled an interrupt
-    irq: AtomicUsize,
+    irq: AtomicU64,
     /// Current state of the CPU
     state: AtomicU8,
 }
@@ -44,11 +44,11 @@ pub struct CpuStats {
 impl CpuStats {
     pub const fn default() -> Self {
         Self {
-            user: AtomicUsize::new(0),
-            nice: AtomicUsize::new(0),
-            kernel: AtomicUsize::new(0),
-            idle: AtomicUsize::new(0),
-            irq: AtomicUsize::new(0),
+            user: AtomicU64::new(0),
+            nice: AtomicU64::new(0),
+            kernel: AtomicU64::new(0),
+            idle: AtomicU64::new(0),
+            irq: AtomicU64::new(0),
             state: AtomicU8::new(0),
         }
     }
@@ -56,15 +56,15 @@ impl CpuStats {
 
 pub struct CpuStatsData {
     /// Number of ticks spent on userspace contexts
-    pub user: usize,
+    pub user: u64,
     /// Number of ticks spent on Niced userspace contexts
-    pub nice: usize,
+    pub nice: u64,
     /// Number of ticks spent on kernel contexts
-    pub kernel: usize,
+    pub kernel: u64,
     /// Number of ticks spent idle
-    pub idle: usize,
+    pub idle: u64,
     /// Number of times the CPU handled an interrupt
-    pub irq: usize,
+    pub irq: u64,
 }
 
 impl CpuStats {
@@ -82,13 +82,13 @@ impl CpuStats {
     /// Which statistic is incremented depends on the [`State`] of the CPU.
     ///
     /// # Parameters
-    /// * `ticks` - NUmber of ticks to add.
+    /// * `nanos` - Number of nanoseconds to add.
     #[inline]
-    pub fn add_time(&self, ticks: usize) {
+    pub fn add_time(&self, nanos: u64) {
         match self.state.load(Ordering::Relaxed) {
-            val if val == CpuState::Idle as u8 => self.idle.fetch_add(ticks, Ordering::Relaxed),
-            val if val == CpuState::User as u8 => self.user.fetch_add(ticks, Ordering::Relaxed),
-            val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(ticks, Ordering::Relaxed),
+            val if val == CpuState::Idle as u8 => self.idle.fetch_add(nanos, Ordering::Relaxed),
+            val if val == CpuState::User as u8 => self.user.fetch_add(nanos, Ordering::Relaxed),
+            val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(nanos, Ordering::Relaxed),
             _ => unreachable!("all possible values are covered"),
         };
     }
