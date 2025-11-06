@@ -94,8 +94,8 @@ pub fn open(raw_path: UserSliceRo, flags: usize, token: &mut CleanLockToken) -> 
     // FIXME remove entries from this list as the respective programs get updated
     if path_buf.contains(':') && !is_legacy(&path_buf) {
         let name = context::current().read(token.token()).name;
-        if name.contains("cosmic") && (path_buf == "event:" || path_buf.starts_with("time:")) {
-            // FIXME cosmic apps likely need crate updates
+        if path_buf == "event:" || path_buf.starts_with("time:") {
+            // FIXME winit issues
         } else {
             println!("deprecated: legacy path {:?} used by {}", path_buf, name);
         }
