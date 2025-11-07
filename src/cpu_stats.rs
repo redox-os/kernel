@@ -1,5 +1,5 @@
 use alloc::{string::String, vec::Vec};
-use core::sync::atomic::{AtomicU8, AtomicUsize, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use crate::cpu_set::LogicalCpuId;
 
