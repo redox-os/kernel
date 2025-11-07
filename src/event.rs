@@ -1,11 +1,11 @@
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use hashbrown::HashMap;
+use hashbrown::{HashMap, HashSet};
 use spin::Once;
 
 use crate::{
     context,
-    scheme::{self, SchemeId},
+    scheme::{self, GlobalSchemes, SchemeId},
     sync::{
         CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0, L1,
     },
@@ -30,6 +30,10 @@ impl EventQueue {
             id,
             queue: WaitQueue::new(),
         }
+    }
+
+    pub fn is_currently_empty(&self) -> bool {
+        self.queue.is_currently_empty()
     }
 
     pub fn read(&self, buf: UserSliceWo, block: bool, token: &mut CleanLockToken) -> Result<usize> {
@@ -179,10 +183,13 @@ pub fn unregister_file(scheme: SchemeId, number: usize) {
 //
 // }
 
-pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
-    //TODO: propogate this lock token
-    let mut token = unsafe { CleanLockToken::new() };
-
+fn trigger_inner(
+    scheme: SchemeId,
+    number: usize,
+    flags: EventFlags,
+    todo: &mut Vec<EventQueueId>,
+    token: &mut CleanLockToken,
+) {
     let registry = registry();
     if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
         for (queue_key, &queue_flags) in queue_list.iter() {
@@ -199,10 +206,36 @@ pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
                             flags: common_flags,
                             data: queue_key.data,
                         },
-                        &mut token,
+                        token,
                     );
+                    todo.push(queue_key.queue);
                 }
             }
+        }
+    }
+}
+
+pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
+    //TODO: propogate this lock token
+    let mut token = unsafe { CleanLockToken::new() };
+
+    // First trigger with the original file
+    let mut todo = Vec::new();
+    trigger_inner(scheme, number, flags, &mut todo, &mut token);
+
+    // Handle triggers on queues
+    //TODO: can this be done with limited allocations?
+    let mut done = HashSet::new();
+    while let Some(queue_id) = todo.pop() {
+        if !done.contains(&queue_id) {
+            trigger_inner(
+                GlobalSchemes::Event.scheme_id(),
+                queue_id.into(),
+                EventFlags::EVENT_READ,
+                &mut todo,
+                &mut token,
+            );
+            done.insert(queue_id);
         }
     }
 }
