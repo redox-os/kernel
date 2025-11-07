@@ -499,16 +499,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EOPNOTSUPP))
     }
 
-    fn kopen(
-        &self,
-        path: &str,
-        flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        Err(Error::new(ENOENT))
-    }
-
     fn kopenat(
         &self,
         file: usize,

@@ -64,13 +64,26 @@ impl KernelScheme for DebugScheme {
 
         Ok(id)
     }
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        if HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+            .num
+            != SpecialFds::SchemeRoot as usize
+        {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -97,29 +110,6 @@ impl KernelScheme for DebugScheme {
         HANDLES.write(token.token()).insert(id, Handle { num });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
-    }
-
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        _flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-            .num
-            != SpecialFds::SchemeRoot as usize
-        {
-            return Err(Error::new(EPERM));
-        }
-
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, ctx, token)
     }
 
     fn fevent(

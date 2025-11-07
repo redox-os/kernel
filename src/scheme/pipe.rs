@@ -173,22 +173,6 @@ impl KernelScheme for PipeScheme {
             InternalFlags::empty(),
         ))
     }
-    fn kopen(
-        &self,
-        path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if !path.trim_start_matches('/').is_empty() {
-            return Err(Error::new(ENOENT));
-        }
-
-        let (read_id, _) = pipe(token)?;
-
-        Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
-    }
-
     fn kopenat(
         &self,
         id: usize,
@@ -226,7 +210,13 @@ impl KernelScheme for PipeScheme {
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, _ctx, token)
+        if !path.trim_start_matches('/').is_empty() {
+            return Err(Error::new(ENOENT));
+        }
+
+        let (read_id, _) = pipe(token)?;
+
+        Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
     }
 
     fn kread(

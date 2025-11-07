@@ -21,24 +21,11 @@ impl KernelScheme for EventScheme {
     fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
         Ok(usize::MAX)
     }
-    fn kopen(
-        &self,
-        _path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        let id = next_queue_id();
-        queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
-
-        Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
-    }
-
     fn kopenat(
         &self,
         id: usize,
         user_buf: StrOrBytes,
-        _flags: usize,
+        flags: usize,
         _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
@@ -47,7 +34,10 @@ impl KernelScheme for EventScheme {
             return Err(Error::new(EPERM));
         }
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, ctx, token)
+        let id = next_queue_id();
+        queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
+
+        Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {

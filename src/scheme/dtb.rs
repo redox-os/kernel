@@ -66,14 +66,30 @@ impl KernelScheme for DtbScheme {
         );
         Ok(id)
     }
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
-        _ctx: CallerCtx,
+        _fcntl_flags: u32,
+        ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let path = path.trim_matches('/');
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?
+                .kind,
+            HandleKind::SchemeRoot
+        ) {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf
+            .as_str()
+            .or(Err(Error::new(EINVAL)))?
+            .trim_matches('/');
 
         if path.is_empty() {
             let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
@@ -91,30 +107,6 @@ impl KernelScheme for DtbScheme {
         }
 
         Err(Error::new(ENOENT))
-    }
-
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if !matches!(
-            HANDLES
-                .read(token.token())
-                .get(&id)
-                .ok_or(Error::new(EBADF))?
-                .kind,
-            HandleKind::SchemeRoot
-        ) {
-            return Err(Error::new(EPERM));
-        }
-
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, flags, ctx, token)
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {

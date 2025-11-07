@@ -1535,35 +1535,6 @@ impl UserScheme {
 }
 
 impl KernelScheme for UserScheme {
-    fn kopen(
-        &self,
-        path: &str,
-        flags: usize,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        let inner = self.inner.clone();
-        let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match inner.call_extended(
-            ctx,
-            None,
-            Opcode::Open,
-            [address.base(), address.len(), flags],
-            address.span(),
-            token,
-        )? {
-            Response::Regular(code, fl) => Ok({
-                let _ = Error::demux(code)?;
-                OpenResult::SchemeLocal(
-                    code,
-                    InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
-                )
-            }),
-            Response::Fd(desc) => Ok(OpenResult::External(desc)),
-            Response::MultipleFds(_) => Err(Error::new(EIO)),
-        }
-    }
-
     fn kopenat(
         &self,
         file: usize,

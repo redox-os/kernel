@@ -65,13 +65,25 @@ impl KernelScheme for SerioScheme {
         Ok(id)
     }
 
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+            if handle.kind != HandleKind::SchemeRoot {
+                return Err(Error::new(ENOTDIR));
+            }
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -90,28 +102,6 @@ impl KernelScheme for SerioScheme {
         );
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
-    }
-
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        {
-            let handles = HANDLES.read(token.token());
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-            if handle.kind != HandleKind::SchemeRoot {
-                return Err(Error::new(ENOTDIR));
-            }
-        }
-
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, flags, ctx, token)
     }
 
     fn fevent(

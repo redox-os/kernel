@@ -184,13 +184,19 @@ impl KernelScheme for MemoryScheme {
     fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
         Ok(usize::MAX)
     }
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         _token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        if id != usize::MAX {
+            return Err(Error::new(EPERM));
+        }
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if path.len() > 64 {
             return Err(Error::new(ENOENT));
         }
@@ -241,21 +247,6 @@ impl KernelScheme for MemoryScheme {
             (handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16),
             InternalFlags::empty(),
         ))
-    }
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        _flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if id != usize::MAX {
-            return Err(Error::new(EPERM));
-        }
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, ctx, token)
     }
     fn kcall(
         &self,

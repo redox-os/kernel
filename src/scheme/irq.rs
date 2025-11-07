@@ -11,8 +11,10 @@ use alloc::{string::String, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
-use syscall::data::GlobalSchemes;
-use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
+use syscall::{
+    data::GlobalSchemes,
+    dirent::{DirEntry, DirentBuf, DirentKind},
+};
 
 use crate::context::file::InternalFlags;
 
@@ -215,13 +217,25 @@ impl crate::scheme::KernelScheme for IrqScheme {
         HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+            if !matches!(handle, Handle::SchemeRoot) {
+                return Err(Error::new(EBADF));
+            }
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -311,27 +325,6 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(fd, handle);
         Ok(OpenResult::SchemeLocal(fd, int_flags))
-    }
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        {
-            let handles = HANDLES.read(token.token());
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
-
-            if !matches!(handle, Handle::SchemeRoot) {
-                return Err(Error::new(EBADF));
-            }
-        }
-
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, flags, ctx, token)
     }
     fn getdents(
         &self,

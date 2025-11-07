@@ -119,14 +119,29 @@ impl KernelScheme for SysScheme {
         HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let path = path.trim_matches('/');
+        if *HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+            != Handle::SchemeRoot
+        {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf
+            .as_str()
+            .or(Err(Error::new(EINVAL)))?
+            .path
+            .trim_matches('/');
 
         if path.is_empty() {
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -159,27 +174,6 @@ impl KernelScheme for SysScheme {
             );
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         }
-    }
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        _flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if *HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-            != Handle::SchemeRoot
-        {
-            return Err(Error::new(EPERM));
-        }
-
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, 0, ctx, token)
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {

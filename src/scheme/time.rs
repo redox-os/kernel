@@ -37,34 +37,11 @@ impl KernelScheme for TimeScheme {
         HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
-    fn kopen(
-        &self,
-        path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        let clock = path.parse::<usize>().map_err(|_| Error::new(ENOENT))?;
-
-        match clock {
-            CLOCK_REALTIME => (),
-            CLOCK_MONOTONIC => (),
-            _ => return Err(Error::new(ENOENT)),
-        }
-
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES
-            .write(token.token())
-            .insert(id, Handle::Clock(clock));
-
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
-    }
-
     fn kopenat(
         &self,
         id: usize,
         user_buf: StrOrBytes,
-        flags: usize,
+        _flags: usize,
         _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
@@ -79,7 +56,20 @@ impl KernelScheme for TimeScheme {
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, flags, ctx, token)
+        let clock = path.parse::<usize>().map_err(|_| Error::new(ENOENT))?;
+
+        match clock {
+            CLOCK_REALTIME => (),
+            CLOCK_MONOTONIC => (),
+            _ => return Err(Error::new(ENOENT)),
+        }
+
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES
+            .write(token.token())
+            .insert(id, Handle::Clock(clock));
+
+        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
 
     fn fcntl(

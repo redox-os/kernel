@@ -128,14 +128,30 @@ impl KernelScheme for AcpiScheme {
 
         Ok(fd)
     }
-    fn kopen(
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let path = path.trim_start_matches('/');
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?
+                .kind,
+            HandleKind::SchemeRoot
+        ) {
+            return Err(Error::new(EPERM));
+        }
+
+        let path = user_buf
+            .as_str()
+            .or(Err(Error::new(EINVAL)))?
+            .trim_start_matches('/');
 
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
@@ -185,29 +201,6 @@ impl KernelScheme for AcpiScheme {
         );
 
         Ok(OpenResult::SchemeLocal(fd, int_flags))
-    }
-    fn kopenat(
-        &self,
-        id: usize,
-        user_buf: StrOrBytes,
-        flags: usize,
-        _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if !matches!(
-            HANDLES
-                .read(token.token())
-                .get(&id)
-                .ok_or(Error::new(EBADF))?
-                .kind,
-            HandleKind::SchemeRoot
-        ) {
-            return Err(Error::new(EPERM));
-        }
-
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        self.kopen(path, flags, ctx, token)
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
