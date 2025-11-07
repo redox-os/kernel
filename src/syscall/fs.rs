@@ -119,7 +119,7 @@ pub fn openat(
                     internal_flags,
                     scheme: description.scheme,
                     number,
-                    flags: description.flags,
+                    flags,
                 }))
             }
             OpenResult::External(desc) => desc,
@@ -130,7 +130,7 @@ pub fn openat(
         .read(token.token())
         .add_file(FileDescriptor {
             description: new_description,
-            cloexec: false,
+            cloexec: fcntl_flags & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
 }
