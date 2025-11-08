@@ -140,7 +140,6 @@ impl KernelScheme for SysScheme {
         let path = user_buf
             .as_str()
             .or(Err(Error::new(EINVAL)))?
-            .path
             .trim_matches('/');
 
         if path.is_empty() {
