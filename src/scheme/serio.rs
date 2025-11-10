@@ -30,7 +30,6 @@ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
 
 /// Add to the input queue
 pub fn serio_input(index: usize, data: u8, token: &mut CleanLockToken) {
-    #[cfg(feature = "profiling")]
     crate::profiling::serio_command(index, data);
 
     INPUT[index].send(data, token);

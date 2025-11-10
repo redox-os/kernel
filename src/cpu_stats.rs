@@ -1,8 +1,5 @@
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
-
-use alloc::string::String;
-#[cfg(feature = "sys_stat")]
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
+use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use crate::cpu_set::LogicalCpuId;
 
@@ -31,15 +28,15 @@ pub enum CpuState {
 #[derive(Debug, Default)]
 pub struct CpuStats {
     /// Number of ticks spent on userspace contexts
-    user: AtomicUsize,
+    user: AtomicU64,
     /// Number of ticks spent on Niced userspace contexts
-    nice: AtomicUsize,
+    nice: AtomicU64,
     /// Number of ticks spent on kernel contexts
-    kernel: AtomicUsize,
+    kernel: AtomicU64,
     /// Number of ticks spent idle
-    idle: AtomicUsize,
+    idle: AtomicU64,
     /// Number of times the CPU handled an interrupt
-    irq: AtomicUsize,
+    irq: AtomicU64,
     /// Current state of the CPU
     state: AtomicU8,
 }
@@ -47,11 +44,11 @@ pub struct CpuStats {
 impl CpuStats {
     pub const fn default() -> Self {
         Self {
-            user: AtomicUsize::new(0),
-            nice: AtomicUsize::new(0),
-            kernel: AtomicUsize::new(0),
-            idle: AtomicUsize::new(0),
-            irq: AtomicUsize::new(0),
+            user: AtomicU64::new(0),
+            nice: AtomicU64::new(0),
+            kernel: AtomicU64::new(0),
+            idle: AtomicU64::new(0),
+            irq: AtomicU64::new(0),
             state: AtomicU8::new(0),
         }
     }
@@ -59,15 +56,15 @@ impl CpuStats {
 
 pub struct CpuStatsData {
     /// Number of ticks spent on userspace contexts
-    pub user: usize,
+    pub user: u64,
     /// Number of ticks spent on Niced userspace contexts
-    pub nice: usize,
+    pub nice: u64,
     /// Number of ticks spent on kernel contexts
-    pub kernel: usize,
+    pub kernel: u64,
     /// Number of ticks spent idle
-    pub idle: usize,
+    pub idle: u64,
     /// Number of times the CPU handled an interrupt
-    pub irq: usize,
+    pub irq: u64,
 }
 
 impl CpuStats {
@@ -77,10 +74,6 @@ impl CpuStats {
     /// * `new_state` - The state of the CPU for the following ticks.
     #[inline]
     pub fn set_state(&self, new_state: CpuState) {
-        if cfg!(not(feature = "sys_stat")) {
-            return;
-        }
-
         self.state.store(new_state as u8, Ordering::Relaxed);
     }
 
@@ -89,17 +82,13 @@ impl CpuStats {
     /// Which statistic is incremented depends on the [`State`] of the CPU.
     ///
     /// # Parameters
-    /// * `ticks` - NUmber of ticks to add.
+    /// * `nanos` - Number of nanoseconds to add.
     #[inline]
-    pub fn add_time(&self, ticks: usize) {
-        if cfg!(not(feature = "sys_stat")) {
-            return;
-        }
-
+    pub fn add_time(&self, nanos: u64) {
         match self.state.load(Ordering::Relaxed) {
-            val if val == CpuState::Idle as u8 => self.idle.fetch_add(ticks, Ordering::Relaxed),
-            val if val == CpuState::User as u8 => self.user.fetch_add(ticks, Ordering::Relaxed),
-            val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(ticks, Ordering::Relaxed),
+            val if val == CpuState::Idle as u8 => self.idle.fetch_add(nanos, Ordering::Relaxed),
+            val if val == CpuState::User as u8 => self.user.fetch_add(nanos, Ordering::Relaxed),
+            val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(nanos, Ordering::Relaxed),
             _ => unreachable!("all possible values are covered"),
         };
     }
@@ -113,10 +102,6 @@ impl CpuStats {
     /// * `irq` - The ID of the interrupt that happened.
     #[inline]
     pub fn add_irq(&self, irq: u8) {
-        if cfg!(not(feature = "sys_stat")) {
-            return;
-        }
-
         IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
         self.irq.fetch_add(1, Ordering::Relaxed);
     }
@@ -151,38 +136,27 @@ impl From<&CpuStats> for CpuStatsData {
 /// Add a context switch to the count.
 #[inline]
 pub fn add_context_switch() {
-    if cfg!(not(feature = "sys_stat")) {
-        return;
-    }
-
     CONTEXT_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Get the number of context switches.
-#[cfg(feature = "sys_stat")]
-pub fn get_context_switch_count() -> u64 {
+pub fn get_context_switch_count() -> usize {
     CONTEXT_SWITCH_COUNT.load(Ordering::Relaxed)
 }
 
 /// Add a context creation to the count.
 #[inline]
 pub fn add_context() {
-    if cfg!(not(feature = "sys_stat")) {
-        return;
-    }
-
     CONTEXTS_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Get the number of contexts created.
-#[cfg(feature = "sys_stat")]
-pub fn get_contexts_count() -> u64 {
+pub fn get_contexts_count() -> usize {
     CONTEXTS_COUNT.load(Ordering::Relaxed)
 }
 
 /// Get the count of each interrupt.
-#[cfg(feature = "sys_stat")]
-pub fn irq_counts() -> Vec<u64> {
+pub fn irq_counts() -> Vec<usize> {
     IRQ_COUNT
         .iter()
         .map(|count| count.load(Ordering::Relaxed))

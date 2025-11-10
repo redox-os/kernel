@@ -87,11 +87,10 @@ pub struct AddrSpaceWrapper {
 }
 impl AddrSpaceWrapper {
     pub fn new() -> Result<Arc<Self>> {
-        Arc::try_new(Self {
+        Ok(Arc::new(Self {
             inner: RwLock::new(AddrSpace::new()?),
             tlb_ack: AtomicU32::new(0),
-        })
-        .map_err(|_| Error::new(ENOMEM))
+        }))
     }
     pub fn acquire_read(&self) -> RwLockReadGuard<'_, AddrSpace> {
         let my_percpu = PercpuBlock::current();

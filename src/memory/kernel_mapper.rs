@@ -1,4 +1,3 @@
-use crate::cpu_set::LogicalCpuId;
 use core::sync::{
     atomic,
     atomic::{AtomicU32, AtomicUsize, Ordering},
@@ -23,7 +22,11 @@ pub struct KernelMapper {
     ro: bool,
 }
 impl KernelMapper {
-    fn lock_inner(current_processor: LogicalCpuId) -> bool {
+    pub fn lock() -> Self {
+        let mapper =
+            unsafe { PageMapper::current(TableKind::Kernel, crate::memory::TheFrameAllocator) };
+
+        let current_processor = crate::cpu_id();
         loop {
             match LOCK_OWNER.compare_exchange_weak(
                 NO_PROCESSOR,
@@ -42,26 +45,10 @@ impl KernelMapper {
         let prev_count = LOCK_COUNT.fetch_add(1, Ordering::Relaxed);
         atomic::compiler_fence(Ordering::Acquire);
 
-        prev_count > 0
-    }
-    pub unsafe fn lock_for_manual_mapper(
-        current_processor: LogicalCpuId,
-        mapper: crate::paging::PageMapper,
-    ) -> Self {
-        let ro = Self::lock_inner(current_processor);
+        let ro = prev_count > 0;
         Self { mapper, ro }
     }
-    pub fn lock_manually(current_processor: LogicalCpuId) -> Self {
-        unsafe {
-            Self::lock_for_manual_mapper(
-                current_processor,
-                PageMapper::current(TableKind::Kernel, crate::memory::TheFrameAllocator),
-            )
-        }
-    }
-    pub fn lock() -> Self {
-        Self::lock_manually(crate::cpu_id())
-    }
+
     pub fn get_mut(&mut self) -> Option<&mut crate::paging::PageMapper> {
         if self.ro {
             None

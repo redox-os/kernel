@@ -254,7 +254,7 @@ impl SchemeList {
         Ok(to)
     }
 
-    pub fn iter_name(&self, ns: SchemeNamespace) -> SchemeIter {
+    pub fn iter_name(&self, ns: SchemeNamespace) -> SchemeIter<'_> {
         SchemeIter {
             inner: self.names.get(&ns).map(|names| names.iter()),
         }

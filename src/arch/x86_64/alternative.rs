@@ -147,7 +147,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             return;
         }
 
-        info!("self-modifying features: {:?}", enable);
+        debug!("self-modifying features: {:?}", enable);
 
         let mut mapper = KernelMapper::lock();
         for reloc in relocs.iter().copied() {

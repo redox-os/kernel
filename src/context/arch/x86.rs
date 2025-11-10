@@ -256,17 +256,16 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 // Check disassembly!
 #[unsafe(naked)]
 unsafe extern "cdecl" fn switch_to_inner() {
-    unsafe {
-        use Context as Cx;
+    use Context as Cx;
 
-        core::arch::naked_asm!(
-            // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
-            //
-            // - the current parameters are passed in the registers `edi`, `esi`,
-            // - we can modify scratch registers, e.g. rax
-            // - we cannot change callee-preserved registers arbitrarily, e.g. ebx, which is why we
-            //   store them here in the first place.
-            concat!("
+    core::arch::naked_asm!(
+        // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
+        //
+        // - the current parameters are passed in the registers `edi`, `esi`,
+        // - we can modify scratch registers, e.g. rax
+        // - we cannot change callee-preserved registers arbitrarily, e.g. ebx, which is why we
+        //   store them here in the first place.
+        "
         // ecx is prev, edx is next
 
         // Save old registers, and load new ones
@@ -302,19 +301,18 @@ unsafe extern "cdecl" fn switch_to_inner() {
         // Note that switch_finish_hook will be responsible for executing `ret`.
         jmp {switch_hook}
 
-        "),
+        ",
 
-            off_eflags = const(offset_of!(Cx, eflags)),
+        off_eflags = const(offset_of!(Cx, eflags)),
 
-            off_ebx = const(offset_of!(Cx, ebx)),
-            off_edi = const(offset_of!(Cx, edi)),
-            off_esi = const(offset_of!(Cx, esi)),
-            off_ebp = const(offset_of!(Cx, ebp)),
-            off_esp = const(offset_of!(Cx, esp)),
+        off_ebx = const(offset_of!(Cx, ebx)),
+        off_edi = const(offset_of!(Cx, edi)),
+        off_esi = const(offset_of!(Cx, esi)),
+        off_ebp = const(offset_of!(Cx, ebp)),
+        off_esp = const(offset_of!(Cx, esp)),
 
-            switch_hook = sym crate::context::switch_finish_hook,
-        );
-    }
+        switch_hook = sym crate::context::switch_finish_hook,
+    );
 }
 
 /// Allocates a new identically mapped ktable and empty utable (same memory on x86)

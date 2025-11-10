@@ -1,6 +1,8 @@
 // This code was adapted from MIT licensed https://github.com/antialize/ordered-locks
 // We cannot use that library directly as it is wrapping std::sync types
 
+#![allow(dead_code)]
+
 //! This create implement compiletime ordering of locks into levels, [`L1`], [`L2`], [`L3`], [`L4`] and [`L5`].
 //! In order to acquire a lock at level `i` only locks at level `i-1` or below may be held.
 //!
@@ -17,7 +19,7 @@
 //! let v2 = Mutex::<L2, _>::new(43);
 //! // Construct a token indicating that this thread does not hold any locks
 //! let mut token = unsafe {CleanLockToken::new()};
-//!  
+//!
 //! {
 //!     // We can aquire the locks for v1 and v2 at the same time
 //!     let mut g1 = v1.lock(token.token());
@@ -41,7 +43,7 @@
 //! // Construct a token indicating that this thread does not hold any locks
 //! let mut clean_token = unsafe {CleanLockToken::new()};
 //! let token = clean_token.token();
-//!  
+//!
 //! // Try to aquire locks in the wrong order
 //! let mut g2 = v2.lock(token);
 //! let (g2, token) = g2.token_split();

@@ -40,13 +40,10 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![warn(static_mut_refs)] // FIXME deny once all occurences are fixed
-#![feature(allocator_api)]
 #![feature(if_let_guard)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
-#![feature(iterator_try_collect)]
 #![feature(sync_unsafe_cell)]
-#![feature(thread_local)]
 #![feature(variant_count)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
@@ -124,8 +121,7 @@ mod percpu;
 mod ptrace;
 
 /// Performance profiling of the kernel
-#[cfg(feature = "profiling")]
-pub mod profiling;
+mod profiling;
 
 /// Schemes, filesystem handlers
 mod scheme;
@@ -188,12 +184,11 @@ fn kmain(bootstrap: Bootstrap) -> ! {
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    info!("BSP: {}", cpu_count());
-    info!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
+    info!("BSP: {} CPUs", cpu_count());
+    debug!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
 
-    #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
     let owner = None; // kmain not owned by any fd
@@ -240,7 +235,6 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
 
     info!("AP {}", cpu_id);
 
-    #[cfg(feature = "profiling")]
     profiling::ready_for_profiling();
 
     run_userspace(&mut token);
@@ -284,10 +278,6 @@ mod kernel_executable_offsets {
         __text_end,
         __rodata_start,
         __rodata_end,
-        __data_start,
-        __data_end,
-        __bss_start,
-        __bss_end,
         __usercopy_start,
         __usercopy_end
     );

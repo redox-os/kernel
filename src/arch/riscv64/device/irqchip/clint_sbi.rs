@@ -5,7 +5,6 @@ use crate::{
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
-use byteorder::{ByteOrder, BE};
 use core::{arch::asm, cmp::max};
 use fdt::node::FdtNode;
 use spin::Mutex;
@@ -73,8 +72,10 @@ impl Clint {
             .property("interrupts-extended")
             .unwrap()
             .value
-            .chunks(4)
-            .map(|x| BE::read_u32(x));
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&x| u32::from_be_bytes(x));
         let mut hart_id = 0;
         while let Ok([phandle1, irq0, phandle2, irq1]) = interrupts.next_chunk::<4>() {
             assert_eq!(

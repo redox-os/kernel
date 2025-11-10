@@ -103,13 +103,8 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
         let rsdp_opt = Rsdp::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
 
         if let Some(rsdp) = rsdp_opt {
-            info!("SDT address: {:#x}", rsdp.sdt_address());
+            debug!("SDT address: {:#x}", rsdp.sdt_address());
             let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
-
-            for &c in rxsdt.signature.iter() {
-                print!("{}", c as char);
-            }
-            println!(":");
 
             let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
                 let mut initialized = false;
@@ -139,7 +134,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
 
                 xsdt
             } else {
-                println!("UNKNOWN RSDT OR XSDT SIGNATURE");
+                warn!("UNKNOWN RSDT OR XSDT SIGNATURE");
                 return;
             };
 
@@ -170,7 +165,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
             #[cfg(target_arch = "aarch64")]
             gtdt::Gtdt::init();
         } else {
-            println!("NO RSDP FOUND");
+            error!("NO RSDP FOUND");
         }
     }
 }

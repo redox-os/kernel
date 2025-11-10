@@ -93,7 +93,6 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 }
 
 #[unsafe(naked)]
-#[allow(named_asm_labels)]
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(concat!(
     // Yes, this is magic. No, you don't need to understand

@@ -139,9 +139,6 @@ pub enum SwitchResult {
 pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let percpu = PercpuBlock::current();
     cpu_stats::add_context_switch();
-    percpu
-        .stats
-        .add_time(percpu.switch_internals.pit_ticks.get());
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     percpu.switch_internals.pit_ticks.set(0);
@@ -218,6 +215,13 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         }
     };
 
+    // Update per-cpu times
+    let switch_time = crate::time::monotonic();
+    let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
+    let percpu_ms = percpu_nanos / 1_000_000;
+    percpu.stats.add_time(percpu_ms);
+    percpu.switch_internals.switch_time.set(switch_time);
+
     // Switch process states, TSS stack pointer, and store new context ID
     match switch_context_opt {
         Some((mut prev_context_guard, mut next_context_guard)) => {
@@ -233,7 +237,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             // Set the CPU ID for the next context
             next_context.cpu_id = Some(cpu_id);
 
-            let percpu = PercpuBlock::current();
+            // Update times
+            prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
+            next_context.switch_time = switch_time;
+            if next_context.userspace {
+                percpu.stats.set_state(cpu_stats::CpuState::User);
+            } else {
+                percpu.stats.set_state(cpu_stats::CpuState::Kernel);
+            }
             unsafe {
                 percpu.switch_internals.set_current_context(Arc::clone(
                     ArcContextLockWriteGuard::rwlock(&next_context_guard),
@@ -294,12 +305,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             // need to use the `switch_finish_hook` to be able to release the locks. Newly created
             // contexts will return directly to the function pointer passed to context::spawn, and not
             // reach this code until the next context switch back.
-            if next_context.userspace {
-                percpu.stats.set_state(cpu_stats::CpuState::User);
-            } else {
-                percpu.stats.set_state(cpu_stats::CpuState::Kernel);
-            }
-
             SwitchResult::Switched
         }
         _ => {
@@ -319,6 +324,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 /// as well as fields required for managing ptrace sessions and signals.
 pub struct ContextSwitchPercpu {
     switch_result: Cell<Option<SwitchResultInner>>,
+    switch_time: Cell<u128>,
     pit_ticks: Cell<usize>,
 
     current_ctxt: RefCell<Option<Arc<ContextLock>>>,
@@ -333,6 +339,7 @@ impl ContextSwitchPercpu {
     pub const fn default() -> Self {
         Self {
             switch_result: Cell::new(None),
+            switch_time: Cell::new(0),
             pit_ticks: Cell::new(0),
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),

@@ -73,7 +73,7 @@ impl LocalApic {
                 .is_some_and(|feature_info| feature_info.has_x2apic());
 
             if !self.x2 {
-                info!("Detected xAPIC at {:#x}", physaddr.data());
+                debug!("Detected xAPIC at {:#x}", physaddr.data());
                 if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr, true) {
                     // Unmap xAPIC page if already mapped
                     flush.flush();
@@ -83,7 +83,7 @@ impl LocalApic {
                     .expect("failed to map local APIC memory")
                     .flush();
             } else {
-                info!("Detected x2APIC");
+                debug!("Detected x2APIC");
             }
 
             self.init_ap();

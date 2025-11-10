@@ -729,8 +729,7 @@ impl KernelScheme for ProcScheme {
                     }
                     let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
-                    let new_filetable = Arc::try_new(spin::RwLock::new(filetable.read().clone()))
-                        .map_err(|_| Error::new(ENOMEM))?;
+                    let new_filetable = Arc::new(spin::RwLock::new(filetable.read().clone()));
 
                     handle(
                         Handle {

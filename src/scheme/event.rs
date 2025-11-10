@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 use core::mem;
-use syscall::O_NONBLOCK;
+use syscall::{EventFlags, O_NONBLOCK};
 
 use crate::{
     context::file::InternalFlags,
@@ -38,6 +38,7 @@ impl KernelScheme for EventScheme {
             .ok_or(Error::new(EBADF))
             .and(Ok(()))
     }
+
     fn kread(
         &self,
         id: usize,
@@ -87,5 +88,31 @@ impl KernelScheme for EventScheme {
 
     fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
         buf.copy_common_bytes_from_slice(b"event:")
+    }
+
+    fn fevent(
+        &self,
+        id: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<EventFlags> {
+        let id = EventQueueId::from(id);
+
+        let queue = {
+            let handles = queues(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        let mut ready = EventFlags::empty();
+        if flags.contains(EventFlags::EVENT_WRITE) {
+            // It is always possible to write events
+            ready |= EventFlags::EVENT_WRITE;
+        }
+        if flags.contains(EventFlags::EVENT_READ) && !queue.is_currently_empty() {
+            // It is possible to read if queue is not empty
+            ready |= EventFlags::EVENT_READ;
+        }
+        Ok(ready)
     }
 }

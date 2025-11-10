@@ -101,7 +101,7 @@ impl MemoryMap {
         }
     }
 
-    fn iter(&self) -> Iter<MemoryEntry> {
+    fn iter(&self) -> Iter<'_, MemoryEntry> {
         self.entries[0..self.size].iter()
     }
 
@@ -154,11 +154,6 @@ fn register_memory_from_kernel_args(args: &KernelArgs) {
         args.kernel_base as usize,
         args.kernel_size as usize,
         BootloaderMemoryKind::Kernel,
-    );
-    register_memory_region(
-        args.stack_base as usize,
-        args.stack_size as usize,
-        BootloaderMemoryKind::IdentityMap,
     );
     register_memory_region(
         args.env_base as usize,
