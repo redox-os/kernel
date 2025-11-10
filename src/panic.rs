@@ -12,10 +12,20 @@ use object::{
     NativeEndian,
 };
 use rmm::VirtualAddress;
+#[cfg(target_arch = "x86_64")]
+use rmm::{PageMapper, X8664Arch};
 use rustc_demangle::demangle;
 
+#[cfg(target_arch = "x86")]
+use crate::arch::interrupt::handler::InterruptErrorStack;
+#[cfg(target_arch = "x86_64")]
+use crate::memory::TheFrameAllocator;
+
 use crate::{
-    arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
+    arch::{
+        consts::USER_END_OFFSET,
+        interrupt::{trace::StackTrace, InterruptStack},
+    },
     context, cpu_id, interrupt,
     memory::KernelMapper,
     sync::CleanLockToken,
@@ -146,4 +156,93 @@ pub unsafe fn stack_trace() {
             frame = frame_.next();
         }
     }
+}
+
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+pub unsafe fn user_stack_trace(_stack: &InterruptStack) {
+    // unimplemented
+}
+
+#[cfg(target_arch = "x86")]
+pub unsafe fn user_stack_trace(_stack: &&mut InterruptErrorStack) {
+    // unimplemented
+}
+
+/// Get a user stack trace
+#[inline(never)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn user_stack_trace(stack: &InterruptStack) {
+    let mut rbp = stack.preserved.rbp;
+    let rsp = stack.iret.rsp;
+
+    if rbp < rsp {
+        println!("  <Unable to generate stack while frame pointers omitted>");
+        return;
+    }
+    if rbp >= crate::USER_END_OFFSET {
+        return;
+    }
+
+    let mut token = unsafe { CleanLockToken::new() };
+    let context_lock = crate::context::current();
+    let context = context_lock.read(token.token());
+
+    if let Ok(addr_space) = context.addr_space() {
+        let page_tables = &addr_space.acquire_read().table.utable;
+
+        for _ in 0..64 {
+            if rbp == 0 || rbp >= crate::USER_END_OFFSET {
+                break;
+            }
+            let rip_addr = rbp + size_of::<usize>();
+            let rip = match read_from_user_space(rip_addr, page_tables) {
+                Some(val) => val,
+                None => {
+                    println!("  <Failed to read RIP 0x{:>016x}>", rbp);
+                    break;
+                }
+            };
+            println!("  FP {:>016x}: PC {:>016x}", rbp, rip);
+            if rip == 0 {
+                break;
+            }
+
+            let next_rbp = match read_from_user_space(rbp, page_tables) {
+                Some(val) => val,
+                None => break,
+            };
+            if next_rbp <= rbp {
+                println!(
+                    "  <Invalid next frame pointer 0x{:>016x}; stack walk ended>",
+                    next_rbp
+                );
+                break;
+            }
+            rbp = next_rbp;
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn read_from_user_space(
+    user_vaddr: usize,
+    page_tables: &PageMapper<X8664Arch, TheFrameAllocator>,
+) -> Option<usize> {
+    use rmm::Arch;
+
+    use crate::{arch::paging::Page, memory::PAGE_SIZE};
+
+    let virt_addr = VirtualAddress::new(user_vaddr);
+    let offset = user_vaddr % X8664Arch::PAGE_ENTRY_SIZE;
+
+    unsafe {
+        if let Some(frame) = page_tables.table().index_of(virt_addr) {
+            use rmm::{FrameAllocator, PageFlags, PageTable};
+            let entry = page_tables.table().entry_virt(frame).unwrap();
+            let addr = entry.data();
+            return Some(core::ptr::read::<usize>((addr + offset) as *const usize));
+        }
+    }
+
+    None
 }

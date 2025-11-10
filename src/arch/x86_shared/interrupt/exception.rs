@@ -2,8 +2,14 @@ use syscall::Exception;
 use x86::irq::PageFaultError;
 
 use crate::{
-    arch::x86_shared::interrupt, context::signal::excp_handler, memory::GenericPfFlags,
-    paging::VirtualAddress, panic::stack_trace, ptrace, sync::CleanLockToken, syscall::flag::*,
+    arch::x86_shared::interrupt,
+    context::signal::excp_handler,
+    memory::GenericPfFlags,
+    paging::VirtualAddress,
+    panic::{stack_trace, user_stack_trace},
+    ptrace,
+    sync::CleanLockToken,
+    syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {
@@ -134,6 +140,7 @@ interrupt_error!(double_fault, |stack, _code| {
     println!("Double fault");
     stack.dump();
     unsafe {
+        user_stack_trace(&stack);
         stack_trace();
         loop {
             interrupt::disable();
@@ -145,7 +152,10 @@ interrupt_error!(double_fault, |stack, _code| {
 interrupt_error!(invalid_tss, |stack, code| {
     println!("Invalid TSS fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(&stack);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 10,
         code,
@@ -156,7 +166,10 @@ interrupt_error!(invalid_tss, |stack, code| {
 interrupt_error!(segment_not_present, |stack, code| {
     println!("Segment not present fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(&stack);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 11,
         code,
@@ -167,7 +180,10 @@ interrupt_error!(segment_not_present, |stack, code| {
 interrupt_error!(stack_segment, |stack, code| {
     println!("Stack segment fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(&stack);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 12,
         code,
@@ -178,7 +194,10 @@ interrupt_error!(stack_segment, |stack, code| {
 interrupt_error!(protection, |stack, code| {
     println!("Protection fault code={:#0x}", code);
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(&stack);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 13,
         code,
@@ -216,7 +235,10 @@ interrupt_error!(page, |stack, code| {
     if crate::memory::page_fault_handler(&mut stack.inner, generic_flags, cr2).is_err() {
         println!("Page fault: {:>08X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
-        unsafe { stack_trace() };
+        unsafe {
+            user_stack_trace(&stack);
+            stack_trace()
+        };
         excp_handler(Exception {
             kind: 14,
             code,
@@ -228,7 +250,10 @@ interrupt_error!(page, |stack, code| {
     if crate::memory::page_fault_handler(stack, generic_flags, cr2).is_err() {
         println!("Page fault: {:>016X} {:#?}", cr2.data(), arch_flags);
         stack.dump();
-        unsafe { stack_trace() };
+        unsafe {
+            user_stack_trace(&stack);
+            stack_trace()
+        };
         excp_handler(Exception {
             kind: 14,
             code,
@@ -250,7 +275,10 @@ interrupt_stack!(fpu_fault, |stack| {
 interrupt_error!(alignment_check, |stack, code| {
     println!("Alignment check fault");
     stack.dump();
-    unsafe { stack_trace() };
+    unsafe {
+        user_stack_trace(&stack);
+        stack_trace()
+    };
     excp_handler(Exception {
         kind: 17,
         code,
@@ -299,6 +327,7 @@ interrupt_error!(security, |stack, _code| {
     println!("Security exception");
     stack.dump();
     unsafe {
+        user_stack_trace(&stack);
         stack_trace();
         loop {
             interrupt::disable();
