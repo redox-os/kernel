@@ -1,6 +1,6 @@
 //! Intrinsics for panic handling
 
-use core::{panic::PanicInfo, slice};
+use core::{mem, panic::PanicInfo, slice};
 
 #[cfg(target_pointer_width = "32")]
 use object::elf::FileHeader32 as FileHeader;
@@ -16,10 +16,11 @@ use rustc_demangle::demangle;
 
 use crate::{
     arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
-    context, cpu_id, interrupt,
+    context, cpu_id,
+    interrupt::{self, InterruptStack},
     memory::KernelMapper,
     sync::CleanLockToken,
-    syscall,
+    syscall::{self, usercopy::UserSliceRo},
 };
 
 /// Required to handle panics
@@ -145,5 +146,54 @@ pub unsafe fn stack_trace() {
             }
             frame = frame_.next();
         }
+    }
+}
+
+/// Get a user stack trace
+#[inline(never)]
+pub unsafe fn user_stack_trace(stack: &InterruptStack) {
+    let mut fp = stack.frame_pointer();
+    let sp = stack.stack_pointer();
+
+    if fp < sp {
+        println!("  <Unable to generate stack while frame pointers omitted>");
+        return;
+    }
+    if fp >= crate::USER_END_OFFSET {
+        return;
+    }
+
+    for _ in 0..64 {
+        if fp == 0 || fp >= crate::USER_END_OFFSET {
+            break;
+        }
+        let rip_addr = fp + size_of::<usize>();
+        let rip = match UserSliceRo::new(rip_addr, mem::size_of::<usize>())
+            .and_then(|x| x.read_usize())
+        {
+            Ok(val) => val,
+            Err(err) => {
+                println!("  <Failed to read RIP 0x{:>016x}>: {}", fp, err);
+                break;
+            }
+        };
+        println!("  FP {:>016x}: PC {:>016x}", fp, rip);
+        if rip == 0 {
+            break;
+        }
+
+        let next_fp =
+            match UserSliceRo::new(fp, mem::size_of::<usize>()).and_then(|x| x.read_usize()) {
+                Ok(val) => val,
+                Err(_err) => break,
+            };
+        if next_fp <= fp {
+            println!(
+                "  <Invalid next frame pointer 0x{:>016x}; stack walk ended>",
+                next_fp
+            );
+            break;
+        }
+        fp = next_fp;
     }
 }

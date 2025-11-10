@@ -1,4 +1,4 @@
-use crate::{memory::ArchIntCtx, syscall::IntRegisters};
+use crate::{memory::ArchIntCtx, panic, syscall::IntRegisters};
 
 use super::super::flags::*;
 
@@ -102,6 +102,12 @@ impl InterruptStack {
         self.iret.cs = (crate::gdt::GDT_USER_CODE << 3) | 3;
         self.iret.ss = (crate::gdt::GDT_USER_DATA << 3) | 3;
     }
+    pub fn frame_pointer(&self) -> usize {
+        self.preserved.rbp
+    }
+    pub fn stack_pointer(&self) -> usize {
+        self.iret.rsp
+    }
     pub fn set_stack_pointer(&mut self, rsp: usize) {
         self.iret.rsp = rsp;
     }
@@ -119,6 +125,13 @@ impl InterruptStack {
         self.iret.dump();
         self.scratch.dump();
         self.preserved.dump();
+    }
+    pub fn trace(&self) {
+        self.dump();
+        unsafe {
+            panic::user_stack_trace(&self);
+            panic::stack_trace();
+        }
     }
     /// Saves all registers to a struct used by the proc:
     /// scheme to read/write registers.

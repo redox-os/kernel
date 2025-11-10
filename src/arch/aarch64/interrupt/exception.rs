@@ -5,7 +5,6 @@ use crate::{
     context::signal::excp_handler,
     exception_stack,
     memory::{ArchIntCtx, GenericPfFlags},
-    panic::stack_trace,
     sync::CleanLockToken,
     syscall::{self, flag::*},
 };
@@ -14,8 +13,7 @@ use super::InterruptStack;
 
 exception_stack!(synchronous_exception_at_el1_with_sp0, |stack| {
     println!("Synchronous exception at EL1 with SP0");
-    stack.dump();
-    stack_trace();
+    stack.trace();
     loop {}
 });
 
@@ -162,8 +160,7 @@ exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
             let far_el1 = far_el1();
             println!("USER FAR_EL1 = 0x{:08x}", far_el1);
         }
-        stack.dump();
-        stack_trace();
+        stack.trace();
         loop {}
     }
 });
@@ -205,8 +202,7 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
                 );
                 println!("FAR_EL1: {:#0x}", far_el1());
                 //crate::debugger::debugger(None);
-                stack.dump();
-                stack_trace();
+                stack.trace();
                 excp_handler(Exception {
                     kind: 0, // TODO
                 });
@@ -217,8 +213,7 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
 
 exception_stack!(unhandled_exception, |stack| {
     println!("Unhandled exception");
-    stack.dump();
-    stack_trace();
+    stack.trace();
     loop {}
 });
 

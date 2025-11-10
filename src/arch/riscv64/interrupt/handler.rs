@@ -1,4 +1,4 @@
-use crate::{memory::ArchIntCtx, syscall::IntRegisters};
+use crate::{memory::ArchIntCtx, panic, syscall::IntRegisters};
 use core::mem::size_of;
 
 #[derive(Default)]
@@ -99,11 +99,14 @@ impl InterruptStack {
             assert!(32 * 8 == size_of::<InterruptStack>());
         }
     }
-    pub fn set_stack_pointer(&mut self, sp: usize) {
-        self.registers.x2 = sp;
+    pub fn frame_pointer(&self) -> usize {
+        self.registers.x8
     }
     pub fn stack_pointer(&self) -> usize {
         self.registers.x2
+    }
+    pub fn set_stack_pointer(&mut self, sp: usize) {
+        self.registers.x2 = sp;
     }
     pub fn set_instr_pointer(&mut self, ip: usize) {
         self.iret.sepc = ip;
@@ -122,6 +125,14 @@ impl InterruptStack {
     pub fn dump(&self) {
         self.iret.dump();
         self.registers.dump();
+    }
+
+    pub fn trace(&self) {
+        self.dump();
+        unsafe {
+            panic::user_stack_trace(&self);
+            panic::stack_trace();
+        }
     }
 
     /// Saves all registers to a struct used by the proc:

@@ -1,4 +1,4 @@
-use crate::syscall::IntRegisters;
+use crate::{panic, syscall::IntRegisters};
 
 #[derive(Default)]
 #[repr(C, packed)]
@@ -120,6 +120,12 @@ pub struct InterruptStack {
 
 impl InterruptStack {
     pub fn init(&mut self) {}
+    pub fn frame_pointer(&self) -> usize {
+        self.preserved.x29
+    }
+    pub fn stack_pointer(&self) -> usize {
+        self.iret.sp_el0
+    }
     pub fn set_stack_pointer(&mut self, sp: usize) {
         self.iret.sp_el0 = sp;
     }
@@ -136,6 +142,13 @@ impl InterruptStack {
         self.iret.dump();
         self.scratch.dump();
         self.preserved.dump();
+    }
+    pub fn trace(&self) {
+        self.dump();
+        unsafe {
+            panic::user_stack_trace(&self);
+            panic::stack_trace();
+        }
     }
 
     /// Saves all registers to a struct used by the proc:

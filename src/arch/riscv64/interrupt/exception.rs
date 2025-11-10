@@ -132,15 +132,14 @@ unsafe fn handle_system_exception(scause: usize, regs: &InterruptStack) {
             "S-mode exception! scause={:#016x}, stval={:#016x}",
             scause, stval
         );
-        regs.dump();
 
         if tp == 0 {
             // Early failure - before misc::init and potentially before RMM init
             // Do not attempt to trace stack because it would probably trap again
-            loop {}
+            regs.dump();
+        } else {
+            regs.trace();
         }
-
-        stack_trace();
         loop {}
     }
 }
