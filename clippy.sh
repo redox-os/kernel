@@ -3,5 +3,5 @@
 set -e
 
 export RUST_TARGET_PATH="${PWD}/targets"
-export RUSTFLAGS="-C soft-float -C debuginfo=2"
+export RUSTFLAGS="-C debuginfo=2"
 cargo clippy --lib --release --target x86_64-unknown-none "$@"
