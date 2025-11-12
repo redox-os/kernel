@@ -185,11 +185,12 @@ pub fn futex(
 
                 let is_empty = if let Some(futexes) = futexes_map.get_mut(&target_physaddr) {
                     let mut i = 0;
+                    let current_addrsp_weak = Arc::downgrade(&current_addrsp);
 
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                     while i < futexes.len() && woken < val {
                         if futexes[i].target_virtaddr != target_virtaddr
-                            || !Arc::downgrade(&current_addrsp).ptr_eq(&futexes[i].addr_space)
+                            || !current_addrsp_weak.ptr_eq(&futexes[i].addr_space)
                         {
                             i += 1;
                             continue;
