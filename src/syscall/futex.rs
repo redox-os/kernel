@@ -3,10 +3,11 @@
 //!
 //! For more information about futexes, please read [this](https://eli.thegreenplace.net/2018/basics-of-futexes/) blog post, and the [futex(2)](http://man7.org/linux/man-pages/man2/futex.2.html) man page
 use alloc::{
-    collections::VecDeque,
     sync::{Arc, Weak},
+    vec::Vec,
 };
 use core::sync::atomic::{AtomicU32, Ordering};
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use rmm::Arch;
 use syscall::EINTR;
 
@@ -30,12 +31,11 @@ use crate::syscall::{
 
 use super::usercopy::UserSlice;
 
-type FutexList = VecDeque<FutexEntry>;
+// Physical address used as key, required if synchronizing across address spaces
+// (necessitates MAP_SHARED since CoW would invalidate this address).
+type FutexList = HashMap<PhysicalAddress, Vec<FutexEntry>>;
 
 pub struct FutexEntry {
-    // Physical address, required if synchronizing across address spaces (necessitates MAP_SHARED
-    // since CoW would invalidate this address).
-    target_physaddr: PhysicalAddress,
     // Virtual address, required if synchronizing across the same address space, if the memory is
     // CoW.
     // TODO: FUTEX_REQUEUE
@@ -50,9 +50,8 @@ pub struct FutexEntry {
 // implement that fully in userspace. Although futex is probably the best API for process-shared
 // POSIX synchronization primitives, a local hash table and wait-for-thread kernel APIs (e.g.
 // lwp_park/lwp_unpark from NetBSD) could be a simpler replacement.
-//
-// TODO: Use an actual hash table.
-static FUTEXES: Mutex<L1, FutexList> = Mutex::new(FutexList::new());
+static FUTEXES: Mutex<L1, FutexList> =
+    Mutex::new(FutexList::with_hasher(DefaultHashBuilder::new()));
 
 fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Option<PhysicalAddress> {
     // TODO: Move this elsewhere!
@@ -156,12 +155,14 @@ pub fn futex(
                     context.block("futex");
                 }
 
-                futexes.push_back(FutexEntry {
-                    target_physaddr,
-                    target_virtaddr,
-                    context_lock,
-                    addr_space: Arc::downgrade(&current_addrsp),
-                });
+                futexes
+                    .entry(target_physaddr)
+                    .or_insert_with(|| Vec::new())
+                    .push(FutexEntry {
+                        target_virtaddr,
+                        context_lock,
+                        addr_space: Arc::downgrade(&current_addrsp),
+                    });
             }
 
             drop(addr_space_guard);
@@ -179,23 +180,31 @@ pub fn futex(
             let mut woken = 0;
 
             {
-                let mut futexes = FUTEXES.lock(token.token());
-                let (futexes, mut token) = futexes.token_split();
+                let mut futexes_map = FUTEXES.lock(token.token());
+                let (futexes_map, mut token) = futexes_map.token_split();
 
-                let mut i = 0;
+                let is_empty = if let Some(futexes) = futexes_map.get_mut(&target_physaddr) {
+                    let mut i = 0;
 
-                // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
-                while i < futexes.len() && woken < val {
-                    if futexes[i].target_physaddr != target_physaddr
-                        && (futexes[i].target_virtaddr != target_virtaddr
-                            || !Arc::downgrade(&current_addrsp).ptr_eq(&futexes[i].addr_space))
-                    {
-                        i += 1;
-                        continue;
+                    // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
+                    while i < futexes.len() && woken < val {
+                        if futexes[i].target_virtaddr != target_virtaddr
+                            || !Arc::downgrade(&current_addrsp).ptr_eq(&futexes[i].addr_space)
+                        {
+                            i += 1;
+                            continue;
+                        }
+                        futexes[i].context_lock.write(token.token()).unblock();
+                        futexes.swap_remove(i);
+                        woken += 1;
                     }
-                    futexes[i].context_lock.write(token.token()).unblock();
-                    futexes.swap_remove_back(i);
-                    woken += 1;
+
+                    futexes.is_empty()
+                } else {
+                    false
+                };
+                if is_empty {
+                    futexes_map.remove(&target_physaddr);
                 }
             }
 
