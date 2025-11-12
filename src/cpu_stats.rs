@@ -1,13 +1,5 @@
 use alloc::{string::String, vec::Vec};
-
-// implemented using cmpxchg8b
-#[cfg(target_arch = "x86")]
-use syscall::sigabi::AtomicU64;
-
-#[cfg(not(target_arch = "x86"))]
-use core::sync::atomic::AtomicU64;
-
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use crate::cpu_set::LogicalCpuId;
 
