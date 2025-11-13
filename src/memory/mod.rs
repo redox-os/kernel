@@ -404,15 +404,29 @@ impl Drop for RaiiFrame {
 // NOTE: init_sections depends on the default initialized value consisting of all zero bytes.
 #[derive(Debug)]
 pub struct PageInfo {
-    /// Stores the reference count to this page, i.e. the number of present page table entries that
-    /// point to this particular frame.
+    /// The RC_USED_NOT_FREE bit marks whether the frame is considered "used" (allocated) or "free"
+    /// (available to allocator). It must crucially be correct at all times, as the allocator can
+    /// look at the bits for siblings when determining whether to merge free p2frames with it to
+    /// form larger p2frames.
     ///
-    /// Bits 0..=N-1 are used for the actual reference count, whereas bit N-1 indicates the page is
-    /// shared if set, and CoW if unset. The flag is not meaningful when the refcount is 0 or 1.
+    /// If the frame is marked "used", the rest of the bits will track reference count and sharing
+    /// mode, where refcount is the number of present page table entries that point to this
+    /// particular frame, or other logical reference owners (such as RaiiFrame). (Unsurprisingly,
+    /// linear mapping of all frames to PHYS_OFFSET does not count.)
+    ///
+    /// With N being the pointer bit width, bits 0..=N-3 store actual reference count, whereas bit
+    /// RC_SHARED_NOT_COW indicates the page is shared if set, and CoW if unset. That flag is not
+    /// meaningful when the refcount is 0 or 1.
+    ///
+    /// If the frame is marked "free", this field stores the order in the sub-page-size bits and
+    /// the frame address of the previous linked page on top of it. The order is the n such that
+    /// this frame represents a p2frame of 2^n pages.
     pub refcount: AtomicUsize,
 
     // TODO: Add one flag indicating whether the page contents is zeroed? Or should this primarily
     // be managed by the memory allocator first?
+    /// This field is unused for "used" pages, and for "free" pages has the same format as
+    /// `refcount` except pointing to the next page in the doubly linked list.
     pub next: AtomicUsize,
 }
 
@@ -775,14 +789,16 @@ impl PageInfo {
     pub fn add_ref(&self, kind: RefKind) -> Result<(), AddRefError> {
         match (self.refcount().expect("cannot add_ref to free frame"), kind) {
             (RefCount::One, RefKind::Cow) => {
-                self.refcount.store(RC_USED_NOT_FREE | 1, Ordering::Relaxed)
+                self.refcount.store(RC_USED_NOT_FREE | 2, Ordering::Relaxed)
             }
             (RefCount::One, RefKind::Shared) => self
                 .refcount
-                .store(RC_USED_NOT_FREE | 1 | RC_SHARED_NOT_COW, Ordering::Relaxed),
+                .store(RC_USED_NOT_FREE | 2 | RC_SHARED_NOT_COW, Ordering::Relaxed),
             (RefCount::Cow(_), RefKind::Cow) | (RefCount::Shared(_), RefKind::Shared) => {
                 let old = self.refcount.fetch_add(1, Ordering::Relaxed);
 
+                // this is overflow-safe as long as the kernel can't be interrupted here, or the
+                // number of hw threads exceeds RC_COUNT_MAX + 1 - RC_MAX
                 if (old & RC_COUNT_MASK) >= RC_MAX {
                     self.refcount.fetch_sub(1, Ordering::Relaxed);
                     return Err(AddRefError::RcOverflow);
@@ -798,15 +814,29 @@ impl PageInfo {
         match self.refcount() {
             None => panic!("refcount was already zero when calling remove_ref!"),
             Some(RefCount::One) => {
-                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | 0, now becomes 0
-                //self.refcount.store(0, Ordering::Relaxed);
+                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | 1, now becomes 0
+                self.refcount.store(0, Ordering::Relaxed);
 
                 None
             }
             Some(RefCount::Cow(_) | RefCount::Shared(_)) => RefCount::from_raw({
                 // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n, now becomes
                 // RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n - 1
-                (self.refcount.fetch_sub(1, Ordering::Relaxed) - 1) | RC_USED_NOT_FREE
+
+                // if the value returned from fetch_sub indicates count==1, the caller is
+                // responsible for freeing (return value will be None as mentioned above)
+                let new_value = self.refcount.fetch_sub(1, Ordering::Relaxed) - 1;
+                assert_ne!(
+                    new_value,
+                    RC_USED_NOT_FREE - 1,
+                    "refcount underflow, allocator will break"
+                );
+                assert_eq!(
+                    new_value & RC_USED_NOT_FREE,
+                    RC_USED_NOT_FREE,
+                    "other malformed refcount"
+                );
+                new_value
             }),
         }
     }
@@ -880,10 +910,17 @@ pub enum RefCount {
 impl RefCount {
     pub fn from_raw(raw: usize) -> Option<Self> {
         if raw & RC_USED_NOT_FREE != RC_USED_NOT_FREE {
+            // Refcount not meaningful for free pages.
             return None;
         }
-        let refcount_minus_one = raw & !(RC_SHARED_NOT_COW | RC_USED_NOT_FREE);
-        let nz_refcount = NonZeroUsize::new(refcount_minus_one + 1).unwrap();
+        let refcount = raw & !(RC_SHARED_NOT_COW | RC_USED_NOT_FREE);
+
+        // Refcount being zero means some other hw thread decreased it from one; hence it would be
+        // very invalid if this caller too, logically owned a reference to it. Reaching zero can for
+        // example occur if two threads simultaneously get Cow(2), then both fetch_sub
+        // simultaneously (meaning both are trying to free something). One of them will then notice
+        // it was the one decreasing from One, hence being responsible to free it.
+        let nz_refcount = NonZeroUsize::new(refcount)?;
 
         Some(if nz_refcount.get() == 1 {
             RefCount::One
@@ -895,9 +932,9 @@ impl RefCount {
     }
     pub fn to_raw(self) -> usize {
         match self {
-            Self::One => 0 | RC_USED_NOT_FREE,
-            Self::Shared(inner) => (inner.get() - 1) | RC_SHARED_NOT_COW | RC_USED_NOT_FREE,
-            Self::Cow(inner) => (inner.get() - 1) | RC_USED_NOT_FREE,
+            Self::One => 1 | RC_USED_NOT_FREE,
+            Self::Shared(inner) => inner.get() | RC_SHARED_NOT_COW | RC_USED_NOT_FREE,
+            Self::Cow(inner) => inner.get() | RC_USED_NOT_FREE,
         }
     }
 }
@@ -922,14 +959,6 @@ pub fn get_page_info(frame: Frame) -> Option<&'static PageInfo> {
     let section = &sections[idx_res.unwrap_or_else(|e| e - 1)];
 
     section.frames.get(frame.offset_from(section.base))
-
-    /*
-    sections
-        .range(..=frame)
-        .next_back()
-        .filter(|(base, section)| frame <= base.next_by(section.frames.len()))
-        .map(|(base, section)| PageInfoHandle { section, idx: frame.offset_from(*base) })
-    */
 }
 
 #[track_caller]
