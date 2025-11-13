@@ -176,6 +176,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
             c,
         ),
         SYS_MPROTECT => format!("mprotect({:#X}, {}, {:?})", b, c, MapFlags::from_bits(d)),
+        SYS_MREMAP => format!("mremap({:#X}, {:#X}, {:#X}, {:#X}, {:#X})", b, c, d, e, f),
         SYS_NANOSLEEP => format!(
             "nanosleep({:?}, ({}, {}))",
             unsafe { read_struct::<TimeSpec>(b) },
