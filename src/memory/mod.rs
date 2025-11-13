@@ -819,25 +819,34 @@ impl PageInfo {
 
                 None
             }
-            Some(RefCount::Cow(_) | RefCount::Shared(_)) => RefCount::from_raw({
-                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n, now becomes
-                // RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n - 1
+            Some(RefCount::Cow(_) | RefCount::Shared(_)) => {
+                let new_parsed_value = RefCount::from_raw({
+                    // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n, now becomes
+                    // RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n - 1
 
-                // if the value returned from fetch_sub indicates count==1, the caller is
-                // responsible for freeing (return value will be None as mentioned above)
-                let new_value = self.refcount.fetch_sub(1, Ordering::Relaxed) - 1;
-                assert_ne!(
-                    new_value,
-                    RC_USED_NOT_FREE - 1,
-                    "refcount underflow, allocator will break"
-                );
-                assert_eq!(
-                    new_value & RC_USED_NOT_FREE,
-                    RC_USED_NOT_FREE,
-                    "other malformed refcount"
-                );
-                new_value
-            }),
+                    // if the value returned from fetch_sub indicates count==1, the caller is
+                    // responsible for freeing (return value will be None as mentioned above)
+                    let new_value = self.refcount.fetch_sub(1, Ordering::Relaxed) - 1;
+                    assert_ne!(
+                        new_value,
+                        RC_USED_NOT_FREE - 1,
+                        "refcount underflow, allocator will break"
+                    );
+                    assert_eq!(
+                        new_value & RC_USED_NOT_FREE,
+                        RC_USED_NOT_FREE,
+                        "other malformed refcount"
+                    );
+                    new_value
+                });
+                if new_parsed_value.is_none() {
+                    // We were the competing thread that decreased the refcount to zero. That means
+                    // we are now responsible for freeing it, but first we should clear
+                    // RC_USED_NOT_FREE.
+                    self.refcount.store(0, Ordering::Relaxed);
+                }
+                new_parsed_value
+            }
         }
     }
     #[track_caller]
