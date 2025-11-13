@@ -145,6 +145,11 @@ pub fn allocate_p2frame_complex(
 
 pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     let mut freelist = FREELIST.lock();
+
+    let initial_info = get_page_info(orig_frame)
+        .unwrap_or_else(|| panic!("missing PageInfo for {orig_frame:?} being freed"));
+    initial_info.refcount.store(0, Ordering::Relaxed);
+
     let mut largest_order = order;
 
     let mut current = orig_frame;
@@ -407,7 +412,9 @@ pub struct PageInfo {
     /// The RC_USED_NOT_FREE bit marks whether the frame is considered "used" (allocated) or "free"
     /// (available to allocator). It must crucially be correct at all times, as the allocator can
     /// look at the bits for siblings when determining whether to merge free p2frames with it to
-    /// form larger p2frames.
+    /// form larger p2frames. Changing RC_USED_NOT_FREE is only allowed if the freelist is locked,
+    /// so that the allocator does not simultaneously free a page causing this page to be a sibling
+    /// to be merged, with potentially unset prev/next.
     ///
     /// If the frame is marked "used", the rest of the bits will track reference count and sharing
     /// mode, where refcount is the number of present page table entries that point to this
@@ -814,39 +821,31 @@ impl PageInfo {
         match self.refcount() {
             None => panic!("refcount was already zero when calling remove_ref!"),
             Some(RefCount::One) => {
-                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | 1, now becomes 0
-                self.refcount.store(0, Ordering::Relaxed);
+                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | 1, now becomes
+                // RC_USED_NOT_FREE
+                self.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
 
                 None
             }
-            Some(RefCount::Cow(_) | RefCount::Shared(_)) => {
-                let new_parsed_value = RefCount::from_raw({
-                    // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n, now becomes
-                    // RC_USED_NOT_FREE | ?RC_SHARED_NOW_COW | n - 1
+            Some(RefCount::Cow(_) | RefCount::Shared(_)) => RefCount::from_raw({
+                // Used to be RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | n, now becomes
+                // RC_USED_NOT_FREE | ?RC_SHARED_NOT_COW | n - 1
 
-                    // if the value returned from fetch_sub indicates count==1, the caller is
-                    // responsible for freeing (return value will be None as mentioned above)
-                    let new_value = self.refcount.fetch_sub(1, Ordering::Relaxed) - 1;
-                    assert_ne!(
-                        new_value,
-                        RC_USED_NOT_FREE - 1,
-                        "refcount underflow, allocator will break"
-                    );
-                    assert_eq!(
-                        new_value & RC_USED_NOT_FREE,
-                        RC_USED_NOT_FREE,
-                        "other malformed refcount"
-                    );
-                    new_value
-                });
-                if new_parsed_value.is_none() {
-                    // We were the competing thread that decreased the refcount to zero. That means
-                    // we are now responsible for freeing it, but first we should clear
-                    // RC_USED_NOT_FREE.
-                    self.refcount.store(0, Ordering::Relaxed);
-                }
-                new_parsed_value
-            }
+                // if the value returned from fetch_sub indicates count==1, the caller is
+                // responsible for freeing (return value will be None as mentioned above)
+                let new_value = self.refcount.fetch_sub(1, Ordering::Relaxed) - 1;
+                assert_ne!(
+                    new_value,
+                    RC_USED_NOT_FREE - 1,
+                    "refcount underflow, allocator will break"
+                );
+                assert_eq!(
+                    new_value & RC_USED_NOT_FREE,
+                    RC_USED_NOT_FREE,
+                    "other malformed refcount"
+                );
+                new_value
+            }),
         }
     }
     #[track_caller]
@@ -975,7 +974,8 @@ fn get_free_alloc_page_info(frame: Frame) -> PageInfoFree<'static> {
     let i = get_page_info(frame).unwrap_or_else(|| {
         panic!("allocator-owned frames need a PageInfo, but none for {frame:?}")
     });
-    i.as_free().unwrap() //.unwrap_or_else(|| panic!("expected frame to be free, but {frame:?} wasn't, in {i:?}"))
+    i.as_free()
+        .unwrap_or_else(|| panic!("expected frame to be free, but {frame:?} wasn't, in {i:?}"))
 }
 
 pub struct Segv;
