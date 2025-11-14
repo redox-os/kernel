@@ -19,7 +19,7 @@ use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult, StrOrBytes};
 
 // TODO: Preallocate a number of scheme IDs, since there can only be *one* root namespace, and
 // therefore only *one* pipe scheme.
-static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static PIPE_NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 // TODO: SLOB?
 static PIPES: RwLock<L1, HashMap<usize, Arc<Pipe>>> =
@@ -29,14 +29,15 @@ const MAX_QUEUE_SIZE: usize = 65536;
 
 // In almost all places where Rust (and LLVM) uses pointers, they are limited to nonnegative isize,
 // so this is fine.
-const WRITE_NOT_READ_BIT: usize = 1 << (usize::BITS - 1);
+const WRITE_NOT_READ_BIT: usize = 1;
 
 fn from_raw_id(id: usize) -> (bool, usize) {
     (id & WRITE_NOT_READ_BIT != 0, id & !WRITE_NOT_READ_BIT)
 }
 
 pub fn pipe(token: &mut CleanLockToken) -> Result<(usize, usize)> {
-    let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    // Bit 0 is used for WRITE_NOT_READ_BIT
+    let id = PIPE_NEXT_ID.fetch_add(2, Ordering::Relaxed);
 
     PIPES.write(token.token()).insert(
         id,
@@ -333,6 +334,10 @@ impl KernelScheme for PipeScheme {
                 return Err(Error::new(EINTR));
             }
         }
+    }
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        //TODO: construct useful path?
+        buf.copy_common_bytes_from_slice("/scheme/pipe/".as_bytes())
     }
     fn kfstat(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<()> {
         buf.copy_exactly(&Stat {

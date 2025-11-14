@@ -630,6 +630,12 @@ impl KernelScheme for ProcScheme {
         let Handle { context, kind } = handle;
         kind.kwriteoff(id, context, buf, token)
     }
+
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        //TODO: construct useful path?
+        buf.copy_common_bytes_from_slice("/scheme/kernel.proc/".as_bytes())
+    }
+
     fn kfstat(&self, id: usize, buffer: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read(token.token());
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;

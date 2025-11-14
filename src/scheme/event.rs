@@ -87,7 +87,7 @@ impl KernelScheme for EventScheme {
     }
 
     fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
-        buf.copy_common_bytes_from_slice(b"event:")
+        buf.copy_common_bytes_from_slice(b"/scheme/event/")
     }
 
     fn fevent(

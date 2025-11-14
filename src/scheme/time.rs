@@ -148,7 +148,7 @@ impl KernelScheme for TimeScheme {
             .get(&id)
             .ok_or(Error::new(EBADF))?;
 
-        let scheme_path = format!("time:{}", clock).into_bytes();
+        let scheme_path = format!("/scheme/time/{}", clock).into_bytes();
         buf.copy_common_bytes_from_slice(&scheme_path)
     }
 }

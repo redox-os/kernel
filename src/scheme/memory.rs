@@ -295,6 +295,10 @@ impl KernelScheme for MemoryScheme {
             HandleTy::Translation => Err(Error::new(EOPNOTSUPP)),
         }
     }
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        //TODO: construct useful path?
+        buf.copy_common_bytes_from_slice("/scheme/memory/".as_bytes())
+    }
     fn kfstatvfs(&self, _file: usize, dst: UserSliceWo, _token: &mut CleanLockToken) -> Result<()> {
         let used = used_frames() as u64;
         let free = free_frames() as u64;
