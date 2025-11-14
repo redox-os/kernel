@@ -34,7 +34,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
         for (id, name, fs) in rows.iter() {
             let _ = writeln!(string, "{}: {}", id, name);
 
-            for (fd, f) in fs.iter().enumerate() {
+            for (fd, f) in fs.enumerate() {
                 let file = match *f {
                     None => continue,
                     Some(ref file) => file.clone(),
@@ -44,8 +44,9 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
 
                 let _ = write!(
                     string,
-                    "  {:>4}: {:>8} {:>8} {:>08X}: ",
-                    fd,
+                    "{} {:>4}: {:>8} {:>8} {:>08X}: ",
+                    if fd & syscall::UPPER_FDTBL_TAG == 0 { " " } else { "U" },
+                    fd & !syscall::UPPER_FDTBL_TAG,
                     description.scheme.get(),
                     description.number,
                     description.flags
