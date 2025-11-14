@@ -290,6 +290,10 @@ impl KernelScheme for AcpiScheme {
         }
         Ok(buf.finalize())
     }
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        //TODO: construct useful path?
+        buf.copy_common_bytes_from_slice("/scheme/kernel.acpi/".as_bytes())
+    }
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read(token.token());
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
