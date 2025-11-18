@@ -265,6 +265,7 @@ pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
 fn duplicate_file(
     fd: FileHandle,
     user_buf: UserSliceRo,
+    cloexec: bool,
     token: &mut CleanLockToken,
 ) -> Result<FileDescriptor> {
     let (caller_ctx, file) = {
@@ -279,7 +280,7 @@ fn duplicate_file(
     if user_buf.is_empty() {
         Ok(FileDescriptor {
             description: Arc::clone(&file.description),
-            cloexec: false,
+            cloexec,
         })
     } else {
         let description = { *file.description.read() };
@@ -306,14 +307,14 @@ fn duplicate_file(
 
         Ok(FileDescriptor {
             description: new_description,
-            cloexec: false,
+            cloexec,
         })
     }
 }
 
 /// Duplicate file descriptor
 pub fn dup(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<FileHandle> {
-    let new_file = duplicate_file(fd, buf, token)?;
+    let new_file = duplicate_file(fd, buf, false, token)?;
 
     context::current()
         .read(token.token())
@@ -332,7 +333,7 @@ pub fn dup2(
         Ok(new_fd)
     } else {
         let _ = close(new_fd, token);
-        let new_file = duplicate_file(fd, buf, token)?;
+        let new_file = duplicate_file(fd, buf, false, token)?;
 
         let context_ref = context::current();
         let context = context_ref.read(token.token());
@@ -526,9 +527,9 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
     let description = file.description.read();
 
-    if cmd == F_DUPFD {
+    if cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC {
         // Not in match because 'files' cannot be locked
-        let new_file = duplicate_file(fd, UserSlice::empty(), token)?;
+        let new_file = duplicate_file(fd, UserSlice::empty(), cmd == F_DUPFD_CLOEXEC, token)?;
 
         let context_lock = context::current();
         let context = context_lock.read(token.token());
