@@ -153,12 +153,13 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
                 }
             }
 
-            //TODO: support this on any arch
-            #[cfg(target_arch = "aarch64")]
-            spcr::Spcr::init();
             // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
             // to initialize enumerated processors to userspace?
             Madt::init();
+            //TODO: support this on any arch
+            // SPCR must be initialized after MADT for interrupt controllers
+            #[cfg(target_arch = "aarch64")]
+            spcr::Spcr::init();
             // TODO: Let userspace setup HPET, and then provide an interface to specify which timer to
             // use?
             Hpet::init();
