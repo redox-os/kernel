@@ -184,7 +184,7 @@ fn kmain(bootstrap: Bootstrap) -> ! {
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
 
-    info!("BSP: {} CPUs", cpu_count());
+    debug!("BSP: {} CPUs", cpu_count());
     debug!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
 
     BOOTSTRAP.call_once(|| bootstrap);
@@ -221,7 +221,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
     if !cfg!(feature = "multi_core") {
-        info!("AP {}: Disabled", cpu_id);
+        debug!("AP {}: Disabled", cpu_id);
 
         loop {
             unsafe {
@@ -233,7 +233,7 @@ fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
 
     context::init(&mut token);
 
-    info!("AP {}", cpu_id);
+    debug!("AP {}", cpu_id);
 
     profiling::ready_for_profiling();
 
