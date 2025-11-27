@@ -14,7 +14,10 @@ mod clint;
 pub fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> {
     if ic_str.contains("riscv,cpu-intc") {
         Some(Box::new(hlic::Hlic::new()))
-    } else if ic_str.contains("riscv,plic0") || ic_str.contains("sifive,plic-1.0.0") {
+    } else if ic_str.contains("riscv,plic0")
+        || ic_str.contains("sifive,plic-1.0.0")
+        || ic_str.contains("sifive,fu540-c000-plic")
+    {
         Some(Box::new(plic::Plic::new()))
     } else {
         warn!("no driver for interrupt controller {:?}", ic_str);
@@ -35,7 +38,7 @@ pub unsafe fn init_clint(fdt: &Fdt) {
         .compatible()
         .unwrap()
         .all()
-        .find(|x| ((*x).eq("riscv,clint0")))
+        .find(|x| ((*x).eq("sifive,clint0")))
         .is_some());
 
     let clint = Clint::new(clock_freq, &clint_node);
