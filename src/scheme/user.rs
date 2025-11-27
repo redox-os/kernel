@@ -27,7 +27,7 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        BorrowedHtBuf, ContextLock, Status,
+        BorrowedHtBuf, ContextLock, PreemptGuard, Status,
     },
     event,
     memory::Frame,
@@ -311,7 +311,8 @@ impl UserInner {
             // need to ensure that the following operations are atomic as
             // otherwise the process will be blocked forever.
             let current_context = context::current();
-            current_context.write(token.token()).is_preemptable = false;
+            let mut preempt = PreemptGuard::new(&current_context, token);
+            let token = preempt.token();
             current_context
                 .write(token.token())
                 .block("UserInner::call");
@@ -331,7 +332,6 @@ impl UserInner {
             self.todo.send(sqe, token);
 
             event::trigger(self.root_id, self.handle_id, EVENT_READ);
-            current_context.write(token.token()).is_preemptable = true;
         }
 
         loop {
@@ -418,7 +418,8 @@ impl UserInner {
                             // We do not want to preempt between sending the
                             // cancellation and blocking again where we might
                             // miss a wakeup.
-                            current_context.write(token.token()).is_preemptable = false;
+                            let mut preempt = PreemptGuard::new(&current_context, token);
+                            let token = preempt.token();
 
                             if canceling {
                                 self.todo.send(
@@ -447,7 +448,6 @@ impl UserInner {
                                 .write(token.token())
                                 .block("UserInner::call (spurious wakeup)");
                             drop(states);
-                            current_context.write(token.token()).is_preemptable = true;
                         }
 
                         // invalid state
