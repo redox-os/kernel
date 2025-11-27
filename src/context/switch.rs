@@ -165,6 +165,10 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         // We are careful not to lock this context twice
         let prev_context_guard = unsafe { prev_context_lock.write_arc() };
 
+        if !prev_context_guard.is_preemptable {
+            return SwitchResult::AllContextsIdle;
+        }
+
         let idle_context = percpu.switch_internals.idle_context();
 
         // Stateful flag used to skip the idle process the first time it shows up.
