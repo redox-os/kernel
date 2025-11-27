@@ -143,6 +143,8 @@ pub struct Context {
     pub euid: u32,
     pub egid: u32,
     pub pid: usize,
+
+    pub is_preemptable: bool,
 }
 
 #[derive(Debug)]
@@ -197,6 +199,8 @@ impl Context {
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
+
+            is_preemptable: true,
         };
         cpu_stats::add_context();
         Ok(this)

@@ -305,10 +305,16 @@ impl UserInner {
         }
 
         {
+            // Disable preemption to avoid context switches between setting the
+            // process state and sending the scheme request. The process is made
+            // runnable again when the scheme response is received. Hence, we
+            // need to ensure that the following operations are atomic as
+            // otherwise the process will be blocked forever.
             let current_context = context::current();
+            current_context.write(token.token()).is_preemptable = false;
             current_context
                 .write(token.token())
-                .block("UserScheme::call");
+                .block("UserInner::call");
             {
                 let mut states = self.states.lock();
                 states[sqe.tag as usize] = State::Waiting {
@@ -322,10 +328,11 @@ impl UserInner {
                     callee_responsible: PageSpan::empty(),
                 };
             }
-        }
-        self.todo.send(sqe, token);
+            self.todo.send(sqe, token);
 
-        event::trigger(self.root_id, self.handle_id, EVENT_READ);
+            event::trigger(self.root_id, self.handle_id, EVENT_READ);
+            current_context.write(token.token()).is_preemptable = true;
+        }
 
         loop {
             context::switch(token);
@@ -366,12 +373,17 @@ impl UserInner {
                                 context,
                                 fds,
                             };
-                            drop(states);
+
                             maybe_eintr?;
 
                             context::current()
                                 .write(token.token())
-                                .block("UserInner::call");
+                                .block("UserInner::call (woken up after cancelation request)");
+
+                            // We do not want to drop the lock before blocking
+                            // as if we get preempted in between we might miss a
+                            // wakeup.
+                            drop(states);
                         }
                         // spurious wakeup
                         State::Waiting {
@@ -381,30 +393,61 @@ impl UserInner {
                             mut callee_responsible,
                         } => {
                             let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                            let current_context = context::current();
+                            // Request is interrupted if a signal arrived. Send
+                            // a cancellation to the scheme if we are not being
+                            // killed.
+                            // (?) In what other cases could we be interrupted
+                            // here? It cannot be a preemption since the process
+                            // was BLOCKED before.
+                            let canceling = current_context
+                                .write(token.token())
+                                .sigcontrol()
+                                .map(|(_, ctl, _)| ctl.pending.load(Ordering::SeqCst) > 0)
+                                .unwrap_or_default();
+
                             *o = State::Waiting {
-                                canceling: true,
+                                canceling,
                                 fds,
                                 context,
                                 callee_responsible,
                             };
 
-                            drop(states);
                             maybe_eintr?;
 
-                            // TODO: Is this too dangerous when the states lock is held?
-                            self.todo.send(
-                                Sqe {
-                                    opcode: Opcode::Cancel as u8,
-                                    sqe_flags: SqeFlags::ONEWAY,
-                                    tag: sqe.tag,
-                                    ..Default::default()
-                                },
-                                token,
-                            );
-                            event::trigger(self.root_id, self.handle_id, EVENT_READ);
+                            // We do not want to preempt between sending the
+                            // cancellation and blocking again where we might
+                            // miss a wakeup.
+                            current_context.write(token.token()).is_preemptable = false;
+
+                            if canceling {
+                                self.todo.send(
+                                    Sqe {
+                                        opcode: Opcode::Cancel as u8,
+                                        sqe_flags: SqeFlags::ONEWAY,
+                                        tag: sqe.tag,
+                                        ..Default::default()
+                                    },
+                                    token,
+                                );
+                                event::trigger(self.root_id, self.handle_id, EVENT_READ);
+                            }
+
+                            // 1. If cancellation was requested and arrived
+                            // before the scheme processed the request, an
+                            // acknowledgement will be sent back after the
+                            // cancellation is processed and we will be woken up
+                            // again. State will be State::Responded then.
+                            //
+                            // 2. If cancellation was requested but the scheme
+                            // already processed the request, we will receive
+                            // the actual response next and woken up again.
+                            // State will be State::Responded then.
                             context::current()
                                 .write(token.token())
-                                .block("UserInner::call");
+                                .block("UserInner::call (spurious wakeup)");
+                            drop(states);
+                            current_context.write(token.token()).is_preemptable = true;
                         }
 
                         // invalid state

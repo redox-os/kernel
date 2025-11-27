@@ -63,7 +63,7 @@ use core::marker::PhantomData;
 /// hierarchy either RA or RB must be on a level that the other.
 ///
 /// At some point in time we would want Level to be replaced by usize, however
-/// with current cont generics (rust 1.55), we cannot compare const generic arguments
+/// with current const generics (rust 1.55), we cannot compare const generic arguments
 /// so we are left with this mess.
 pub trait Level {}
 
