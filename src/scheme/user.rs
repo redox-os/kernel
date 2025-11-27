@@ -1186,8 +1186,8 @@ impl UserInner {
 
                         match context.upgrade() {
                             Some(context) => {
-                                context.write(token.token()).unblock();
                                 *o = State::Responded(response);
+                                context.write(token.token()).unblock();
                             }
                             _ => {
                                 states.remove(tag as usize);
