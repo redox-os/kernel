@@ -394,20 +394,15 @@ impl UserInner {
                         } => {
                             let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
                             let current_context = context::current();
-                            // Request is interrupted if a signal arrived. Send
-                            // a cancellation to the scheme if we are not being
-                            // killed.
-                            // (?) In what other cases could we be interrupted
-                            // here? It cannot be a preemption since the process
-                            // was BLOCKED before.
-                            let canceling = current_context
-                                .write(token.token())
-                                .sigcontrol()
-                                .map(|(_, ctl, _)| ctl.pending.load(Ordering::SeqCst) > 0)
-                                .unwrap_or_default();
 
                             *o = State::Waiting {
-                                canceling,
+                                // Currently we treat all spurious wakeups to have the same behavior
+                                // as signals (i.e., we send a cancellation request). It is not something
+                                // that should happen, but it certainly can happen, for example if a context
+                                // is awoken through its thread handle without setting any sig bits, or if the
+                                // caller clears its own sig bits. If it actually is a signal, then it is the
+                                // intended behavior.
+                                canceling: true,
                                 fds,
                                 context,
                                 callee_responsible,
@@ -421,18 +416,16 @@ impl UserInner {
                             let mut preempt = PreemptGuard::new(&current_context, token);
                             let token = preempt.token();
 
-                            if canceling {
-                                self.todo.send(
-                                    Sqe {
-                                        opcode: Opcode::Cancel as u8,
-                                        sqe_flags: SqeFlags::ONEWAY,
-                                        tag: sqe.tag,
-                                        ..Default::default()
-                                    },
-                                    token,
-                                );
-                                event::trigger(self.root_id, self.handle_id, EVENT_READ);
-                            }
+                            self.todo.send(
+                                Sqe {
+                                    opcode: Opcode::Cancel as u8,
+                                    sqe_flags: SqeFlags::ONEWAY,
+                                    tag: sqe.tag,
+                                    ..Default::default()
+                                },
+                                token,
+                            );
+                            event::trigger(self.root_id, self.handle_id, EVENT_READ);
 
                             // 1. If cancellation was requested and arrived
                             // before the scheme processed the request, an
