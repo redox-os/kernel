@@ -144,7 +144,8 @@ pub struct Context {
     pub egid: u32,
     pub pid: usize,
 
-    pub is_preemptable: bool,
+    // Use PreemptGuard
+    pub(super) is_preemptable: bool,
 }
 
 #[derive(Debug)]

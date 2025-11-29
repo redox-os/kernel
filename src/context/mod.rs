@@ -174,3 +174,37 @@ pub fn spawn(
     }
     Ok(context_lock)
 }
+
+/// A guard that disables preemption for a context while it is alive.
+///
+/// This guard is used to ensure that a sequence of operations is atomic with respect to preemption.
+/// It automatically re-enables preemption when dropped.
+///
+/// Because the guard must hold a mutable reference to the `CleanLockToken` to re-enable preemption
+/// in `Drop`, it consumes the token. The `token()` method allows re-borrowing the token for use
+/// within the guard's scope.
+pub struct PreemptGuard<'a> {
+    context: &'a ContextLock,
+    token: &'a mut CleanLockToken,
+}
+
+impl<'a> PreemptGuard<'a> {
+    pub fn new(context: &'a ContextLock, token: &'a mut CleanLockToken) -> PreemptGuard<'a> {
+        context.write(token.token()).is_preemptable = false;
+        PreemptGuard { context, token }
+    }
+
+    /// Get a mutable reference to the underlying `CleanLockToken`.
+    ///
+    /// This is necessary because the `PreemptGuard` owns the mutable reference to the token
+    /// (to use it in `Drop`), so we cannot use the original `token` variable while the guard exists.
+    pub fn token(&mut self) -> &mut CleanLockToken {
+        self.token
+    }
+}
+
+impl Drop for PreemptGuard<'_> {
+    fn drop(&mut self) {
+        self.context.write(self.token.token()).is_preemptable = true;
+    }
+}
