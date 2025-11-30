@@ -1,4 +1,3 @@
-use rustc_cfg::Cfg;
 use std::{env, path::Path, process::Command};
 use toml::Table;
 
@@ -53,10 +52,9 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dtb)");
 
     let out_dir = env::var("OUT_DIR").unwrap();
-    let cfg = Cfg::of(env::var("TARGET").unwrap().as_str()).unwrap();
-    let arch_str = cfg.target_arch.as_str();
+    let arch_str = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
-    match arch_str {
+    match &*arch_str {
         "aarch64" => {
             println!("cargo::rustc-cfg=dtb");
         }
@@ -96,5 +94,5 @@ fn main() {
         _ => (),
     }
 
-    let _ = parse_kconfig(arch_str);
+    let _ = parse_kconfig(&*arch_str);
 }

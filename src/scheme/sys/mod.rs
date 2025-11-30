@@ -40,15 +40,10 @@ mod exe;
 mod iostat;
 mod irq;
 mod log;
-// mod scheme;
-// mod scheme_num;
+mod stat;
 mod syscall;
 mod uname;
 
-#[cfg(feature = "sys_stat")]
-mod stat;
-
-#[derive(PartialEq)]
 enum Handle {
     TopLevel,
     Resource {
@@ -87,7 +82,6 @@ const FILES: &[(&str, Kind)] = &[
     ("env", Rd(|_| Ok(Vec::from(crate::init_env())))),
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     ("spurious_irq", Rd(interrupt::irq::spurious_irq_resource)),
-    #[cfg(feature = "sys_stat")]
     ("stat", Rd(stat::resource)),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
     /*

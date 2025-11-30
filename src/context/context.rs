@@ -145,6 +145,9 @@ pub struct Context {
     pub euid: u32,
     pub egid: u32,
     pub pid: usize,
+
+    // Use PreemptGuard
+    pub(super) is_preemptable: bool,
 }
 
 #[derive(Debug)]
@@ -199,6 +202,8 @@ impl Context {
 
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
+
+            is_preemptable: true,
         };
         cpu_stats::add_context();
         Ok(this)
@@ -897,6 +902,15 @@ impl FdTbl {
 }
 
 impl FdTbl {
+    pub fn enumerate(&self) -> impl Iterator<Item = (usize, &Option<FileDescriptor>)> {
+        self.posix_fdtbl.iter().enumerate().chain(
+            self.upper_fdtbl
+                .iter()
+                .enumerate()
+                .map(|(i, fd)| (i | UPPER_FDTBL_TAG, fd)),
+        )
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
         self.posix_fdtbl.iter().chain(self.upper_fdtbl.iter())
     }

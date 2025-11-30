@@ -88,3 +88,12 @@ pub unsafe fn init(fdt: &Fdt) {
         COM1.lock().enable_irq();
     }
 }
+
+pub unsafe fn init_acpi(irq: u32) {
+    //TODO: what should chip index be?
+    let virq = IRQ_CHIP.irq_chip_list.chips[0].ic.irq_to_virq(irq).unwrap();
+    info!("serial_port virq = {}", virq);
+    register_irq(virq as u32, Box::new(Com1Irq {}));
+    IRQ_CHIP.irq_enable(virq as u32);
+    COM1.lock().enable_irq();
+}

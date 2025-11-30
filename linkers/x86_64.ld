@@ -23,9 +23,6 @@ SECTIONS {
     .text ALIGN(4K) : AT(ADDR(.text) - KERNEL_OFFSET) {
         __text_start = .;
         *(.text*)
-        __usercopy_start = .;
-        *(.usercopy-fns)
-        __usercopy_end = .;
     }
 
     .rodata ALIGN(4K) : AT(ADDR(.rodata) - KERNEL_OFFSET) {
@@ -46,11 +43,8 @@ SECTIONS {
 
     .data ALIGN(4K) : AT(ADDR(.data) - KERNEL_OFFSET) {
         __rodata_end = .;
-        __data_start = .;
         *(.data*)
         . = ALIGN(4K);
-        __data_end = .;
-        __bss_start = .;
         *(.bss*)
     }
 

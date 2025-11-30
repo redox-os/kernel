@@ -26,7 +26,7 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        BorrowedHtBuf, ContextLock, Status,
+        BorrowedHtBuf, ContextLock, PreemptGuard, Status,
     },
     event,
     memory::Frame,
@@ -297,10 +297,17 @@ impl UserInner {
         }
 
         {
+            // Disable preemption to avoid context switches between setting the
+            // process state and sending the scheme request. The process is made
+            // runnable again when the scheme response is received. Hence, we
+            // need to ensure that the following operations are atomic as
+            // otherwise the process will be blocked forever.
             let current_context = context::current();
+            let mut preempt = PreemptGuard::new(&current_context, token);
+            let token = preempt.token();
             current_context
                 .write(token.token())
-                .block("UserScheme::call");
+                .block("UserInner::call");
             {
                 let mut states = self.states.lock();
                 states[sqe.tag as usize] = State::Waiting {
@@ -314,10 +321,10 @@ impl UserInner {
                     callee_responsible: PageSpan::empty(),
                 };
             }
-        }
-        self.todo.send(sqe, token);
+            self.todo.send(sqe, token);
 
-        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+        }
 
         loop {
             context::switch(token);
@@ -358,12 +365,17 @@ impl UserInner {
                                 context,
                                 fds,
                             };
-                            drop(states);
+
                             maybe_eintr?;
 
                             context::current()
                                 .write(token.token())
-                                .block("UserInner::call");
+                                .block("UserInner::call (woken up after cancelation request)");
+
+                            // We do not want to drop the lock before blocking
+                            // as if we get preempted in between we might miss a
+                            // wakeup.
+                            drop(states);
                         }
                         // spurious wakeup
                         State::Waiting {
@@ -373,17 +385,29 @@ impl UserInner {
                             mut callee_responsible,
                         } => {
                             let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                            let current_context = context::current();
+
                             *o = State::Waiting {
+                                // Currently we treat all spurious wakeups to have the same behavior
+                                // as signals (i.e., we send a cancellation request). It is not something
+                                // that should happen, but it certainly can happen, for example if a context
+                                // is awoken through its thread handle without setting any sig bits, or if the
+                                // caller clears its own sig bits. If it actually is a signal, then it is the
+                                // intended behavior.
                                 canceling: true,
                                 fds,
                                 context,
                                 callee_responsible,
                             };
 
-                            drop(states);
                             maybe_eintr?;
 
-                            // TODO: Is this too dangerous when the states lock is held?
+                            // We do not want to preempt between sending the
+                            // cancellation and blocking again where we might
+                            // miss a wakeup.
+                            let mut preempt = PreemptGuard::new(&current_context, token);
+                            let token = preempt.token();
+
                             self.todo.send(
                                 Sqe {
                                     opcode: Opcode::Cancel as u8,
@@ -394,9 +418,21 @@ impl UserInner {
                                 token,
                             );
                             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+
+                            // 1. If cancellation was requested and arrived
+                            // before the scheme processed the request, an
+                            // acknowledgement will be sent back after the
+                            // cancellation is processed and we will be woken up
+                            // again. State will be State::Responded then.
+                            //
+                            // 2. If cancellation was requested but the scheme
+                            // already processed the request, we will receive
+                            // the actual response next and woken up again.
+                            // State will be State::Responded then.
                             context::current()
                                 .write(token.token())
-                                .block("UserInner::call");
+                                .block("UserInner::call (spurious wakeup)");
+                            drop(states);
                         }
 
                         // invalid state
@@ -1135,8 +1171,8 @@ impl UserInner {
 
                         match context.upgrade() {
                             Some(context) => {
-                                context.write(token.token()).unblock();
                                 *o = State::Responded(response);
+                                context.write(token.token()).unblock();
                             }
                             _ => {
                                 states.remove(tag as usize);

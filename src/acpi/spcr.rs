@@ -8,6 +8,12 @@ use crate::{
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
 
+const INTERRUPT_TYPE_8259: u8 = 1 << 0;
+const INTERRUPT_TYPE_APIC: u8 = 1 << 1;
+const INTERRUPT_TYPE_SAPIC: u8 = 1 << 2;
+const INTERRUPT_TYPE_GIC: u8 = 1 << 3;
+const INTERRUPT_TYPE_PLIC: u8 = 1 << 4;
+
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
 pub struct Spcr {
@@ -78,7 +84,14 @@ impl Spcr {
                             )
                         };
                         let serial_port = uart_pl011::SerialPort::new(virt.data(), false);
-                        *COM1.lock() = SerialKind::Pl011(serial_port)
+                        *COM1.lock() = SerialKind::Pl011(serial_port);
+                        //TODO: enable IRQ on more platforms and interrupt types
+                        if (spcr.interrupt_type & INTERRUPT_TYPE_GIC) == INTERRUPT_TYPE_GIC {
+                            #[cfg(target_arch = "aarch64")]
+                            unsafe {
+                                crate::device::serial::init_acpi(spcr.gsiv);
+                            }
+                        }
                     } else {
                         warn!(
                             "SPCR unsuppoted address for PL011 {:#x?}",

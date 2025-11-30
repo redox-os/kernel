@@ -1,8 +1,5 @@
 pub use crate::arch::x86_shared::*;
 
-#[macro_use]
-pub mod macros;
-
 /// Constants like memory locations
 pub mod consts;
 
@@ -17,10 +14,11 @@ pub mod flags {
 }
 
 #[unsafe(naked)]
-#[unsafe(link_section = ".usercopy-fns")]
 pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -> u8 {
     core::arch::naked_asm!(
         "
+    .global __usercopy_start
+    __usercopy_start:
         push edi
         push esi
 
@@ -34,6 +32,8 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
 
         xor eax, eax
         ret
+    .global __usercopy_end
+    __usercopy_end:
     "
     );
 }

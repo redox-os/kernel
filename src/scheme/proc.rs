@@ -338,11 +338,8 @@ impl ProcScheme {
                     use core::fmt::Write;
 
                     let mut data = String::new();
-                    // Only the posix file table is targeted.
                     for index in filetable
                         .read()
-                        .posix_fdtbl
-                        .iter()
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
                     {
@@ -626,6 +623,12 @@ impl KernelScheme for ProcScheme {
         let Handle { context, kind } = handle;
         kind.kwriteoff(id, context, buf, token)
     }
+
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        //TODO: construct useful path?
+        buf.copy_common_bytes_from_slice("/scheme/kernel.proc/".as_bytes())
+    }
+
     fn kfstat(&self, id: usize, buffer: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read(token.token());
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
@@ -725,8 +728,7 @@ impl KernelScheme for ProcScheme {
                     }
                     let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
-                    let new_filetable = Arc::try_new(spin::RwLock::new(filetable.read().clone()))
-                        .map_err(|_| Error::new(ENOMEM))?;
+                    let new_filetable = Arc::new(spin::RwLock::new(filetable.read().clone()));
 
                     handle(
                         Handle {

@@ -134,7 +134,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Setup kernel heap
             allocator::init();
 
-            #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
             crate::profiling::init();
 
             // Activate memory logging
@@ -225,7 +224,6 @@ unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {
             // Initialize paging
             paging::init();
 
-            #[cfg(all(target_arch = "x86_64", feature = "profiling"))]
             crate::profiling::init();
 
             #[cfg(target_arch = "x86_64")]

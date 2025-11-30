@@ -88,8 +88,8 @@ impl Session {
             .as_ref()?
             .upgrade()
     }
-    pub fn try_new(file_id: usize) -> Result<Arc<Session>> {
-        Arc::try_new(Session {
+    pub fn new(file_id: usize) -> Arc<Session> {
+        Arc::new(Session {
             data: Mutex::new(SessionData {
                 breakpoint: None,
                 events: VecDeque::new(),
@@ -98,7 +98,6 @@ impl Session {
             tracee: WaitCondition::new(),
             tracer: WaitCondition::new(),
         })
-        .map_err(|_| Error::new(ENOMEM))
     }
 }
 

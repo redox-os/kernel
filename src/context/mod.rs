@@ -4,7 +4,6 @@
 
 use alloc::{collections::BTreeSet, sync::Arc};
 use core::num::NonZeroUsize;
-use syscall::ENOMEM;
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -15,7 +14,7 @@ use crate::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
         L0, L1, L2,
     },
-    syscall::error::{Error, Result},
+    syscall::error::Result,
 };
 
 use self::context::Kstack;
@@ -159,8 +158,7 @@ pub fn spawn(
 ) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let context_lock = Arc::try_new(ContextLock::new(Context::new(owner_proc_id)?))
-        .map_err(|_| Error::new(ENOMEM))?;
+    let context_lock = Arc::new(ContextLock::new(Context::new(owner_proc_id)?));
 
     contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
 
@@ -175,4 +173,38 @@ pub fn spawn(
         context.userspace = userspace_allowed;
     }
     Ok(context_lock)
+}
+
+/// A guard that disables preemption for a context while it is alive.
+///
+/// This guard is used to ensure that a sequence of operations is atomic with respect to preemption.
+/// It automatically re-enables preemption when dropped.
+///
+/// Because the guard must hold a mutable reference to the `CleanLockToken` to re-enable preemption
+/// in `Drop`, it consumes the token. The `token()` method allows re-borrowing the token for use
+/// within the guard's scope.
+pub struct PreemptGuard<'a> {
+    context: &'a ContextLock,
+    token: &'a mut CleanLockToken,
+}
+
+impl<'a> PreemptGuard<'a> {
+    pub fn new(context: &'a ContextLock, token: &'a mut CleanLockToken) -> PreemptGuard<'a> {
+        context.write(token.token()).is_preemptable = false;
+        PreemptGuard { context, token }
+    }
+
+    /// Get a mutable reference to the underlying `CleanLockToken`.
+    ///
+    /// This is necessary because the `PreemptGuard` owns the mutable reference to the token
+    /// (to use it in `Drop`), so we cannot use the original `token` variable while the guard exists.
+    pub fn token(&mut self) -> &mut CleanLockToken {
+        self.token
+    }
+}
+
+impl Drop for PreemptGuard<'_> {
+    fn drop(&mut self) {
+        self.context.write(self.token.token()).is_preemptable = true;
+    }
 }
