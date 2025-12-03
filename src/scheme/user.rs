@@ -817,7 +817,6 @@ impl UserInner {
             id: u64::from(sqe.tag) + 1,
             pid: sqe.caller as usize,
             a: match opc {
-                Opcode::Open => SYS_OPEN,
                 Opcode::Close => SYS_CLOSE,
                 Opcode::Dup => SYS_DUP,
                 Opcode::Read => SYS_READ,
