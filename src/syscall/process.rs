@@ -260,6 +260,6 @@ pub fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) ->
             },
             syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
         )
-        .expect("failed to create pipe scheme")
+        .expect("failed to insert fd to current context")
         .get()
 }
