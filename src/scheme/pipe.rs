@@ -83,7 +83,7 @@ impl PipeScheme {
 
 impl KernelScheme for PipeScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = PIPE_NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let id = PIPE_NEXT_ID.fetch_add(2, Ordering::Relaxed);
         PIPES.write(token.token()).insert(id, Handle::SchemeRoot);
         Ok(id)
     }
