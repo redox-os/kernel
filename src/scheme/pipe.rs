@@ -186,12 +186,12 @@ impl KernelScheme for PipeScheme {
         {
             let guard = PIPES.read(token.token());
             if let Some(Handle::SchemeRoot) = guard.get(&key) {
+                println!("open on scheme root: {}", key)
             } else if let Some(Handle::Pipe(pipe_arc)) = guard.get(&key) {
                 let pipe = Arc::clone(pipe_arc);
                 drop(guard);
 
-                let buf = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-                if buf == "write" {
+                if user_buf.as_bytes() == b"write" {
                     return Err(Error::new(EINVAL));
                 }
 
