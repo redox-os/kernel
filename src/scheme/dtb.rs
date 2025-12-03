@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::Once;
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 use crate::{
     dtb::DTB_BINARY,
     scheme::InternalFlags,
@@ -72,7 +72,7 @@ impl KernelScheme for DtbScheme {
         user_buf: StrOrBytes,
         _flags: usize,
         _fcntl_flags: u32,
-        ctx: CallerCtx,
+        _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if !matches!(
@@ -83,7 +83,7 @@ impl KernelScheme for DtbScheme {
                 .kind,
             HandleKind::SchemeRoot
         ) {
-            return Err(Error::new(EPERM));
+            return Err(Error::new(EACCES));
         }
 
         let path = user_buf

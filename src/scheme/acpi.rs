@@ -23,9 +23,7 @@ use crate::{
 
 use crate::syscall::{
     data::Stat,
-    error::{
-        Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EPERM, EROFS,
-    },
+    error::{Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS},
     flag::{
         EventFlags, EVENT_READ, MODE_CHR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY,
         O_EXCL, O_RDONLY, O_STAT, O_SYMLINK,
@@ -145,7 +143,7 @@ impl KernelScheme for AcpiScheme {
                 .kind,
             HandleKind::SchemeRoot
         ) {
-            return Err(Error::new(EPERM));
+            return Err(Error::new(EACCES));
         }
 
         let path = user_buf

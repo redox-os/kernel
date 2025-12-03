@@ -327,6 +327,10 @@ impl KernelScheme for SchemeList {
         ))
     }
 
+    fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
+        buf.copy_common_bytes_from_slice("/scheme".as_bytes())
+    }
+
     fn fevent(
         &self,
         id: usize,

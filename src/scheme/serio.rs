@@ -77,8 +77,8 @@ impl KernelScheme for SerioScheme {
             let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-            if handle.kind != HandleKind::SchemeRoot {
-                return Err(Error::new(ENOTDIR));
+            if !matches!(handle.kind, HandleKind::SchemeRoot) {
+                return Err(Error::new(EACCES));
             }
         }
 

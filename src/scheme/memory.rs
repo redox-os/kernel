@@ -194,7 +194,7 @@ impl KernelScheme for MemoryScheme {
         _token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if id != usize::MAX {
-            return Err(Error::new(EPERM));
+            return Err(Error::new(EACCES));
         }
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if path.len() > 64 {

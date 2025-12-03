@@ -43,7 +43,7 @@ impl KernelScheme for TimeScheme {
         user_buf: StrOrBytes,
         _flags: usize,
         _fcntl_flags: u32,
-        ctx: CallerCtx,
+        _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         {
@@ -51,7 +51,7 @@ impl KernelScheme for TimeScheme {
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
             if !matches!(handle, Handle::SchemeRoot) {
-                return Err(Error::new(EBADF));
+                return Err(Error::new(EACCES));
             }
         }
 

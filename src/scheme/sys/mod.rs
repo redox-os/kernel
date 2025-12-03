@@ -5,7 +5,7 @@
 
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
+    EACCES, EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::vec::Vec;
 use core::{
@@ -122,13 +122,14 @@ impl KernelScheme for SysScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if *HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-            != Handle::SchemeRoot
-        {
-            return Err(Error::new(EPERM));
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
         }
 
         let path = user_buf

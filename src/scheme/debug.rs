@@ -80,7 +80,7 @@ impl KernelScheme for DebugScheme {
             .num
             != SpecialFds::SchemeRoot as usize
         {
-            return Err(Error::new(EPERM));
+            return Err(Error::new(EACCES));
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;

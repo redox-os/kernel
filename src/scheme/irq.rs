@@ -231,7 +231,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
             if !matches!(handle, Handle::SchemeRoot) {
-                return Err(Error::new(EBADF));
+                return Err(Error::new(EACCES));
             }
         }
 

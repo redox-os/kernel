@@ -25,15 +25,14 @@ impl KernelScheme for EventScheme {
         &self,
         id: usize,
         user_buf: StrOrBytes,
-        flags: usize,
+        _flags: usize,
         _fcntl_flags: u32,
-        ctx: CallerCtx,
+        _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if id != usize::MAX {
-            return Err(Error::new(EPERM));
+            return Err(Error::new(EACCES));
         }
-        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         let id = next_queue_id();
         queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 
