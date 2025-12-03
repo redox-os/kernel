@@ -203,10 +203,6 @@ pub fn syscall(
                 token,
             ),
 
-            SYS_OPEN => {
-                println!("SYS_OPEN called");
-                Err(Error::new(ENOSYS))
-            }
             SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _, token).map(FileHandle::into),
             SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, token).map(|()| 0),
             SYS_YIELD => sched_yield(token).map(|()| 0),

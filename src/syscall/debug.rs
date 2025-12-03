@@ -44,16 +44,7 @@ unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
 //TODO: calling format_call with arguments from another process space will not work
 pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> String {
     match a {
-        SYS_OPEN => format!(
-            "open({:?}, {:#X})",
-            debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
-            d
-        ),
-        SYS_RMDIR => format!(
-            "rmdir({:?})",
-            debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
-        ),
-        SYS_UNLINK => format!(
+        SYS_UNLINKAT => format!(
             "unlink({:?})",
             debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
         ),
