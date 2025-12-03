@@ -134,58 +134,34 @@ pub fn openat(
         })
         .ok_or(Error::new(EMFILE))
 }
-/*
-/// rmdir syscall
-pub fn rmdir(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.ens, cx.caller_ctx())
-    };
+/// Unlinkat syscall
+pub fn unlinkat(
+    fh: FileHandle,
+    raw_path: UserSliceRo,
+    flags: usize,
+    token: &mut CleanLockToken,
+) -> Result<()> {
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let pipe = context::current()
+        .read(token.token())
+        .get_file(fh)
+        .ok_or(Error::new(EBADF))?;
+
+    let description = pipe.description.read();
+
+    let scheme = scheme::schemes(token.token())
+        .get(description.scheme)
+        .ok_or(Error::new(EBADF))?
+        .clone();
+
+    let caller_ctx = context::current().read(token.token()).caller_ctx();
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let scheme = {
-        let schemes = scheme::schemes(token.token());
-        let (_scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name.as_ref())
-            .ok_or(Error::new(ENODEV))?;
-        scheme.clone()
-    };
-    scheme.rmdir(reference.as_ref(), caller_ctx, token)
+    scheme.unlinkat(description.number, &path_buf, flags, caller_ctx, token)
 }
-
-/// Unlink syscall
-pub fn unlink(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.ens, cx.caller_ctx())
-    };
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let scheme = {
-        let schemes = scheme::schemes(token.token());
-        let (_scheme_id, scheme) = schemesSchemeId
-            .get_name(scheme_ns, scheme_name.as_ref())
-            .ok_or(Error::new(ENODEV))?;
-        scheme.clone()
-    };
-    scheme.unlink(reference.as_ref(), caller_ctx, token)
-}
-*/
 
 /// Close syscall
 pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {

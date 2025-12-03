@@ -208,8 +208,7 @@ pub fn syscall(
                 Err(Error::new(ENOSYS))
             }
             SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _, token).map(FileHandle::into),
-            // SYS_RMDIR => rmdir(UserSlice::ro(b, c)?, token).map(|()| 0),
-            // SYS_UNLINK => unlink(UserSlice::ro(b, c)?, token).map(|()| 0),
+            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, token).map(|()| 0),
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, core::mem::size_of::<TimeSpec>())?,
