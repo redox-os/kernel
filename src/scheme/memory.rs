@@ -180,9 +180,12 @@ impl MemoryScheme {
         Ok(base_page.start_address().data())
     }
 }
+
+const SCHEME_ROOT_ID: usize = usize::MAX;
+
 impl KernelScheme for MemoryScheme {
     fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
-        Ok(usize::MAX)
+        Ok(SCHEME_ROOT_ID)
     }
     fn kopenat(
         &self,
@@ -193,7 +196,7 @@ impl KernelScheme for MemoryScheme {
         ctx: CallerCtx,
         _token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if id != usize::MAX {
+        if id != SCHEME_ROOT_ID {
             return Err(Error::new(EACCES));
         }
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
@@ -209,6 +212,12 @@ impl KernelScheme for MemoryScheme {
             "" | "zeroed" => HandleTy::Allocated,
             "physical" => HandleTy::PhysBorrow,
             "translation" => HandleTy::Translation,
+            "scheme-root" => {
+                return Ok(OpenResult::SchemeLocal(
+                    SCHEME_ROOT_ID,
+                    InternalFlags::empty(),
+                ))
+            }
 
             _ => return Err(Error::new(ENOENT)),
         };
