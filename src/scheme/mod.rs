@@ -736,3 +736,17 @@ pub struct CallerCtx {
     pub uid: u32,
     pub gid: u32,
 }
+
+impl CallerCtx {
+    pub fn filter_uid_gid(self, euid: u32, egid: u32) -> Self {
+        if self.uid == 0 && self.gid == 0 {
+            Self {
+                pid: self.pid,
+                uid: euid,
+                gid: egid,
+            }
+        } else {
+            self
+        }
+    }
+}

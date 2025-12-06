@@ -79,6 +79,8 @@ pub fn openat(
     raw_path: UserSliceRo,
     flags: usize,
     fcntl_flags: u32,
+    euid: u32,
+    egid: u32,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
@@ -95,7 +97,10 @@ pub fn openat(
 
     let description = pipe.description.read();
 
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
+    let caller_ctx = context::current()
+        .read(token.token())
+        .caller_ctx()
+        .filter_uid_gid(euid, egid);
 
     let new_description = {
         let scheme = scheme::schemes(token.token())
@@ -119,7 +124,7 @@ pub fn openat(
                     internal_flags,
                     scheme: description.scheme,
                     number,
-                    flags: flags as u32,
+                    flags: (flags & !O_CLOEXEC) as u32,
                 }))
             }
             OpenResult::External(desc) => desc,
@@ -130,7 +135,7 @@ pub fn openat(
         .read(token.token())
         .add_file(FileDescriptor {
             description: new_description,
-            cloexec: fcntl_flags as usize & O_CLOEXEC == O_CLOEXEC,
+            cloexec: flags as usize & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
 }
@@ -139,6 +144,8 @@ pub fn unlinkat(
     fh: FileHandle,
     raw_path: UserSliceRo,
     flags: usize,
+    euid: u32,
+    egid: u32,
     token: &mut CleanLockToken,
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
@@ -154,7 +161,10 @@ pub fn unlinkat(
         .ok_or(Error::new(EBADF))?
         .clone();
 
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
+    let caller_ctx = context::current()
+        .read(token.token())
+        .caller_ctx()
+        .filter_uid_gid(euid, egid);
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;

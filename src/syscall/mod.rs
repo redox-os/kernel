@@ -58,6 +58,7 @@ pub fn syscall(
     d: usize,
     e: usize,
     f: usize,
+    g: usize,
     token: &mut CleanLockToken,
 ) -> usize {
     #[inline(always)]
@@ -68,6 +69,7 @@ pub fn syscall(
         d: usize,
         e: usize,
         f: usize,
+        g: usize,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let fd = FileHandle::from(b);
@@ -203,8 +205,19 @@ pub fn syscall(
                 token,
             ),
 
-            SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _, token).map(FileHandle::into),
-            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, token).map(|()| 0),
+            SYS_OPENAT => openat(
+                fd,
+                UserSlice::ro(c, d)?,
+                e,
+                (e & syscall::O_FCNTL_MASK) as _,
+                f as _,
+                g as _,
+                token,
+            )
+            .map(FileHandle::into),
+            SYS_UNLINKAT => {
+                unlinkat(fd, UserSlice::ro(c, d)?, e, f as _, g as _, token).map(|()| 0)
+            }
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, core::mem::size_of::<TimeSpec>())?,
@@ -226,11 +239,11 @@ pub fn syscall(
 
     PercpuBlock::current().inside_syscall.set(true);
 
-    debug_start([a, b, c, d, e, f], token);
+    debug_start([a, b, c, d, e, f, g], token);
 
-    let result = inner(a, b, c, d, e, f, token);
+    let result = inner(a, b, c, d, e, f, g, token);
 
-    debug_end([a, b, c, d, e, f], result, token);
+    debug_end([a, b, c, d, e, f, g], result, token);
 
     let percpu = PercpuBlock::current();
     percpu.inside_syscall.set(false);
