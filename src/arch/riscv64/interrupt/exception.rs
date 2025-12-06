@@ -161,7 +161,7 @@ unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
         if scause == USERMODE_ECALL {
             let r = &mut regs.registers;
             regs.iret.sepc += 4; // skip ecall
-            let ret = syscall::syscall(r.x17, r.x10, r.x11, r.x12, r.x13, r.x14, &mut token);
+            let ret = syscall::syscall(r.x17, r.x10, r.x11, r.x12, r.x13, r.x14, r.x15, &mut token);
             r.x10 = ret;
             return;
         }

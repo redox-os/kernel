@@ -209,7 +209,7 @@ checksum = "64072665120942deff5fd5425d6c1811b854f4939e7f1c01ce755f64432bbea7"
 [[package]]
 name = "redox_syscall"
 version = "0.5.19"
-source = "git+https://gitlab.redox-os.org/Ibuki.O/syscall.git?branch=unlinkat#2aa1fcf9498f98f5fa1912c2966f27b5b939f59b"
+source = "git+https://gitlab.redox-os.org/Ibuki.O/syscall.git?branch=filter-uidgid#c8c7ecbd2602a30c8d327191df271dff9cabb148"
 dependencies = [
  "bitflags 2.9.4",
 ]
