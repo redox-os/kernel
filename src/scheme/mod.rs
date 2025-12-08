@@ -476,7 +476,7 @@ impl SchemeExt for GlobalSchemes {
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
-            #[cfg(any(feature = "acpi", dtb))]
+            #[cfg(not(all(feature = "acpi", dtb)))]
             _ => panic!("Unknown global scheme"),
         }
     }
