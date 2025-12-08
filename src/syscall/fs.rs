@@ -3,6 +3,7 @@
 use core::{mem::size_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
+use redox_path::RedoxPath;
 use spin::RwLock;
 
 use crate::{
@@ -506,13 +507,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     }
 }
 
-/*
 pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, scheme_ns) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.caller_ctx(), cx.ens)
-    };
+    let caller_ctx = context::current().read(token.token()).caller_ctx();
     let file = context::current()
         .read(token.token())
         .get_file(fd)
@@ -524,33 +520,27 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let (scheme_id, scheme) = {
-        let schemes = scheme::schemes(token.token());
-        let (scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name.as_ref())
-            .ok_or(Error::new(ENODEV))?;
-        (scheme_id, scheme.clone())
-    };
+    let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let description = file.description.read();
 
+    let scheme = scheme::schemes(token.token())
+        .get(description.scheme)
+        .ok_or(Error::new(EBADF))?
+        .clone();
+
+    // TODO: Check EXDEV.
+    /*
     if scheme_id != description.scheme {
         return Err(Error::new(EXDEV));
     }
+    */
 
     scheme.flink(description.number, reference.as_ref(), caller_ctx, token)
 }
-*/
 
-/*
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, scheme_ns) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.caller_ctx(), cx.ens)
-    };
+    let caller_ctx = context::current().read(token.token()).caller_ctx();
     let file = context::current()
         .read(token.token())
         .get_file(fd)
@@ -562,25 +552,24 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let (scheme_id, scheme) = {
-        let schemes = scheme::schemes(token.token());
-        let (scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name.as_ref())
-            .ok_or(Error::new(ENODEV))?;
-        (scheme_id, scheme.clone())
-    };
+    let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let description = file.description.read();
 
+    let scheme = scheme::schemes(token.token())
+        .get(description.scheme)
+        .ok_or(Error::new(EBADF))?
+        .clone();
+
+    // TODO: Check EXDEV.
+    /*
     if scheme_id != description.scheme {
         return Err(Error::new(EXDEV));
     }
+    */
 
     scheme.frename(description.number, reference.as_ref(), caller_ctx, token)
 }
-*/
 
 /// File status
 pub fn fstat(fd: FileHandle, user_buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {

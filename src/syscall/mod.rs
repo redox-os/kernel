@@ -184,8 +184,8 @@ pub fn syscall(
                     .fevent(number, EventFlags::from_bits_truncate(c), token)?
                     .bits())
             }),
-            // SYS_FLINK => flink(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
-            // SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
+            SYS_FLINK => flink(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
+            SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
             SYS_FUNMAP => funmap(b, c, token),
 
             SYS_FSYNC => file_op_generic(fd, token, |scheme, number, token| {
