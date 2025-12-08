@@ -462,6 +462,7 @@ pub trait SchemeExt {
 }
 impl SchemeExt for GlobalSchemes {
     fn as_scheme(&self) -> &dyn KernelScheme {
+        #[allow(unreachable_patterns)]
         match self {
             Self::Debug => &DebugScheme,
             Self::Event => &EventScheme,
