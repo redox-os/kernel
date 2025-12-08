@@ -42,11 +42,23 @@ unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
 }
 
 //TODO: calling format_call with arguments from another process space will not work
-pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -> String {
+pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g: usize) -> String {
     match a {
+        SYS_OPENAT => format!(
+            "openat({} {:?}, {:#0x}, {}, {})",
+            b,
+            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
+            e,
+            f,
+            g
+        ),
         SYS_UNLINKAT => format!(
-            "unlink({:?})",
-            debug_path(b, c).as_ref().map(|p| ByteStr(p.as_bytes())),
+            "unlink({} {:?}, {:#0x}, {}, {})",
+            b,
+            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
+            e,
+            f,
+            g,
         ),
         SYS_CLOSE => format!("close({})", b),
         SYS_DUP => format!(
@@ -177,8 +189,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize) -
         ),
         SYS_YIELD => format!("yield()"),
         _ => format!(
-            "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
-            a, a, b, c, d, e, f
+            "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
+            a, a, b, c, d, e, f, g
         ),
     }
 }
@@ -210,7 +222,7 @@ impl SyscallDebugInfo {
 }
 
 #[cfg_attr(feature = "syscall_debug", inline)]
-pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
+pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken) {
     if cfg!(not(feature = "syscall_debug")) {
         return;
     }
@@ -243,7 +255,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
         // deadlock.
-        let string = format_call(a, b, c, d, e, f);
+        let string = format_call(a, b, c, d, e, f, g);
         println!("{}", string);
 
         crate::time::monotonic()
@@ -262,7 +274,7 @@ pub fn debug_start([a, b, c, d, e, f]: [usize; 6], token: &mut CleanLockToken) {
 
 #[cfg_attr(feature = "syscall_debug", inline)]
 pub fn debug_end(
-    [a, b, c, d, e, f]: [usize; 6],
+    [a, b, c, d, e, f, g]: [usize; 7],
     result: Result<usize>,
     token: &mut CleanLockToken,
 ) {
@@ -288,7 +300,7 @@ pub fn debug_end(
 
     // Do format_call outside print! so possible exception handlers cannot reentrantly
     // deadlock.
-    let string = format_call(a, b, c, d, e, f);
+    let string = format_call(a, b, c, d, e, f, g);
     print!("{} = ", string);
 
     match result {
