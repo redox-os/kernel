@@ -462,7 +462,6 @@ pub trait SchemeExt {
 }
 impl SchemeExt for GlobalSchemes {
     fn as_scheme(&self) -> &dyn KernelScheme {
-        #[allow(unreachable_patterns)]
         match self {
             Self::Debug => &DebugScheme,
             Self::Event => &EventScheme,
@@ -477,6 +476,7 @@ impl SchemeExt for GlobalSchemes {
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
+            #[cfg(any(feature = "acpi", dtb))]
             _ => panic!("Unknown global scheme"),
         }
     }
