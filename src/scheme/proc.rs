@@ -114,10 +114,12 @@ enum ContextHandle {
     Start,
     NewFiletable {
         filetable: Arc<spin::RwLock<FdTbl>>,
+        binary_format: bool,
         data: Box<[u8]>,
     },
     Filetable {
         filetable: Weak<spin::RwLock<FdTbl>>,
+        binary_format: bool,
         data: Box<[u8]>,
     },
     AddrSpace {
@@ -209,6 +211,15 @@ impl ProcScheme {
             "filetable" => (
                 ContextHandle::Filetable {
                     filetable: Arc::downgrade(&context.read(token.token()).files),
+                    binary_format: false,
+                    data: Box::new([]),
+                },
+                true,
+            ),
+            "filetable-binary" => (
+                ContextHandle::Filetable {
+                    filetable: Arc::downgrade(&context.read(token.token()).files),
+                    binary_format: true,
                     data: Box::new([]),
                 },
                 true,
@@ -317,22 +328,38 @@ impl ProcScheme {
                     kind:
                         ContextHandle::Filetable {
                             ref filetable,
+                            binary_format,
                             ref mut data,
                         },
                     ..
-                } => Some((filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?, data)),
+                } => Some((
+                    filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?,
+                    binary_format,
+                    data,
+                )),
                 Handle {
                     kind:
                         ContextHandle::NewFiletable {
                             ref filetable,
+                            binary_format,
                             ref mut data,
                         },
                     ..
-                } => Some((Arc::clone(filetable), data)),
+                } => Some((Arc::clone(filetable), binary_format, data)),
                 _ => None,
             };
-            if let Some((filetable, data)) = filetable_opt {
-                *data = {
+            if let Some((filetable, binary_format, data)) = filetable_opt {
+                *data = if binary_format {
+                    let mut data = Vec::new();
+                    for index in filetable
+                        .read()
+                        .enumerate()
+                        .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                    {
+                        data.extend((index as u64).to_le_bytes());
+                    }
+                    data.into_boxed_slice()
+                } else {
                     use core::fmt::Write;
 
                     let mut data = String::new();
@@ -721,6 +748,7 @@ impl KernelScheme for ProcScheme {
                     kind:
                         ContextHandle::Filetable {
                             ref filetable,
+                            binary_format,
                             ref data,
                         },
                     context,
@@ -738,6 +766,7 @@ impl KernelScheme for ProcScheme {
                         Handle {
                             kind: ContextHandle::NewFiletable {
                                 filetable: new_filetable,
+                                binary_format,
                                 data: data.clone(),
                             },
                             context,
@@ -1009,6 +1038,7 @@ impl ContextHandle {
                         kind:
                             ContextHandle::NewFiletable {
                                 ref filetable,
+                                binary_format,
                                 ref data,
                             },
                         ..
@@ -1017,6 +1047,7 @@ impl ContextHandle {
                         *entry.get_mut() = Handle {
                             kind: ContextHandle::Filetable {
                                 filetable: Arc::downgrade(filetable),
+                                binary_format,
                                 data: data.clone(),
                             },
                             context: Arc::clone(&context),
