@@ -1234,7 +1234,10 @@ impl UserInner {
         if map.address % PAGE_SIZE != 0 {
             return Err(Error::new(EINVAL));
         };
-        let dst_base = (map.address != 0)
+
+        let fixed = map.flags.contains(MapFlags::MAP_FIXED)
+            || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+        let dst_base = (map.address != 0 || fixed)
             .then_some(Page::containing_address(VirtualAddress::new(map.address)));
 
         if map.offset % PAGE_SIZE != 0 {

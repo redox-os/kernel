@@ -502,7 +502,9 @@ impl KernelScheme for ProcScheme {
                     PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size)
                         .ok_or(Error::new(EINVAL))?;
 
-                let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
+                let fixed = map.flags.contains(MapFlags::MAP_FIXED)
+                    || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+                let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
                 let mut src_addr_space = addrspace.acquire_write();
 
