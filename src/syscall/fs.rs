@@ -744,7 +744,9 @@ pub fn mremap(
     let addr_space = AddrSpace::current()?;
     let src_span = PageSpan::new(old_base, old_size.div_ceil(PAGE_SIZE));
     let new_page_count = new_size.div_ceil(PAGE_SIZE);
-    let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
+    let fixed = map_flags.contains(MapFlags::MAP_FIXED)
+        || map_flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+    let requested_dst_base = (new_address != 0 || fixed).then_some(new_base);
 
     if mremap_flags.contains(MremapFlags::KEEP_OLD) {
         // TODO: This is a hack! Find a better interface for replacing this, perhaps a capability
