@@ -1196,6 +1196,62 @@ impl ContextHandle {
                 guard.egid = info.egid;
                 Ok(size_of::<ProcSchemeAttrs>())
             }
+            ContextHandle::OpenViaDup => {
+                println!("EXIT via OpenViaDup");
+                let mut args = buf.usizes();
+
+                let user_data = args.next().ok_or(Error::new(EINVAL))??;
+
+                let context_verb =
+                    ContextVerb::try_from_raw(user_data).ok_or(Error::new(EINVAL))?;
+
+                match context_verb {
+                    ContextVerb::ForceKill => {
+                        if context::is_current(&context) {
+                            //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            let debug_id = context.read(token.token()).debug_id;
+                            let pid = context.read(token.token()).pid;
+                            println!("FORCEKILL SELF {} {}", debug_id, pid);
+
+                            // The following functionality simplifies the cleanup step when detached threads
+                            // terminate.
+                            if let Some(post_unmap) = args.next() {
+                                let base = post_unmap?;
+                                let size = args.next().ok_or(Error::new(EINVAL))??;
+
+                                if size > 0 {
+                                    let addrsp =
+                                        Arc::clone(context.read(token.token()).addr_space()?);
+                                    let res = addrsp.munmap(
+                                        PageSpan::validate_nonempty(
+                                            VirtualAddress::new(base),
+                                            size,
+                                        )
+                                        .ok_or(Error::new(EINVAL))?,
+                                        false,
+                                    )?;
+                                    for r in res {
+                                        let _ = r.unmap(token);
+                                    }
+                                }
+                            }
+                            crate::syscall::exit_this_context(None, token);
+                        } else {
+                            let debug_id = context::current().read(token.token()).debug_id;
+                            let mut ctxt = context.write(token.token());
+                            //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                            println!(
+                                "FORCEKILL NONSELF={} {}, SELF={}",
+                                ctxt.debug_id, ctxt.pid, debug_id
+                            );
+                            ctxt.status = context::Status::Runnable;
+                            ctxt.being_sigkilled = true;
+                            Ok(mem::size_of::<usize>())
+                        }
+                    }
+                    _ => Err(Error::new(EINVAL)),
+                }
+            }
             _ => Err(Error::new(EBADF)),
         }
     }
