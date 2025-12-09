@@ -1133,6 +1133,9 @@ impl ContextHandle {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            let debug_id = context.read(token.token()).debug_id;
+                            let pid = context.read(token.token()).pid;
+                            println!("FORCEKILL SELF {} {}", debug_id, pid);
 
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
@@ -1158,8 +1161,13 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
+                            let debug_id = context::current().read(token.token()).debug_id;
                             let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                            println!(
+                                "FORCEKILL NONSELF={} {}, SELF={}",
+                                ctxt.debug_id, ctxt.pid, debug_id
+                            );
                             ctxt.status = context::Status::Runnable;
                             ctxt.being_sigkilled = true;
                             Ok(mem::size_of::<usize>())
