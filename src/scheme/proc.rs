@@ -9,7 +9,7 @@ use crate::{
     },
     memory::PAGE_SIZE,
     ptrace,
-    scheme::{self, FileHandle, KernelScheme},
+    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme},
     sync::{CleanLockToken, RwLock, L1},
     syscall::{
         data::{GrantDesc, Map, SetSighandlerData, Stat},
@@ -878,24 +878,41 @@ impl ContextHandle {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
-                        if !flags.contains(MapFlags::MAP_FIXED) {
-                            return Err(Error::new(EOPNOTSUPP));
+                        if fd == !0 {
+                            if op == ADDRSPACE_OP_TRANSFER {
+                                return Err(Error::new(EOPNOTSUPP));
+                            }
+
+                            return MemoryScheme::fmap_anonymous(
+                                &addrspace,
+                                &Map {
+                                    offset,
+                                    size: page_span.count * PAGE_SIZE,
+                                    address: page_span.base.start_address().data(),
+                                    flags,
+                                },
+                                false,
+                                token,
+                            );
+                        } else {
+                            let (scheme, number) = extract_scheme_number(fd, token)?;
+
+                            // ADDRSPACE_OP_MMAP and ADDRSPACE_OP_TRANSFER return the target address
+                            // rather than the amount of written bytes.
+                            // FIXME maybe make all these operations calls rather than writes?
+                            return scheme.kfmap(
+                                number,
+                                &addrspace,
+                                &Map {
+                                    offset,
+                                    size: page_span.count * PAGE_SIZE,
+                                    address: page_span.base.start_address().data(),
+                                    flags,
+                                },
+                                op == ADDRSPACE_OP_TRANSFER,
+                                token,
+                            );
                         }
-
-                        let (scheme, number) = extract_scheme_number(fd, token)?;
-
-                        scheme.kfmap(
-                            number,
-                            &addrspace,
-                            &Map {
-                                offset,
-                                size: page_span.count * PAGE_SIZE,
-                                address: page_span.base.start_address().data(),
-                                flags,
-                            },
-                            op == ADDRSPACE_OP_TRANSFER,
-                            token,
-                        )?;
                     }
                     ADDRSPACE_OP_MUNMAP => {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
