@@ -452,7 +452,12 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
     if cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC {
         // Not in match because 'files' cannot be locked
-        let new_file = duplicate_file(fd, UserSlice::empty(), cmd == F_DUPFD_CLOEXEC, token)?;
+        let new_file = duplicate_file(
+            fd,
+            UserSlice::empty(),
+            file.cloexec || cmd == F_DUPFD_CLOEXEC,
+            token,
+        )?;
 
         let context_lock = context::current();
         let context = context_lock.read(token.token());
