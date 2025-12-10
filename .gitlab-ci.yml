@@ -3,6 +3,11 @@ image: "redoxos/redoxer:latest"
 variables:
   GIT_SUBMODULE_STRATEGY: recursive
 
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PROJECT_NAMESPACE == "redox-os"'
+    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
+
 stages:
   - host
   - build
