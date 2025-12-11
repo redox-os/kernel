@@ -1157,7 +1157,6 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            let debug_id = context::current().read(token.token()).debug_id;
                             let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
                             ctxt.status = context::Status::Runnable;
@@ -1189,7 +1188,6 @@ impl ContextHandle {
                 Ok(size_of::<ProcSchemeAttrs>())
             }
             ContextHandle::OpenViaDup => {
-                println!("EXIT via OpenViaDup");
                 let mut args = buf.usizes();
 
                 let user_data = args.next().ok_or(Error::new(EINVAL))??;
@@ -1201,9 +1199,6 @@ impl ContextHandle {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
-                            let debug_id = context.read(token.token()).debug_id;
-                            let pid = context.read(token.token()).pid;
-                            println!("FORCEKILL SELF {} {}", debug_id, pid);
 
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
