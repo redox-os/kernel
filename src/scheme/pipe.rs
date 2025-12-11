@@ -435,9 +435,19 @@ impl KernelScheme for PipeScheme {
                 let fds_to_transfer: Vec<_> = vec.drain(..fds_to_read).collect();
 
                 if flags.contains(CallFlags::FD_UPPER) {
-                    bulk_insert_fds(fds_to_transfer, payload, token)?;
+                    bulk_insert_fds(
+                        fds_to_transfer,
+                        payload,
+                        flags.contains(CallFlags::FD_CLOEXEC),
+                        token,
+                    )?;
                 } else {
-                    bulk_add_fds(fds_to_transfer, payload, token)?;
+                    bulk_add_fds(
+                        fds_to_transfer,
+                        payload,
+                        flags.contains(CallFlags::FD_CLOEXEC),
+                        token,
+                    )?;
                 }
 
                 event::trigger(

@@ -1447,6 +1447,9 @@ impl UserInner {
                 if flags.contains(CallFlags::FD_EXCLUSIVE) {
                     obtainfd_flags |= FobtainFdFlags::EXCLUSIVE;
                 }
+                if flags.contains(CallFlags::FD_CLOEXEC) {
+                    obtainfd_flags |= FobtainFdFlags::CLOEXEC;
+                }
                 self.handle_obtainfd(payload, metadata[1] as usize, obtainfd_flags, token)
             }
             _ => Err(Error::new(EINVAL)),
@@ -1471,9 +1474,19 @@ impl UserInner {
         };
 
         let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
-            bulk_insert_fds(descriptions, payload, token)?
+            bulk_insert_fds(
+                descriptions,
+                payload,
+                flags.contains(FobtainFdFlags::CLOEXEC),
+                token,
+            )?
         } else {
-            bulk_add_fds(descriptions, payload, token)?
+            bulk_add_fds(
+                descriptions,
+                payload,
+                flags.contains(FobtainFdFlags::CLOEXEC),
+                token,
+            )?
         };
 
         Ok(num_fds)
@@ -2109,6 +2122,9 @@ impl KernelScheme for UserScheme {
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
+        if flags.contains(CallFlags::FD_CLOEXEC) {
+            recvfd_flags |= RecvFdFlags::CLOEXEC;
+        }
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / mem::size_of::<usize>();
@@ -2134,9 +2150,19 @@ impl KernelScheme for UserScheme {
 
         let num_fds = if let Some(descriptions) = descriptions_opt {
             if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
-                bulk_insert_fds(descriptions, payload, token)?
+                bulk_insert_fds(
+                    descriptions,
+                    payload,
+                    recvfd_flags.contains(RecvFdFlags::CLOEXEC),
+                    token,
+                )?
             } else {
-                bulk_add_fds(descriptions, payload, token)?
+                bulk_add_fds(
+                    descriptions,
+                    payload,
+                    recvfd_flags.contains(RecvFdFlags::CLOEXEC),
+                    token,
+                )?
             }
         } else {
             0
