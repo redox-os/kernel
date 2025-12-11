@@ -1199,7 +1199,6 @@ impl ContextHandle {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
-
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {

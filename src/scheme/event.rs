@@ -15,11 +15,13 @@ use crate::{
 
 use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
+const SCHEME_ROOT_ID: usize = usize::MAX;
+
 pub struct EventScheme;
 
 impl KernelScheme for EventScheme {
     fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
-        Ok(usize::MAX)
+        Ok(SCHEME_ROOT_ID)
     }
     fn kopenat(
         &self,
@@ -30,7 +32,7 @@ impl KernelScheme for EventScheme {
         _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if id != usize::MAX {
+        if id != SCHEME_ROOT_ID {
             return Err(Error::new(EACCES));
         }
         let id = next_queue_id();

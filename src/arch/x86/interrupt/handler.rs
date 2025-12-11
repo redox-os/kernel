@@ -149,7 +149,6 @@ impl InterruptStack {
     pub fn set_instr_pointer(&mut self, eip: usize) {
         self.iret.eip = eip;
     }
-
     /// Loads all registers from a struct used by the proc:
     /// scheme to read/write registers.
     pub fn load(&mut self, all: &IntRegisters) {
