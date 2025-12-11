@@ -925,6 +925,7 @@ impl FdTbl {
 pub fn bulk_add_fds(
     descriptions: Vec<Arc<RwLock<FileDescription>>>,
     payload: UserSliceRw,
+    cloexec: bool,
     token: &mut CleanLockToken,
 ) -> Result<usize> {
     let cnt = descriptions.len();
@@ -941,7 +942,7 @@ pub fn bulk_add_fds(
         .into_iter()
         .map(|description| FileDescriptor {
             description,
-            cloexec: true,
+            cloexec,
         })
         .collect();
     let handles = current
@@ -957,6 +958,7 @@ pub fn bulk_add_fds(
 pub fn bulk_insert_fds(
     descriptions: Vec<Arc<RwLock<FileDescription>>>,
     payload: UserSliceRw,
+    cloexec: bool,
     token: &mut CleanLockToken,
 ) -> Result<usize> {
     let cnt = descriptions.len();
@@ -968,7 +970,7 @@ pub fn bulk_insert_fds(
     }
     let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
         description,
-        cloexec: true,
+        cloexec,
     });
     let first_fd = payload
         .in_exact_chunks(size_of::<usize>())
