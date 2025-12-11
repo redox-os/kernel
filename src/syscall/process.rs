@@ -139,7 +139,12 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    insert_fd(scheme.scheme_id(), cap_fd, token)
+                    insert_fd(
+                        scheme.scheme_id(),
+                        cap_fd,
+                        matches!(scheme, GlobalSchemes::Proc),
+                        token,
+                    )
                 },
             };
         }
@@ -152,7 +157,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             };
             // Second, retrieve the scheme ID.
             let scheme_id = &SchemeList.id();
-            insert_fd(*scheme_id, cap_fd, token)
+            insert_fd(*scheme_id, cap_fd, false, token)
         };
 
         let kernel_schemes_info_page = addr_space
@@ -244,7 +249,12 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
     }
 }
 
-pub fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usize {
+pub fn insert_fd(
+    scheme: SchemeId,
+    number: usize,
+    cloexec: bool,
+    token: &mut CleanLockToken,
+) -> usize {
     context::current()
         .write(token.token())
         .add_file_min(
@@ -256,7 +266,7 @@ pub fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) ->
                     flags: (O_CREAT | O_RDWR) as u32,
                     internal_flags: InternalFlags::empty(),
                 })),
-                cloexec: false,
+                cloexec,
             },
             syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
         )
