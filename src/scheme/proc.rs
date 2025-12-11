@@ -9,7 +9,7 @@ use crate::{
     },
     memory::PAGE_SIZE,
     ptrace,
-    scheme::{self, FileHandle, KernelScheme},
+    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme},
     sync::{CleanLockToken, RwLock, L1},
     syscall::{
         data::{GrantDesc, Map, SetSighandlerData, Stat},
@@ -115,10 +115,12 @@ enum ContextHandle {
     Start,
     NewFiletable {
         filetable: Arc<spin::RwLock<FdTbl>>,
+        binary_format: bool,
         data: Box<[u8]>,
     },
     Filetable {
         filetable: Weak<spin::RwLock<FdTbl>>,
+        binary_format: bool,
         data: Box<[u8]>,
     },
     AddrSpace {
@@ -211,6 +213,15 @@ impl ProcScheme {
             "filetable" => (
                 ContextHandle::Filetable {
                     filetable: Arc::downgrade(&context.read(token.token()).files),
+                    binary_format: false,
+                    data: Box::new([]),
+                },
+                true,
+            ),
+            "filetable-binary" => (
+                ContextHandle::Filetable {
+                    filetable: Arc::downgrade(&context.read(token.token()).files),
+                    binary_format: true,
                     data: Box::new([]),
                 },
                 true,
@@ -319,22 +330,38 @@ impl ProcScheme {
                     kind:
                         ContextHandle::Filetable {
                             ref filetable,
+                            binary_format,
                             ref mut data,
                         },
                     ..
-                } => Some((filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?, data)),
+                } => Some((
+                    filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?,
+                    binary_format,
+                    data,
+                )),
                 Handle {
                     kind:
                         ContextHandle::NewFiletable {
                             ref filetable,
+                            binary_format,
                             ref mut data,
                         },
                     ..
-                } => Some((Arc::clone(filetable), data)),
+                } => Some((Arc::clone(filetable), binary_format, data)),
                 _ => None,
             };
-            if let Some((filetable, data)) = filetable_opt {
-                *data = {
+            if let Some((filetable, binary_format, data)) = filetable_opt {
+                *data = if binary_format {
+                    let mut data = Vec::new();
+                    for index in filetable
+                        .read()
+                        .enumerate()
+                        .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                    {
+                        data.extend((index as u64).to_le_bytes());
+                    }
+                    data.into_boxed_slice()
+                } else {
                     use core::fmt::Write;
 
                     let mut data = String::new();
@@ -471,7 +498,9 @@ impl KernelScheme for ProcScheme {
                     PageSpan::validate_nonempty(VirtualAddress::new(map.offset), map.size)
                         .ok_or(Error::new(EINVAL))?;
 
-                let requested_dst_base = (map.address != 0).then_some(requested_dst_page);
+                let fixed = map.flags.contains(MapFlags::MAP_FIXED)
+                    || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+                let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
                 let mut src_addr_space = addrspace.acquire_write();
 
@@ -717,6 +746,7 @@ impl KernelScheme for ProcScheme {
                     kind:
                         ContextHandle::Filetable {
                             ref filetable,
+                            binary_format,
                             ref data,
                         },
                     context,
@@ -734,6 +764,7 @@ impl KernelScheme for ProcScheme {
                         Handle {
                             kind: ContextHandle::NewFiletable {
                                 filetable: new_filetable,
+                                binary_format,
                                 data: data.clone(),
                             },
                             context,
@@ -845,24 +876,41 @@ impl ContextHandle {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
-                        if !flags.contains(MapFlags::MAP_FIXED) {
-                            return Err(Error::new(EOPNOTSUPP));
+                        if fd == !0 {
+                            if op == ADDRSPACE_OP_TRANSFER {
+                                return Err(Error::new(EOPNOTSUPP));
+                            }
+
+                            return MemoryScheme::fmap_anonymous(
+                                &addrspace,
+                                &Map {
+                                    offset,
+                                    size: page_span.count * PAGE_SIZE,
+                                    address: page_span.base.start_address().data(),
+                                    flags,
+                                },
+                                false,
+                                token,
+                            );
+                        } else {
+                            let (scheme, number) = extract_scheme_number(fd, token)?;
+
+                            // ADDRSPACE_OP_MMAP and ADDRSPACE_OP_TRANSFER return the target address
+                            // rather than the amount of written bytes.
+                            // FIXME maybe make all these operations calls rather than writes?
+                            return scheme.kfmap(
+                                number,
+                                &addrspace,
+                                &Map {
+                                    offset,
+                                    size: page_span.count * PAGE_SIZE,
+                                    address: page_span.base.start_address().data(),
+                                    flags,
+                                },
+                                op == ADDRSPACE_OP_TRANSFER,
+                                token,
+                            );
                         }
-
-                        let (scheme, number) = extract_scheme_number(fd, token)?;
-
-                        scheme.kfmap(
-                            number,
-                            &addrspace,
-                            &Map {
-                                offset,
-                                size: page_span.count * PAGE_SIZE,
-                                address: page_span.base.start_address().data(),
-                                flags,
-                            },
-                            op == ADDRSPACE_OP_TRANSFER,
-                            token,
-                        )?;
                     }
                     ADDRSPACE_OP_MUNMAP => {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
@@ -1005,6 +1053,7 @@ impl ContextHandle {
                         kind:
                             ContextHandle::NewFiletable {
                                 ref filetable,
+                                binary_format,
                                 ref data,
                             },
                         ..
@@ -1013,6 +1062,7 @@ impl ContextHandle {
                         *entry.get_mut() = Handle {
                             kind: ContextHandle::Filetable {
                                 filetable: Arc::downgrade(filetable),
+                                binary_format,
                                 data: data.clone(),
                             },
                             context: Arc::clone(&context),
