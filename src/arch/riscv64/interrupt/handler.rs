@@ -122,6 +122,12 @@ impl InterruptStack {
         self.registers.x10 = ret;
     }
 
+    pub fn set_arg1(&mut self, arg_opt: Option<usize>) {
+        if let Some(arg) = arg_opt {
+            self.registers.x11 = arg;
+        }
+    }
+
     pub fn dump(&self) {
         self.iret.dump();
         self.registers.dump();

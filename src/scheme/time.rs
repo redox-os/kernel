@@ -3,6 +3,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{file::InternalFlags, timeout},
@@ -16,22 +17,45 @@ use crate::{
     time,
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Handle {
+    SchemeRoot,
+    Clock(usize),
+}
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-static HANDLES: RwLock<L1, HashMap<usize, usize>> =
+static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 pub struct TimeScheme;
 
 impl KernelScheme for TimeScheme {
-    fn kopen(
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+            if !matches!(handle, Handle::SchemeRoot) {
+                return Err(Error::new(EACCES));
+            }
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         let clock = path.parse::<usize>().map_err(|_| Error::new(ENOENT))?;
 
         match clock {
@@ -41,7 +65,9 @@ impl KernelScheme for TimeScheme {
         }
 
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, clock);
+        HANDLES
+            .write(token.token())
+            .insert(id, Handle::Clock(clock));
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
@@ -92,10 +118,14 @@ impl KernelScheme for TimeScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let clock = *HANDLES
+        let clock = match HANDLES
             .read(token.token())
             .get(&id)
-            .ok_or(Error::new(EBADF))?;
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::Clock(clock_id) => *clock_id,
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
+        };
 
         let mut bytes_read = 0;
 
@@ -125,10 +155,14 @@ impl KernelScheme for TimeScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let clock = *HANDLES
+        let clock = match HANDLES
             .read(token.token())
             .get(&id)
-            .ok_or(Error::new(EBADF))?;
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::Clock(clock_id) => *clock_id,
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
+        };
 
         let mut bytes_written = 0;
 
@@ -143,10 +177,14 @@ impl KernelScheme for TimeScheme {
         Ok(bytes_written)
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let clock = *HANDLES
+        let clock = match HANDLES
             .read(token.token())
             .get(&id)
-            .ok_or(Error::new(EBADF))?;
+            .ok_or(Error::new(EBADF))?
+        {
+            Handle::Clock(clock_id) => *clock_id,
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
+        };
 
         let scheme_path = format!("/scheme/time/{}", clock).into_bytes();
         buf.copy_common_bytes_from_slice(&scheme_path)

@@ -138,6 +138,11 @@ impl InterruptStack {
     pub fn instr_pointer(&self) -> usize {
         self.iret.elr_el1
     }
+    pub fn set_arg1(&mut self, arg_opt: Option<usize>) {
+        if let Some(arg) = arg_opt {
+            self.scratch.x1 = arg;
+        }
+    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();
