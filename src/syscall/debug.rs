@@ -58,7 +58,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             g
         ),
         SYS_UNLINKAT => format!(
-            "unlink({} {:?}, {:#0x}, {}, {})",
+            "unlinkat({} {:?}, {:#0x}, {}, {})",
             b,
             debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
             e,

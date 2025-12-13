@@ -568,12 +568,6 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Ok(0)
     }
-    fn rmdir(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
-    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
     fn unlinkat(
         &self,
         file: usize,

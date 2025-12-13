@@ -140,30 +140,6 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        let path = path.trim_matches('/');
-
-        if ctx.uid != 0 {
-            return Err(Error::new(EACCES));
-        }
-        let inner = {
-            let handles = self.handles.read(token.token());
-            handles
-                .iter()
-                .find_map(|(_id, handle)| {
-                    if let Handle::Scheme(inner) = handle {
-                        if path == inner.name.as_ref() {
-                            return Some(inner.clone());
-                        }
-                    }
-                    None
-                })
-                .ok_or(Error::new(ENOENT))?
-        };
-
-        inner.unmount(token)
-    }
-
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let handle = {
             let handles = self.handles.read(token.token());
