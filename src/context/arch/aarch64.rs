@@ -153,14 +153,14 @@ impl super::Context {
             ptr::write(self.kfx.as_mut_ptr() as *mut FloatRegisters, new);
         }
     }
-    pub fn current_syscall(&self) -> Option<[usize; 6]> {
+    pub fn current_syscall(&self) -> Option<[usize; 7]> {
         if !self.inside_syscall {
             return None;
         }
         let regs = self.regs()?;
         let scratch = &regs.scratch;
         Some([
-            scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4,
+            scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, scratch.x5,
         ])
     }
 

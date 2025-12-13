@@ -161,7 +161,7 @@ impl super::Context {
         }
     }
 
-    pub(crate) fn current_syscall(&self) -> Option<[usize; 6]> {
+    pub(crate) fn current_syscall(&self) -> Option<[usize; 7]> {
         if !self.inside_syscall {
             return None;
         }
@@ -174,6 +174,7 @@ impl super::Context {
             scratch.rdx,
             scratch.r10,
             scratch.r8,
+            scratch.r9,
         ])
     }
 

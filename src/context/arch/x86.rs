@@ -145,7 +145,7 @@ impl super::Context {
             }
         }
     }
-    pub fn current_syscall(&self) -> Option<[usize; 6]> {
+    pub fn current_syscall(&self) -> Option<[usize; 7]> {
         if !self.inside_syscall {
             return None;
         }
@@ -157,6 +157,7 @@ impl super::Context {
             regs.scratch.edx,
             regs.preserved.esi,
             regs.preserved.edi,
+            regs.preserved.ebp,
         ])
     }
 

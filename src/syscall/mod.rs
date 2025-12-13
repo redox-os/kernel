@@ -12,12 +12,12 @@ pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
 
-pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region};
+pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_region};
 
 use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
-    error::{Error, Result, ENOSYS, EOVERFLOW},
+    error::{Error, Result, ENOSYS},
     flag::{EventFlags, MapFlags},
     number::*,
     usercopy::UserSlice,
@@ -61,6 +61,7 @@ pub fn syscall(
     d: usize,
     e: usize,
     f: usize,
+    g: usize,
     token: &mut CleanLockToken,
 ) -> usize {
     #[inline(always)]
@@ -71,6 +72,7 @@ pub fn syscall(
         d: usize,
         e: usize,
         f: usize,
+        g: usize,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let fd = FileHandle::from(b);
@@ -206,10 +208,19 @@ pub fn syscall(
                 token,
             ),
 
-            SYS_OPEN => open(UserSlice::ro(b, c)?, d, token).map(FileHandle::into),
-            SYS_OPENAT => openat(fd, UserSlice::ro(c, d)?, e, f as _, token).map(FileHandle::into),
-            SYS_RMDIR => rmdir(UserSlice::ro(b, c)?, token).map(|()| 0),
-            SYS_UNLINK => unlink(UserSlice::ro(b, c)?, token).map(|()| 0),
+            SYS_OPENAT => openat(
+                fd,
+                UserSlice::ro(c, d)?,
+                e,
+                (e & syscall::O_FCNTL_MASK) as _,
+                f as _,
+                g as _,
+                token,
+            )
+            .map(FileHandle::into),
+            SYS_UNLINKAT => {
+                unlinkat(fd, UserSlice::ro(c, d)?, e, f as _, g as _, token).map(|()| 0)
+            }
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, core::mem::size_of::<TimeSpec>())?,
@@ -223,14 +234,6 @@ pub fn syscall(
             SYS_FUTEX => futex(b, c, d, e, f, token),
 
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
-            SYS_MKNS => mkns(
-                UserSlice::ro(
-                    b,
-                    c.checked_mul(core::mem::size_of::<[usize; 2]>())
-                        .ok_or(Error::new(EOVERFLOW))?,
-                )?,
-                token,
-            ),
             SYS_MREMAP => mremap(b, c, d, e, f, token),
 
             _ => Err(Error::new(ENOSYS)),
@@ -239,11 +242,11 @@ pub fn syscall(
 
     PercpuBlock::current().inside_syscall.set(true);
 
-    debug_start([a, b, c, d, e, f], token);
+    debug_start([a, b, c, d, e, f, g], token);
 
-    let result = inner(a, b, c, d, e, f, token);
+    let result = inner(a, b, c, d, e, f, g, token);
 
-    debug_end([a, b, c, d, e, f], result, token);
+    debug_end([a, b, c, d, e, f, g], result, token);
 
     let percpu = PercpuBlock::current();
     percpu.inside_syscall.set(false);
