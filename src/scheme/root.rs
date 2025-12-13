@@ -77,21 +77,21 @@ impl KernelScheme for RootScheme {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
             let inner = {
-                let path_box = path.to_string().into_boxed_str();
-                let mut schemes = scheme::schemes_mut(token.token());
-
                 let v2 = flags & O_FSYNC == O_FSYNC;
                 let new_close = flags & O_EXLOCK == O_EXLOCK;
 
                 if !v2 {
-                    //warn!("Context {} opened a v1 scheme", context::current().read().name);
+                    warn!("Context {} opened a v1 scheme", context::current().read(token.token()).name);
                 }
                 if !new_close {
-                    /*warn!(
+                    warn!(
                         "Context {} opened a non-async-close scheme",
-                        context::current().read().name
-                    );*/
+                        context::current().read(token.token()).name
+                    );
                 }
+
+                let path_box = path.to_string().into_boxed_str();
+                let mut schemes = scheme::schemes_mut(token.token());
 
                 let (_scheme_id, inner) =
                     schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
