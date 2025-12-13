@@ -14,8 +14,7 @@ use spin::{Mutex, RwLock};
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
-    SendFdFlags, F_SETFL, KSMSG_CANCEL, MAP_FIXED_NOREPLACE, SKMSG_FOBTAINFD, SKMSG_FRETURNFD,
-    SKMSG_PROVIDE_MMAP,
+    SendFdFlags, MAP_FIXED_NOREPLACE,
 };
 
 use crate::{
@@ -35,10 +34,9 @@ use crate::{
     scheme::SchemeId,
     sync::{CleanLockToken, WaitQueue},
     syscall::{
-        data::{Map, Packet},
+        data::Map,
         error::*,
         flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
-        number::*,
         usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
@@ -50,7 +48,6 @@ pub struct UserInner {
     handle_id: usize,
     pub name: Box<str>,
     pub scheme_id: SchemeId,
-    v2: bool,
     supports_on_close: bool,
     context: Weak<ContextLock>,
     todo: WaitQueue<Sqe>,
@@ -114,61 +111,8 @@ enum ParsedCqe {
         base_addr: VirtualAddress,
         page_count: usize,
     },
-    NoOp, // TODO: remove
 }
 impl ParsedCqe {
-    fn parse_packet(packet: &Packet, token: &mut CleanLockToken) -> Result<Self> {
-        Ok(if packet.id == 0 {
-            match packet.a {
-                SYS_FEVENT => Self::TriggerFevent {
-                    number: packet.b,
-                    flags: EventFlags::from_bits_truncate(packet.c),
-                },
-                _ => {
-                    warn!(
-                        "Unknown scheme -> kernel message {} from {}",
-                        packet.a,
-                        context::current().read(token.token()).name
-                    );
-
-                    // Some schemes don't implement cancellation properly yet, so we temporarily
-                    // ignore their responses to the cancellation message, rather than EINVAL.
-                    if packet.a == Error::mux(Err(Error::new(ENOSYS))) {
-                        return Ok(Self::NoOp);
-                    }
-
-                    return Err(Error::new(EINVAL));
-                }
-            }
-        } else if Error::demux(packet.a) == Err(Error::new(ESKMSG)) {
-            // The reason why the new ESKMSG mechanism was introduced, is that passing packet IDs
-            // in packet.id is much cleaner than having to convert it into 1 or 2 usizes etc.
-            match packet.b {
-                SKMSG_FRETURNFD => Self::ResponseWithFd {
-                    tag: (packet.id - 1) as u32,
-                    fd: packet.d,
-                },
-                SKMSG_FOBTAINFD => Self::ObtainFd {
-                    tag: (packet.id - 1) as u32,
-                    flags: FobtainFdFlags::from_bits(packet.d).ok_or(Error::new(EINVAL))?,
-                    dst_fd_or_ptr: packet.c,
-                },
-                SKMSG_PROVIDE_MMAP => Self::ProvideMmap {
-                    tag: (packet.id - 1) as u32,
-                    offset: u64::from(packet.uid) | (u64::from(packet.gid) << 32),
-                    base_addr: VirtualAddress::new(packet.c),
-                    page_count: packet.d,
-                },
-                _ => return Err(Error::new(EINVAL)),
-            }
-        } else {
-            ParsedCqe::RegularResponse {
-                tag: (packet.id - 1) as u32,
-                code: packet.a,
-                extra0: 0,
-            }
-        })
-    }
     fn parse_cqe(cqe: &Cqe) -> Result<Self> {
         Ok(
             match CqeOpcode::try_from_raw(cqe.flags & 0b111).ok_or(Error::new(EINVAL))? {
@@ -204,7 +148,6 @@ impl UserInner {
     pub fn new(
         root_id: SchemeId,
         scheme_id: SchemeId,
-        v2: bool,
         new_close: bool,
         handle_id: usize,
         name: Box<str>,
@@ -215,7 +158,6 @@ impl UserInner {
             root_id,
             handle_id,
             name,
-            v2,
             supports_on_close: new_close,
             scheme_id,
             context,
@@ -779,171 +721,29 @@ impl UserInner {
         // If unmounting, do not block so that EOF can be returned immediately
         let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
 
-        if self.v2 {
-            match self
-                .todo
-                .receive_into_user(buf, block, "UserInner::read (v2)", token)
-            {
-                // If we received requests, return them to the scheme handler
-                Ok(byte_count) => Ok(byte_count),
-                // If there were no requests and we were unmounting, return EOF
-                Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => Ok(0),
-                // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
-                // occurred, return that.
-                Err(error) => Err(error),
-            }
-        } else {
-            let mut bytes_read = 0;
-
-            for dst in buf.in_exact_chunks(size_of::<Packet>()) {
-                match self
-                    .todo
-                    .receive(block && bytes_read == 0, "UserInner::read (legacy)", token)
-                {
-                    Ok(sqe) => {
-                        dst.copy_exactly(&self.translate_sqe_to_packet(&sqe)?)?;
-                        bytes_read += size_of::<Packet>();
-                    }
-                    Err(_) if bytes_read > 0 => return Ok(bytes_read),
-                    Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => {
-                        return Ok(bytes_read)
-                    }
-                    Err(error) => return Err(error),
-                }
-            }
-            Ok(bytes_read)
+        match self
+            .todo
+            .receive_into_user(buf, block, "UserInner::read (v2)", token)
+        {
+            // If we received requests, return them to the scheme handler
+            Ok(byte_count) => Ok(byte_count),
+            // If there were no requests and we were unmounting, return EOF
+            Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => Ok(0),
+            // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
+            // occurred, return that.
+            Err(error) => Err(error),
         }
-    }
-    fn translate_sqe_to_packet(&self, sqe: &Sqe) -> Result<Packet> {
-        let opc = Opcode::try_from_raw(sqe.opcode)
-            .expect("passed scheme opcode not internally recognized by kernel");
-
-        let uid = sqe.args[5] as u32;
-        let gid = (sqe.args[5] >> 32) as u32;
-
-        Ok(Packet {
-            id: u64::from(sqe.tag) + 1,
-            pid: sqe.caller as usize,
-            a: match opc {
-                Opcode::Open => SYS_OPEN,
-                Opcode::Rmdir => SYS_RMDIR,
-                Opcode::Unlink => SYS_UNLINK,
-                Opcode::Close => SYS_CLOSE,
-                Opcode::Dup => SYS_DUP,
-                Opcode::Read => SYS_READ,
-                Opcode::Write => SYS_WRITE,
-                Opcode::Fsize => SYS_LSEEK, // lseek reuses the fsize "opcode", must be !v2
-                Opcode::Fchmod => SYS_FCHMOD,
-                Opcode::Fchown => SYS_FCHOWN,
-                Opcode::Fcntl => SYS_FCNTL,
-                Opcode::Fevent => SYS_FEVENT,
-                Opcode::Sendfd => SYS_SENDFD,
-                Opcode::Flink => SYS_FLINK,
-                Opcode::Fpath => SYS_FPATH,
-                Opcode::Frename => SYS_FRENAME,
-                Opcode::Fstat => SYS_FSTAT,
-                Opcode::Fstatvfs => SYS_FSTATVFS,
-                Opcode::Fsync => SYS_FSYNC,
-                Opcode::Ftruncate => SYS_FTRUNCATE,
-                Opcode::Futimens => SYS_FUTIMENS,
-
-                Opcode::MmapPrep => {
-                    return Ok(Packet {
-                        id: u64::from(sqe.tag) + 1,
-                        pid: sqe.caller as usize,
-                        a: KSMSG_MMAP_PREP,
-                        b: sqe.args[0] as usize,
-                        c: sqe.args[1] as usize,
-                        d: sqe.args[2] as usize,
-                        uid: sqe.args[3] as u32,
-                        gid: (sqe.args[3] >> 32) as u32,
-                    })
-                }
-                Opcode::RequestMmap => {
-                    return Ok(Packet {
-                        id: u64::from(sqe.tag) + 1,
-                        pid: sqe.caller as usize,
-                        a: KSMSG_MMAP,
-                        b: sqe.args[0] as usize,
-                        c: sqe.args[1] as usize,
-                        d: sqe.args[2] as usize,
-                        uid: sqe.args[3] as u32,
-                        gid: (sqe.args[3] >> 32) as u32,
-                    })
-                }
-                Opcode::Munmap => {
-                    return Ok(Packet {
-                        id: u64::from(sqe.tag) + 1,
-                        pid: sqe.caller as usize,
-                        a: KSMSG_MUNMAP,
-                        b: sqe.args[0] as usize,         // fd
-                        c: sqe.args[1] as usize,         // size
-                        d: sqe.args[2] as usize,         // flags
-                        uid: sqe.args[3] as u32,         // offset lo
-                        gid: (sqe.args[3] >> 32) as u32, // offset hi
-                    });
-                }
-                Opcode::Getdents => {
-                    return Ok(Packet {
-                        id: u64::from(sqe.tag) + 1,
-                        pid: sqe.caller as usize,
-                        a: SYS_GETDENTS,
-                        b: sqe.args[0] as usize,
-                        c: sqe.args[1] as usize,
-                        d: sqe.args[2] as usize,
-                        uid: sqe.args[3] as u32,
-                        gid: (sqe.args[3] >> 32) as u32,
-                    });
-                }
-
-                Opcode::Mremap => SYS_MREMAP,
-                Opcode::Msync => KSMSG_MSYNC,
-
-                Opcode::Cancel => {
-                    return Ok(Packet {
-                        id: 0,
-                        a: KSMSG_CANCEL,
-                        b: sqe.tag as usize + 1,
-                        c: 0,
-                        d: 0,
-                        pid: sqe.caller as usize,
-                        uid,
-                        gid,
-                    })
-                }
-
-                _ => return Err(Error::new(EOPNOTSUPP)),
-            },
-            b: sqe.args[0] as usize,
-            c: sqe.args[1] as usize,
-            d: sqe.args[2] as usize,
-
-            uid,
-            gid,
-        })
     }
 
     pub fn write(&self, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
         let mut bytes_read = 0;
-        if self.v2 {
-            for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
-                match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
-                    .and_then(|p| self.handle_parsed(&p, token))
-                {
-                    Ok(()) => bytes_read += size_of::<Cqe>(),
-                    Err(_) if bytes_read > 0 => break,
-                    Err(error) => return Err(error),
-                }
-            }
-        } else {
-            for chunk in buf.in_exact_chunks(size_of::<Packet>()) {
-                match ParsedCqe::parse_packet(&unsafe { chunk.read_exact::<Packet>()? }, token)
-                    .and_then(|p| self.handle_parsed(&p, token))
-                {
-                    Ok(()) => bytes_read += size_of::<Packet>(),
-                    Err(_) if bytes_read > 0 => break,
-                    Err(error) => return Err(error),
-                }
+        for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
+            match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
+                .and_then(|p| self.handle_parsed(&p, token))
+            {
+                Ok(()) => bytes_read += size_of::<Cqe>(),
+                Err(_) if bytes_read > 0 => break,
+                Err(error) => return Err(error),
             }
         }
         Ok(bytes_read)
@@ -964,16 +764,6 @@ impl UserInner {
             states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
         }
 
-        /*self.todo.send(Packet {
-            id: packet_id,
-            pid: context::context_id().into(),
-            a: KSMSG_MMAP,
-            b: id,
-            c: flags.bits(),
-            d: required_page_count,
-            uid: offset as u32,
-            gid: (offset >> 32) as u32,
-        });*/
         self.todo.send(
             Sqe {
                 opcode: Opcode::RequestMmap as u8,
@@ -1122,7 +912,6 @@ impl UserInner {
             ParsedCqe::TriggerFevent { number, flags } => {
                 event::trigger(self.scheme_id, number, flags)
             }
-            ParsedCqe::NoOp => (),
         }
         Ok(())
     }
@@ -1266,22 +1055,6 @@ impl UserInner {
 
         let response = self.call_extended_inner(
             None,
-            /*
-            Packet {
-                id: self.next_id(),
-                pid: pid.into(),
-                a: KSMSG_MMAP_PREP,
-                b: file,
-                c: unaligned_size,
-                d: map.flags.bits(),
-                // The uid and gid can be obtained by the proc scheme anyway, if the pid is provided.
-                uid: map.offset as u32,
-                #[cfg(target_pointer_width = "64")]
-                gid: (map.offset >> 32) as u32,
-                #[cfg(target_pointer_width = "32")]
-                gid: 0,
-            },
-            */
             Sqe {
                 opcode: Opcode::MmapPrep as u8,
                 sqe_flags: SqeFlags::empty(),
@@ -1750,9 +1523,6 @@ impl KernelScheme for UserScheme {
 
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        if !inner.v2 {
-            return Err(Error::new(ESPIPE));
-        }
         inner
             .call(Opcode::Fsize, [file], &mut PageSpan::empty(), token)
             .map(|o| o as u64)
@@ -1949,14 +1719,10 @@ impl KernelScheme for UserScheme {
         buf: UserSliceWo,
         offset: u64,
         call_flags: u32,
-        stored_flags: u32,
+        _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-
-        if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, call_flags as usize, token)?;
-        }
 
         let mut address = inner.capture_user(buf, token)?;
         let result = inner.call(
@@ -1973,10 +1739,6 @@ impl KernelScheme for UserScheme {
         );
         address.release()?;
 
-        if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, stored_flags as usize, token)?;
-        }
-
         result
     }
 
@@ -1986,13 +1748,10 @@ impl KernelScheme for UserScheme {
         buf: UserSliceRo,
         offset: u64,
         call_flags: u32,
-        stored_flags: u32,
+        _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, call_flags as usize, token)?;
-        }
 
         let mut address = inner.capture_user(buf, token)?;
         let result = inner.call(
@@ -2009,29 +1768,7 @@ impl KernelScheme for UserScheme {
         );
         address.release()?;
 
-        if call_flags != stored_flags && !inner.v2 {
-            self.fcntl(file, F_SETFL, stored_flags as usize, token)?;
-        }
-
         result
-    }
-    fn legacy_seek(
-        &self,
-        id: usize,
-        pos: isize,
-        whence: usize,
-        token: &mut CleanLockToken,
-    ) -> Option<Result<usize>> {
-        let inner = self.inner.upgrade()?;
-        if inner.v2 {
-            return None;
-        }
-        Some(inner.call(
-            Opcode::Fsize,
-            [id, pos as usize, whence],
-            &mut PageSpan::empty(),
-            token,
-        ))
     }
     fn kfutimens(
         &self,

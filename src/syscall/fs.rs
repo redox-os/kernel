@@ -796,25 +796,13 @@ pub fn mremap(
 }
 
 pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken) -> Result<usize> {
-    enum Ret {
-        Legacy(usize),
-        Fsize((Option<u64>, Arc<RwLock<FileDescription>>)),
-    }
-    let fsize_or_legacy = file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
-        Ok(
-            if let Some(new_off) = scheme.legacy_seek(desc.number, pos as isize, whence, token) {
-                Ret::Legacy(new_off?)
-            } else if whence == SEEK_END {
-                Ret::Fsize((Some(scheme.fsize(desc.number, token)?), desc_arc))
-            } else {
-                Ret::Fsize((None, desc_arc))
-            },
-        )
+    let (fsize, desc) = file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
+        Ok(if whence == SEEK_END {
+            (Some(scheme.fsize(desc.number, token)?), desc_arc)
+        } else {
+            (None, desc_arc)
+        })
     })?;
-    let (fsize, desc) = match fsize_or_legacy {
-        Ret::Fsize(fsize) => fsize,
-        Ret::Legacy(new_pos) => return Ok(new_pos),
-    };
 
     let mut guard = desc.write();
 
