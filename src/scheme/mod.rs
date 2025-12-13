@@ -512,15 +512,6 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         Err(Error::new(ESPIPE))
     }
-    fn legacy_seek(
-        &self,
-        id: usize,
-        pos: isize,
-        whence: usize,
-        token: &mut CleanLockToken,
-    ) -> Option<Result<usize>> {
-        None
-    }
     fn fchmod(&self, id: usize, new_mode: u16, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }

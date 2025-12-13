@@ -81,7 +81,8 @@ impl KernelScheme for RootScheme {
                 let new_close = flags & O_EXLOCK == O_EXLOCK;
 
                 if !v2 {
-                    warn!("Context {} opened a v1 scheme", context::current().read(token.token()).name);
+                    error!("Context {} tried to open a v1 scheme", context::current().read(token.token()).name);
+                    return Err(Error::new(EINVAL));
                 }
                 if !new_close {
                     warn!(
@@ -98,9 +99,6 @@ impl KernelScheme for RootScheme {
                         let inner = Arc::new(UserInner::new(
                             self.scheme_id,
                             scheme_id,
-                            // TODO: This is a hack, but eventually the legacy interface will be
-                            // removed.
-                            v2,
                             new_close,
                             id,
                             path_box,
