@@ -65,10 +65,10 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
         if !context.status_reason.is_empty() {
             println!("reason: {}", context.status_reason);
         }
-        if let Some([a, b, c, d, e, f]) = context.current_syscall() {
+        if let Some([a, b, c, d, e, f, g]) = context.current_syscall() {
             println!(
                 "syscall: {}",
-                crate::syscall::debug::format_call(a, b, c, d, e, f)
+                crate::syscall::debug::format_call(a, b, c, d, e, f, g)
             );
         }
         if let Some(ref addr_space) = context.addr_space {
