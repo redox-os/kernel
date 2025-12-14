@@ -32,7 +32,7 @@ $(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell
 		--manifest-path "$(MANIFEST)" \
 		--target "$(TARGET_SPEC)" \
 		--release \
-		-Z build-std=core,alloc \
+		-Z build-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
 		-- \
 		-C link-arg=-T -Clink-arg="$(LD_SCRIPT)" \
 		-C link-arg=-z -Clink-arg=max-page-size=0x1000 \
