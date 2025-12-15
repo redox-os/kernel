@@ -144,8 +144,10 @@ pub struct Context {
     pub egid: u32,
     pub pid: usize,
 
-    // Use PreemptGuard
-    pub(super) is_preemptable: bool,
+    // See [`PreemptGuard`]
+    //
+    // When > 0, preemption is disabled.
+    pub(super) preempt_locks: usize,
 }
 
 #[derive(Debug)]
@@ -201,10 +203,14 @@ impl Context {
             #[cfg(feature = "syscall_debug")]
             syscall_debug_info: crate::syscall::debug::SyscallDebugInfo::default(),
 
-            is_preemptable: true,
+            preempt_locks: 0,
         };
         cpu_stats::add_context();
         Ok(this)
+    }
+
+    pub fn is_preemptable(&self) -> bool {
+        self.preempt_locks == 0
     }
 
     /// Block the context, and return true if it was runnable before being blocked

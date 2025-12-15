@@ -4,8 +4,8 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, ContextLock},
-    sync::{CleanLockToken, Mutex, L1},
+    context::{self, ContextLock, PreemptGuard},
+    sync::{CleanLockToken, L1, Mutex},
 };
 
 #[derive(Debug)]
@@ -50,6 +50,12 @@ impl WaitCondition {
     pub fn wait<T>(&self, guard: T, reason: &'static str, token: &mut CleanLockToken) -> bool {
         let current_context_ref = context::current();
         {
+            // Avoid a context switch between blocking ourselves and adding
+            // ourselves to the wait list as otherwise we might miss a wakeup.
+            // We cannot add ourselves to the wait list first as that would lead
+            // to deadlock if we were woken up immediately.
+            let mut preempt = PreemptGuard::new(&current_context_ref, token);
+            let token = preempt.token();
             {
                 let mut context = current_context_ref.write(token.token());
                 if let Some((control, pctl, _)) = context.sigcontrol()

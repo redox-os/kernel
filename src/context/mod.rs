@@ -190,7 +190,7 @@ pub struct PreemptGuard<'a> {
 
 impl<'a> PreemptGuard<'a> {
     pub fn new(context: &'a ContextLock, token: &'a mut CleanLockToken) -> PreemptGuard<'a> {
-        context.write(token.token()).is_preemptable = false;
+        context.write(token.token()).preempt_locks += 1;
         PreemptGuard { context, token }
     }
 
@@ -205,6 +205,6 @@ impl<'a> PreemptGuard<'a> {
 
 impl Drop for PreemptGuard<'_> {
     fn drop(&mut self) {
-        self.context.write(self.token.token()).is_preemptable = true;
+        self.context.write(self.token.token()).preempt_locks -= 1;
     }
 }
