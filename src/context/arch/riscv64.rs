@@ -88,13 +88,15 @@ impl super::Context {
         unimplemented!()
     }
 
-    pub fn current_syscall(&self) -> Option<[usize; 6]> {
+    pub fn current_syscall(&self) -> Option<[usize; 7]> {
         if !self.inside_syscall {
             return None;
         }
         let regs = self.regs()?;
         let regs = &regs.registers;
-        Some([regs.x17, regs.x10, regs.x11, regs.x12, regs.x13, regs.x14])
+        Some([
+            regs.x17, regs.x10, regs.x11, regs.x12, regs.x13, regs.x14, regs.x15,
+        ])
     }
 
     pub(crate) fn write_current_env_regs(&mut self, regs: EnvRegisters) -> Result<()> {

@@ -559,10 +559,14 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Ok(0)
     }
-    fn rmdir(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        Err(Error::new(ENOENT))
-    }
-    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
+    fn unlinkat(
+        &self,
+        file: usize,
+        path: &str,
+        flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         Err(Error::new(ENOENT))
     }
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
@@ -610,6 +614,19 @@ pub struct CallerCtx {
     pub pid: usize,
     pub uid: u32,
     pub gid: u32,
+}
+impl CallerCtx {
+    pub fn filter_uid_gid(self, euid: u32, egid: u32) -> Self {
+        if self.uid == 0 && self.gid == 0 {
+            Self {
+                pid: self.pid,
+                uid: euid,
+                gid: egid,
+            }
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Clone)]

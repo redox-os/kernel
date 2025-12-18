@@ -1497,24 +1497,19 @@ impl KernelScheme for UserScheme {
         }
     }
 
-    fn rmdir(&self, path: &str, _ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
+    fn unlinkat(
+        &self,
+        file: usize,
+        path: &str,
+        flags: usize,
+        _ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
         inner.call(
-            Opcode::Rmdir,
-            [address.base(), address.len()],
-            address.span(),
-            token,
-        )?;
-        Ok(())
-    }
-
-    fn unlink(&self, path: &str, _ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        inner.call(
-            Opcode::Unlink,
-            [address.base(), address.len()],
+            Opcode::UnlinkAt,
+            [file, address.base(), address.len(), flags],
             address.span(),
             token,
         )?;

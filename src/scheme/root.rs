@@ -81,7 +81,10 @@ impl KernelScheme for RootScheme {
                 let new_close = flags & O_EXLOCK == O_EXLOCK;
 
                 if !v2 {
-                    error!("Context {} tried to open a v1 scheme", context::current().read(token.token()).name);
+                    error!(
+                        "Context {} tried to open a v1 scheme",
+                        context::current().read(token.token()).name
+                    );
                     return Err(Error::new(EINVAL));
                 }
                 if !new_close {
@@ -138,21 +141,44 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
+    fn unlinkat(
+        &self,
+        fd: usize,
+        path: &str,
+        _flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         let path = path.trim_matches('/');
+
+        let ens = {
+            let handles = self.handles.read(token.token());
+            let Handle::List { ens } = handles.get(&fd).ok_or(Error::new(ENOENT))? else {
+                return Err(Error::new(EPERM));
+            };
+            *ens
+        };
 
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
+
+        {
+            let schemes = scheme::schemes(token.token());
+            if schemes.get_name(ens, path).is_none() {
+                return Err(Error::new(ENODEV));
+            }
+        }
+
         let inner = {
             let handles = self.handles.read(token.token());
             handles
                 .iter()
                 .find_map(|(_id, handle)| {
-                    if let Handle::Scheme(inner) = handle {
-                        if path == inner.name.as_ref() {
-                            return Some(inner.clone());
-                        }
+                    if let Handle::Scheme(inner) = handle
+                        && path == inner.name.as_ref()
+                    {
+                        return Some(inner.clone());
                     }
                     None
                 })

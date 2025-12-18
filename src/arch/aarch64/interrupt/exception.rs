@@ -6,7 +6,7 @@ use crate::{
     exception_stack,
     memory::{ArchIntCtx, GenericPfFlags},
     sync::CleanLockToken,
-    syscall::{self, flag::*},
+    syscall,
 };
 
 use super::InterruptStack;
@@ -189,7 +189,8 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
             let scratch = &stack.scratch;
             let mut token = unsafe { CleanLockToken::new() };
             let ret = syscall::syscall(
-                scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, &mut token,
+                scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, scratch.x5,
+                &mut token,
             );
             stack.scratch.x0 = ret;
         }
