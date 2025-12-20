@@ -47,3 +47,22 @@ fn hpet_or_pit() -> u128 {
     // Calculate nanoseconds since last interrupt
     (elapsed as u128 * pit::PERIOD_FS) / 1_000_000
 }
+
+pub fn monotonic_resolution() -> u128 {
+    #[cfg(feature = "x86_kvm_pv")]
+    if super::device::tsc::monotonic_absolute().is_some() {
+        return 1;
+    }
+
+    if let Some(ref hpet) = *crate::acpi::ACPI_TABLE.hpet.read() {
+        let capability = unsafe { hpet.read_u64(hpet::CAPABILITY_OFFSET) };
+        let mut period_fs = capability >> 32;
+        if period_fs == 0 {
+            period_fs = 10_000_000;
+        }
+
+        return (period_fs as u128) / 1_000_000;
+    }
+
+    pit::PERIOD_FS / 1_000_000
+}
