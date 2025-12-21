@@ -71,6 +71,7 @@ impl WaitCondition {
                 .push(Arc::downgrade(&current_context_ref));
 
             drop(guard);
+            drop(preempt);
         }
 
         context::switch(token);
