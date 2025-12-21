@@ -24,3 +24,9 @@ pub fn monotonic_absolute() -> u128 {
         0
     }
 }
+
+pub fn monotonic_resolution() -> u128 {
+    let freq_hz = MTIME_FREQ_HZ.load(Ordering::Relaxed);
+
+    1_000_000_000u128 / freq_hz as u128
+}

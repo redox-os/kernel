@@ -38,6 +38,7 @@ interrupt_stack!(syscall, |stack| {
             scratch.edx,
             preserved.esi,
             preserved.edi,
+            preserved.ebp,
             &mut token,
         );
         stack.scratch.eax = ret;

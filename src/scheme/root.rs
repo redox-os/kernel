@@ -77,30 +77,31 @@ impl KernelScheme for RootScheme {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
             let inner = {
-                let path_box = path.to_string().into_boxed_str();
-                let mut schemes = scheme::schemes_mut(token.token());
-
                 let v2 = flags & O_FSYNC == O_FSYNC;
                 let new_close = flags & O_EXLOCK == O_EXLOCK;
 
                 if !v2 {
-                    //warn!("Context {} opened a v1 scheme", context::current().read().name);
+                    error!(
+                        "Context {} tried to open a v1 scheme",
+                        context::current().read(token.token()).name
+                    );
+                    return Err(Error::new(EINVAL));
                 }
                 if !new_close {
-                    /*warn!(
+                    warn!(
                         "Context {} opened a non-async-close scheme",
-                        context::current().read().name
-                    );*/
+                        context::current().read(token.token()).name
+                    );
                 }
+
+                let path_box = path.to_string().into_boxed_str();
+                let mut schemes = scheme::schemes_mut(token.token());
 
                 let (_scheme_id, inner) =
                     schemes.insert_and_pass(self.scheme_ns, path, |scheme_id| {
                         let inner = Arc::new(UserInner::new(
                             self.scheme_id,
                             scheme_id,
-                            // TODO: This is a hack, but eventually the legacy interface will be
-                            // removed.
-                            v2,
                             new_close,
                             id,
                             path_box,
@@ -140,21 +141,44 @@ impl KernelScheme for RootScheme {
         }
     }
 
-    fn unlink(&self, path: &str, ctx: CallerCtx, token: &mut CleanLockToken) -> Result<()> {
+    fn unlinkat(
+        &self,
+        fd: usize,
+        path: &str,
+        _flags: usize,
+        ctx: CallerCtx,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         let path = path.trim_matches('/');
+
+        let ens = {
+            let handles = self.handles.read(token.token());
+            let Handle::List { ens } = handles.get(&fd).ok_or(Error::new(ENOENT))? else {
+                return Err(Error::new(EPERM));
+            };
+            *ens
+        };
 
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
+
+        {
+            let schemes = scheme::schemes(token.token());
+            if schemes.get_name(ens, path).is_none() {
+                return Err(Error::new(ENODEV));
+            }
+        }
+
         let inner = {
             let handles = self.handles.read(token.token());
             handles
                 .iter()
                 .find_map(|(_id, handle)| {
-                    if let Handle::Scheme(inner) = handle {
-                        if path == inner.name.as_ref() {
-                            return Some(inner.clone());
-                        }
+                    if let Handle::Scheme(inner) = handle
+                        && path == inner.name.as_ref()
+                    {
+                        return Some(inner.clone());
                     }
                     None
                 })

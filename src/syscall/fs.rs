@@ -1,4 +1,5 @@
 //! Filesystem syscalls
+
 use core::{mem::size_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
@@ -145,6 +146,8 @@ pub fn openat(
     raw_path: UserSliceRo,
     flags: usize,
     fcntl_flags: u32,
+    euid: u32,
+    egid: u32,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
@@ -161,7 +164,10 @@ pub fn openat(
 
     let description = pipe.description.read();
 
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
+    let caller_ctx = context::current()
+        .read(token.token())
+        .caller_ctx()
+        .filter_uid_gid(euid, egid);
 
     let new_description = {
         let scheme = scheme::schemes(token.token())
@@ -185,7 +191,7 @@ pub fn openat(
                     internal_flags,
                     scheme: description.scheme,
                     number,
-                    flags: description.flags,
+                    flags: (flags & !O_CLOEXEC) as u32,
                 }))
             }
             OpenResult::External(desc) => desc,
@@ -196,59 +202,42 @@ pub fn openat(
         .read(token.token())
         .add_file(FileDescriptor {
             description: new_description,
-            cloexec: false,
+            cloexec: flags as usize & O_CLOEXEC == O_CLOEXEC,
         })
         .ok_or(Error::new(EMFILE))
 }
-/// rmdir syscall
-pub fn rmdir(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.ens, cx.caller_ctx())
-    };
+/// Unlinkat syscall
+pub fn unlinkat(
+    fh: FileHandle,
+    raw_path: UserSliceRo,
+    flags: usize,
+    euid: u32,
+    egid: u32,
+    token: &mut CleanLockToken,
+) -> Result<()> {
+    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
+    let pipe = context::current()
+        .read(token.token())
+        .get_file(fh)
+        .ok_or(Error::new(EBADF))?;
+
+    let description = pipe.description.read();
+
+    let scheme = scheme::schemes(token.token())
+        .get(description.scheme)
+        .ok_or(Error::new(EBADF))?
+        .clone();
+
+    let caller_ctx = context::current()
+        .read(token.token())
+        .caller_ctx()
+        .filter_uid_gid(euid, egid);
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let scheme = {
-        let schemes = scheme::schemes(token.token());
-        let (_scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name.as_ref())
-            .ok_or(Error::new(ENODEV))?;
-        scheme.clone()
-    };
-    scheme.rmdir(reference.as_ref(), caller_ctx, token)
-}
-
-/// Unlink syscall
-pub fn unlink(raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (scheme_ns, caller_ctx) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.ens, cx.caller_ctx())
-    };
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let scheme = {
-        let schemes = scheme::schemes(token.token());
-        let (_scheme_id, scheme) = schemes
-            .get_name(scheme_ns, scheme_name.as_ref())
-            .ok_or(Error::new(ENODEV))?;
-        scheme.clone()
-    };
-    scheme.unlink(reference.as_ref(), caller_ctx, token)
+    scheme.unlinkat(description.number, &path_buf, flags, caller_ctx, token)
 }
 
 /// Close syscall
@@ -744,7 +733,9 @@ pub fn mremap(
     let addr_space = AddrSpace::current()?;
     let src_span = PageSpan::new(old_base, old_size.div_ceil(PAGE_SIZE));
     let new_page_count = new_size.div_ceil(PAGE_SIZE);
-    let requested_dst_base = Some(new_base).filter(|_| new_address != 0);
+    let fixed = map_flags.contains(MapFlags::MAP_FIXED)
+        || map_flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+    let requested_dst_base = (new_address != 0 || fixed).then_some(new_base);
 
     if mremap_flags.contains(MremapFlags::KEEP_OLD) {
         // TODO: This is a hack! Find a better interface for replacing this, perhaps a capability
@@ -794,25 +785,13 @@ pub fn mremap(
 }
 
 pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken) -> Result<usize> {
-    enum Ret {
-        Legacy(usize),
-        Fsize((Option<u64>, Arc<RwLock<FileDescription>>)),
-    }
-    let fsize_or_legacy = file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
-        Ok(
-            if let Some(new_off) = scheme.legacy_seek(desc.number, pos as isize, whence, token) {
-                Ret::Legacy(new_off?)
-            } else if whence == SEEK_END {
-                Ret::Fsize((Some(scheme.fsize(desc.number, token)?), desc_arc))
-            } else {
-                Ret::Fsize((None, desc_arc))
-            },
-        )
+    let (fsize, desc) = file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
+        Ok(if whence == SEEK_END {
+            (Some(scheme.fsize(desc.number, token)?), desc_arc)
+        } else {
+            (None, desc_arc)
+        })
     })?;
-    let (fsize, desc) = match fsize_or_legacy {
-        Ret::Fsize(fsize) => fsize,
-        Ret::Legacy(new_pos) => return Ok(new_pos),
-    };
 
     let mut guard = desc.write();
 

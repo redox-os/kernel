@@ -165,7 +165,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         // We are careful not to lock this context twice
         let prev_context_guard = unsafe { prev_context_lock.write_arc() };
 
-        if !prev_context_guard.is_preemptable {
+        if !prev_context_guard.is_preemptable() {
             return SwitchResult::AllContextsIdle;
         }
 

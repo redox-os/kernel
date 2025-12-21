@@ -120,7 +120,11 @@ impl InterruptStack {
     pub fn set_instr_pointer(&mut self, rip: usize) {
         self.iret.rip = rip;
     }
-
+    pub fn set_arg1(&mut self, arg_opt: Option<usize>) {
+        if let Some(arg) = arg_opt {
+            self.scratch.rsi = arg;
+        }
+    }
     pub fn dump(&self) {
         self.iret.dump();
         self.scratch.dump();

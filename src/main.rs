@@ -102,10 +102,6 @@ mod devices;
 /// Event handling
 mod event;
 
-/// External functions
-#[cfg(not(test))]
-mod externs;
-
 /// Logging
 mod log;
 
