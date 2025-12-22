@@ -375,23 +375,23 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             }
         }
 
-        // Ensure graphical debug region remains paged
-        // {
-        //     use crate::devices::graphical_debug::FRAMEBUFFER;
+        //Ensure graphical debug region remains paged
+        {
+            use crate::devices::graphical_debug::FRAMEBUFFER;
 
-        //     let (phys, virt, size) = *FRAMEBUFFER.lock();
+            let (phys, virt, size) = *FRAMEBUFFER.lock();
 
-        //     let pages = size.div_ceil(PAGE_SIZE);
-        //     for i in 0..pages {
-        //         let phys = PhysicalAddress::new(phys + i * PAGE_SIZE);
-        //         let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
-        //         let flags = PageFlags::new().write(true).write_combining(true);
-        //         let flush = mapper
-        //             .map_phys(virt, phys, flags)
-        //             .expect("failed to map frame");
-        //         flush.ignore(); // Not the active table
-        //     }
-        // }
+            let pages = size.div_ceil(PAGE_SIZE);
+            for i in 0..pages {
+                let phys = PhysicalAddress::new(phys + i * PAGE_SIZE);
+                let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
+                let flags = PageFlags::new().write(true).write_combining(true);
+                let flush = mapper
+                    .map_phys(virt, phys, flags)
+                    .expect("failed to map frame");
+                flush.ignore(); // Not the active table
+            }
+        }
 
         debug!("Table: {:X}", mapper.table().phys().data());
         for i in 0..A::PAGE_ENTRIES {
