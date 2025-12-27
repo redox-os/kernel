@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
+use syscall::data::GlobalSchemes;
 
 use crate::{
     devices::graphical_debug,
@@ -47,16 +48,42 @@ enum SpecialFds {
 
     #[cfg(feature = "profiling")]
     CtlProfiling = !0 - 3,
+
+    SchemeRoot = !0 - 4,
 }
 
 impl KernelScheme for DebugScheme {
-    fn kopen(
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write(token.token()).insert(
+            id,
+            Handle {
+                num: SpecialFds::SchemeRoot as usize,
+            },
+        );
+
+        Ok(id)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        if HANDLES
+            .read(token.token())
+            .get(&id)
+            .ok_or(Error::new(EBADF))?
+            .num
+            != SpecialFds::SchemeRoot as usize
+        {
+            return Err(Error::new(EACCES));
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if ctx.uid != 0 {
             return Err(Error::new(EPERM));
         }
@@ -129,7 +156,9 @@ impl KernelScheme for DebugScheme {
             *handles.get(&id).ok_or(Error::new(EBADF))?
         };
 
-        if handle.num == SpecialFds::DisableGraphicalDebug as usize {
+        if handle.num == SpecialFds::DisableGraphicalDebug as usize
+            || handle.num == SpecialFds::SchemeRoot as usize
+        {
             return Err(Error::new(EBADF));
         }
 

@@ -22,7 +22,7 @@ use crate::{
 
 use crate::context::context::FdTbl;
 
-use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
+use super::{CallerCtx, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
@@ -34,12 +34,13 @@ use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
     slice, str,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
+use syscall::data::GlobalSchemes;
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -393,20 +394,7 @@ impl ProcScheme {
 }
 
 impl KernelScheme for ProcScheme {
-    fn kopen(
-        &self,
-        path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if path != "authority" {
-            return Err(Error::new(ENOENT));
-        }
-        static LOCK: AtomicBool = AtomicBool::new(false);
-        if LOCK.swap(true, Ordering::Relaxed) {
-            return Err(Error::new(EEXIST));
-        }
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(
             id,
@@ -416,7 +404,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::Authority,
             },
         );
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(id)
     }
 
     fn fevent(
