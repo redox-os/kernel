@@ -2628,7 +2628,7 @@ fn correct_inner<'l>(
                 .get(scheme_id)
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
-                        user.inner.upgrade()
+                        Some(user.inner.clone())
                     } else {
                         None
                     }
