@@ -1183,7 +1183,6 @@ impl ContextHandle {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
-
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
@@ -1237,6 +1236,48 @@ impl ContextHandle {
                 guard.euid = info.euid;
                 guard.egid = info.egid;
                 Ok(size_of::<ProcSchemeAttrs>())
+            }
+            ContextHandle::OpenViaDup => {
+                let mut args = buf.usizes();
+
+                let user_data = args.next().ok_or(Error::new(EINVAL))??;
+
+                let context_verb =
+                    ContextVerb::try_from_raw(user_data).ok_or(Error::new(EINVAL))?;
+
+                match context_verb {
+                    ContextVerb::ForceKill => {
+                        if context::is_current(&context) {
+                            //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            // The following functionality simplifies the cleanup step when detached threads
+                            // terminate.
+                            if let Some(post_unmap) = args.next() {
+                                let base = post_unmap?;
+                                let size = args.next().ok_or(Error::new(EINVAL))??;
+
+                                if size > 0 {
+                                    let addrsp =
+                                        Arc::clone(context.read(token.token()).addr_space()?);
+                                    let res = addrsp.munmap(
+                                        PageSpan::validate_nonempty(
+                                            VirtualAddress::new(base),
+                                            size,
+                                        )
+                                        .ok_or(Error::new(EINVAL))?,
+                                        false,
+                                    )?;
+                                    for r in res {
+                                        let _ = r.unmap(token);
+                                    }
+                                }
+                            }
+                            crate::syscall::exit_this_context(None, token);
+                        } else {
+                            Err(Error::new(EPERM))
+                        }
+                    }
+                    _ => Err(Error::new(EINVAL)),
+                }
             }
             _ => Err(Error::new(EBADF)),
         }
