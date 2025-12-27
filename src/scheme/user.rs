@@ -19,7 +19,7 @@ use syscall::{
 use crate::{
     context::{
         self,
-        context::HardBlockedReason,
+        context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
         file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
@@ -1250,90 +1250,22 @@ impl UserInner {
         };
 
         let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
-            Self::bulk_insert_fds(descriptions, payload, token)?
+            bulk_insert_fds(
+                descriptions,
+                payload,
+                flags.contains(FobtainFdFlags::CLOEXEC),
+                token,
+            )?
         } else {
-            Self::bulk_add_fds(descriptions, payload, token)?
+            bulk_add_fds(
+                descriptions,
+                payload,
+                flags.contains(FobtainFdFlags::CLOEXEC),
+                token,
+            )?
         };
 
         Ok(num_fds)
-    }
-
-    fn bulk_add_fds(
-        descriptions: Vec<Arc<RwLock<FileDescription>>>,
-        payload: UserSliceRw,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        let cnt = descriptions.len();
-        if payload.len() != cnt * size_of::<usize>() {
-            return Err(Error::new(EINVAL));
-        }
-        if descriptions.is_empty() {
-            return Ok(0);
-        }
-        let current_lock = context::current();
-        let current = current_lock.write(token.token());
-
-        let files: Vec<FileDescriptor> = descriptions
-            .into_iter()
-            .map(|description| FileDescriptor {
-                description,
-                cloexec: true,
-            })
-            .collect();
-        let handles = current
-            .bulk_add_files_posix(files)
-            .ok_or(Error::new(EMFILE))?;
-        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
-        for (handle, chunk) in handles.iter().zip(payload_chunks) {
-            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
-        }
-        Ok(handles.len())
-    }
-
-    fn bulk_insert_fds(
-        descriptions: Vec<Arc<RwLock<FileDescription>>>,
-        payload: UserSliceRw,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        let cnt = descriptions.len();
-        if payload.len() != cnt * size_of::<usize>() {
-            return Err(Error::new(EINVAL));
-        }
-        if descriptions.is_empty() {
-            return Ok(0);
-        }
-        let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
-            description,
-            cloexec: true,
-        });
-        let first_fd = payload
-            .in_exact_chunks(size_of::<usize>())
-            .next()
-            .ok_or(Error::new(EINVAL))?
-            .read_usize()?;
-
-        let current_lock = context::current();
-        let current = current_lock.write(token.token());
-
-        if first_fd == usize::MAX {
-            let files = files_iter.collect::<Vec<_>>();
-            let handles = current
-                .bulk_insert_files_upper(files)
-                .ok_or(Error::new(EMFILE))?;
-            let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
-            for (handle, chunk) in handles.iter().zip(payload_chunks) {
-                chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
-            }
-            Ok(handles.len())
-        } else {
-            let handles: Vec<FileHandle> = payload
-                .usizes()
-                .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
-                .collect::<Result<_, _>>()?;
-            let files = files_iter.collect::<Vec<_>>();
-            current.bulk_insert_files_upper_manual(files, &handles)?;
-            Ok(handles.len())
-        }
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
@@ -1958,9 +1890,19 @@ impl KernelScheme for UserScheme {
 
         let num_fds = if let Some(descriptions) = descriptions_opt {
             if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
-                UserInner::bulk_insert_fds(descriptions, payload, token)?
+                bulk_insert_fds(
+                    descriptions,
+                    payload,
+                    recvfd_flags.contains(RecvFdFlags::CLOEXEC),
+                    token,
+                )?
             } else {
-                UserInner::bulk_add_fds(descriptions, payload, token)?
+                bulk_add_fds(
+                    descriptions,
+                    payload,
+                    recvfd_flags.contains(RecvFdFlags::CLOEXEC),
+                    token,
+                )?
             }
         } else {
             0
