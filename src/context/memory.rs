@@ -405,7 +405,8 @@ impl AddrSpaceWrapper {
             )?);
         }
 
-        let mut remaining_src_span = PageSpan::new(src_span.base, new_page_count);
+        let mut remaining_src_span =
+            PageSpan::new(src_span.base, cmp::min(src_span.count, new_page_count));
 
         let to_remap = src_grants
             .conflicts(remaining_src_span)
