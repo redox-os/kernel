@@ -86,9 +86,13 @@ pub fn openat(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    if is_legacy(&path_buf) {
-        // TODO: implement
-        return Err(Error::new(EINVAL));
+    if path_buf.contains(':') && !is_legacy(&path_buf) {
+        let name = context::current().read(token.token()).name;
+        if path_buf == "event:" || path_buf.starts_with("time:") {
+            // FIXME winit issues
+        } else {
+            println!("deprecated: legacy path {:?} used by {}", path_buf, name);
+        }
     }
 
     let pipe = context::current()
