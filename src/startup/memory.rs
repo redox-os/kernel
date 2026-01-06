@@ -375,7 +375,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             }
         }
 
-        //Ensure graphical debug region remains paged
+        // Ensure graphical debug region remains paged
         {
             use crate::devices::graphical_debug::FRAMEBUFFER;
 
