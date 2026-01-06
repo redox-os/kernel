@@ -23,7 +23,7 @@ pub fn new_irqchip(compatible: &str) -> Option<Box<dyn InterruptController>> {
     } else {
         warn!(
             "no driver for interrupt controller compatible with: {:?}",
-            1
+            compatible
         );
         None
     }
