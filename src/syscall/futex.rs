@@ -93,11 +93,11 @@ pub fn futex(
                 .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
                 .transpose()?;
 
+            let context_lock = context::current();
+
             {
                 let mut futexes = FUTEXES.lock(token.token());
                 let (futexes, mut token) = futexes.token_split();
-
-                let context_lock = context::current();
 
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
@@ -160,7 +160,7 @@ pub fn futex(
                     .or_insert_with(|| Vec::new())
                     .push(FutexEntry {
                         target_virtaddr,
-                        context_lock,
+                        context_lock: context_lock.clone(),
                         addr_space: Arc::downgrade(&current_addrsp),
                     });
             }
@@ -169,8 +169,11 @@ pub fn futex(
 
             context::switch(token);
 
-            if timeout_opt.is_some() {
-                context::current().write(token.token()).wake = None;
+            let context = context_lock.read(token.token());
+
+            // The scheduler clears `wake` on timeout. Hence if a timeout was
+            // set and `wake` is now `None`, we timed out.
+            if context.wake.is_none() && timeout_opt.is_some() {
                 Err(Error::new(ETIMEDOUT))
             } else {
                 Ok(0)
