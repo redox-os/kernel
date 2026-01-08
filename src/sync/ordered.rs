@@ -6,8 +6,8 @@
 //! This create implement compiletime ordering of locks into levels, [`L1`], [`L2`], [`L3`], [`L4`] and [`L5`].
 //! In order to acquire a lock at level `i` only locks at level `i-1` or below may be held.
 //!
-//! If locks are alwayes acquired in level order on all threads, then one cannot have a deadlock
-//! involving only acquireng locks.
+//! If locks are always acquired in level order on all threads, then one cannot have a deadlock
+//! involving only acquired locks.
 //!
 //! In the following example we create two [muteces](Mutex) at level [`L1`] and [`L2`] and lock them
 //! in the propper order.
@@ -21,7 +21,7 @@
 //! let mut token = unsafe {CleanLockToken::new()};
 //!
 //! {
-//!     // We can aquire the locks for v1 and v2 at the same time
+//!     // We can acquire the locks for v1 and v2 at the same time
 //!     let mut g1 = v1.lock(token.token());
 //!     let (g1, token) = g1.token_split();
 //!     let mut g2 = v2.lock(token);
@@ -121,7 +121,7 @@ pub trait Higher<O: Level>: Level {}
 impl<L1: Level, L2: Level> Higher<L2> for L1 where L2: Lower<L1> {}
 
 /// While this exists only locks with a level higher than L, may be locked.
-/// These tokens are carried around the call stack to indicate tho current locking level.
+/// These tokens are carried around the call stack to indicate the current locking level.
 /// They have no size and should disappear at runtime.
 pub struct LockToken<'a, L: Level>(PhantomData<&'a mut L>);
 

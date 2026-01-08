@@ -19,27 +19,27 @@
 #![allow(clippy::too_many_arguments)]
 // Used to allow stuff like 1 << 0 and 1 * 1024 * 1024
 #![allow(clippy::identity_op)]
-// TODO: address ocurrances and then deny
+// TODO: address occurrences and then deny
 #![warn(clippy::not_unsafe_ptr_arg_deref)]
-// TODO: address ocurrances and then deny
+// TODO: address occurrences and then deny
 #![warn(clippy::cast_ptr_alignment)]
 // Indexing a slice can cause panics and that is something we always want to avoid
 // in kernel code. Use .get and return an error instead
-// TODO: address ocurrances and then deny
+// TODO: address occurrences and then deny
 #![warn(clippy::indexing_slicing)]
 // Overflows are very, very bad in kernel code as it may provide an attack vector for
 // userspace applications, and it is only checked in debug builds
-// TODO: address ocurrances and then deny
+// TODO: address occurrences and then deny
 #![warn(clippy::arithmetic_side_effects)]
 // Avoid panicking in the kernel without information about the panic. Use expect
-// TODO: address ocurrances and then deny
+// TODO: address occurrences and then deny
 #![warn(clippy::unwrap_used)]
 // This is usually a serious issue - a missing import of a define where it is interpreted
 // as a catch-all variable in a match, for example
 #![deny(unreachable_patterns)]
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
-#![warn(static_mut_refs)] // FIXME deny once all occurences are fixed
+#![warn(static_mut_refs)] // FIXME deny once all occurrences are fixed
 #![feature(if_let_guard)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
