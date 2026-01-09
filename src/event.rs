@@ -59,6 +59,12 @@ impl EventQueue {
                 (description.scheme, description.number)
             };
 
+            if scheme == GlobalSchemes::Event.scheme_id() && number == self.id.into() {
+                // Do not allow recursively registering the same event queue
+                //TODO: should we also disallow event queues that contain this event queue?
+                return Err(Error::new(EBADF));
+            }
+
             register(
                 RegKey { scheme, number },
                 QueueKey {
