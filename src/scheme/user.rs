@@ -486,11 +486,11 @@ impl UserInner {
         map_flags.set(MapFlags::PROT_WRITE, WRITE);
 
         if user_buf.is_empty() {
-            // NOTE: Rather than returning NULL, we return a dummy dangling address, that is
+            // NOTE: Rather than returning NULL, we return a dummy dangling address, which
             // happens to be non-canonical on x86. This relieves scheme handlers from having to
             // check the length before e.g. creating nonnull Rust references (when an empty length
             // still requires a nonnull but possibly dangling pointer, and this has in practice
-            // made nulld errorneously confuse an empty Some("") with None (invalid UTF-8), due to
+            // made nulld erroneously confuse an empty Some("") with None (invalid UTF-8), due to
             // enum layout optimization, as the pointer was null and not dangling). A good choice
             // is thus to simply set the most-significant bit to be compatible with all alignments.
             return Ok(CaptureGuard {
