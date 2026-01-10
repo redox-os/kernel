@@ -3,13 +3,13 @@
 
 #![allow(dead_code)]
 
-//! This create implement compiletime ordering of locks into levels, [`L1`], [`L2`], [`L3`], [`L4`] and [`L5`].
+//! This crate implements compiletime ordering of locks into levels, [`L1`], [`L2`], [`L3`], [`L4`] and [`L5`].
 //! In order to acquire a lock at level `i` only locks at level `i-1` or below may be held.
 //!
-//! If locks are alwayes acquired in level order on all threads, then one cannot have a deadlock
-//! involving only acquireng locks.
+//! If locks are always acquired in level order on all threads, then one cannot have a deadlock
+//! involving only acquired locks.
 //!
-//! In the following example we create two [muteces](Mutex) at level [`L1`] and [`L2`] and lock them
+//! In the following example we create two [mutexes](Mutex) at level [`L1`] and [`L2`] and lock them
 //! in the propper order.
 //! ```
 //! use ordered_locks::{L1, L2, Mutex, CleanLockToken};
@@ -21,7 +21,7 @@
 //! let mut token = unsafe {CleanLockToken::new()};
 //!
 //! {
-//!     // We can aquire the locks for v1 and v2 at the same time
+//!     // We can acquire the locks for v1 and v2 at the same time
 //!     let mut g1 = v1.lock(token.token());
 //!     let (g1, token) = g1.token_split();
 //!     let mut g2 = v2.lock(token);
@@ -32,7 +32,7 @@
 //! *v2.lock(token.token()) = 13;
 //! ```
 //!
-//! In the following example we create two [muteces](Mutex) at level [`L1`] and [`L2`] and try to lock
+//! In the following example we create two [mutexes](Mutex) at level [`L1`] and [`L2`] and try to lock
 //! the mutex at [`L1`] while already holding a [`Mutex`] at [`L2`] which failes to compile.
 //! ```compile_fail
 //! use ordered_locks::{L1, L2, Mutex, CleanLockToken};
@@ -57,7 +57,7 @@ use core::marker::PhantomData;
 /// Lock level of a mutex
 ///
 /// While a mutex of L1 is locked on a thread, only mutexes of L2 or higher may be locked.
-/// This lock hierarchy prevents deadlocks from occurring. For a dead lock to occour
+/// This lock hierarchy prevents deadlocks from occurring. For a deadlock to occur
 /// We need some thread TA to hold a resource RA, and request a resource RB, while
 /// another thread TB holds RB, and requests RA. This is not possible with a lock
 /// hierarchy either RA or RB must be on a level that the other.
@@ -121,7 +121,7 @@ pub trait Higher<O: Level>: Level {}
 impl<L1: Level, L2: Level> Higher<L2> for L1 where L2: Lower<L1> {}
 
 /// While this exists only locks with a level higher than L, may be locked.
-/// These tokens are carried around the call stack to indicate tho current locking level.
+/// These tokens are carried around the call stack to indicate the current locking level.
 /// They have no size and should disappear at runtime.
 pub struct LockToken<'a, L: Level>(PhantomData<&'a mut L>);
 
@@ -293,7 +293,7 @@ impl<L: Level, T: Default> Default for RwLock<L, T> {
 /// The type parameter T represents the data that this lock protects. It is required that T satisfies
 /// Send to be shared across threads and Sync to allow concurrent access through readers.
 /// The RAII guards returned from the locking methods implement Deref (and DerefMut for the write methods)
-/// to allow access to the contained of the lock.
+/// to allow access to the container of the lock.
 impl<L: Level, T> RwLock<L, T> {
     /// Creates a new instance of an RwLock<T> which is unlocked.
     pub const fn new(val: T) -> Self {

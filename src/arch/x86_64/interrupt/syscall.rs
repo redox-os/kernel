@@ -17,7 +17,7 @@ pub unsafe fn init() {
         // IA32_STAR[31:0] are reserved.
 
         // The base selector of the two consecutive segments for kernel code and the immediately
-        // suceeding stack (data).
+        // succeeding stack (data).
         let syscall_cs_ss_base = (gdt::GDT_KERNEL_CODE as u16) << 3;
         // The base selector of the three consecutive segments (of which two are used) for user code
         // and user data. It points to a 32-bit code segment, which must be followed by a data segment
