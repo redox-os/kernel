@@ -721,9 +721,9 @@ impl AddrSpace {
 
 #[derive(Debug)]
 pub struct UserGrants {
-    // Using a BTreeMap for it's range method.
+    // Using a BTreeMap for its range method.
     inner: BTreeMap<Page, GrantInfo>,
-    // Using a BTreeMap for it's range method.
+    // Using a BTreeMap for its range method.
     holes: BTreeMap<VirtualAddress, usize>,
     // TODO: Would an additional map ordered by (size,start) to allow for O(log n) allocations be
     // beneficial?
