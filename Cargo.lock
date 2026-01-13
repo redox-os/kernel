@@ -417,3 +417,13 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "redox-rt"
+version = "0.1.0"
+source = "git+https://gitlab.redox-os.org/aarch/relibc.git#3d18770b46b0efd704d04eba621c6b6ccc5ab892"
+
+[[patch.unused]]
+name = "relibc"
+version = "0.2.5"
+source = "git+https://gitlab.redox-os.org/aarch/relibc.git#3d18770b46b0efd704d04eba621c6b6ccc5ab892"
