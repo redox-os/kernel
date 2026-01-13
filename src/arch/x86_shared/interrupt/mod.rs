@@ -27,7 +27,7 @@ pub unsafe fn enable_and_halt() {
 
 /// Set interrupts and nop
 /// This will enable interrupts and allow the IF flag to be processed
-/// Simply enabling interrupts does not gurantee that they will trigger, use this instead!
+/// Simply enabling interrupts does not guarantee that they will trigger, use this instead!
 #[inline(always)]
 pub unsafe fn enable_and_nop() {
     unsafe {

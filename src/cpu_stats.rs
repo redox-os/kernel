@@ -18,7 +18,7 @@ pub enum CpuState {
     /// Waiting for runnable context
     #[default]
     Idle = 0,
-    /// Runnnig a kernel context
+    /// Running a kernel context
     Kernel = 1,
     /// Running a context in the userspace
     User = 2,
