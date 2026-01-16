@@ -15,7 +15,7 @@ use crate::{
     context::{
         self,
         memory::{AddrSpace, AddrSpaceWrapper},
-        ContextLock,
+        ContextLock, PreemptGuard,
     },
     memory::PhysicalAddress,
     paging::{Page, VirtualAddress},
@@ -96,13 +96,15 @@ pub fn futex(
             let context_lock = context::current();
 
             {
-                let mut futexes = FUTEXES.lock(token.token());
-                let (futexes, mut token) = futexes.token_split();
+                let mut preempt_guard = PreemptGuard::new(&context_lock, token);
+                let token = preempt_guard.token();
+                let mut futexes_lock = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes_lock.token_split();
 
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
                     // (simpler) validation we did in the first place.
-                    if addr % 4 != 0 {
+                    if !addr.is_multiple_of(4) {
                         return Err(Error::new(EINVAL));
                     }
 
@@ -123,7 +125,7 @@ pub fn futex(
                         use core::sync::atomic::AtomicU64;
 
                         // op == FUTEX_WAIT64
-                        if addr % 8 != 0 {
+                        if !addr.is_multiple_of(8) {
                             return Err(Error::new(EINVAL));
                         }
                         (
@@ -146,10 +148,10 @@ pub fn futex(
                     context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
                         tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
                     });
-                    if let Some((tctl, pctl, _)) = context.sigcontrol() {
-                        if tctl.currently_pending_unblocked(pctl) != 0 {
-                            return Err(Error::new(EINTR));
-                        }
+                    if let Some((tctl, pctl, _)) = context.sigcontrol()
+                        && tctl.currently_pending_unblocked(pctl) != 0
+                    {
+                        return Err(Error::new(EINTR));
                     }
 
                     context.block("futex");
@@ -157,12 +159,34 @@ pub fn futex(
 
                 futexes
                     .entry(target_physaddr)
-                    .or_insert_with(|| Vec::new())
+                    .or_insert_with(Vec::new)
                     .push(FutexEntry {
                         target_virtaddr,
                         context_lock: context_lock.clone(),
                         addr_space: Arc::downgrade(&current_addrsp),
                     });
+
+                // XXX: `futexes_lock` must be dropped before dropping the
+                // preempt guard to avoid the following deadlock scenario:
+                //
+                // Context A                          Context B
+                // --------------------------         -----------------------------------------
+                // drop(preempt_guard)
+                // // Context switch happens
+                // // Context A is blocked
+                //                                    futex_wake(addr)
+                //                                    FUTEXES.lock()
+                //                                    // Blocks forever waiting for the FUTEXES
+                //                                    // lock held by A.
+                //
+                //                                    // A cannot release the lock because it is
+                //                                    // sleeping. B cannot wake A because it is
+                //                                    // blocked on the lock.
+                //
+                // Since the [`FUTEXES`] lock is global, every futex operation
+                // would be deadlocked.
+                drop(futexes_lock);
+                drop(preempt_guard);
             }
 
             drop(addr_space_guard);
