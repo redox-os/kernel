@@ -1445,7 +1445,7 @@ impl KernelScheme for UserScheme {
         match inner.call_extended(
             ctx,
             None,
-            Opcode::Open,
+            unsafe { mem::transmute(0u8) }, //TODO: Opcode::Open was deprecated
             [address.base(), address.len(), flags],
             address.span(),
             token,
@@ -1877,7 +1877,7 @@ impl KernelScheme for UserScheme {
         &self,
         id: usize,
         payload: UserSliceRw,
-        _flags: CallFlags,
+        flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -1887,7 +1887,11 @@ impl KernelScheme for UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
         let mut sqe = Sqe {
-            opcode: Opcode::Call as u8,
+            opcode: if flags.contains(CallFlags::STD_FS) {
+                Opcode::StdFsCall
+            } else {
+                Opcode::Call
+            } as u8,
             sqe_flags: SqeFlags::empty(),
             _rsvd: 0,
             tag: inner.next_id()?,

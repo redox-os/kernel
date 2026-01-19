@@ -7,6 +7,7 @@ use super::{
     flag::*,
     number::*,
     usercopy::UserSlice,
+    SYS_OPEN,
 };
 
 use crate::{sync::CleanLockToken, syscall::error::Result};

@@ -14,6 +14,9 @@ pub use self::syscall::{
 
 pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region};
 
+//TODO: this is deprecated, pending userspace implementation of openat
+pub const SYS_OPEN: usize = SYS_CLASS_PATH | SYS_RET_FILE | 5;
+
 use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
