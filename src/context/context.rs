@@ -355,10 +355,12 @@ impl Context {
                     this_percpu.current_addrsp.borrow().as_ref().unwrap(),
                     prev_addrsp
                 ));
-                prev_addrsp
-                    .acquire_read()
-                    .used_by
-                    .atomic_clear(this_percpu.cpu_id);
+
+                // See [`crate::percpu::switch_arch_hook`].
+                prev_addrsp.used_by.atomic_clear(this_percpu.cpu_id);
+
+                core::sync::atomic::fence(Ordering::SeqCst);
+                this_percpu.maybe_handle_tlb_shootdown();
             }
 
             let _old_addrsp = core::mem::replace(
@@ -368,9 +370,8 @@ impl Context {
 
             match addr_space {
                 Some(ref new) => {
+                    new.used_by.atomic_set(this_percpu.cpu_id);
                     let new_addrsp = new.acquire_read();
-                    new_addrsp.used_by.atomic_set(this_percpu.cpu_id);
-
                     unsafe {
                         new_addrsp.table.utable.make_current();
                     }

@@ -63,17 +63,21 @@ impl LogicalCpuSet {
     pub const fn empty() -> Self {
         Self([const { AtomicUsize::new(0) }; SET_WORDS])
     }
+
     pub const fn all() -> Self {
         Self([const { AtomicUsize::new(!0) }; SET_WORDS])
     }
-    pub fn contains(&mut self, id: LogicalCpuId) -> bool {
+
+    pub fn contains(&self, id: LogicalCpuId) -> bool {
         let (word, bit) = parts(id);
-        *self.0[word].get_mut() & (1 << bit) != 0
+        self.0[word].load(Ordering::Acquire) & (1 << bit) != 0
     }
+
     pub fn atomic_set(&self, id: LogicalCpuId) {
         let (word, bit) = parts(id);
         let _ = self.0[word].fetch_or(1 << bit, Ordering::Release);
     }
+
     pub fn atomic_clear(&self, id: LogicalCpuId) {
         let (word, bit) = parts(id);
         let _ = self.0[word].fetch_and(!(1 << bit), Ordering::Release);
@@ -82,15 +86,15 @@ impl LogicalCpuSet {
     pub fn override_from(&mut self, raw: &RawMask) {
         self.0 = raw.map(AtomicUsize::new);
     }
+
     pub fn to_raw(&self) -> RawMask {
         self.0.each_ref().map(|w| w.load(Ordering::Acquire))
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = LogicalCpuId> + '_ {
-        // TODO: Will this be optimized away?
-        self.0.iter_mut().enumerate().flat_map(move |(i, w)| {
+    pub fn iter(&self) -> impl Iterator<Item = LogicalCpuId> + '_ {
+        self.0.iter().enumerate().flat_map(move |(i, w)| {
             (0..usize::BITS).filter_map(move |b| {
-                if *w.get_mut() & (1 << b) != 0 {
+                if w.load(Ordering::Acquire) & (1 << b) != 0 {
                     Some(LogicalCpuId::new(i as u32 * usize::BITS + b))
                 } else {
                     None
