@@ -142,10 +142,19 @@ pub unsafe fn switch_arch_hook() {
             return;
         }
         if let Some(prev_addrsp) = &*cur_addrsp {
-            prev_addrsp
-                .acquire_read()
-                .used_by
-                .atomic_clear(percpu.cpu_id);
+            prev_addrsp.used_by.atomic_clear(percpu.cpu_id);
+
+            // See [`Flusher::flush`].
+            //
+            // Without the fence, `wants_tlb_shootdown` check *may* happen
+            // before the CPU is removed from the `used_by` set. Hence, if a
+            // shootdown request arises *after* the check and *before* removing
+            // the CPU from the set, it would be missed and the CPU who
+            // requested the shootdown would spin forever since the request was
+            // never ACKed.
+            core::sync::atomic::fence(Ordering::SeqCst);
+
+            percpu.maybe_handle_tlb_shootdown();
         }
 
         drop(cur_addrsp);
@@ -156,9 +165,9 @@ pub unsafe fn switch_arch_hook() {
 
         match &*percpu.current_addrsp.borrow() {
             Some(next_addrsp) => {
+                next_addrsp.used_by.atomic_set(percpu.cpu_id);
                 let next = next_addrsp.acquire_read();
 
-                next.used_by.atomic_set(percpu.cpu_id);
                 next.table.utable.make_current();
             }
             _ => {
