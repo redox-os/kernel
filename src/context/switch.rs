@@ -166,7 +166,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         let prev_context_guard = unsafe { prev_context_lock.write_arc() };
 
         if !prev_context_guard.is_preemptable() {
-            return SwitchResult::AllContextsIdle;
+            // Unset global lock
+            arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+
+            // Pretend to have finished switching, so CPU is not idled
+            return SwitchResult::Switched;
         }
 
         let idle_context = percpu.switch_internals.idle_context();
