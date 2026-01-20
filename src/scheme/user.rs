@@ -1445,7 +1445,7 @@ impl KernelScheme for UserScheme {
         match inner.call_extended(
             ctx,
             None,
-            Opcode::Open,
+            unsafe { mem::transmute(0u8) }, //TODO: Opcode::Open was deprecated
             [address.base(), address.len(), flags],
             address.span(),
             token,
@@ -1497,60 +1497,11 @@ impl KernelScheme for UserScheme {
         }
     }
 
-    fn unlinkat(
-        &self,
-        file: usize,
-        path: &str,
-        flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        inner.call(
-            Opcode::UnlinkAt,
-            [file, address.base(), address.len(), flags],
-            address.span(),
-            token,
-        )?;
-        Ok(())
-    }
-
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
         inner
             .call(Opcode::Fsize, [file], &mut PageSpan::empty(), token)
             .map(|o| o as u64)
-    }
-
-    fn fchmod(&self, file: usize, mode: u16, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(
-            Opcode::Fchmod,
-            [file, mode as usize],
-            &mut PageSpan::empty(),
-            token,
-        )?;
-        Ok(())
-    }
-
-    fn fchown(&self, file: usize, uid: u32, gid: u32, token: &mut CleanLockToken) -> Result<()> {
-        {
-            let ctx = context::current();
-            let cx = &ctx.read(token.token());
-            if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
-                return Err(Error::new(EPERM));
-            }
-        }
-
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(
-            Opcode::Fchown,
-            [file, uid as usize, gid as usize],
-            &mut PageSpan::empty(),
-            token,
-        )?;
-        Ok(())
     }
 
     fn fcntl(
@@ -1617,23 +1568,6 @@ impl KernelScheme for UserScheme {
             Opcode::Frename,
             [file, address.base(), address.len()],
             address.span(),
-            token,
-        )?;
-        Ok(())
-    }
-
-    fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(Opcode::Fsync, [file], &mut PageSpan::empty(), token)?;
-        Ok(())
-    }
-
-    fn ftruncate(&self, file: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        inner.call(
-            Opcode::Ftruncate,
-            [file, len],
-            &mut PageSpan::empty(),
             token,
         )?;
         Ok(())
@@ -1765,76 +1699,6 @@ impl KernelScheme for UserScheme {
 
         result
     }
-    fn kfutimens(
-        &self,
-        file: usize,
-        buf: UserSliceRo,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let mut address = inner.capture_user(buf, token)?;
-        let result = inner.call(
-            Opcode::Futimens,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
-        address.release()?;
-        result
-    }
-    fn getdents(
-        &self,
-        file: usize,
-        buf: UserSliceWo,
-        header_size: u16,
-        opaque_id_start: u64,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let mut address = inner.capture_user(buf, token)?;
-        // TODO: Support passing the 16-byte record_len of the last dent, to make it possible to
-        // iterate backwards without first interating forward? The last entry will contain the
-        // opaque id to pass to the next getdents. Since this field is small, this would fit in the
-        // extra_raw field of `Cqe`s.
-        let result = inner.call(
-            Opcode::Getdents,
-            [
-                file,
-                address.base(),
-                address.len(),
-                header_size.into(),
-                opaque_id_start as usize,
-            ],
-            address.span(),
-            token,
-        );
-        address.release()?;
-        result
-    }
-    fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let mut address = inner.capture_user(stat, token)?;
-        let result = inner.call(
-            Opcode::Fstat,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
-        address.release()?;
-        result.map(|_| ())
-    }
-    fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
-        let mut address = inner.capture_user(stat, token)?;
-        let result = inner.call(
-            Opcode::Fstatvfs,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
-        address.release()?;
-        result.map(|_| ())
-    }
     fn kfmap(
         &self,
         file: usize,
@@ -1877,7 +1741,7 @@ impl KernelScheme for UserScheme {
         &self,
         id: usize,
         payload: UserSliceRw,
-        _flags: CallFlags,
+        flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -1888,6 +1752,47 @@ impl KernelScheme for UserScheme {
 
         let mut sqe = Sqe {
             opcode: Opcode::Call as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag: inner.next_id()?,
+            caller: ctx.pid as u64,
+            args: [
+                id as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[3..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+        let res = inner.call_extended_inner(None, sqe, address.span(), token)?;
+
+        match res {
+            Response::Regular(res, _) => Error::demux(res),
+            Response::Fd(_) => Err(Error::new(EIO)),
+            Response::MultipleFds(_) => Err(Error::new(EIO)),
+        }
+    }
+    fn kstdfscall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let inner = self.inner.upgrade().ok_or(Error::new(ENODEV))?;
+
+        let mut address = inner.capture_user(payload, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let mut sqe = Sqe {
+            opcode: Opcode::StdFsCall as u8,
             sqe_flags: SqeFlags::empty(),
             _rsvd: 0,
             tag: inner.next_id()?,

@@ -7,6 +7,7 @@ use super::{
     flag::*,
     number::*,
     usercopy::UserSlice,
+    SYS_OPEN,
 };
 
 use crate::{sync::CleanLockToken, syscall::error::Result};
@@ -57,14 +58,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             f,
             g
         ),
-        SYS_UNLINKAT => format!(
-            "unlinkat({} {:?}, {:#0x}, {}, {})",
-            b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
-            e,
-            f,
-            g,
-        ),
         SYS_CLOSE => format!("close({})", b),
         SYS_DUP => format!(
             "dup({}, {:?})",
@@ -108,8 +101,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             },
             d
         ),
-        SYS_FCHMOD => format!("fchmod({}, {:#o})", b, c),
-        SYS_FCHOWN => format!("fchown({}, {}, {})", b, c, d),
         SYS_FCNTL => format!(
             "fcntl({}, {} ({}), {:#X})",
             b,
@@ -134,27 +125,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
         SYS_FLINK => format!("flink({}, {:?})", b, debug_path(c, d),),
         SYS_FPATH => format!("fpath({}, {:#X}, {})", b, c, d),
         SYS_FRENAME => format!("frename({}, {:?})", b, debug_path(c, d),),
-        SYS_FSTAT => format!(
-            "fstat({}, {:?})",
-            b,
-            UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
-        ),
-        SYS_FSTATVFS => format!("fstatvfs({}, {:#X}, {})", b, c, d),
-        SYS_FSYNC => format!("fsync({})", b),
-        SYS_FTRUNCATE => format!("ftruncate({}, {})", b, c),
-        SYS_FUTIMENS => format!(
-            "futimens({}, {:?})",
-            b,
-            UserSlice::ro(c, d).and_then(|buf| {
-                let mut times = vec![unsafe { buf.read_exact::<TimeSpec>()? }];
-
-                // One or two timespecs
-                if let Some(second) = buf.advance(mem::size_of::<TimeSpec>()) {
-                    times.push(unsafe { second.read_exact::<TimeSpec>()? });
-                }
-                Ok(times)
-            }),
-        ),
         SYS_CALL => format!(
             "call({b}, {c:x}+{d}, {:?}, {:0x?}",
             CallFlags::from_bits_retain(e & !0xff),
@@ -242,7 +212,7 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
     {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
-        } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {
+        } else if (a == SYS_WRITE) && (b == 1 || b == 2) {
             false
         } else {
             true

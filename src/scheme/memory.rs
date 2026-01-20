@@ -90,7 +90,8 @@ impl MemoryScheme {
             return Err(Error::new(EOPNOTSUPP));
         }
 
-        let fixed = map.flags.contains(MapFlags::MAP_FIXED) || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+        let fixed = map.flags.contains(MapFlags::MAP_FIXED)
+            || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
 
         let page = addr_space.acquire_write().mmap(
             addr_space,
