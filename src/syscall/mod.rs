@@ -113,21 +113,6 @@ pub fn syscall(
                     })
                 }
             }
-            SYS_GETDENTS => {
-                let header_size = u16::try_from(e).map_err(|_| Error::new(EINVAL))?;
-
-                if usize::from(header_size) != size_of::<DirentHeader>() {
-                    // TODO: allow? If so, zero_out must be implemented for UserSlice
-                    return Err(Error::new(EINVAL));
-                }
-
-                file_op_generic(fd, token, |scheme, number, token| {
-                    scheme.getdents(number, UserSlice::wo(c, d)?, header_size, f as u64, token)
-                })
-            }
-            SYS_FUTIMENS => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.kfutimens(number, UserSlice::ro(c, d)?, token)
-            }),
 
             SYS_READ2 => file_op_generic_ext(fd, token, |scheme, _, desc, token| {
                 let flags = if f == usize::MAX {
@@ -153,12 +138,6 @@ pub fn syscall(
             SYS_FPATH => file_op_generic(fd, token, |scheme, number, token| {
                 scheme.kfpath(number, UserSlice::wo(c, d)?, token)
             }),
-            SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
-            SYS_FSTATVFS => file_op_generic(fd, token, |scheme, number, token| {
-                scheme
-                    .kfstatvfs(number, UserSlice::wo(c, d)?, token)
-                    .map(|()| 0)
-            }),
 
             SYS_DUP => dup(fd, UserSlice::ro(c, d)?, token).map(FileHandle::into),
             SYS_DUP2 => {
@@ -178,12 +157,6 @@ pub fn syscall(
             SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64, token),
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
-            SYS_FCHMOD => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.fchmod(number, c as u16, token).map(|()| 0)
-            }),
-            SYS_FCHOWN => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.fchown(number, c as u32, d as u32, token).map(|()| 0)
-            }),
             SYS_FCNTL => fcntl(fd, c, d, token),
             SYS_FEVENT => file_op_generic(fd, token, |scheme, number, token| {
                 Ok(scheme
@@ -194,14 +167,6 @@ pub fn syscall(
             SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
             SYS_FUNMAP => funmap(b, c, token),
 
-            SYS_FSYNC => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.fsync(number, token).map(|()| 0)
-            }),
-            // TODO: 64-bit lengths on 32-bit platforms
-            SYS_FTRUNCATE => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.ftruncate(number, c, token).map(|()| 0)
-            }),
-
             SYS_CLOSE => close(fd, token).map(|()| 0),
             SYS_CALL => call(
                 fd,
@@ -210,7 +175,6 @@ pub fn syscall(
                 UserSlice::ro(f, (e & 0xff) * 8)?,
                 token,
             ),
-            SYS_OPEN => open(UserSlice::ro(b, c)?, d, token).map(FileHandle::into),
             SYS_OPENAT => {
                 openat(fd, UserSlice::ro(c, d)?, e, f as _, 0, 0, token).map(FileHandle::into)
             }
@@ -224,7 +188,6 @@ pub fn syscall(
                 token,
             )
             .map(FileHandle::into),
-            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, 0, 0, token).map(|()| 0),
             SYS_UNLINKAT_WITH_FILTER => {
                 unlinkat(fd, UserSlice::ro(c, d)?, e, f as _, g as _, token).map(|()| 0)
             }

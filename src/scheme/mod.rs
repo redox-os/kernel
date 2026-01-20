@@ -13,7 +13,7 @@ use core::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use indexmap::IndexMap;
 use spin::Once;
-use syscall::{CallFlags, EventFlags, MunmapFlags};
+use syscall::{CallFlags, EventFlags, MunmapFlags, StdFsCallKind, StdFsCallMeta};
 
 use crate::{
     context::{
@@ -506,7 +506,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
-    fn ftruncate(&self, id: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
+    fn ftruncate(&self, id: usize, len: u64, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
@@ -581,6 +581,67 @@ pub trait KernelScheme: Send + Sync + 'static {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
+    }
+    fn kstdfscall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let mut meta = StdFsCallMeta::default();
+        if metadata.len() == meta.len() {
+            meta.copy_from_slice(metadata);
+        } else {
+            return Err(Error::new(EINVAL));
+        }
+        let Some(kind) = StdFsCallKind::try_from_raw(meta.kind) else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+        match kind {
+            StdFsCallKind::Fchmod => {
+                self.fchmod(id, meta.arg1 as u16, token)?;
+                Ok(0)
+            }
+            //TODO: validate uid and gid here, as well as in user scheme (somehow)
+            StdFsCallKind::Fchown => {
+                self.fchown(id, meta.arg1 as u32, (meta.arg1 >> 32) as u32, token)?;
+                Ok(0)
+            }
+            StdFsCallKind::Getdents => self.getdents(
+                id,
+                payload.reinterpret_unchecked(),
+                meta.arg1 as u16,
+                meta.arg2,
+                token,
+            ),
+            StdFsCallKind::Fstat => {
+                self.kfstat(id, payload.reinterpret_unchecked(), token)?;
+                Ok(0)
+            }
+            StdFsCallKind::Fstatvfs => {
+                self.kfstatvfs(id, payload.reinterpret_unchecked(), token)?;
+                Ok(0)
+            }
+            StdFsCallKind::Fsync => {
+                self.fsync(id, token)?;
+                Ok(0)
+            }
+            StdFsCallKind::Ftruncate => {
+                self.ftruncate(id, meta.arg1, token)?;
+                Ok(0)
+            }
+            StdFsCallKind::Futimens => self.kfutimens(id, payload.reinterpret_unchecked(), token),
+            StdFsCallKind::Unlinkat => {
+                //TODO: self.unlinkat(id, payload, arg1, ctx, token),
+                return Err(Error::new(EOPNOTSUPP));
+            }
+            StdFsCallKind::Realpathat => {
+                //TODO: realpathat
+                return Err(Error::new(EOPNOTSUPP));
+            }
+        }
     }
     fn kfdwrite(
         &self,

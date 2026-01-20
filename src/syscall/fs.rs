@@ -75,72 +75,6 @@ fn is_legacy(path_buf: &String) -> bool {
         || path_buf.starts_with("orbital:")
 }
 
-/// Open syscall
-pub fn open(raw_path: UserSliceRo, flags: usize, token: &mut CleanLockToken) -> Result<FileHandle> {
-    let (pid, uid, gid, scheme_ns) = {
-        let ctx = context::current();
-        let cx = &ctx.read(token.token());
-        (cx.pid, cx.euid, cx.egid, cx.ens)
-    };
-
-    // TODO: BorrowedHtBuf!
-
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    // Display a deprecation warning for any usage of the legacy scheme syntax (scheme:/path)
-    // FIXME remove entries from this list as the respective programs get updated
-    if path_buf.contains(':') && !is_legacy(&path_buf) {
-        let name = context::current().read(token.token()).name;
-        if path_buf == "event:" || path_buf.starts_with("time:") {
-            // FIXME winit issues
-        } else {
-            println!("deprecated: legacy path {:?} used by {}", path_buf, name);
-        }
-    }
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (scheme_name, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
-
-    let description = {
-        let (scheme_id, scheme) = {
-            let schemes = scheme::schemes(token.token());
-            let (scheme_id, scheme) = schemes
-                .get_name(scheme_ns, scheme_name.as_ref())
-                .ok_or(Error::new(ENODEV))?;
-            (scheme_id, scheme.clone())
-        };
-
-        match scheme.kopen(
-            reference.as_ref(),
-            flags,
-            CallerCtx { uid, gid, pid },
-            token,
-        )? {
-            OpenResult::SchemeLocal(number, internal_flags) => {
-                Arc::new(RwLock::new(FileDescription {
-                    scheme: scheme_id,
-                    number,
-                    offset: 0,
-                    flags: (flags & !O_CLOEXEC) as u32,
-                    internal_flags,
-                }))
-            }
-            OpenResult::External(desc) => desc,
-        }
-    };
-    //drop(path_buf);
-    context::current()
-        .read(token.token())
-        .add_file(FileDescriptor {
-            description,
-            cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-        })
-        .ok_or(Error::new(EMFILE))
-}
-
 pub fn openat(
     fh: FileHandle,
     raw_path: UserSliceRo,
@@ -382,7 +316,11 @@ fn call_normal(
         .ok_or(Error::new(EBADFD))?
         .clone();
 
-    scheme.kcall(number, payload, flags, metadata, token)
+    if flags.contains(CallFlags::STD_FS) {
+        scheme.kstdfscall(number, payload, flags, metadata, token)
+    } else {
+        scheme.kcall(number, payload, flags, metadata, token)
+    }
 }
 
 fn call_fdwrite(
@@ -643,29 +581,6 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     }
 
     scheme.frename(description.number, reference.as_ref(), caller_ctx, token)
-}
-
-/// File status
-pub fn fstat(fd: FileHandle, user_buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-    file_op_generic_ext(fd, token, |scheme, _, desc, token| {
-        scheme.kfstat(desc.number, user_buf, token)?;
-
-        // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
-        // for retrieving the scheme ID from a file descriptor.
-        // TODO: Less hacky method.
-        let st_dev = desc
-            .scheme
-            .get()
-            .try_into()
-            .map_err(|_| Error::new(EOVERFLOW))?;
-        user_buf
-            .advance(core::mem::offset_of!(Stat, st_dev))
-            .and_then(|b| b.limit(8))
-            .ok_or(Error::new(EIO))?
-            .copy_from_slice(&u64::to_ne_bytes(st_dev))?;
-
-        Ok(())
-    })
 }
 
 pub fn funmap(virtual_address: usize, length: usize, token: &mut CleanLockToken) -> Result<usize> {
