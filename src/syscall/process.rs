@@ -3,23 +3,27 @@ use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
 use spin::RwLock;
+use syscall::data::GlobalSchemes;
 
 use crate::{
     context::{
         context::SyscallFrame,
+        file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
     event,
-    scheme::GlobalSchemes,
     sync::CleanLockToken,
-    syscall::EventFlags,
+    syscall::flag::{EventFlags, O_CREAT, O_RDWR},
 };
 
 use crate::{
     context,
     context::context::FdTbl,
     paging::{Page, VirtualAddress, PAGE_SIZE},
+    scheme::{
+        KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
+    },
     syscall::{error::*, flag::MapFlags},
     Bootstrap, CurrentRmmArch,
 };
@@ -74,6 +78,15 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
     AddrSpace::current()?.mprotect(span, flags)
 }
 
+const KERNEL_METADATA_BASE: usize = crate::USER_END_OFFSET - syscall::KERNEL_METADATA_SIZE;
+const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_SIZE + {
+    if syscall::KERNEL_METADATA_SIZE % PAGE_SIZE == 0 {
+        0
+    } else {
+        1
+    }
+};
+
 pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockToken) {
     assert_ne!(bootstrap.page_count, 0);
 
@@ -114,6 +127,94 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 },
             )
             .expect("Failed to allocate bootstrap pages");
+
+        // Insert kernel schemes root capabilities.
+        let mut kernel_schemes_infos =
+            [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
+        for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
+            kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
+                scheme_id: scheme.scheme_id().get() as u8,
+                fd: {
+                    let cap_fd = match scheme.as_scheme().scheme_root(token) {
+                        Ok(fd) => fd,
+                        Err(_) => usize::MAX,
+                    };
+                    insert_fd(
+                        scheme.scheme_id(),
+                        cap_fd,
+                        matches!(scheme, GlobalSchemes::Proc),
+                        token,
+                    )
+                },
+            };
+        }
+        // Insert a scheme creation capability for the usermode bootstrap.
+        let scheme_creation_cap = {
+            // First, get the scheme root to initialize the schemelist.
+            let cap_fd = match &SchemeList.scheme_root(token) {
+                Ok(fd) => *fd,
+                Err(_) => usize::MAX,
+            };
+            // Second, retrieve the scheme ID.
+            let scheme_id = &SchemeList.id();
+            insert_fd(*scheme_id, cap_fd, false, token)
+        };
+
+        let kernel_schemes_info_page = addr_space
+            .acquire_write()
+            .mmap(
+                &addr_space,
+                Some(Page::containing_address(VirtualAddress::new(
+                    KERNEL_METADATA_BASE,
+                ))),
+                NonZeroUsize::new(KERNEL_METADATA_PAGE_COUNT).unwrap(),
+                MapFlags::MAP_FIXED_NOREPLACE | MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+                &mut Vec::new(),
+                |page, flags, mapper, flusher| {
+                    let shared = false;
+                    Ok(Grant::zeroed(
+                        PageSpan::new(page, KERNEL_METADATA_PAGE_COUNT),
+                        flags,
+                        mapper,
+                        flusher,
+                        shared,
+                    )?)
+                },
+            )
+            .expect("Failed to allocate kernel scheme info page");
+
+        let mut cursor = kernel_schemes_info_page.start_address().data();
+        const HEADER_SIZE: usize = mem::size_of::<usize>();
+        UserSliceWo::new(cursor, HEADER_SIZE)
+            .expect("failed to create kernel schemes header user slice")
+            .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
+            .expect("failed to copy kernel schemes count");
+        cursor += HEADER_SIZE;
+        let info_bytes = unsafe {
+            core::slice::from_raw_parts(
+                kernel_schemes_infos.as_ptr() as *const u8,
+                KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+            )
+        };
+        UserSliceWo::new(
+            cursor,
+            KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+        )
+        .expect("failed to create kernel schemes info user slice")
+        .copy_common_bytes_from_slice(info_bytes)
+        .expect("failed to copy kernel schemes info");
+        cursor += KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
+        UserSliceWo::new(cursor, mem::size_of::<usize>())
+            .expect("failed to create scheme creation cap user slice")
+            .copy_common_bytes_from_slice(&scheme_creation_cap.to_ne_bytes())
+            .expect("failed to copy scheme creation cap");
+
+        mprotect(
+            KERNEL_METADATA_BASE,
+            KERNEL_METADATA_PAGE_COUNT * PAGE_SIZE,
+            MapFlags::PROT_READ,
+        )
+        .expect("failed to mprotect kernel schemes info page");
     }
 
     let bootstrap_slice = unsafe { bootstrap_mem(bootstrap) };
@@ -146,4 +247,29 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
             bootstrap.page_count * PAGE_SIZE,
         )
     }
+}
+
+pub fn insert_fd(
+    scheme: SchemeId,
+    number: usize,
+    cloexec: bool,
+    token: &mut CleanLockToken,
+) -> usize {
+    context::current()
+        .write(token.token())
+        .add_file_min(
+            FileDescriptor {
+                description: Arc::new(RwLock::new(FileDescription {
+                    scheme,
+                    number,
+                    offset: 0,
+                    flags: (O_CREAT | O_RDWR) as u32,
+                    internal_flags: InternalFlags::empty(),
+                })),
+                cloexec,
+            },
+            syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
+        )
+        .expect("failed to insert fd to current context")
+        .get()
 }

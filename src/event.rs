@@ -2,10 +2,11 @@ use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use hashbrown::{HashMap, HashSet};
 use spin::Once;
+use syscall::data::GlobalSchemes;
 
 use crate::{
     context,
-    scheme::{self, GlobalSchemes, SchemeId},
+    scheme::{self, SchemeExt, SchemeId},
     sync::{
         CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0, L1,
     },

@@ -12,12 +12,12 @@ pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
 
-pub use self::{fs::*, futex::futex, privilege::*, process::*, time::*, usercopy::validate_region};
+pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_region};
 
 use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
-    error::{Error, Result, ENOSYS, EOVERFLOW},
+    error::{Error, Result, ENOSYS},
     flag::{EventFlags, MapFlags},
     number::*,
     usercopy::UserSlice,
@@ -38,9 +38,6 @@ pub mod fs;
 
 /// Fast userspace mutex
 pub mod futex;
-
-/// Privilege syscalls
-pub mod privilege;
 
 /// Process syscalls
 pub mod process;
@@ -207,7 +204,6 @@ pub fn syscall(
                 UserSlice::ro(f, (e & 0xff) * 8)?,
                 token,
             ),
-            SYS_OPEN => open(UserSlice::ro(b, c)?, d, token).map(FileHandle::into),
             SYS_OPENAT => {
                 openat(fd, UserSlice::ro(c, d)?, e, f as _, 0, 0, token).map(FileHandle::into)
             }
@@ -238,14 +234,6 @@ pub fn syscall(
             SYS_FUTEX => futex(b, c, d, e, f, token),
 
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
-            SYS_MKNS => mkns(
-                UserSlice::ro(
-                    b,
-                    c.checked_mul(core::mem::size_of::<[usize; 2]>())
-                        .ok_or(Error::new(EOVERFLOW))?,
-                )?,
-                token,
-            ),
             SYS_MREMAP => mremap(b, c, d, e, f, token),
 
             _ => Err(Error::new(ENOSYS)),

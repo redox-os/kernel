@@ -11,11 +11,14 @@ use alloc::{string::String, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
-use syscall::dirent::{DirEntry, DirentBuf, DirentKind};
+use syscall::{
+    data::GlobalSchemes,
+    dirent::{DirEntry, DirentBuf, DirentKind},
+};
 
 use crate::context::file::InternalFlags;
 
-use super::{CallerCtx, GlobalSchemes, OpenResult};
+use super::{CallerCtx, OpenResult, SchemeExt, StrOrBytes};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved, set_reserved};
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
@@ -71,6 +74,7 @@ pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
 
 #[allow(dead_code)]
 enum Handle {
+    SchemeRoot,
     Irq { ack: AtomicUsize, irq: u8 },
     Avail(LogicalCpuId),
     TopLevel,
@@ -208,13 +212,30 @@ const fn vector_to_irq(vector: u8) -> u8 {
 }
 
 impl crate::scheme::KernelScheme for IrqScheme {
-    fn kopen(
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_FD.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+
+            if !matches!(handle, Handle::SchemeRoot) {
+                return Err(Error::new(EACCES));
+            }
+        }
+
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
         }
@@ -490,6 +511,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 st_nlink: 1,
                 ..Default::default()
             },
+            _ => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())
@@ -504,6 +526,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
             Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
             Handle::TopLevel => format!("irq:"),
+            _ => return Err(Error::new(EBADF)),
         }
         .into_bytes();
 
@@ -545,7 +568,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 buffer.write_u32(LogicalCpuId::BSP.get())?;
                 Ok(mem::size_of::<usize>())
             }
-            Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) => Err(Error::new(EISDIR)),
+            Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) | Handle::SchemeRoot => {
+                Err(Error::new(EISDIR))
+            }
         }
     }
 }

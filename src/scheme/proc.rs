@@ -22,7 +22,7 @@ use crate::{
 
 use crate::context::context::FdTbl;
 
-use super::{CallerCtx, GlobalSchemes, KernelSchemes, OpenResult};
+use super::{CallerCtx, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
@@ -34,12 +34,13 @@ use core::{
     mem::{self, size_of},
     num::NonZeroUsize,
     slice, str,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
+use syscall::data::GlobalSchemes;
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -393,20 +394,7 @@ impl ProcScheme {
 }
 
 impl KernelScheme for ProcScheme {
-    fn kopen(
-        &self,
-        path: &str,
-        _flags: usize,
-        _ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<OpenResult> {
-        if path != "authority" {
-            return Err(Error::new(ENOENT));
-        }
-        static LOCK: AtomicBool = AtomicBool::new(false);
-        if LOCK.swap(true, Ordering::Relaxed) {
-            return Err(Error::new(EEXIST));
-        }
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         HANDLES.write(token.token()).insert(
             id,
@@ -416,7 +404,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::Authority,
             },
         );
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(id)
     }
 
     fn fevent(
@@ -1195,7 +1183,6 @@ impl ContextHandle {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
                             //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
-
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
@@ -1249,6 +1236,48 @@ impl ContextHandle {
                 guard.euid = info.euid;
                 guard.egid = info.egid;
                 Ok(size_of::<ProcSchemeAttrs>())
+            }
+            ContextHandle::OpenViaDup => {
+                let mut args = buf.usizes();
+
+                let user_data = args.next().ok_or(Error::new(EINVAL))??;
+
+                let context_verb =
+                    ContextVerb::try_from_raw(user_data).ok_or(Error::new(EINVAL))?;
+
+                match context_verb {
+                    ContextVerb::ForceKill => {
+                        if context::is_current(&context) {
+                            //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            // The following functionality simplifies the cleanup step when detached threads
+                            // terminate.
+                            if let Some(post_unmap) = args.next() {
+                                let base = post_unmap?;
+                                let size = args.next().ok_or(Error::new(EINVAL))??;
+
+                                if size > 0 {
+                                    let addrsp =
+                                        Arc::clone(context.read(token.token()).addr_space()?);
+                                    let res = addrsp.munmap(
+                                        PageSpan::validate_nonempty(
+                                            VirtualAddress::new(base),
+                                            size,
+                                        )
+                                        .ok_or(Error::new(EINVAL))?,
+                                        false,
+                                    )?;
+                                    for r in res {
+                                        let _ = r.unmap(token);
+                                    }
+                                }
+                            }
+                            crate::syscall::exit_this_context(None, token);
+                        } else {
+                            Err(Error::new(EPERM))
+                        }
+                    }
+                    _ => Err(Error::new(EINVAL)),
+                }
             }
             _ => Err(Error::new(EBADF)),
         }

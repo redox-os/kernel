@@ -5,7 +5,7 @@
 
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
+    EACCES, EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::vec::Vec;
 use core::{
@@ -27,7 +27,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 mod block;
 mod context;
@@ -40,8 +40,6 @@ mod exe;
 mod iostat;
 mod irq;
 mod log;
-mod scheme;
-mod scheme_num;
 mod stat;
 mod syscall;
 mod uname;
@@ -52,6 +50,7 @@ enum Handle {
         path: &'static str,
         data: Option<Vec<u8>>,
     },
+    SchemeRoot,
 }
 
 enum Kind {
@@ -76,8 +75,6 @@ const FILES: &[(&str, Kind)] = &[
     ("iostat", Rd(iostat::resource)),
     ("irq", Rd(irq::resource)),
     ("log", Rd(log::resource)),
-    ("scheme", Rd(scheme::resource)),
-    ("scheme_num", Rd(scheme_num::resource)),
     ("syscall", Rd(syscall::resource)),
     ("uname", Rd(uname::resource)),
     ("env", Rd(|_| Ok(Vec::from(crate::init_env())))),
@@ -109,14 +106,34 @@ const FILES: &[(&str, Kind)] = &[
 ];
 
 impl KernelScheme for SysScheme {
-    fn kopen(
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
+        Ok(id)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let path = path.trim_matches('/');
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?,
+            Handle::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
+
+        let path = user_buf
+            .as_str()
+            .or(Err(Error::new(EINVAL)))?
+            .trim_matches('/');
 
         if path.is_empty() {
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
@@ -159,6 +176,7 @@ impl KernelScheme for SysScheme {
         {
             Handle::TopLevel => Ok(0),
             Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -174,6 +192,7 @@ impl KernelScheme for SysScheme {
         let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
             Handle::TopLevel => "",
             Handle::Resource { path, .. } => path,
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         const FIRST: &[u8] = b"sys:";
@@ -212,6 +231,7 @@ impl KernelScheme for SysScheme {
 
                 buffer.copy_common_bytes_from_slice(avail_buf)
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
     fn kwriteoff(
@@ -243,6 +263,7 @@ impl KernelScheme for SysScheme {
                 };
                 (handler, intermediate, len)
             }
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
         handler(&intermediate[..len], token)
     }
@@ -275,6 +296,7 @@ impl KernelScheme for SysScheme {
                 }
                 Ok(buf.finalize())
             }
+            Handle::SchemeRoot => Err(Error::new(EBADF)),
         }
     }
 
@@ -298,6 +320,7 @@ impl KernelScheme for SysScheme {
                 st_size: 0,
                 ..Default::default()
             },
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         buf.copy_exactly(&stat)?;

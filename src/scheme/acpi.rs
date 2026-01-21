@@ -9,6 +9,7 @@ use alloc::boxed::Box;
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
 use syscall::{
+    data::GlobalSchemes,
     dirent::{DirEntry, DirentBuf, DirentKind},
     EIO,
 };
@@ -30,7 +31,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, GlobalSchemes, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;
@@ -45,6 +46,7 @@ enum HandleKind {
     TopLevel,
     Rxsdt,
     ShutdownPipe,
+    SchemeRoot,
 }
 
 static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
@@ -110,14 +112,44 @@ impl AcpiScheme {
 }
 
 impl KernelScheme for AcpiScheme {
-    fn kopen(
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let fd = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
+        let mut handles_guard = HANDLES.write(token.token());
+
+        let _ = handles_guard.insert(
+            fd,
+            Handle {
+                kind: HandleKind::SchemeRoot,
+                stat: false,
+            },
+        );
+
+        Ok(fd)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let path = path.trim_start_matches('/');
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?
+                .kind,
+            HandleKind::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
+
+        let path = user_buf
+            .as_str()
+            .or(Err(Error::new(EINVAL)))?
+            .trim_start_matches('/');
 
         if ctx.uid != 0 {
             return Err(Error::new(EACCES));
@@ -180,6 +212,7 @@ impl KernelScheme for AcpiScheme {
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len() as u64,
             HandleKind::ShutdownPipe => 1,
             HandleKind::TopLevel => 0,
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF))?,
         })
     }
     // TODO
@@ -246,6 +279,7 @@ impl KernelScheme for AcpiScheme {
             }
             HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
             HandleKind::TopLevel => return Err(Error::new(EISDIR)),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let src_offset = core::cmp::min(offset, data.len());
@@ -318,6 +352,7 @@ impl KernelScheme for AcpiScheme {
                 st_size: 1,
                 ..Default::default()
             },
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())
