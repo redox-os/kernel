@@ -23,7 +23,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 
 pub struct MemoryScheme;
 
@@ -90,7 +90,8 @@ impl MemoryScheme {
             return Err(Error::new(EOPNOTSUPP));
         }
 
-        let fixed = map.flags.contains(MapFlags::MAP_FIXED) || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
+        let fixed = map.flags.contains(MapFlags::MAP_FIXED)
+            || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
 
         let page = addr_space.acquire_write().mmap(
             addr_space,
@@ -182,14 +183,26 @@ impl MemoryScheme {
         Ok(base_page.start_address().data())
     }
 }
+
+const SCHEME_ROOT_ID: usize = usize::MAX;
+
 impl KernelScheme for MemoryScheme {
-    fn kopen(
+    fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
+        Ok(SCHEME_ROOT_ID)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         ctx: CallerCtx,
         _token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
+        if id != SCHEME_ROOT_ID {
+            return Err(Error::new(EACCES));
+        }
+        let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
         if path.len() > 64 {
             return Err(Error::new(ENOENT));
         }
@@ -202,6 +215,12 @@ impl KernelScheme for MemoryScheme {
             "" | "zeroed" => HandleTy::Allocated,
             "physical" => HandleTy::PhysBorrow,
             "translation" => HandleTy::Translation,
+            "scheme-root" => {
+                return Ok(OpenResult::SchemeLocal(
+                    SCHEME_ROOT_ID,
+                    InternalFlags::empty(),
+                ))
+            }
 
             _ => return Err(Error::new(ENOENT)),
         };

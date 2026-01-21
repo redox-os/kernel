@@ -4,7 +4,7 @@ use alloc::boxed::Box;
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::Once;
 
-use super::{CallerCtx, KernelScheme, OpenResult};
+use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 use crate::{
     dtb::DTB_BINARY,
     scheme::InternalFlags,
@@ -22,6 +22,7 @@ pub struct DtbScheme;
 #[derive(Eq, PartialEq)]
 enum HandleKind {
     RawData,
+    SchemeRoot,
 }
 
 struct Handle {
@@ -51,14 +52,44 @@ impl DtbScheme {
 }
 
 impl KernelScheme for DtbScheme {
-    fn kopen(
+    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
+        let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
+
+        let mut handles_guard = HANDLES.write(token.token());
+
+        let _ = handles_guard.insert(
+            id,
+            Handle {
+                kind: HandleKind::SchemeRoot,
+                stat: false,
+            },
+        );
+        Ok(id)
+    }
+    fn kopenat(
         &self,
-        path: &str,
+        id: usize,
+        user_buf: StrOrBytes,
         _flags: usize,
+        _fcntl_flags: u32,
         _ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let path = path.trim_matches('/');
+        if !matches!(
+            HANDLES
+                .read(token.token())
+                .get(&id)
+                .ok_or(Error::new(EBADF))?
+                .kind,
+            HandleKind::SchemeRoot
+        ) {
+            return Err(Error::new(EACCES));
+        }
+
+        let path = user_buf
+            .as_str()
+            .or(Err(Error::new(EINVAL)))?
+            .trim_matches('/');
 
         if path.is_empty() {
             let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
@@ -88,6 +119,7 @@ impl KernelScheme for DtbScheme {
 
         let file_len = match handle.kind {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?.len(),
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         Ok(file_len as u64)
@@ -118,6 +150,7 @@ impl KernelScheme for DtbScheme {
 
         let data = match handle.kind {
             HandleKind::RawData => DATA.get().ok_or(Error::new(EBADFD))?,
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
         let src_offset = core::cmp::min(offset.try_into().unwrap(), data.len());
@@ -147,6 +180,7 @@ impl KernelScheme for DtbScheme {
                     ..Default::default()
                 }
             }
+            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
         })?;
 
         Ok(())
