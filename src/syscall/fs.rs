@@ -66,15 +66,6 @@ pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<String>
 // TODO: Define elsewhere
 const PATH_MAX: usize = PAGE_SIZE;
 
-#[inline]
-fn is_legacy(path_buf: &String) -> bool {
-    // FIXME remove entries from this list as the respective programs get updated
-    path_buf.starts_with(':')
-        || path_buf == "null:" // FIXME Remove exception at next rustc update (rust#138457)
-        || path_buf == "sys:exe" // FIXME Remove exception at next rustc update (rust#138457)
-        || path_buf.starts_with("orbital:")
-}
-
 pub fn openat(
     fh: FileHandle,
     raw_path: UserSliceRo,
@@ -85,15 +76,6 @@ pub fn openat(
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    if path_buf.contains(':') && !is_legacy(&path_buf) {
-        let name = context::current().read(token.token()).name;
-        if path_buf == "event:" || path_buf.starts_with("time:") {
-            // FIXME winit issues
-        } else {
-            println!("deprecated: legacy path {:?} used by {}", path_buf, name);
-        }
-    }
 
     let pipe = context::current()
         .read(token.token())
