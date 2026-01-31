@@ -2,7 +2,9 @@ use crate::{
     arch::{device::irqchip::hlic, start::BOOT_HART_ID},
     dtb::{
         get_mmio_address,
-        irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        irqchip::{
+            InterruptController, InterruptHandler, IrqCell, IrqConnection, IrqDesc, IRQ_CHIP,
+        },
     },
     sync::CleanLockToken,
 };
@@ -147,8 +149,19 @@ impl InterruptController for Plic {
         self.context = desc
             .parents
             .iter()
-            .position(|x| x.parent_interrupt.is_some() && x.parent == hlic_ic_idx)
-            .unwrap();
+            .position(
+                |IrqConnection {
+                     parent_phandle: _,
+                     parent,
+                     parent_interrupt,
+                 }| {
+                    *parent == hlic_ic_idx
+                        && parent_interrupt.is_some_and(|irq| irq == IrqCell::L1(9))
+                    // Supervisor external int
+                },
+            )
+            .expect("cannot find context for plic!");
+
         info!("PLIC: using context {}", self.context);
 
         let regs = unsafe { self.regs.as_mut().unwrap() };
@@ -168,6 +181,7 @@ impl InterruptController for Plic {
     }
 
     fn irq_enable(&mut self, irq_num: u32) {
+        trace!("plic irq enable: {}", irq_num);
         assert!(irq_num > 0 && irq_num as usize <= self.ndev);
         let regs = unsafe { self.regs.as_mut().unwrap() };
         regs.set_priority(irq_num as usize, 1);

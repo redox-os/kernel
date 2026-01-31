@@ -4,14 +4,10 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use crate::{
-    allocator,
-    memory::Frame,
-    paging::{PhysicalAddress, PAGE_SIZE},
-};
+use crate::allocator;
 
 use crate::{
-    arch::{device::serial::init_early, interrupt, paging},
+    arch::{device::serial::init_early, paging},
     device,
     devices::graphical_debug,
     interrupt::exception_handler,
@@ -103,9 +99,9 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             info!("Redox OS starting...");
             args.print();
 
-            if let Some(dtb) = &dtb {
-                device::dump_fdt(&dtb);
-            }
+            // if let Some(dtb) = &dtb {
+            //     device::dump_fdt(&dtb);
+            // }
 
             // Initialize RMM
             crate::startup::memory::init(&args, None, None);

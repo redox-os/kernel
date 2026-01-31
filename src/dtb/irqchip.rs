@@ -11,7 +11,7 @@ pub trait InterruptHandler {
     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken);
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum IrqCell {
     L1(u32),
@@ -86,11 +86,15 @@ impl IrqChipList {
                     "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
                     node.name, compatible, intr_cells, phandle
                 );
+                let Some(ic) = new_irqchip(compatible) else {
+                    warn!("No drivers found, skipping");
+                    continue;
+                };
                 let mut item = IrqChipItem {
                     phandle,
                     parents: Vec::new(),
                     children: Vec::new(),
-                    ic: new_irqchip(compatible).unwrap(),
+                    ic,
                 };
 
                 fn interrupt_address(

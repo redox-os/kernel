@@ -31,7 +31,7 @@ bitflags! {
 }
 
 #[allow(dead_code)]
-#[repr(packed(4))]
+#[repr(C, packed(4))]
 pub struct SerialPort<T: Io> {
     /// Data register, read to receive, write to send
     data: T,
@@ -84,32 +84,32 @@ where
 {
     pub fn init(&mut self) -> Result<(), ()> {
         unsafe {
-            //TODO: Cleanup
-            // FIXME: Fix UB if unaligned
-            // Disable all interrupts
-            (*addr_of_mut!(self.int_en)).write(0x00.into());
-            // Set baud rate divisor
-            (*addr_of_mut!(self.line_ctrl)).write(0x80.into());
-            // Set divisor to 1 (115200 baud)
-            (*addr_of_mut!(self.data)).write(0x01.into());
-            (*addr_of_mut!(self.int_en)).write(0x00.into());
-            // Use 8 data bits, no parity, one stop bit
-            (*addr_of_mut!(self.line_ctrl)).write(0x03.into());
-            // Enable and clear FIFOs with 14-byte threshold
-            (*addr_of_mut!(self.fifo_ctrl)).write(0xC7.into());
+            // //TODO: Cleanup
+            // // FIXME: Fix UB if unaligned
+            // // Disable all interrupts
+            // (*addr_of_mut!(self.int_en)).write(0x00.into());
+            // // Set baud rate divisor
+            // (*addr_of_mut!(self.line_ctrl)).write(0x80.into());
+            // // Set divisor to 1 (115200 baud)
+            // (*addr_of_mut!(self.data)).write(0x01.into());
+            // (*addr_of_mut!(self.int_en)).write(0x00.into());
+            // // Use 8 data bits, no parity, one stop bit
+            // (*addr_of_mut!(self.line_ctrl)).write(0x03.into());
+            // // Enable and clear FIFOs with 14-byte threshold
+            // (*addr_of_mut!(self.fifo_ctrl)).write(0xC7.into());
 
-            // Enable loopback
-            (*addr_of_mut!(self.modem_ctrl)).write(0x10.into());
-            // Perform loopback test with even/odd pattern
-            for &byte in &[0x55, 0xAA] {
-                (*addr_of_mut!(self.data)).write(byte.into());
-                if (*addr_of_mut!(self.data)).read() != byte.into() {
-                    return Err(());
-                }
-            }
+            // // Enable loopback
+            // (*addr_of_mut!(self.modem_ctrl)).write(0x10.into());
+            // // Perform loopback test with even/odd pattern
+            // for &byte in &[0x55, 0xAA] {
+            //     (*addr_of_mut!(self.data)).write(byte.into());
+            //     if (*addr_of_mut!(self.data)).read() != byte.into() {
+            //         return Err(());
+            //     }
+            // }
 
-            // Enable DTR, RTS, OUT1, and OUT2, disable loopback
-            (*addr_of_mut!(self.modem_ctrl)).write(0x0F.into());
+            // // Enable DTR, RTS, OUT1, and OUT2, disable loopback
+            // (*addr_of_mut!(self.modem_ctrl)).write(0x0F.into());
             // Enable receive interrupt
             (*addr_of_mut!(self.int_en)).write(0x01.into());
         }
