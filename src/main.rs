@@ -196,7 +196,6 @@ fn kmain(bootstrap: Bootstrap) -> ! {
             context.name.push_str("[bootstrap]");
 
             // TODO: Remove these from kernel
-            context.ens = SchemeNamespace::from(1);
             context.euid = 0;
             context.egid = 0;
         }
