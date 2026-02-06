@@ -26,7 +26,7 @@ impl KernelScheme for EventScheme {
     fn kopenat(
         &self,
         id: usize,
-        user_buf: StrOrBytes,
+        _user_buf: StrOrBytes,
         _flags: usize,
         _fcntl_flags: u32,
         _ctx: CallerCtx,
