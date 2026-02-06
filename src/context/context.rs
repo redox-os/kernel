@@ -18,7 +18,7 @@ use crate::{
     memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
-    scheme::{CallerCtx, FileHandle, SchemeId, SchemeNamespace},
+    scheme::{CallerCtx, FileHandle, SchemeId},
     sync::CleanLockToken,
     syscall::usercopy::UserSliceRw,
 };
