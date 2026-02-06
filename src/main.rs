@@ -55,7 +55,7 @@ extern crate bitflags;
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::{context::switch::SwitchResult, scheme::SchemeNamespace};
+use crate::context::switch::SwitchResult;
 
 use crate::consts::*;
 
