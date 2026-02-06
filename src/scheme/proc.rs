@@ -830,10 +830,7 @@ fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(Kerne
         .ok_or(Error::new(EBADF))?;
     let desc = file_descriptor.description.read();
     let (scheme_id, number) = (desc.scheme, desc.number);
-    let scheme = scheme::schemes(token.token())
-        .get(scheme_id)
-        .ok_or(Error::new(ENODEV))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     Ok((scheme, number))
 }

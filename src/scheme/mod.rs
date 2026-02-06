@@ -9,12 +9,10 @@
 // TODO: Move handling of the global namespace to userspace.
 
 use alloc::{
-    boxed::Box,
     sync::{Arc, Weak},
     vec::Vec,
 };
 use core::{
-    hash::BuildHasherDefault,
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -33,7 +31,7 @@ use crate::{
         memory::AddrSpaceWrapper,
         ContextLock,
     },
-    sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, L0, L1},
+    sync::{CleanLockToken, LockToken, RwLock, L0, L1},
     syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
 };
 
@@ -134,18 +132,6 @@ impl<'a> StrOrBytes<'a> {
     }
 }
 
-pub struct SchemeIter<'a> {
-    inner: Option<indexmap::map::Iter<'a, Box<str>, SchemeId>>,
-}
-
-impl<'a> Iterator for SchemeIter<'a> {
-    type Item = (&'a Box<str>, &'a SchemeId);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.as_mut().and_then(|iter| iter.next())
-    }
-}
-
 enum Handle {
     SchemeCreationCapability,
     Scheme(KernelSchemes),
@@ -186,23 +172,16 @@ fn init_schemes() -> RwLock<L1, HashMap<SchemeId, Handle>> {
     RwLock::new(handles)
 }
 
-/// Get the global schemes list, const
-pub fn schemes<'a>(token: LockToken<'a, L0>) -> SchemesView<'a> {
-    SchemesView(handles().read(token))
+/// Get a handle to a scheme.
+pub fn get_scheme(token: LockToken<'_, L0>, scheme_id: SchemeId) -> Result<KernelSchemes> {
+    match handles().read(token).get(&scheme_id) {
+        Some(Handle::Scheme(scheme)) => Ok(scheme.clone()),
+        _ => Err(Error::new(ENODEV)),
+    }
 }
 
 fn handles<'a>() -> &'a RwLock<L1, HashMap<SchemeId, Handle>> {
     HANDLES.call_once(init_schemes)
-}
-
-pub struct SchemesView<'a>(RwLockReadGuard<'a, L1, HashMap<SchemeId, Handle>>);
-impl<'a> SchemesView<'a> {
-    pub fn get(&self, id: SchemeId) -> Option<&KernelSchemes> {
-        match self.0.get(&id) {
-            Some(Handle::Scheme(scheme)) => Some(&scheme),
-            _ => None,
-        }
-    }
 }
 
 /// Scheme list type
@@ -215,7 +194,7 @@ impl SchemeList {
     }
 
     /// Get the UserInner
-     fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
+    fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
         match handles().read(token.token()).get(&SchemeId(id)) {
             Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
             _ => None,
@@ -223,11 +202,7 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    fn insert(
-        &self,
-        context: Weak<ContextLock>,
-        token: &mut CleanLockToken,
-    ) -> Result<SchemeId> {
+    fn insert(&self, context: Weak<ContextLock>, token: &mut CleanLockToken) -> Result<SchemeId> {
         let mut handles = handles().write(token.token());
         let id = loop {
             let mut id = SCHEME_LIST_NEXT_ID.fetch_add(1, Ordering::Relaxed);

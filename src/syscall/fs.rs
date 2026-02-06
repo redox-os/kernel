@@ -46,10 +46,7 @@ pub fn file_op_generic_ext<T>(
         (file, desc)
     };
 
-    let scheme = scheme::schemes(token.token())
-        .get(desc.scheme)
-        .ok_or(Error::new(EBADF))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), desc.scheme)?;
 
     op(&*scheme, file.description, desc, token)
 }
@@ -90,10 +87,7 @@ pub fn openat(
         .filter_uid_gid(euid, egid);
 
     let new_description = {
-        let scheme = scheme::schemes(token.token())
-            .get(description.scheme)
-            .ok_or(Error::new(EBADF))?
-            .clone();
+        let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
         let res = scheme.kopenat(
             description.number,
@@ -143,10 +137,7 @@ pub fn unlinkat(
 
     let description = pipe.description.read();
 
-    let scheme = scheme::schemes(token.token())
-        .get(description.scheme)
-        .ok_or(Error::new(EBADF))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
     let caller_ctx = context::current()
         .read(token.token())
@@ -195,10 +186,7 @@ fn duplicate_file(
         let description = { *file.description.read() };
 
         let new_description = {
-            let scheme = scheme::schemes(token.token())
-                .get(description.scheme)
-                .ok_or(Error::new(EBADF))?
-                .clone();
+            let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
             match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
                 OpenResult::SchemeLocal(number, internal_flags) => {
@@ -297,10 +285,7 @@ fn call_normal(
         let desc = file.description.read();
         (desc.scheme, desc.number)
     };
-    let scheme = scheme::schemes(token.token())
-        .get(scheme_id)
-        .ok_or(Error::new(EBADFD))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     scheme.kcall(number, payload, flags, metadata, token)
 }
@@ -344,10 +329,7 @@ fn fdwrite_inner(
             let desc = &file_descriptor.description.read();
             (desc.scheme, desc.number)
         };
-        let scheme = scheme::schemes(token.token())
-            .get(scheme)
-            .ok_or(Error::new(ENODEV))?
-            .clone();
+        let scheme = scheme::get_scheme(token.token(), scheme)?;
 
         let current_lock = context::current();
         let current = current_lock.read(token.token());
@@ -398,10 +380,7 @@ fn call_fdread(
             let desc = file_descriptor.description.read();
             (desc.scheme, desc.number)
         };
-        let scheme = scheme::schemes(token.token())
-            .get(scheme)
-            .ok_or(Error::new(ENODEV))?
-            .clone();
+        let scheme = scheme::get_scheme(token.token(), scheme)?;
 
         (scheme, number)
     };
@@ -451,10 +430,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
     // Communicate fcntl with scheme
     if cmd != F_GETFD && cmd != F_SETFD {
-        let scheme = scheme::schemes(token.token())
-            .get(description.scheme)
-            .ok_or(Error::new(EBADF))?
-            .clone();
+        let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
         scheme.fcntl(description.number, cmd, arg, token)?;
     };
@@ -510,10 +486,7 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
 
     let description = file.description.read();
 
-    let scheme = scheme::schemes(token.token())
-        .get(description.scheme)
-        .ok_or(Error::new(EBADF))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
     // TODO: Check EXDEV.
     /*
@@ -542,10 +515,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
 
     let description = file.description.read();
 
-    let scheme = scheme::schemes(token.token())
-        .get(description.scheme)
-        .ok_or(Error::new(EBADF))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
     // TODO: Check EXDEV.
     /*
