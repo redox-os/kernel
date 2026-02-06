@@ -66,9 +66,8 @@ impl UnmapResult {
             (desc.scheme, desc.number)
         };
 
-        let scheme_opt = scheme::schemes(token.token()).get(scheme_id).cloned();
+        let scheme_opt = scheme::get_scheme(token.token(), scheme_id);
         let funmap_result = scheme_opt
-            .ok_or(Error::new(ENODEV))
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
@@ -2624,11 +2623,11 @@ fn correct_inner<'l>(
                 let desc = &file_ref.description.read();
                 (desc.scheme, desc.number)
             };
-            let user_inner = scheme::schemes(token.token())
-                .get(scheme_id)
+            let user_inner = scheme::get_scheme(token.token(), scheme_id)
+                .ok()
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
-                        Some(user.inner.clone())
+                        Some(user.inner)
                     } else {
                         None
                     }

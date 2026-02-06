@@ -4,7 +4,7 @@ use crate::{
     event,
     scheme::{self, SchemeId},
     sync::CleanLockToken,
-    syscall::error::{Error, Result, EBADF},
+    syscall::error::Result,
 };
 use alloc::sync::Arc;
 use spin::RwLock;
@@ -74,10 +74,7 @@ impl FileDescription {
     pub fn try_close(self, token: &mut CleanLockToken) -> Result<()> {
         event::unregister_file(self.scheme, self.number);
 
-        let scheme = scheme::schemes(token.token())
-            .get(self.scheme)
-            .ok_or(Error::new(EBADF))?
-            .clone();
+        let scheme = scheme::get_scheme(token.token(), self.scheme)?;
 
         scheme.close(self.number, token)
     }

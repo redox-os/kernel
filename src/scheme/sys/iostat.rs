@@ -57,10 +57,9 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                 );
 
                 let scheme = {
-                    let schemes = scheme::schemes(token.token());
-                    match schemes.get(description.scheme) {
-                        Some(scheme) => scheme.clone(),
-                        None => {
+                    match scheme::get_scheme(token.token(), description.scheme) {
+                        Ok(scheme) => scheme.clone(),
+                        Err(_) => {
                             let _ = writeln!(string, "no scheme",);
                             continue;
                         }

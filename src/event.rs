@@ -171,10 +171,7 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
         }
     }
 
-    let scheme = scheme::schemes(token.token())
-        .get(reg_key.scheme)
-        .ok_or(Error::new(EBADF))?
-        .clone();
+    let scheme = scheme::get_scheme(token.token(), reg_key.scheme)?;
 
     scheme.fevent(reg_key.number, flags, token)
 }

@@ -17,7 +17,6 @@ use crate::{
     cpu_stats,
     percpu::PercpuBlock,
     sync::CleanLockToken,
-    time,
 };
 
 use super::ContextRef;
@@ -40,7 +39,11 @@ enum UpdateResult {
 /// # Returns
 /// - `UpdateResult::CanSwitch`: If the context can be switched to.
 /// - `UpdateResult::Skip`: If the context should be skipped (e.g., it's running on another CPU).
-unsafe fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId, switch_time: u128) -> UpdateResult {
+unsafe fn update_runnable(
+    context: &mut Context,
+    cpu_id: LogicalCpuId,
+    switch_time: u128,
+) -> UpdateResult {
     // Ignore contexts that are already running.
     if context.running {
         return UpdateResult::Skip;

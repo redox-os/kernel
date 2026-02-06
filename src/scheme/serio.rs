@@ -1,9 +1,6 @@
 //! PS/2 unfortunately requires a kernel driver to prevent race conditions due
 //! to how status is utilized
-use core::{
-    str,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use syscall::data::GlobalSchemes;

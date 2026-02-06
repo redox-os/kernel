@@ -316,7 +316,7 @@ impl KernelScheme for MemoryScheme {
             HandleTy::Translation => Err(Error::new(EOPNOTSUPP)),
         }
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+    fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
         //TODO: construct useful path?
         buf.copy_common_bytes_from_slice("/scheme/memory/".as_bytes())
     }
