@@ -141,7 +141,6 @@ pub struct Context {
     pub owner_proc_id: Option<NonZeroUsize>,
 
     // TODO: Temporary replacement for existing kernel logic, replace with capabilities!
-    pub ens: SchemeNamespace,
     pub euid: u32,
     pub egid: u32,
     pub pid: usize,
@@ -197,7 +196,6 @@ impl Context {
             being_sigkilled: false,
             owner_proc_id,
 
-            ens: 0.into(),
             euid: 0,
             egid: 0,
             pid: 0,
