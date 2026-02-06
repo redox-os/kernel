@@ -1912,12 +1912,12 @@ impl KernelScheme for UserScheme {
     }
 }
 
-pub trait Args: Copy {
+trait Args: Copy {
     fn args(self) -> [u64; 6];
 }
 impl<const N: usize> Args for [u64; N] {
     fn args(self) -> [u64; 6] {
-        assert!(self.len() <= N);
+        const { assert!(N <= 6) };
         core::array::from_fn(|i| self.get(i).copied().unwrap_or(0))
     }
 }
