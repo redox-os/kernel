@@ -215,7 +215,7 @@ impl SchemeList {
     }
 
     /// Get the UserInner
-    pub fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
+     fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
         match handles().read(token.token()).get(&SchemeId(id)) {
             Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
             _ => None,
@@ -223,7 +223,7 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    pub fn insert(
+    fn insert(
         &self,
         context: Weak<ContextLock>,
         token: &mut CleanLockToken,
@@ -252,7 +252,7 @@ impl SchemeList {
     }
 
     /// Remove a scheme
-    pub fn remove(&self, id: usize, token: &mut CleanLockToken) {
+    fn remove(&self, id: usize, token: &mut CleanLockToken) {
         assert!(handles()
             .write(token.token())
             .remove(&SchemeId(id))

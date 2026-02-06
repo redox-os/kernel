@@ -183,7 +183,7 @@ impl UserInner {
         u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
     }
 
-    pub fn call(
+    fn call(
         &self,
         opcode: Opcode,
         args: impl Args,
@@ -198,7 +198,7 @@ impl UserInner {
         }
     }
 
-    pub fn call_extended(
+    fn call_extended(
         &self,
         ctx: CallerCtx,
         fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
@@ -396,14 +396,14 @@ impl UserInner {
     /// Map a readable structure to the scheme's userspace and return the
     /// pointer
     #[must_use = "copying back to head/tail buffers can fail"]
-    pub fn capture_user<const READ: bool, const WRITE: bool>(
+    fn capture_user<const READ: bool, const WRITE: bool>(
         &self,
         buf: UserSlice<READ, WRITE>,
         token: &mut CleanLockToken,
     ) -> Result<CaptureGuard<READ, WRITE>> {
         UserInner::capture_inner(&self.context, buf, token)
     }
-    pub fn copy_and_capture_tail(
+    fn copy_and_capture_tail(
         &self,
         buf: &[u8],
         token: &mut CleanLockToken,
@@ -1330,7 +1330,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         Ok(())
     }
-    pub fn release(mut self) -> Result<()> {
+    fn release(mut self) -> Result<()> {
         self.release_inner()
     }
 }
