@@ -1,5 +1,4 @@
 use alloc::collections::VecDeque;
-use spin::Once;
 
 use crate::{
     event,
@@ -22,16 +21,11 @@ struct Timeout {
 
 type Registry = VecDeque<Timeout>;
 
-static REGISTRY: Once<Mutex<L1, Registry>> = Once::new();
-
-/// Initialize registry, called if needed
-fn init_registry() -> Mutex<L1, Registry> {
-    Mutex::new(Registry::new())
-}
+static REGISTRY: Mutex<L1, Registry> = Mutex::new(Registry::new());
 
 /// Get the global timeouts list
 fn registry(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, Registry> {
-    REGISTRY.call_once(init_registry).lock(token)
+    REGISTRY.lock(token)
 }
 
 pub fn register(

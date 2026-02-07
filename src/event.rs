@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicUsize, Ordering};
-use hashbrown::{HashMap, HashSet};
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap, HashSet};
 use spin::Once;
 use syscall::data::GlobalSchemes;
 
@@ -97,21 +97,17 @@ pub fn next_queue_id() -> EventQueueId {
 }
 
 // Current event queues
-static QUEUES: Once<RwLock<L1, EventQueueList>> = Once::new();
-
-/// Initialize queues, called if needed
-fn init_queues() -> RwLock<L1, EventQueueList> {
-    RwLock::new(HashMap::new())
-}
+static QUEUES: RwLock<L1, EventQueueList> =
+    RwLock::new(EventQueueList::with_hasher(DefaultHashBuilder::new()));
 
 /// Get the event queues list, const
 pub fn queues(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, EventQueueList> {
-    QUEUES.call_once(init_queues).read(token)
+    QUEUES.read(token)
 }
 
 /// Get the event queues list, mutable
 pub fn queues_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, EventQueueList> {
-    QUEUES.call_once(init_queues).write(token)
+    QUEUES.write(token)
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
