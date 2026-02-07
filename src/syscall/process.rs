@@ -240,7 +240,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     }
 }
 
-pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
+unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
     unsafe {
         core::slice::from_raw_parts(
             CurrentRmmArch::phys_to_virt(bootstrap.base.base()).data() as *const u8,
@@ -249,12 +249,7 @@ pub unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
     }
 }
 
-pub fn insert_fd(
-    scheme: SchemeId,
-    number: usize,
-    cloexec: bool,
-    token: &mut CleanLockToken,
-) -> usize {
+fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLockToken) -> usize {
     context::current()
         .write(token.token())
         .add_file_min(
