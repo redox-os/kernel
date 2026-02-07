@@ -28,7 +28,7 @@ pub struct SessionData {
     file_id: usize,
 }
 impl SessionData {
-    fn add_event(&mut self, event: PtraceEvent) {
+    pub(crate) fn add_event(&mut self, event: PtraceEvent) {
         self.events.push_back(event);
 
         // Notify nonblocking tracers
