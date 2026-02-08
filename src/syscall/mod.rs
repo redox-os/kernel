@@ -251,12 +251,15 @@ pub fn syscall(
     #[cfg(feature = "syscall_debug")]
     debug::debug_end([a, b, c, d, e, f, g], result, token);
 
-    let percpu = PercpuBlock::current();
-    percpu
+    let being_sigkilled = PercpuBlock::current()
         .switch_internals
-        .with_context(|context| context.write(token.token()).inside_syscall = false);
+        .with_context(|context| {
+            let mut context = context.write(token.token());
+            context.inside_syscall = false;
+            context.being_sigkilled
+        });
 
-    if percpu.switch_internals.being_sigkilled.get() {
+    if being_sigkilled {
         exit_this_context(None, token);
     }
 

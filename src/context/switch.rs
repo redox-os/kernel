@@ -297,11 +297,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 next_context.syscall_debug_info.on_switch_to();
             }
 
-            percpu
-                .switch_internals
-                .being_sigkilled
-                .set(next_context.being_sigkilled);
-
             unsafe {
                 arch::switch_to(prev_context, next_context);
             }
@@ -337,8 +332,6 @@ pub struct ContextSwitchPercpu {
 
     /// The idle process.
     idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
-
-    pub(crate) being_sigkilled: Cell<bool>,
 }
 
 impl ContextSwitchPercpu {
@@ -349,7 +342,6 @@ impl ContextSwitchPercpu {
             pit_ticks: Cell::new(0),
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
-            being_sigkilled: Cell::new(false),
         }
     }
 
