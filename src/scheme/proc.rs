@@ -1,5 +1,5 @@
 use crate::{
-    arch::paging::{Page, VirtualAddress},
+    arch::paging::{Page, PageCount, VirtualAddress},
     context::{
         self,
         context::{HardBlockedReason, SignalState},
@@ -436,7 +436,17 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let _ = try_stop_context(context, token, |context: &mut Context| {
+                // notify debugger before we switch address spaces
+                // otherwise gdbserver loses track during dynamic linking
+                if let Some(session) = ptrace::Session::current() {
+                    let mut data = session.data.lock();
+                    if data.breakpoint.is_some() {
+                        data.add_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
+                        session.tracer.notify(token);
+                    }
+                }
+
+                let _ = try_stop_context(Arc::clone(&context), token, |context: &mut Context| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -449,10 +459,19 @@ impl KernelScheme for ProcScheme {
 
                     Ok(context.set_addr_space(Some(new)))
                 })?;
-                let _ = ptrace::send_event(
-                    crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0),
-                    token,
-                );
+
+                // wait for debugger ack if we're being traced
+                if let Some(session) = ptrace::Session::current() {
+                    let data = session.data.lock();
+                    if data.breakpoint.is_some() {
+                        drop(data);
+                        let _ = session.tracee.wait(
+                            session.data.lock(),
+                            "proc::close addrspace_switch",
+                            token,
+                        );
+                    }
+                }
             }
             Handle {
                 kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
@@ -529,22 +548,18 @@ impl KernelScheme for ProcScheme {
                         |dst_page, _, dst_mapper, flusher| {
                             Grant::borrow(
                                 Arc::clone(addrspace),
-                                &mut src_addr_space,
-                                src_span.base,
-                                dst_page,
-                                src_span.count,
-                                map.flags,
+                                src_span.base.add(dst_page.data().start_address().data() - requested_dst_page.start_address().data()),
+                                PageCount::from_usize(1),
                                 dst_mapper,
                                 flusher,
-                                true,
-                                true,
-                                false,
                             )
                         },
                     )?
                 };
 
-                handle_notify_files(notify_files, token);
+                for file in notify_files {
+                    let _ = file.fcntl(F_NOTIFY_NEW_MAPPING, 0);
+                }
 
                 Ok(result_base.start_address().data())
             }
