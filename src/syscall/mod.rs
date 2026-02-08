@@ -239,7 +239,9 @@ pub fn syscall(
         }
     }
 
-    PercpuBlock::current().inside_syscall.set(true);
+    PercpuBlock::current()
+        .switch_internals
+        .with_context(|context| context.write(token.token()).inside_syscall = true);
 
     #[cfg(feature = "syscall_debug")]
     debug::debug_start([a, b, c, d, e, f, g], token);
@@ -250,7 +252,9 @@ pub fn syscall(
     debug::debug_end([a, b, c, d, e, f, g], result, token);
 
     let percpu = PercpuBlock::current();
-    percpu.inside_syscall.set(false);
+    percpu
+        .switch_internals
+        .with_context(|context| context.write(token.token()).inside_syscall = false);
 
     if percpu.switch_internals.being_sigkilled.get() {
         exit_this_context(None, token);

@@ -36,7 +36,6 @@ pub struct PercpuBlock {
 
     pub ptrace_flags: Cell<PtraceFlags>,
     pub ptrace_session: RefCell<Option<Weak<Session>>>,
-    pub inside_syscall: Cell<bool>,
 
     pub misc_arch_info: crate::device::ArchPercpuMisc,
 
@@ -183,7 +182,6 @@ impl PercpuBlock {
             wants_tlb_shootdown: AtomicBool::new(false),
             ptrace_flags: Cell::new(PtraceFlags::empty()),
             ptrace_session: RefCell::new(None),
-            inside_syscall: Cell::new(false),
 
             profiling: None,
 

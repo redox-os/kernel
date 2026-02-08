@@ -290,8 +290,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
             //*percpu.ptrace_session.borrow_mut() = ptrace_session;
             percpu.ptrace_flags.set(ptrace_flags);
-            prev_context.inside_syscall =
-                percpu.inside_syscall.replace(next_context.inside_syscall);
 
             #[cfg(feature = "syscall_debug")]
             {
