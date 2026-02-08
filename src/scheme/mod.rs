@@ -217,7 +217,7 @@ impl SchemeList {
         };
 
         let root_id = SchemeId(SCHEME_LIST_ID.load(Ordering::Relaxed));
-        let inner = Arc::new(UserInner::new(root_id, id, true, context));
+        let inner = Arc::new(UserInner::new(root_id, id, context));
         let new_scheme = Handle::Scheme(KernelSchemes::User(UserScheme::new(inner)));
         assert!(handles.insert(id, new_scheme).is_none());
         Ok(id)
