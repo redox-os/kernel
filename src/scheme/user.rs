@@ -69,7 +69,7 @@ enum State {
 
 #[derive(Debug)]
 pub enum Response {
-    Regular(usize, u8),
+    Regular(Result<usize>, u8),
     Fd(Arc<RwLock<FileDescription>>),
     MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
 }
@@ -86,7 +86,7 @@ enum ParsedCqe {
     },
     RegularResponse {
         tag: u32,
-        code: usize,
+        res: Result<usize>,
         extra0: u8,
     },
     ResponseWithFd {
@@ -115,7 +115,7 @@ impl ParsedCqe {
             match CqeOpcode::try_from_raw(cqe.flags & 0b111).ok_or(Error::new(EINVAL))? {
                 CqeOpcode::RespondRegular => Self::RegularResponse {
                     tag: cqe.tag,
-                    code: cqe.result as usize,
+                    res: Error::demux(cqe.result as usize),
                     extra0: cqe.extra_raw[0],
                 },
                 CqeOpcode::RespondWithFd => Self::ResponseWithFd {
@@ -192,7 +192,7 @@ impl UserInner {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.call_extended(ctx, None, opcode, args, caller_responsible, token)? {
-            Response::Regular(code, _) => Error::demux(code),
+            Response::Regular(res, _) => res,
             Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
@@ -779,8 +779,8 @@ impl UserInner {
     }
     fn handle_parsed(&self, cqe: &ParsedCqe, token: &mut CleanLockToken) -> Result<()> {
         match *cqe {
-            ParsedCqe::RegularResponse { tag, code, extra0 } => {
-                self.respond(tag, Response::Regular(code, extra0), token)?
+            ParsedCqe::RegularResponse { tag, res, extra0 } => {
+                self.respond(tag, Response::Regular(res, extra0), token)?
             }
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
@@ -929,22 +929,22 @@ impl UserInner {
                     } => {
                         // Convert ECANCELED to EINTR if a request was being canceled (currently always
                         // due to signals).
-                        if let Response::Regular(ref mut code, _) = response
+                        if let Response::Regular(ref mut res, _) = response
                             && canceling
-                            && *code == Error::mux(Err(Error::new(ECANCELED)))
+                            && *res == Err(Error::new(ECANCELED))
                         {
-                            *code = Error::mux(Err(Error::new(EINTR)));
+                            *res = Err(Error::new(EINTR));
                         }
 
                         // TODO: Require ECANCELED?
-                        if let Response::Regular(ref mut code, _) = response
+                        if let Response::Regular(ref mut res, _) = response
                             && !canceling
-                            && *code == Error::mux(Err(Error::new(EINTR)))
+                            && *res == Err(Error::new(EINTR))
                         {
                             // EINTR is valid after cancelation has been requested, but not otherwise.
                             // This is because the userspace signal trampoline will be invoked after a
                             // syscall returns EINTR.
-                            *code = Error::mux(Err(Error::new(EIO)));
+                            *res = Err(Error::new(EIO));
                         }
 
                         if let Response::MultipleFds(ref mut response_fds) = response {
@@ -1073,7 +1073,7 @@ impl UserInner {
         let mapping_is_lazy = false;
 
         let base_page_opt = match response {
-            Response::Regular(code, _) => (!mapping_is_lazy).then_some(Error::demux(code)?),
+            Response::Regular(res, _) => (!mapping_is_lazy).then_some(res?),
             Response::Fd(_) => {
                 debug!("Scheme incorrectly returned an fd for fmap.");
 
@@ -1382,8 +1382,8 @@ impl KernelScheme for UserScheme {
         address.release()?;
 
         match result? {
-            Response::Regular(code, fl) => Ok({
-                let fd = Error::demux(code)?;
+            Response::Regular(res, fl) => Ok({
+                let fd = res?;
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
@@ -1589,8 +1589,8 @@ impl KernelScheme for UserScheme {
         address.release()?;
 
         match result? {
-            Response::Regular(code, fl) => Ok({
-                let fd = Error::demux(code)?;
+            Response::Regular(res, fl) => Ok({
+                let fd = res?;
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
@@ -1820,9 +1820,8 @@ impl KernelScheme for UserScheme {
         let res = inner.call_extended_inner(None, sqe, address.span(), token)?;
 
         match res {
-            Response::Regular(res, _) => Error::demux(res),
-            Response::Fd(_) => Err(Error::new(EIO)),
-            Response::MultipleFds(_) => Err(Error::new(EIO)),
+            Response::Regular(res, _) => res,
+            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
     fn kfdwrite(
@@ -1853,9 +1852,8 @@ impl KernelScheme for UserScheme {
         )?;
 
         match res {
-            Response::Regular(res, _) => Error::demux(res),
-            Response::Fd(_) => Err(Error::new(EIO)),
-            Response::MultipleFds(_) => Err(Error::new(EIO)),
+            Response::Regular(res, _) => res,
+            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
     fn kfdread(
@@ -1892,7 +1890,7 @@ impl KernelScheme for UserScheme {
 
         let descriptions_opt = match res {
             Response::Regular(res, _) => {
-                return match Error::demux(res) {
+                return match res {
                     Ok(_) => Err(Error::new(EIO)),
                     Err(e) => Err(e),
                 }
