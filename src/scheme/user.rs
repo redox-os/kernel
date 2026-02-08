@@ -68,10 +68,19 @@ enum State {
 }
 
 #[derive(Debug)]
-pub enum Response {
+enum Response {
     Regular(Result<usize>, u8),
     Fd(Arc<RwLock<FileDescription>>),
     MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
+}
+
+impl Response {
+    fn as_regular(self) -> Result<usize> {
+        match self {
+            Response::Regular(res, _) => res,
+            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
+        }
+    }
 }
 
 const ONE: NonZeroUsize = match NonZeroUsize::new(1) {
@@ -191,10 +200,8 @@ impl UserInner {
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        match self.call_extended(ctx, None, opcode, args, caller_responsible, token)? {
-            Response::Regular(res, _) => res,
-            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
-        }
+        self.call_extended(ctx, None, opcode, args, caller_responsible, token)?
+            .as_regular()
     }
 
     fn call_extended(
@@ -1072,15 +1079,7 @@ impl UserInner {
         //let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
         let mapping_is_lazy = false;
 
-        let base_page_opt = match response {
-            Response::Regular(res, _) => (!mapping_is_lazy).then_some(res?),
-            Response::Fd(_) => {
-                debug!("Scheme incorrectly returned an fd for fmap.");
-
-                return Err(Error::new(EIO));
-            }
-            Response::MultipleFds(_) => return Err(Error::new(EIO)),
-        };
+        let base_page_opt = (!mapping_is_lazy).then_some(response.as_regular()?);
 
         let file_ref = GrantFileRef {
             description: desc,
@@ -1778,11 +1777,8 @@ impl KernelScheme for UserScheme {
             token,
         )?;
 
-        match res {
-            Response::Regular(_, _) => Ok(()),
-            Response::Fd(_) => Err(Error::new(EIO)),
-            Response::MultipleFds(_) => Err(Error::new(EIO)),
-        }
+        res.as_regular()?;
+        Ok(())
     }
     fn kcall(
         &self,
@@ -1817,12 +1813,9 @@ impl KernelScheme for UserScheme {
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
         }
-        let res = inner.call_extended_inner(None, sqe, address.span(), token)?;
-
-        match res {
-            Response::Regular(res, _) => res,
-            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
-        }
+        inner
+            .call_extended_inner(None, sqe, address.span(), token)?
+            .as_regular()
     }
     fn kfdwrite(
         &self,
@@ -1842,19 +1835,16 @@ impl KernelScheme for UserScheme {
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = descs.len();
-        let res = inner.call_extended(
-            ctx,
-            Some(descs),
-            Opcode::Sendfd,
-            [number, sendfd_flags.bits(), arg as usize, len],
-            &mut PageSpan::empty(),
-            token,
-        )?;
-
-        match res {
-            Response::Regular(res, _) => res,
-            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
-        }
+        inner
+            .call_extended(
+                ctx,
+                Some(descs),
+                Opcode::Sendfd,
+                [number, sendfd_flags.bits(), arg as usize, len],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()
     }
     fn kfdread(
         &self,
