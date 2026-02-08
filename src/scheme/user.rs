@@ -58,7 +58,7 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<ContextLock>,
-        fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
+        fds: Vec<Arc<RwLock<FileDescription>>>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
@@ -195,20 +195,19 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
+        fds: Vec<Arc<RwLock<FileDescription>>>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
     ) -> Result<Response> {
-        let next_id = self.next_id()?;
         self.call_inner(
             fds,
             Sqe {
                 opcode: opcode as u8,
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
-                tag: next_id,
+                tag: self.next_id()?,
                 caller: ctx.pid as u64,
                 args: {
                     let mut a = args.args();
@@ -223,7 +222,7 @@ impl UserInner {
 
     fn call_inner(
         &self,
-        fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
+        fds: Vec<Arc<RwLock<FileDescription>>>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
@@ -804,7 +803,10 @@ impl UserInner {
                         .ok_or(Error::new(EINVAL))?
                     {
                         &mut State::Waiting { ref mut fds, .. } => {
-                            fds.take().ok_or(Error::new(ENOENT))?.remove(0)
+                            if fds.is_empty() {
+                                return Err(Error::new(ENOENT));
+                            }
+                            fds.remove(0)
                         }
                         _ => return Err(Error::new(ENOENT)),
                     }
@@ -918,7 +920,7 @@ impl UserInner {
 
                     State::Waiting {
                         context,
-                        mut fds,
+                        fds,
                         canceling,
                         callee_responsible,
                     } => {
@@ -943,14 +945,15 @@ impl UserInner {
                         }
 
                         if let Response::MultipleFds(ref mut response_fds) = response {
-                            *response_fds = fds.take();
+                            *response_fds = Some(fds);
+                            to_close = Vec::new();
+                        } else {
+                            to_close = fds
+                                .into_iter()
+                                .filter_map(|f| Arc::try_unwrap(f).ok())
+                                .map(RwLock::into_inner)
+                                .collect();
                         }
-                        to_close = fds
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|f| Arc::try_unwrap(f).ok())
-                            .map(RwLock::into_inner)
-                            .collect();
 
                         match context.upgrade() {
                             Some(context) => {
@@ -1040,7 +1043,7 @@ impl UserInner {
         };
 
         let response = self.call_inner(
-            None,
+            Vec::new(),
             Sqe {
                 opcode: Opcode::MmapPrep as u8,
                 sqe_flags: SqeFlags::empty(),
@@ -1170,7 +1173,7 @@ impl UserInner {
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
-            &mut State::Waiting { ref mut fds, .. } => *fds = Some(descs),
+            &mut State::Waiting { ref mut fds, .. } => *fds = descs,
             _ => return Err(Error::new(ENOENT)),
         };
 
@@ -1231,7 +1234,7 @@ impl UserInner {
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
-            &mut State::Waiting { ref mut fds, .. } => fds.take().ok_or(Error::new(ENOENT))?,
+            &mut State::Waiting { ref mut fds, .. } => mem::take(fds),
             _ => return Err(Error::new(ENOENT)),
         };
 
@@ -1358,7 +1361,7 @@ impl KernelScheme for UserScheme {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
         let result = self.inner.call(
             ctx,
-            None,
+            Vec::new(),
             Opcode::OpenAt,
             [file, address.base(), address.len(), flags, fcntl_flags as _],
             address.span(),
@@ -1392,7 +1395,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::UnlinkAt,
                 [file, address.base(), address.len(), flags],
                 address.span(),
@@ -1407,7 +1410,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fsize,
                 [file],
                 &mut PageSpan::empty(),
@@ -1422,7 +1425,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fchmod,
                 [file, mode as usize],
                 &mut PageSpan::empty(),
@@ -1445,7 +1448,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fchown,
                 [file, uid as usize, gid as usize],
                 &mut PageSpan::empty(),
@@ -1466,7 +1469,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fcntl,
                 [file, cmd, arg],
                 &mut PageSpan::empty(),
@@ -1485,7 +1488,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fevent,
                 [file, flags.bits()],
                 &mut PageSpan::empty(),
@@ -1506,7 +1509,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Flink,
                 [file, address.base(), address.len()],
                 address.span(),
@@ -1527,7 +1530,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Frename,
                 [file, address.base(), address.len()],
                 address.span(),
@@ -1542,7 +1545,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fsync,
                 [file],
                 &mut PageSpan::empty(),
@@ -1557,7 +1560,7 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Ftruncate,
                 [file, len],
                 &mut PageSpan::empty(),
@@ -1573,7 +1576,7 @@ impl KernelScheme for UserScheme {
             self.inner
                 .call(
                     ctx,
-                    None,
+                    Vec::new(),
                     Opcode::Close,
                     [id],
                     &mut PageSpan::empty(),
@@ -1610,7 +1613,7 @@ impl KernelScheme for UserScheme {
         let mut address = inner.capture_user(buf, token)?;
         let result = inner.call(
             ctx,
-            None,
+            Vec::new(),
             Opcode::Dup,
             [file, address.base(), address.len()],
             address.span(),
@@ -1638,7 +1641,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fpath,
                 [file, address.base(), address.len()],
                 address.span(),
@@ -1665,7 +1668,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Read,
                 [
                     file as u64,
@@ -1699,7 +1702,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Write,
                 [
                     file as u64,
@@ -1728,7 +1731,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Futimens,
                 [file, address.base(), address.len()],
                 address.span(),
@@ -1756,7 +1759,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Getdents,
                 [
                     file,
@@ -1779,7 +1782,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fstat,
                 [file, address.base(), address.len()],
                 address.span(),
@@ -1796,7 +1799,7 @@ impl KernelScheme for UserScheme {
             .inner
             .call(
                 ctx,
-                None,
+                Vec::new(),
                 Opcode::Fstatvfs,
                 [file, address.base(), address.len()],
                 address.span(),
@@ -1830,7 +1833,7 @@ impl KernelScheme for UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let res = inner.call(
             ctx,
-            None,
+            Vec::new(),
             Opcode::Munmap,
             [number, size, flags.bits(), offset],
             &mut PageSpan::empty(),
@@ -1874,7 +1877,7 @@ impl KernelScheme for UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
         inner
-            .call_inner(None, sqe, address.span(), token)?
+            .call_inner(Vec::new(), sqe, address.span(), token)?
             .as_regular()
     }
     fn kfdwrite(
@@ -1898,7 +1901,7 @@ impl KernelScheme for UserScheme {
         inner
             .call(
                 ctx,
-                Some(descs),
+                descs,
                 Opcode::Sendfd,
                 [number, sendfd_flags.bits(), arg as usize, len],
                 &mut PageSpan::empty(),
@@ -1931,7 +1934,7 @@ impl KernelScheme for UserScheme {
         let len = payload.len() / mem::size_of::<usize>();
         let res = inner.call(
             ctx,
-            None,
+            Vec::new(),
             Opcode::Recvfd,
             [id, recvfd_flags.bits(), len],
             &mut PageSpan::empty(),
