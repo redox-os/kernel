@@ -195,18 +195,6 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        opcode: Opcode,
-        args: impl Args,
-        caller_responsible: &mut PageSpan,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        self.call_extended(ctx, None, opcode, args, caller_responsible, token)?
-            .as_regular()
-    }
-
-    fn call_extended(
-        &self,
-        ctx: CallerCtx,
         fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         opcode: Opcode,
         args: impl Args,
@@ -214,7 +202,7 @@ impl UserInner {
         token: &mut CleanLockToken,
     ) -> Result<Response> {
         let next_id = self.next_id()?;
-        self.call_extended_inner(
+        self.call_inner(
             fds,
             Sqe {
                 opcode: opcode as u8,
@@ -233,7 +221,7 @@ impl UserInner {
         )
     }
 
-    fn call_extended_inner(
+    fn call_inner(
         &self,
         fds: Option<Vec<Arc<RwLock<FileDescription>>>>,
         sqe: Sqe,
@@ -1051,7 +1039,7 @@ impl UserInner {
             (context.pid, desc.description)
         };
 
-        let response = self.call_extended_inner(
+        let response = self.call_inner(
             None,
             Sqe {
                 opcode: Opcode::MmapPrep as u8,
@@ -1367,9 +1355,8 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        let inner = self.inner.clone();
-        let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        let result = inner.call_extended(
+        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
+        let result = self.inner.call(
             ctx,
             None,
             Opcode::OpenAt,
@@ -1402,33 +1389,46 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        self.inner.call(
-            ctx,
-            Opcode::UnlinkAt,
-            [file, address.base(), address.len(), flags],
-            address.span(),
-            token,
-        )?;
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::UnlinkAt,
+                [file, address.base(), address.len(), flags],
+                address.span(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner
-            .call(ctx, Opcode::Fsize, [file], &mut PageSpan::empty(), token)
+            .call(
+                ctx,
+                None,
+                Opcode::Fsize,
+                [file],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()
             .map(|o| o as u64)
     }
 
     fn fchmod(&self, file: usize, mode: u16, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        let inner = self.inner.clone();
-        inner.call(
-            ctx,
-            Opcode::Fchmod,
-            [file, mode as usize],
-            &mut PageSpan::empty(),
-            token,
-        )?;
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::Fchmod,
+                [file, mode as usize],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
@@ -1442,13 +1442,16 @@ impl KernelScheme for UserScheme {
         }
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        self.inner.call(
-            ctx,
-            Opcode::Fchown,
-            [file, uid as usize, gid as usize],
-            &mut PageSpan::empty(),
-            token,
-        )?;
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::Fchown,
+                [file, uid as usize, gid as usize],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
@@ -1460,13 +1463,16 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        self.inner.call(
-            ctx,
-            Opcode::Fcntl,
-            [file, cmd, arg],
-            &mut PageSpan::empty(),
-            token,
-        )
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::Fcntl,
+                [file, cmd, arg],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()
     }
 
     fn fevent(
@@ -1479,11 +1485,13 @@ impl KernelScheme for UserScheme {
         self.inner
             .call(
                 ctx,
+                None,
                 Opcode::Fevent,
                 [file, flags.bits()],
                 &mut PageSpan::empty(),
                 token,
-            )
+            )?
+            .as_regular()
             .map(EventFlags::from_bits_truncate)
     }
 
@@ -1494,15 +1502,17 @@ impl KernelScheme for UserScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<()> {
-        let inner = self.inner.clone();
-        let mut address = inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        inner.call(
-            ctx,
-            Opcode::Flink,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        )?;
+        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::Flink,
+                [file, address.base(), address.len()],
+                address.span(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
@@ -1514,32 +1524,46 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        self.inner.call(
-            ctx,
-            Opcode::Frename,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        )?;
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::Frename,
+                [file, address.base(), address.len()],
+                address.span(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
     fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner
-            .call(ctx, Opcode::Fsync, [file], &mut PageSpan::empty(), token)?;
+            .call(
+                ctx,
+                None,
+                Opcode::Fsync,
+                [file],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
     fn ftruncate(&self, file: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        self.inner.call(
-            ctx,
-            Opcode::Ftruncate,
-            [file, len],
-            &mut PageSpan::empty(),
-            token,
-        )?;
+        self.inner
+            .call(
+                ctx,
+                None,
+                Opcode::Ftruncate,
+                [file, len],
+                &mut PageSpan::empty(),
+                token,
+            )?
+            .as_regular()?;
         Ok(())
     }
 
@@ -1547,7 +1571,15 @@ impl KernelScheme for UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         if !self.inner.supports_on_close {
             self.inner
-                .call(ctx, Opcode::Close, [id], &mut PageSpan::empty(), token)?;
+                .call(
+                    ctx,
+                    None,
+                    Opcode::Close,
+                    [id],
+                    &mut PageSpan::empty(),
+                    token,
+                )?
+                .as_regular()?;
             return Ok(());
         }
 
@@ -1576,7 +1608,7 @@ impl KernelScheme for UserScheme {
     ) -> Result<OpenResult> {
         let inner = self.inner.clone();
         let mut address = inner.capture_user(buf, token)?;
-        let result = inner.call_extended(
+        let result = inner.call(
             ctx,
             None,
             Opcode::Dup,
@@ -1602,13 +1634,17 @@ impl KernelScheme for UserScheme {
     fn kfpath(&self, file: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let mut address = self.inner.capture_user(buf, token)?;
-        let result = self.inner.call(
-            ctx,
-            Opcode::Fpath,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Fpath,
+                [file, address.base(), address.len()],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
         result
     }
@@ -1625,19 +1661,23 @@ impl KernelScheme for UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
         let mut address = self.inner.capture_user(buf, token)?;
-        let result = self.inner.call(
-            ctx,
-            Opcode::Read,
-            [
-                file as u64,
-                address.base() as u64,
-                address.len() as u64,
-                offset,
-                u64::from(call_flags),
-            ],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Read,
+                [
+                    file as u64,
+                    address.base() as u64,
+                    address.len() as u64,
+                    offset,
+                    u64::from(call_flags),
+                ],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
 
         result
@@ -1655,19 +1695,23 @@ impl KernelScheme for UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
         let mut address = self.inner.capture_user(buf, token)?;
-        let result = self.inner.call(
-            ctx,
-            Opcode::Write,
-            [
-                file as u64,
-                address.base() as u64,
-                address.len() as u64,
-                offset,
-                u64::from(call_flags),
-            ],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Write,
+                [
+                    file as u64,
+                    address.base() as u64,
+                    address.len() as u64,
+                    offset,
+                    u64::from(call_flags),
+                ],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
 
         result
@@ -1680,13 +1724,17 @@ impl KernelScheme for UserScheme {
     ) -> Result<usize> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let mut address = self.inner.capture_user(buf, token)?;
-        let result = self.inner.call(
-            ctx,
-            Opcode::Futimens,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Futimens,
+                [file, address.base(), address.len()],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
         result
     }
@@ -1704,45 +1752,57 @@ impl KernelScheme for UserScheme {
         // iterate backwards without first interating forward? The last entry will contain the
         // opaque id to pass to the next getdents. Since this field is small, this would fit in the
         // extra_raw field of `Cqe`s.
-        let result = self.inner.call(
-            ctx,
-            Opcode::Getdents,
-            [
-                file,
-                address.base(),
-                address.len(),
-                header_size.into(),
-                opaque_id_start as usize,
-            ],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Getdents,
+                [
+                    file,
+                    address.base(),
+                    address.len(),
+                    header_size.into(),
+                    opaque_id_start as usize,
+                ],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let mut address = self.inner.capture_user(stat, token)?;
-        let result = self.inner.call(
-            ctx,
-            Opcode::Fstat,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Fstat,
+                [file, address.base(), address.len()],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let mut address = self.inner.capture_user(stat, token)?;
-        let result = self.inner.call(
-            ctx,
-            Opcode::Fstatvfs,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-        );
+        let result = self
+            .inner
+            .call(
+                ctx,
+                None,
+                Opcode::Fstatvfs,
+                [file, address.base(), address.len()],
+                address.span(),
+                token,
+            )?
+            .as_regular();
         address.release()?;
         result.map(|_| ())
     }
@@ -1768,7 +1828,7 @@ impl KernelScheme for UserScheme {
         let inner = self.inner.clone();
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        let res = inner.call_extended(
+        let res = inner.call(
             ctx,
             None,
             Opcode::Munmap,
@@ -1814,7 +1874,7 @@ impl KernelScheme for UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
         inner
-            .call_extended_inner(None, sqe, address.span(), token)?
+            .call_inner(None, sqe, address.span(), token)?
             .as_regular()
     }
     fn kfdwrite(
@@ -1836,7 +1896,7 @@ impl KernelScheme for UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = descs.len();
         inner
-            .call_extended(
+            .call(
                 ctx,
                 Some(descs),
                 Opcode::Sendfd,
@@ -1869,7 +1929,7 @@ impl KernelScheme for UserScheme {
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / mem::size_of::<usize>();
-        let res = inner.call_extended(
+        let res = inner.call(
             ctx,
             None,
             Opcode::Recvfd,
