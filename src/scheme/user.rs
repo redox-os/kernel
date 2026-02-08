@@ -45,7 +45,6 @@ use super::{CallerCtx, FileHandle, KernelScheme, OpenResult};
 pub struct UserInner {
     root_id: SchemeId,
     pub scheme_id: SchemeId,
-    supports_on_close: bool,
     context: Weak<ContextLock>,
     todo: WaitQueue<Sqe>,
 
@@ -151,15 +150,9 @@ impl ParsedCqe {
 }
 
 impl UserInner {
-    pub fn new(
-        root_id: SchemeId,
-        scheme_id: SchemeId,
-        new_close: bool,
-        context: Weak<ContextLock>,
-    ) -> UserInner {
+    pub fn new(root_id: SchemeId, scheme_id: SchemeId, context: Weak<ContextLock>) -> UserInner {
         UserInner {
             root_id,
-            supports_on_close: new_close,
             scheme_id,
             context,
             todo: WaitQueue::new(),
@@ -1571,21 +1564,6 @@ impl KernelScheme for UserScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-        if !self.inner.supports_on_close {
-            self.inner
-                .call(
-                    ctx,
-                    Vec::new(),
-                    Opcode::Close,
-                    [id],
-                    &mut PageSpan::empty(),
-                    token,
-                )?
-                .as_regular()?;
-            return Ok(());
-        }
-
         self.inner.todo.send(
             Sqe {
                 opcode: Opcode::CloseMsg as u8,
