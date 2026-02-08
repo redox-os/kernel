@@ -9,7 +9,7 @@ use super::{
     usercopy::UserSlice,
 };
 
-use crate::{sync::CleanLockToken, syscall::error::Result};
+use crate::syscall::error::Result;
 
 struct ByteStr<'a>(&'a [u8]);
 
@@ -195,12 +195,14 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
     }
 }
 
+#[cfg(feature = "syscall_debug")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SyscallDebugInfo {
     this_switch_time: u128,
     accumulated_time: u128,
     do_debug: bool,
 }
+#[cfg(feature = "syscall_debug")]
 impl SyscallDebugInfo {
     pub const fn default() -> Self {
         Self {
@@ -210,23 +212,17 @@ impl SyscallDebugInfo {
         }
     }
 
-    #[cfg(feature = "syscall_debug")]
     pub fn on_switch_from(&mut self) {
         let now = crate::time::monotonic();
         self.accumulated_time += now - core::mem::replace(&mut self.this_switch_time, now);
     }
-    #[cfg(feature = "syscall_debug")]
     pub fn on_switch_to(&mut self) {
         self.this_switch_time = crate::time::monotonic();
     }
 }
 
-#[cfg_attr(feature = "syscall_debug", inline)]
-pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken) {
-    if cfg!(not(feature = "syscall_debug")) {
-        return;
-    }
-
+#[cfg(feature = "syscall_debug")]
+pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut crate::sync::CleanLockToken) {
     #[expect(clippy::overly_complex_bool_expr)]
     #[expect(clippy::needless_bool)]
     let do_debug = if false
@@ -264,27 +260,25 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
     };
 
     crate::percpu::PercpuBlock::current()
-        .syscall_debug_info
-        .set(SyscallDebugInfo {
-            accumulated_time: 0,
-            this_switch_time: debug_start,
-            do_debug,
+        .switch_internals
+        .with_context(|context| {
+            context.write(token.token()).syscall_debug_info = SyscallDebugInfo {
+                accumulated_time: 0,
+                this_switch_time: debug_start,
+                do_debug,
+            };
         });
 }
 
-#[cfg_attr(feature = "syscall_debug", inline)]
+#[cfg(feature = "syscall_debug")]
 pub fn debug_end(
     [a, b, c, d, e, f, g]: [usize; 7],
     result: Result<usize>,
-    token: &mut CleanLockToken,
+    token: &mut crate::sync::CleanLockToken,
 ) {
-    if cfg!(not(feature = "syscall_debug")) {
-        return;
-    }
-
     let debug_info = crate::percpu::PercpuBlock::current()
-        .syscall_debug_info
-        .take();
+        .switch_internals
+        .with_context(|context| context.read(token.token()).syscall_debug_info);
 
     if !debug_info.do_debug {
         return;

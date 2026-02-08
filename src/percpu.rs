@@ -16,7 +16,6 @@ use crate::{
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
-    syscall::debug::SyscallDebugInfo,
 };
 
 /// The percpu block, that stored all percpu variables.
@@ -38,8 +37,6 @@ pub struct PercpuBlock {
     pub ptrace_flags: Cell<PtraceFlags>,
     pub ptrace_session: RefCell<Option<Weak<Session>>>,
     pub inside_syscall: Cell<bool>,
-
-    pub syscall_debug_info: Cell<SyscallDebugInfo>,
 
     pub misc_arch_info: crate::device::ArchPercpuMisc,
 
@@ -187,8 +184,6 @@ impl PercpuBlock {
             ptrace_flags: Cell::new(PtraceFlags::empty()),
             ptrace_session: RefCell::new(None),
             inside_syscall: Cell::new(false),
-
-            syscall_debug_info: Cell::new(SyscallDebugInfo::default()),
 
             profiling: None,
 

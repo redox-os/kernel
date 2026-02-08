@@ -16,7 +16,6 @@ pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_regi
 
 use self::{
     data::{Map, TimeSpec},
-    debug::{debug_end, debug_start},
     error::{Error, Result, ENOSYS},
     flag::{EventFlags, MapFlags},
     number::*,
@@ -242,11 +241,13 @@ pub fn syscall(
 
     PercpuBlock::current().inside_syscall.set(true);
 
-    debug_start([a, b, c, d, e, f, g], token);
+    #[cfg(feature = "syscall_debug")]
+    debug::debug_start([a, b, c, d, e, f, g], token);
 
     let result = inner(a, b, c, d, e, f, g, token);
 
-    debug_end([a, b, c, d, e, f, g], result, token);
+    #[cfg(feature = "syscall_debug")]
+    debug::debug_end([a, b, c, d, e, f, g], result, token);
 
     let percpu = PercpuBlock::current();
     percpu.inside_syscall.set(false);
