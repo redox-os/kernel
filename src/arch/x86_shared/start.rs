@@ -3,7 +3,7 @@
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
 use core::{
-    arch::global_asm,
+    arch::naked_asm,
     cell::SyncUnsafeCell,
     hint,
     mem::offset_of,
@@ -32,10 +32,13 @@ struct StackAlign<T>(T);
 static STACK: SyncUnsafeCell<StackAlign<[u8; 128 * 1024]>> =
     SyncUnsafeCell::new(StackAlign([0; 128 * 1024]));
 
-#[cfg(target_arch = "x86")]
-global_asm!("
-    .globl kstart
-    kstart:
+// FIXME use extern "custom"
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+extern "C" fn kstart() {
+    naked_asm!(
+        #[cfg(target_arch = "x86")]
+        "
         // BSS should already be zero
         cmp dword ptr [{bss_test_zero}], 0
         jne .Lkstart_crash
@@ -50,20 +53,12 @@ global_asm!("
         jmp {start}
 
     .Lkstart_crash:
-        mov eax, 0
+        xor eax, eax
         jmp eax
     ",
-    bss_test_zero = sym BSS_TEST_ZERO,
-    data_test_nonzero = sym DATA_TEST_NONZERO,
-    stack = sym STACK,
-    stack_size = const size_of_val(&STACK),
-    start = sym start,
-);
 
-#[cfg(target_arch = "x86_64")]
-global_asm!("
-    .globl kstart
-    kstart:
+        #[cfg(target_arch = "x86_64")]
+        "
         // BSS should already be zero
         cmp qword ptr [rip + {bss_test_zero}], 0
         jne .Lkstart_crash
@@ -81,15 +76,17 @@ global_asm!("
         jmp {start}
 
     .Lkstart_crash:
-        mov rax, 0
+        xor rax, rax
         jmp rax
     ",
-    bss_test_zero = sym BSS_TEST_ZERO,
-    data_test_nonzero = sym DATA_TEST_NONZERO,
-    stack = sym STACK,
-    stack_size = const size_of_val(&STACK),
-    start = sym start,
-);
+
+        bss_test_zero = sym BSS_TEST_ZERO,
+        data_test_nonzero = sym DATA_TEST_NONZERO,
+        stack = sym STACK,
+        stack_size = const size_of_val(&STACK),
+        start = sym start,
+    );
+}
 
 /// The entry to Rust, all things must be initialized
 unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
@@ -173,28 +170,20 @@ pub struct KernelArgsAp {
 }
 
 // FIXME use extern "custom"
-unsafe extern "C" {
-    pub fn kstart_ap();
-}
-
-#[cfg(target_arch = "x86")]
-global_asm!("
-    .globl kstart_ap
-    kstart_ap:
+#[unsafe(naked)]
+pub extern "C" fn kstart_ap() {
+    naked_asm!(
+        #[cfg(target_arch = "x86")]
+        "
         mov esp, dword ptr [edi + {args_stack}]
         mov [esp + 4], edi
         mov [esp + 8], esp
 
         jmp {start_ap}
     ",
-    args_stack = const offset_of!(KernelArgsAp, stack_end),
-    start_ap = sym start_ap,
-);
 
-#[cfg(target_arch = "x86_64")]
-global_asm!("
-    .globl kstart_ap
-    kstart_ap:
+        #[cfg(target_arch = "x86_64")]
+        "
         // Note: The System V ABI requires the stack to be aligned to 16 bytes
         // before the call instruction. As we jump rather than call it has to
         // be offset by 8 bytes. Additionally reserve a bit more space at the
@@ -205,9 +194,11 @@ global_asm!("
 
         jmp {start_ap}
     ",
-    args_stack = const offset_of!(KernelArgsAp, stack_end),
-    start_ap = sym start_ap,
-);
+
+        args_stack = const offset_of!(KernelArgsAp, stack_end),
+        start_ap = sym start_ap,
+    );
+}
 
 /// Entry to rust for an AP
 unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {

@@ -40,6 +40,7 @@
 // Ensure that all must_use results are used
 #![deny(unused_must_use)]
 #![warn(static_mut_refs)] // FIXME deny once all occurrences are fixed
+#![feature(asm_cfg)] // Stabilized in 1.93
 #![feature(if_let_guard)]
 #![feature(int_roundings)]
 #![feature(iter_next_chunk)]
