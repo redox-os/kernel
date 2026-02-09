@@ -383,13 +383,13 @@ macro_rules! interrupt_stack {
             unsafe extern "C" fn inner($stack: &mut $crate::arch::x86_64::interrupt::InterruptStack) {
                 $code
             }
-            core::arch::naked_asm!(concat!(
+            core::arch::naked_asm!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
 
                 // Backup all userspace registers to stack
                 $save1!(),
-                "push rax\n",
+                "push rax",
                 push_scratch!(),
                 push_preserved!(),
 
@@ -414,13 +414,12 @@ macro_rules! interrupt_stack {
                 pop_scratch!(),
 
                 $rstor1!(),
-                "iretq\n",
-            ),
+                "iretq",
 
-            inner = sym inner,
-            IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
+                inner = sym inner,
+                IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
 
-            PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::gdt::ProcessorControlRegion, gdt)),
+                PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::gdt::ProcessorControlRegion, gdt)),
             );
         }
     };
@@ -437,20 +436,20 @@ macro_rules! interrupt {
                 $code
             }
 
-            core::arch::naked_asm!(concat!(
+            core::arch::naked_asm!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
 
                 // Backup all userspace registers to stack
                 swapgs_iff_ring3_fast!(),
-                "push rax\n",
+                "push rax",
                 push_scratch!(),
 
                 // TODO: Map PTI
                 // $crate::arch::x86_64::pti::map();
 
                 // Call inner function with pointer to stack
-                "call {inner}\n",
+                "call {inner}",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86_64::pti::unmap();
@@ -459,10 +458,9 @@ macro_rules! interrupt {
                 pop_scratch!(),
 
                 swapgs_iff_ring3_fast!(),
-                "iretq\n",
-            ),
+                "iretq",
 
-            inner = sym inner,
+                inner = sym inner,
             );
         }
     };
@@ -477,7 +475,7 @@ macro_rules! interrupt_error {
                 $code
             }
 
-            core::arch::naked_asm!(concat!(
+            core::arch::naked_asm!(
                 // Clear direction flag, required by ABI when running any Rust code in the kernel.
                 "cld;",
 
@@ -512,10 +510,9 @@ macro_rules! interrupt_error {
                 // The error code has already been popped, so use the regular macro.
                 swapgs_iff_ring3_fast!(),
                 "iretq;",
-            ),
 
-            inner = sym inner,
-            rax_offset = const(::core::mem::size_of::<$crate::interrupt::handler::PreservedRegisters>() + ::core::mem::size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
+                inner = sym inner,
+                rax_offset = const(::core::mem::size_of::<$crate::interrupt::handler::PreservedRegisters>() + ::core::mem::size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
             );
         }
     };

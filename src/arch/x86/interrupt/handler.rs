@@ -296,9 +296,9 @@ macro_rules! interrupt_stack {
                     $code
                 }
             }
-            core::arch::naked_asm!(concat!(
+            core::arch::naked_asm!(
                 // Backup all userspace registers to stack
-                "push eax\n",
+                "push eax",
                 push_scratch!(),
                 push_preserved!(),
 
@@ -324,9 +324,9 @@ macro_rules! interrupt_stack {
                 pop_preserved!(),
                 pop_scratch!(),
 
-                "iretd\n",
-            ),
-            inner = sym inner,
+                "iretd",
+
+                inner = sym inner,
             );
         }
     };
@@ -343,9 +343,9 @@ macro_rules! interrupt {
                 $code
             }
 
-            core::arch::naked_asm!(concat!(
+            core::arch::naked_asm!(
                 // Backup all userspace registers to stack
-                "push eax\n",
+                "push eax",
                 push_scratch!(),
 
                 // Enter kernel TLS segment
@@ -355,7 +355,7 @@ macro_rules! interrupt {
                 // $crate::arch::x86::pti::map();
 
                 // Call inner function with pointer to stack
-                "call {inner}\n",
+                "call {inner}",
 
                 // TODO: Unmap PTI
                 // $crate::arch::x86::pti::unmap();
@@ -366,9 +366,9 @@ macro_rules! interrupt {
                 // Restore all userspace registers
                 pop_scratch!(),
 
-                "iretd\n",
-            ),
-            inner = sym inner,
+                "iretd",
+
+                inner = sym inner,
             );
         }
     };
@@ -384,10 +384,10 @@ macro_rules! interrupt_error {
                 $code
             }
 
-            core::arch::naked_asm!(concat!(
+            core::arch::naked_asm!(
                 // Move eax into code's place, put code in last instead (to be
                 // compatible with InterruptStack)
-                "xchg [esp], eax\n",
+                "xchg [esp], eax",
 
                 // Push all userspace registers
                 push_scratch!(),
@@ -397,7 +397,7 @@ macro_rules! interrupt_error {
                 enter_gs!(),
 
                 // Put code in, it's now in eax
-                "push eax\n",
+                "push eax",
 
                 // TODO: Map PTI
                 // $crate::arch::x86::pti::map();
@@ -413,7 +413,7 @@ macro_rules! interrupt_error {
                 // $crate::arch::x86::pti::unmap();
 
                 // Pop previous esp and code
-                "add esp, 8\n",
+                "add esp, 8",
 
                 // Exit kernel TLS segment
                 exit_gs!(),
@@ -423,9 +423,9 @@ macro_rules! interrupt_error {
                 pop_scratch!(),
 
                 // The error code has already been popped, so use the regular macro.
-                "iretd\n",
-            ),
-            inner = sym inner);
+                "iretd",
+                inner = sym inner,
+            );
         }
     };
 }
@@ -461,7 +461,7 @@ impl ArchIntCtx for InterruptStack {
 
 #[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode() {
-    core::arch::naked_asm!(concat!(
+    core::arch::naked_asm!(
         // TODO: Unmap PTI
         // $crate::arch::x86::pti::unmap();
 
@@ -470,6 +470,6 @@ pub unsafe extern "C" fn enter_usermode() {
         // Restore all userspace registers
         pop_preserved!(),
         pop_scratch!(),
-        "iretd\n",
-    ))
+        "iretd",
+    )
 }

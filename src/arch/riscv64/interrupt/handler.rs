@@ -319,15 +319,15 @@ macro_rules! pop_registers {
 
 #[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode() -> ! {
-    core::arch::naked_asm!(concat!(
-        "jalr    s11\n",
-        "li      t0, 1 << 8\n", // force U mode on sret
-        "csrc    sstatus, t0\n",
-        "li      t0, 0x6000\n", // set FS to dirty (enable FPU in U mode)
-        "csrs    sstatus, t0\n",
-        "addi    t0, sp, 32 * 8\n", // save S mode stack to percpu
-        "sd      t0, 8(tp)\n",
+    core::arch::naked_asm!(
+        "jalr    s11",
+        "li      t0, 1 << 8", // force U mode on sret
+        "csrc    sstatus, t0",
+        "li      t0, 0x6000", // set FS to dirty (enable FPU in U mode)
+        "csrs    sstatus, t0",
+        "addi    t0, sp, 32 * 8", // save S mode stack to percpu
+        "sd      t0, 8(tp)",
         pop_registers!(),
-        "sret\n",
-    ))
+        "sret",
+    )
 }
