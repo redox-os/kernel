@@ -105,7 +105,7 @@ __vec_14:
 __vec_15:
     b       unhandled_exception
     b       __vec_15
-    
+
     .align 7
 exception_vector_end:
 "

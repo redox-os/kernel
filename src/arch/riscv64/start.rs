@@ -1,5 +1,5 @@
 use core::{
-    arch::{asm, global_asm},
+    arch::naked_asm,
     cell::SyncUnsafeCell,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -44,9 +44,11 @@ struct StackAlign<T>(T);
 static STACK: SyncUnsafeCell<StackAlign<[u8; 128 * 1024]>> =
     SyncUnsafeCell::new(StackAlign([0; 128 * 1024]));
 
-global_asm!("
-    .globl kstart
-    kstart:
+// FIXME use extern "custom"
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+extern "C" fn kstart() {
+    naked_asm!("
         mv gp, x0 // ensure gp relative accesses crash
         mv tp, x0 // reset percpu until it is initialized
         csrw sscratch, tp
@@ -70,13 +72,14 @@ global_asm!("
     .Lkstart_crash:
         jr x0
     ",
-    bss_test_zero = sym BSS_TEST_ZERO,
-    data_test_nonzero = sym DATA_TEST_NONZERO,
-    exception_handler = sym exception_handler,
-    stack = sym STACK,
-    stack_size = const size_of_val(&STACK),
-    start = sym start,
-);
+        bss_test_zero = sym BSS_TEST_ZERO,
+        data_test_nonzero = sym DATA_TEST_NONZERO,
+        exception_handler = sym exception_handler,
+        stack = sym STACK,
+        stack_size = const size_of_val(&STACK),
+        start = sym start,
+    );
+}
 
 /// The entry to Rust, all things must be initialized
 unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {

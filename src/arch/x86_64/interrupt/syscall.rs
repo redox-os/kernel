@@ -95,7 +95,7 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 
 #[unsafe(naked)]
 pub unsafe extern "C" fn syscall_instruction() {
-    core::arch::naked_asm!(concat!(
+    core::arch::naked_asm!(
     // Yes, this is magic. No, you don't need to understand
     "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
     "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn syscall_instruction() {
     xor rcx, rcx
     xor r11, r11
     iretq
-    "),
+    ",
 
     sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
     ksp = const(offset_of!(gdt::ProcessorControlRegion, tss) + offset_of!(TaskStateSegment, rsp)),
