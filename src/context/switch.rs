@@ -286,9 +286,16 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             } else {
                 (None, PtraceFlags::empty())
             };*/
-            let ptrace_flags = PtraceFlags::empty();
+            let (ptrace_session, ptrace_flags) = if let Some(session) = crate::ptrace::sessions()
+                .get(&next_context.pid)
+            {
+                let bp = session.data.lock().breakpoint;
+                (Some(Arc::downgrade(session)), bp.map_or(PtraceFlags::empty(), |f| f.flags))
+            } else {
+                (None, PtraceFlags::empty())
+            };
 
-            //*percpu.ptrace_session.borrow_mut() = ptrace_session;
+            *percpu.ptrace_session.borrow_mut() = ptrace_session;
             percpu.ptrace_flags.set(ptrace_flags);
             prev_context.inside_syscall =
                 percpu.inside_syscall.replace(next_context.inside_syscall);

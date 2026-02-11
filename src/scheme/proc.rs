@@ -1,5 +1,5 @@
 use crate::{
-    arch::paging::{Page, PageCount, VirtualAddress},
+    arch::paging::{Page, VirtualAddress},
     context::{
         self,
         context::{HardBlockedReason, SignalState},
@@ -147,6 +147,10 @@ enum ContextHandle {
     SchedAffinity,
 
     MmapMinAddr(Arc<AddrSpaceWrapper>),
+    
+    Trace {
+        pid: usize,
+    },
 }
 #[derive(Clone)]
 struct Handle {
@@ -245,6 +249,14 @@ impl ProcScheme {
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status { privileged: false }, false),
+            "trace" => {
+                let pid = context.read(token.token()).pid;
+                let file_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                if !ptrace::try_new_session(pid, file_id) {
+                    return Err(Error::new(EBUSY));
+                }
+                (ContextHandle::Trace { pid }, false)
+            }
             _ if path.starts_with("auth-") => {
                 let nonprefix = &path["auth-".len()..];
                 let next_dash = nonprefix.find('-').ok_or(Error::new(ENOENT))?;
@@ -484,6 +496,12 @@ impl KernelScheme for ProcScheme {
             } => {
                 context.write(token.token()).files = new_ft;
             }
+            Handle {
+                kind: ContextHandle::Trace { pid },
+                ..
+            } => {
+                ptrace::close_session_by_id(pid, token);
+            }
             _ => (),
         }
         Ok(())
@@ -548,18 +566,22 @@ impl KernelScheme for ProcScheme {
                         |dst_page, _, dst_mapper, flusher| {
                             Grant::borrow(
                                 Arc::clone(addrspace),
-                                src_span.base.add(dst_page.data().start_address().data() - requested_dst_page.start_address().data()),
-                                PageCount::from_usize(1),
+                                &mut src_addr_space,
+                                src_span.base,
+                                dst_page,
+                                src_span.count,
+                                map.flags,
                                 dst_mapper,
                                 flusher,
+                                true,
+                                true,
+                                false,
                             )
                         },
                     )?
                 };
 
-                for file in notify_files {
-                    let _ = file.fcntl(F_NOTIFY_NEW_MAPPING, 0);
-                }
+                handle_notify_files(notify_files, token);
 
                 Ok(result_base.start_address().data())
             }

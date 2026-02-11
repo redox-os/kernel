@@ -10,10 +10,26 @@ use crate::{
     syscall::{data::PtraceEvent, error::*, flag::*, ptrace_event},
 };
 
-use alloc::{collections::VecDeque, sync::Arc};
+use alloc::{collections::{BTreeMap, VecDeque}, sync::Arc};
 use core::cmp;
-use spin::Mutex;
+use spin::{Mutex, Once, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use syscall::data::GlobalSchemes;
+
+type SessionMap = BTreeMap<usize, Arc<Session>>;
+
+static SESSIONS: Once<RwLock<SessionMap>> = Once::new();
+
+fn init_sessions() -> RwLock<SessionMap> {
+    RwLock::new(BTreeMap::new())
+}
+
+pub fn sessions() -> RwLockReadGuard<'static, SessionMap> {
+    SESSIONS.call_once(init_sessions).read()
+}
+
+fn sessions_mut() -> RwLockWriteGuard<'static, SessionMap> {
+    SESSIONS.call_once(init_sessions).write()
+}
 
 //  ____                _
 // / ___|  ___  ___ ___(_) ___  _ __  ___
@@ -98,6 +114,21 @@ impl Session {
             tracee: WaitCondition::new(),
             tracer: WaitCondition::new(),
         })
+    }
+}
+
+pub fn try_new_session(pid: usize, file_id: usize) -> bool {
+    let mut sessions = sessions_mut();
+    if sessions.contains_key(&pid) {
+        return false;
+    }
+    sessions.insert(pid, Session::new(file_id));
+    true
+}
+
+pub fn close_session_by_id(pid: usize, token: &mut CleanLockToken) {
+    if let Some(session) = sessions_mut().remove(&pid) {
+        close_session(&session, token);
     }
 }
 
