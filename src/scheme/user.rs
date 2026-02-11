@@ -1858,6 +1858,43 @@ impl KernelScheme for UserScheme {
             .call_inner(Vec::new(), sqe, address.span(), token)?
             .as_regular()
     }
+    fn kstdfscall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        _flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let inner = self.inner.clone();
+
+        let mut address = inner.capture_user(payload, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let mut sqe = Sqe {
+            opcode: Opcode::StdFsCall as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag: inner.next_id()?,
+            caller: ctx.pid as u64,
+            args: [
+                id as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[3..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+        inner
+            .call_inner(Vec::new(), sqe, address.span(), token)?
+            .as_regular()
+    }
     fn kfdwrite(
         &self,
         number: usize,
