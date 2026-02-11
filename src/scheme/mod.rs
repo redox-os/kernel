@@ -662,6 +662,16 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
     }
+    fn kstdfscall(
+        &self,
+        id: usize,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
     fn kfdwrite(
         &self,
         id: usize,
