@@ -7,7 +7,7 @@ use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     EACCES, EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
-use alloc::vec::Vec;
+use alloc::{sync::Arc, vec::Vec};
 use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -48,14 +48,24 @@ enum Handle {
     TopLevel,
     Resource {
         path: &'static str,
-        data: Option<Vec<u8>>,
+        kind: Kind,
+        data: Arc<RwLock<L1, Option<Vec<u8>>>>,
     },
     SchemeRoot,
 }
 
+#[derive(Clone, Copy)]
 enum Kind {
     Rd(fn(&mut CleanLockToken) -> Result<Vec<u8>>),
     Wr(fn(&[u8], &mut CleanLockToken) -> Result<usize>),
+}
+impl Kind {
+    fn generate_data(&self, token: &mut CleanLockToken) -> Result<Vec<u8>> {
+        match self {
+            Rd(handler) => handler(token),
+            Wr(_) => Err(Error::new(EISDIR)),
+        }
+    }
 }
 use Kind::*;
 
@@ -153,15 +163,13 @@ impl KernelScheme for SysScheme {
             }
 
             let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-            let data = match entry.1 {
-                Rd(r) => Some(r(token)?),
-                Wr(_) => None,
-            };
+            // TODO: Initialize resources during openat to use them as a snapshot.
             HANDLES.write(token.token()).insert(
                 id,
                 Handle::Resource {
                     path: entry.0,
-                    data,
+                    kind: entry.1,
+                    data: Arc::new(RwLock::new(None)),
                 },
             );
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
@@ -169,15 +177,29 @@ impl KernelScheme for SysScheme {
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
-        match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
-            Handle::TopLevel => Ok(0),
-            Handle::Resource { data, .. } => Ok(data.as_ref().map_or(0, |d| d.len() as u64)),
-            Handle::SchemeRoot => Err(Error::new(EBADF)),
+        let (kind, data_lock) = {
+            let handles = HANDLES.read(token.token());
+            match handles.get(&id).ok_or(Error::new(EBADF))? {
+                Handle::TopLevel => return Ok(0),
+                Handle::Resource { kind, data, .. } => (*kind, data.clone()),
+                Handle::SchemeRoot => return Err(Error::new(EBADF)),
+            }
+        };
+        if matches!(kind, Kind::Wr(_)) {
+            return Ok(0);
         }
+        let is_data_none = data_lock.write(token.token()).is_none();
+        if is_data_none {
+            let new_data = kind.generate_data(token)?;
+            let mut data_guard = data_lock.write(token.token());
+            if data_guard.is_none() {
+                *data_guard = Some(new_data);
+            }
+        }
+        let data_guard = data_lock.read(token.token());
+        let data = data_guard.as_ref().ok_or(Error::new(EIO))?;
+
+        Ok(data.len() as u64)
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
@@ -217,22 +239,25 @@ impl KernelScheme for SysScheme {
             return Ok(0);
         };
 
-        match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
-            Handle::TopLevel | Handle::Resource { data: None, .. } => Err(Error::new(EISDIR)),
-            &Handle::Resource {
-                data: Some(ref data),
-                ..
-            } => {
-                let avail_buf = data.get(pos..).unwrap_or(&[]);
-
-                buffer.copy_common_bytes_from_slice(avail_buf)
+        let (kind, data_lock) = {
+            let handles = HANDLES.read(token.token());
+            match handles.get(&id).ok_or(Error::new(EBADF))? {
+                Handle::Resource { kind, data, .. } => (*kind, data.clone()),
+                _ => return Err(Error::new(EBADF)),
             }
-            Handle::SchemeRoot => Err(Error::new(EBADF)),
+        };
+        let is_data_none = data_lock.write(token.token()).is_none();
+        if is_data_none {
+            let new_data = kind.generate_data(token)?;
+            let mut data_guard = data_lock.write(token.token());
+            if data_guard.is_none() {
+                *data_guard = Some(new_data);
+            }
         }
+        let data_guard = data_lock.read(token.token());
+        let data = data_guard.as_ref().ok_or(Error::new(EIO))?;
+        let avail_buf = data.get(pos..).unwrap_or(&[]);
+        buffer.copy_common_bytes_from_slice(avail_buf)
     }
     fn kwriteoff(
         &self,
@@ -248,20 +273,17 @@ impl KernelScheme for SysScheme {
             .get(&id)
             .ok_or(Error::new(EBADF))?
         {
-            Handle::TopLevel | Handle::Resource { data: Some(_), .. } => {
-                return Err(Error::new(EISDIR))
-            }
-            Handle::Resource { data: None, path } => {
+            Handle::TopLevel
+            | Handle::Resource {
+                kind: Kind::Rd(_), ..
+            } => return Err(Error::new(EISDIR)),
+            Handle::Resource {
+                kind: Kind::Wr(handler),
+                ..
+            } => {
                 let mut intermediate = [0_u8; 256];
                 let len = buffer.copy_common_bytes_to_slice(&mut intermediate)?;
-                let (_, Wr(handler)) = FILES
-                    .iter()
-                    .find(|(entry_path, _)| entry_path == path)
-                    .ok_or(Error::new(EBADFD))?
-                else {
-                    return Err(Error::new(EBADFD))?;
-                };
-                (handler, intermediate, len)
+                (*handler, intermediate, len)
             }
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
@@ -301,28 +323,45 @@ impl KernelScheme for SysScheme {
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let stat = match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
-            Handle::Resource { data, .. } => Stat {
+        let stat_base = {
+            let handles = HANDLES.read(token.token());
+            match handles.get(&id).ok_or(Error::new(EBADF))? {
+                Handle::Resource { kind, data, .. } => Some((*kind, data.clone())),
+                Handle::TopLevel => None,
+                Handle::SchemeRoot => return Err(Error::new(EBADF)),
+            }
+        };
+        let stat = if let Some((kind, data_lock)) = stat_base {
+            let is_data_none = data_lock.write(token.token()).is_none();
+            if is_data_none {
+                let new_data = kind.generate_data(token)?;
+                let mut data_guard = data_lock.write(token.token());
+                if data_guard.is_none() {
+                    *data_guard = Some(new_data);
+                }
+            }
+            let data_guard = data_lock.read(token.token());
+            let data = data_guard.as_ref().ok_or(Error::new(EIO))?;
+            let size = match kind {
+                Kind::Rd(_) => data.len() as u64,
+                Kind::Wr(_) => 0,
+            };
+            Stat {
                 st_mode: 0o666 | MODE_FILE,
                 st_uid: 0,
                 st_gid: 0,
-                st_size: data.as_ref().map_or(0, |d| d.len() as u64),
+                st_size: size,
                 ..Default::default()
-            },
-            Handle::TopLevel => Stat {
+            }
+        } else {
+            Stat {
                 st_mode: 0o444 | MODE_DIR,
                 st_uid: 0,
                 st_gid: 0,
                 st_size: 0,
                 ..Default::default()
-            },
-            Handle::SchemeRoot => return Err(Error::new(EBADF)),
+            }
         };
-
         buf.copy_exactly(&stat)?;
 
         Ok(())
