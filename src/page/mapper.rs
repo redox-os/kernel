@@ -63,14 +63,16 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
     pub unsafe fn remap_with_full(
         &mut self,
         virt: VirtualAddress,
-        f: impl FnOnce(PhysicalAddress, PageFlags<A>) -> (PhysicalAddress, PageFlags<A>),
+        f: impl FnOnce(PhysicalAddress, PageFlags<A>) -> Option<(PhysicalAddress, PageFlags<A>)>,
     ) -> Option<(PageFlags<A>, PhysicalAddress, PageFlush<A>)> {
         unsafe {
             self.visit(virt, |p1, i| {
                 let old_entry = p1.entry(i)?;
                 let old_phys = old_entry.address().ok()?;
                 let old_flags = old_entry.flags();
-                let (new_phys, new_flags) = f(old_phys, old_flags);
+                let Some((new_phys, new_flags)) = f(old_phys, old_flags) else {
+                    return None;
+                };
                 // TODO: Higher-level PageEntry::new interface?
                 let new_entry = PageEntry::new(new_phys.data(), new_flags.data());
                 p1.set_entry(i, new_entry);
@@ -86,7 +88,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
     ) -> Option<(PageFlags<A>, PhysicalAddress, PageFlush<A>)> {
         unsafe {
             self.remap_with_full(virt, |same_phys, old_flags| {
-                (same_phys, map_flags(old_flags))
+                Some((same_phys, map_flags(old_flags)))
             })
         }
     }
