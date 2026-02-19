@@ -276,6 +276,7 @@ impl AddrSpaceWrapper {
             if let Some(before) = before {
                 guard.grants.insert(before);
             }
+            // FIXME: andypython: should this be done at the end?
             if let Some(after) = after {
                 guard.grants.insert(after);
             }
@@ -1414,7 +1415,7 @@ impl Grant {
                                 .table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
-                                    (new_cow_frame.base(), flags)
+                                    Some((new_cow_frame.base(), flags))
                                 })
                                 .expect("page did exist");
 
@@ -1683,7 +1684,7 @@ impl Grant {
                         unsafe {
                             if let Some((_flags, phys, flush)) = src_mapper
                                 .remap_with_full(src_page.start_address(), |_, f| {
-                                    (new_frame.base(), f)
+                                    Some((new_frame.base(), f))
                                 })
                             {
                                 // TODO: flush.ignore() is correct, but seems to be amplifying a
@@ -1814,7 +1815,7 @@ impl Grant {
         &mut self,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
-        flags: PageFlags<RmmA>,
+        new_flags: PageFlags<RmmA>,
     ) {
         assert!(self.info.mapped);
 
@@ -1822,7 +1823,14 @@ impl Grant {
             unsafe {
                 // Lazy mappings don't require remapping, as info.flags will be updated.
                 let Some((old_flags, phys, flush)) =
-                    mapper.remap_with(page.start_address(), |_| flags)
+                    mapper.remap_with_full(page.start_address(), |same_phys, old_flags| {
+                        if !old_flags.has_write() && new_flags.has_write() {
+                            // Page flags will be updated in [`correct_inner`].
+                            None
+                        } else {
+                            Some((same_phys, new_flags))
+                        }
+                    })
                 else {
                     continue;
                 };
@@ -1831,13 +1839,14 @@ impl Grant {
                 flusher.queue(
                     Frame::containing(phys),
                     None,
-                    TlbShootdownActions::change_of_flags(old_flags, flags),
+                    TlbShootdownActions::change_of_flags(old_flags, new_flags),
                 );
             }
         }
 
-        self.info.flags = flags;
+        self.info.flags = new_flags;
     }
+
     #[must_use = "will not unmap itself"]
     pub fn unmap(
         mut self,
@@ -2273,7 +2282,7 @@ impl Drop for Table {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AccessMode {
     Read,
     Write,
@@ -2584,7 +2593,7 @@ fn correct_inner<'l>(
                                     .table
                                     .utable
                                     .remap_with_full(src_page.start_address(), |_, f| {
-                                        (new_frame.base(), f)
+                                        Some((new_frame.base(), f))
                                     });
                             }
 
