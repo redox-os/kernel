@@ -23,7 +23,7 @@ pub enum TableKind {
 }
 
 /// Physical memory address
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct PhysicalAddress(usize);
 
@@ -41,6 +41,12 @@ impl PhysicalAddress {
     #[inline(always)]
     pub fn add(self, offset: usize) -> Self {
         Self(self.0 + offset)
+    }
+}
+
+impl core::fmt::Debug for PhysicalAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "[phys {:#0x}]", self.data())
     }
 }
 
@@ -74,6 +80,7 @@ impl VirtualAddress {
         }
     }
 }
+
 impl core::fmt::Debug for VirtualAddress {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "[virt {:#0x}]", self.data())
