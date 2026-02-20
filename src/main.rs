@@ -46,6 +46,7 @@
 #![feature(iter_next_chunk)]
 #![feature(sync_unsafe_cell)]
 #![feature(variant_count)]
+#![feature(btree_cursors)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 #[macro_use]
