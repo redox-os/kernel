@@ -4,6 +4,7 @@ use core::{
     cmp,
     fmt::Debug,
     num::NonZeroUsize,
+    ops::Bound,
     sync::atomic::{AtomicU32, Ordering},
 };
 use rmm::{Arch as _, PageFlush};
@@ -263,7 +264,7 @@ impl AddrSpaceWrapper {
 
             let grant = guard
                 .grants
-                .remove(grant_span.base)
+                .remove_containing(grant_span.base)
                 .expect("grant cannot magically disappear while we hold the lock!");
             //info!("Mprotecting {:#?} to {:#?} in {:#?}", grant, flags, grant_span);
             let intersection = grant_span.intersection(requested_span);
@@ -439,7 +440,7 @@ impl AddrSpaceWrapper {
                 .as_mut()
                 .map_or(&mut dst.grants, |(g, _, _)| &mut *g);
             let grant = src_grants
-                .remove(grant_base)
+                .remove_containing(grant_base)
                 .expect("grant cannot disappear");
             let grant_span = PageSpan::new(grant.base, grant.info.page_count());
             let (before, middle, after) = grant
@@ -590,7 +591,7 @@ impl AddrSpace {
             let conflicting_span = conflicting_span_res?;
 
             let mut grant = this_grants
-                .remove(conflicting_span.base)
+                .remove_containing(conflicting_span.base)
                 .expect("conflicting region didn't exist");
             if unpin {
                 grant.info.unpin();
@@ -837,6 +838,7 @@ impl UserGrants {
                 .collect::<BTreeMap<_, _>>(),
         }
     }
+
     /// Returns the grant, if any, which occupies the specified page
     pub fn contains(&self, page: Page) -> Option<(Page, &GrantInfo)> {
         self.inner
@@ -845,6 +847,7 @@ impl UserGrants {
             .filter(|(base, info)| (**base..base.next_by(info.page_count)).contains(&page))
             .map(|(base, info)| (*base, info))
     }
+
     /// Returns an iterator over all grants that occupy some part of the
     /// requested region
     pub fn conflicts(&self, span: PageSpan) -> impl Iterator<Item = (Page, &'_ GrantInfo)> + '_ {
@@ -1018,11 +1021,23 @@ impl UserGrants {
 
         self.inner.insert(grant.base, grant.info);
     }
-    pub fn remove(&mut self, base: Page) -> Option<Grant> {
-        let info = self.inner.remove(&base)?;
-        Self::unreserve(&mut self.holes, base, info.page_count);
-        Some(Grant { base, info })
+
+    pub fn remove_containing(&mut self, page: Page) -> Option<Grant> {
+        // Points to the gap *after* the greatest grant smaller than or equal to `page`.
+        let mut cursor = self.inner.upper_bound_mut(Bound::Included(&page));
+        let Some((&base, info)) = cursor.peek_prev() else {
+            return None;
+        };
+
+        if (base..base.next_by(info.page_count())).contains(&page) {
+            let (base, info) = cursor.remove_prev().unwrap();
+            Self::unreserve(&mut self.holes, base, info.page_count());
+            Some(Grant { base, info })
+        } else {
+            None
+        }
     }
+
     pub fn iter(&self) -> impl Iterator<Item = (Page, &GrantInfo)> + '_ {
         self.inner.iter().map(|(base, info)| (*base, info))
     }
