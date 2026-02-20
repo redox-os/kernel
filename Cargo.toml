@@ -31,6 +31,9 @@ features = ["read_core", "elf"]
 version = "0.1.16"
 default-features = false
 
+[lints.clippy]
+precedence = "deny"
+
 [target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa36b6a7c5351004be54" }
 
