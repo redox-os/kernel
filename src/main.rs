@@ -3,43 +3,6 @@
 //! The Redox OS Kernel is a microkernel that supports `x86_64` systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
-// Useful for adding comments about different branches
-#![allow(clippy::if_same_then_else)]
-// Useful in the syscall function
-#![allow(clippy::many_single_char_names)]
-// Used for context::context
-#![allow(clippy::module_inception)]
-// Not implementing default is sometimes useful in the case something has significant cost
-// to allocate. If you implement default, it can be allocated without evidence using the
-// ..Default::default() syntax. Not fun in kernel space
-#![allow(clippy::new_without_default)]
-// Used to make it nicer to return errors, for example, .ok_or(Error::new(ESRCH))
-#![allow(clippy::or_fun_call)]
-// This is needed in some cases, like for syscall
-#![allow(clippy::too_many_arguments)]
-// Used to allow stuff like 1 << 0 and 1 * 1024 * 1024
-#![allow(clippy::identity_op)]
-// TODO: address occurrences and then deny
-#![warn(clippy::not_unsafe_ptr_arg_deref)]
-// TODO: address occurrences and then deny
-#![warn(clippy::cast_ptr_alignment)]
-// Indexing a slice can cause panics and that is something we always want to avoid
-// in kernel code. Use .get and return an error instead
-// TODO: address occurrences and then deny
-#![warn(clippy::indexing_slicing)]
-// Overflows are very, very bad in kernel code as it may provide an attack vector for
-// userspace applications, and it is only checked in debug builds
-// TODO: address occurrences and then deny
-#![warn(clippy::arithmetic_side_effects)]
-// Avoid panicking in the kernel without information about the panic. Use expect
-// TODO: address occurrences and then deny
-#![warn(clippy::unwrap_used)]
-// This is usually a serious issue - a missing import of a define where it is interpreted
-// as a catch-all variable in a match, for example
-#![deny(unreachable_patterns)]
-// Ensure that all must_use results are used
-#![deny(unused_must_use)]
-#![warn(static_mut_refs)] // FIXME deny once all occurrences are fixed
 #![feature(asm_cfg)] // Stabilized in 1.93
 #![feature(if_let_guard)]
 #![feature(int_roundings)]
