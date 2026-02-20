@@ -32,7 +32,37 @@ version = "0.1.16"
 default-features = false
 
 [lints.clippy]
+# Overflows are very, very bad in kernel code as it may provide an attack vector for
+# userspace applications, and it is only checked in debug builds
+# TODO: address occurrences and then deny
+arithmetic_side_effects = "warn"
+cast_ptr_alignment = "warn" # TODO: address occurrences and then deny
+identity_op = "allow" # Used to allow stuff like 1 << 0 and 1 * 1024 * 1024
+if_same_then_else = "allow" # Useful for adding comments about different branches
+# Indexing a slice can cause panics and that is something we always want to avoid
+# in kernel code. Use .get and return an error instead
+# TODO: address occurrences and then deny
+indexing_slicing = "warn"
+many_single_char_names = "allow" # Useful in the syscall function
+module_inception = "allow" # Used for context::context
+# Not implementing default is sometimes useful in the case something has significant cost
+# to allocate. If you implement default, it can be allocated without evidence using the
+# ..Default::default() syntax. Not fun in kernel space
+new_without_default = "allow"
+not_unsafe_ptr_arg_deref = "warn" # TODO: address occurrences and then deny
+or_fun_call = "allow" # Used to make it nicer to return errors, for example, .ok_or(Error::new(ESRCH))
 precedence = "deny"
+too_many_arguments = "allow" # This is needed in some cases, like for syscall
+# Avoid panicking in the kernel without information about the panic. Use expect
+# TODO: address occurrences and then deny
+unwrap_used = "warn"
+
+[lints.rust]
+static_mut_refs = "warn" # FIXME deny once all occurrences are fixed
+# This is usually a serious issue - a missing import of a define where it is interpreted
+# as a catch-all variable in a match, for example
+unreachable_patterns = "deny"
+unused_must_use = "deny" # Ensure that all must_use results are used
 
 [target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
 fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa36b6a7c5351004be54" }
