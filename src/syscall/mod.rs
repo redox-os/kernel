@@ -12,6 +12,10 @@ pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
 
+// Ptrace event constants
+pub use syscall::flag::PTRACE_STOP_SIGNAL;
+pub const PTRACE_EVENT_ADDRSPACE_SWITCH: syscall::flag::PtraceFlags = syscall::flag::PtraceFlags::from_bits_truncate(0x1000);
+
 pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_region};
 
 use self::{

@@ -147,6 +147,10 @@ enum ContextHandle {
     SchedAffinity,
 
     MmapMinAddr(Arc<AddrSpaceWrapper>),
+    
+    Trace {
+        pid: usize,
+    },
 }
 #[derive(Clone)]
 struct Handle {
@@ -245,6 +249,14 @@ impl ProcScheme {
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status { privileged: false }, false),
+            "trace" => {
+                let pid = context.read(token.token()).pid;
+                let file_id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+                if !ptrace::try_new_session(pid, file_id) {
+                    return Err(Error::new(EBUSY));
+                }
+                (ContextHandle::Trace { pid }, false)
+            }
             _ if path.starts_with("auth-") => {
                 let nonprefix = &path["auth-".len()..];
                 let next_dash = nonprefix.find('-').ok_or(Error::new(ENOENT))?;
@@ -436,7 +448,17 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let _ = try_stop_context(context, token, |context: &mut Context| {
+                // notify debugger before we switch address spaces
+                // otherwise gdbserver loses track during dynamic linking
+                if let Some(session) = ptrace::Session::current() {
+                    let mut data = session.data.lock();
+                    if data.breakpoint.is_some() {
+                        data.add_event(crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0));
+                        session.tracer.notify(token);
+                    }
+                }
+
+                let _ = try_stop_context(Arc::clone(&context), token, |context: &mut Context| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -449,10 +471,19 @@ impl KernelScheme for ProcScheme {
 
                     Ok(context.set_addr_space(Some(new)))
                 })?;
-                let _ = ptrace::send_event(
-                    crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0),
-                    token,
-                );
+
+                // wait for debugger ack if we're being traced
+                if let Some(session) = ptrace::Session::current() {
+                    let data = session.data.lock();
+                    if data.breakpoint.is_some() {
+                        drop(data);
+                        let _ = session.tracee.wait(
+                            session.data.lock(),
+                            "proc::close addrspace_switch",
+                            token,
+                        );
+                    }
+                }
             }
             Handle {
                 kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
@@ -464,6 +495,12 @@ impl KernelScheme for ProcScheme {
                 context,
             } => {
                 context.write(token.token()).files = new_ft;
+            }
+            Handle {
+                kind: ContextHandle::Trace { pid },
+                ..
+            } => {
+                ptrace::close_session_by_id(pid, token);
             }
             _ => (),
         }
