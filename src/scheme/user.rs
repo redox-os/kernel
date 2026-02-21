@@ -567,12 +567,10 @@ impl UserInner {
                 },
             )?;
 
-            let head = CopyInfo {
+            CopyInfo {
                 src: Some(array),
                 dst: WRITE.then_some(head_part_of_buf.reinterpret_unchecked()),
-            };
-
-            head
+            }
         } else {
             CopyInfo {
                 src: None,
@@ -1002,7 +1000,7 @@ impl UserInner {
 
         let page_count = unaligned_size.div_ceil(PAGE_SIZE);
 
-        if map.address % PAGE_SIZE != 0 {
+        if !map.address.is_multiple_of(PAGE_SIZE) {
             return Err(Error::new(EINVAL));
         };
 
@@ -1011,7 +1009,7 @@ impl UserInner {
         let dst_base = (map.address != 0 || fixed)
             .then_some(Page::containing_address(VirtualAddress::new(map.address)));
 
-        if map.offset % PAGE_SIZE != 0 {
+        if !map.offset.is_multiple_of(PAGE_SIZE) {
             return Err(Error::new(EINVAL));
         }
 
@@ -1933,7 +1931,7 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
-        if payload.len() % mem::size_of::<usize>() != 0 {
+        if !payload.len().is_multiple_of(mem::size_of::<usize>()) {
             return Err(Error::new(EINVAL));
         }
 

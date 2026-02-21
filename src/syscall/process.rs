@@ -80,7 +80,7 @@ pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
 
 const KERNEL_METADATA_BASE: usize = crate::USER_END_OFFSET - syscall::KERNEL_METADATA_SIZE;
 const KERNEL_METADATA_PAGE_COUNT: usize = syscall::KERNEL_METADATA_SIZE / PAGE_SIZE + {
-    if syscall::KERNEL_METADATA_SIZE % PAGE_SIZE == 0 {
+    if syscall::KERNEL_METADATA_SIZE.is_multiple_of(PAGE_SIZE) {
         0
     } else {
         1

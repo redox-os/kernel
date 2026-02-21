@@ -127,12 +127,13 @@ impl MemoryScheme {
     ) -> Result<usize> {
         // TODO: Check physical_address against the real MAXPHYADDR.
         let end = 1 << 52;
-        if (physical_address.saturating_add(size) as u64) > end || physical_address % PAGE_SIZE != 0
+        if (physical_address.saturating_add(size) as u64) > end
+            || !physical_address.is_multiple_of(PAGE_SIZE)
         {
             return Err(Error::new(EINVAL));
         }
 
-        if size % PAGE_SIZE != 0 {
+        if !size.is_multiple_of(PAGE_SIZE) {
             warn!(
                 "physmap size {} is not multiple of PAGE_SIZE {}",
                 size, PAGE_SIZE

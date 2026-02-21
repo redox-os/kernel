@@ -752,7 +752,7 @@ impl PageSpan {
         Self::validate(address, size).filter(|this| !this.is_empty())
     }
     pub fn validate(address: VirtualAddress, size: usize) -> Option<Self> {
-        if address.data() % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 {
+        if !address.data().is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) {
             return None;
         }
         if address.data().saturating_add(size) > crate::USER_END_OFFSET {
@@ -1025,9 +1025,7 @@ impl UserGrants {
     pub fn remove_containing(&mut self, page: Page) -> Option<Grant> {
         // Points to the gap *after* the greatest grant smaller than or equal to `page`.
         let mut cursor = self.inner.upper_bound_mut(Bound::Included(&page));
-        let Some((&base, info)) = cursor.peek_prev() else {
-            return None;
-        };
+        let (&base, info) = cursor.peek_prev()?;
 
         if (base..base.next_by(info.page_count())).contains(&page) {
             let (base, info) = cursor.remove_prev().unwrap();

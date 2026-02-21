@@ -980,8 +980,8 @@ impl ContextHandle {
 
                 let state = if data.thread_control_addr != 0 && data.proc_control_addr != 0 {
                     let validate_off = |addr, sz| {
-                        let off = addr % PAGE_SIZE;
-                        if off % mem::align_of::<usize>() == 0 && off + sz <= PAGE_SIZE {
+                        let off: usize = addr % PAGE_SIZE;
+                        if off.is_multiple_of(mem::align_of::<usize>()) && off + sz <= PAGE_SIZE {
                             Ok(off as u16)
                         } else {
                             Err(Error::new(EINVAL))
@@ -1077,7 +1077,7 @@ impl ContextHandle {
 
                 Ok(mem::size_of::<usize>())
             }
-            ContextHandle::CurrentAddrSpace { .. } => {
+            ContextHandle::CurrentAddrSpace => {
                 let mut iter = buf.usizes();
                 let addrspace_fd = iter.next().ok_or(Error::new(EINVAL))??;
                 let sp = iter.next().ok_or(Error::new(EINVAL))??;
