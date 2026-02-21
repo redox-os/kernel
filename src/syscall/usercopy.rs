@@ -228,7 +228,7 @@ fn is_kernel_mem(slice: &[u8]) -> bool {
 /// - the region is empty (EINVAL), or
 /// - any byte in the region exceeds USER_END_OFFSET (EFAULT).
 pub fn validate_region(address: usize, size: usize) -> Result<PageSpan> {
-    if address % PAGE_SIZE != 0 || size % PAGE_SIZE != 0 || size == 0 {
+    if !address.is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) || size == 0 {
         return Err(Error::new(EINVAL));
     }
     if address.saturating_add(size) > crate::USER_END_OFFSET {

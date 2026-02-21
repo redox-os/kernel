@@ -346,7 +346,7 @@ impl Frame {
             / PAGE_SIZE
     }
     pub fn is_aligned_to_order(self, order: u32) -> bool {
-        self.base().data() % (PAGE_SIZE << order) == 0
+        self.base().data().is_multiple_of(PAGE_SIZE << order)
     }
 }
 

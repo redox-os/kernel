@@ -102,7 +102,7 @@ pub fn futex(
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
                     // (simpler) validation we did in the first place.
-                    if addr % 4 != 0 {
+                    if !addr.is_multiple_of(4) {
                         return Err(Error::new(EINVAL));
                     }
 
@@ -123,7 +123,7 @@ pub fn futex(
                         use core::sync::atomic::AtomicU64;
 
                         // op == FUTEX_WAIT64
-                        if addr % 8 != 0 {
+                        if !addr.is_multiple_of(8) {
                             return Err(Error::new(EINVAL));
                         }
                         (
@@ -157,7 +157,7 @@ pub fn futex(
 
                 futexes
                     .entry(target_physaddr)
-                    .or_insert_with(|| Vec::new())
+                    .or_insert_with(Vec::new)
                     .push(FutexEntry {
                         target_virtaddr,
                         context_lock: context_lock.clone(),

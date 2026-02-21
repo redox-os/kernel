@@ -590,10 +590,10 @@ pub fn mremap(
     flags: usize,
     token: &mut CleanLockToken,
 ) -> Result<usize> {
-    if old_address % PAGE_SIZE != 0
-        || old_size % PAGE_SIZE != 0
-        || new_address % PAGE_SIZE != 0
-        || new_size % PAGE_SIZE != 0
+    if !old_address.is_multiple_of(PAGE_SIZE)
+        || !old_size.is_multiple_of(PAGE_SIZE)
+        || !new_address.is_multiple_of(PAGE_SIZE)
+        || !new_size.is_multiple_of(PAGE_SIZE)
     {
         return Err(Error::new(EINVAL));
     }

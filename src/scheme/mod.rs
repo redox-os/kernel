@@ -306,14 +306,14 @@ impl KernelScheme for SchemeList {
     ) -> Result<EventFlags> {
         match self.get_user_inner(id, token) {
             Some(inner) => inner.fevent(flags),
-            _ => return Err(Error::new(EBADF)),
+            _ => Err(Error::new(EBADF)),
         }
     }
 
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         match self.get_user_inner(id, token) {
             Some(inner) => inner.fsync(),
-            None => return Err(Error::new(EBADF)),
+            None => Err(Error::new(EBADF)),
         }
     }
 
@@ -333,7 +333,7 @@ impl KernelScheme for SchemeList {
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
             Some(inner) => inner.read(buf, flags, token),
-            None => return Err(Error::new(EBADF)),
+            None => Err(Error::new(EBADF)),
         }
     }
 
@@ -347,7 +347,7 @@ impl KernelScheme for SchemeList {
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
             Some(inner) => inner.write(buf, token),
-            None => return Err(Error::new(EBADF)),
+            None => Err(Error::new(EBADF)),
         }
     }
 
