@@ -132,9 +132,9 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
         for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
-            kernel_schemes_infos[i] = syscall::data::KernelSchemeInfo {
-                scheme_id: scheme.scheme_id().get() as u8,
-                fd: {
+            if let Some(inner) = kernel_schemes_infos.get_mut(i) {
+                inner.scheme_id = scheme.scheme_id().get() as u8;
+                inner.fd = {
                     let cap_fd = match scheme.as_scheme().scheme_root(token) {
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
@@ -145,8 +145,8 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         matches!(scheme, GlobalSchemes::Proc),
                         token,
                     )
-                },
-            };
+                };
+            }
         }
         // Insert a scheme creation capability for the usermode bootstrap.
         let scheme_creation_cap = {
