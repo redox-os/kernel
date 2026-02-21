@@ -131,6 +131,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         // Insert kernel schemes root capabilities.
         let mut kernel_schemes_infos =
             [syscall::data::KernelSchemeInfo::default(); KERNEL_SCHEMES_COUNT];
+        assert_eq!(kernel_schemes_infos.len(), ALL_KERNEL_SCHEMES.len());
         for (i, scheme) in ALL_KERNEL_SCHEMES.iter().enumerate() {
             if let Some(inner) = kernel_schemes_infos.get_mut(i) {
                 inner.scheme_id = scheme.scheme_id().get() as u8;
