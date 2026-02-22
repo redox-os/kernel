@@ -116,8 +116,12 @@ impl<T: Clone + ValidForZero, const ALIGN: usize> Clone for AlignedBox<[T], ALIG
     fn clone(&self) -> Self {
         let mut new = Self::try_zeroed_slice(self.len())
             .unwrap_or_else(|_| alloc::alloc::handle_alloc_error(self.layout()));
-        for i in 0..self.len() {
-            new[i].clone_from(&self[i]);
+        for (i, val) in self.iter().enumerate() {
+            if let Some(new_inner) = new.get_mut(i) {
+                new_inner.clone_from(val);
+            } else {
+                unreachable!();
+            }
         }
         new
     }
