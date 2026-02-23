@@ -192,13 +192,15 @@ pub fn futex(
 
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                     while i < futexes.len() && woken < val {
-                        if futexes[i].target_virtaddr != target_virtaddr
-                            || !current_addrsp_weak.ptr_eq(&futexes[i].addr_space)
+                        // SAFETY: already verified index is less than length
+                        let futex = unsafe { futexes.get_unchecked_mut(i) };
+                        if futex.target_virtaddr != target_virtaddr
+                            || !current_addrsp_weak.ptr_eq(&futex.addr_space)
                         {
                             i += 1;
                             continue;
                         }
-                        futexes[i].context_lock.write(token.token()).unblock();
+                        futex.context_lock.write(token.token()).unblock();
                         futexes.swap_remove(i);
                         woken += 1;
                     }
