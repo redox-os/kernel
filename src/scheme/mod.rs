@@ -652,6 +652,9 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
+    fn detach(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        Ok(())
+    }
     fn kcall(
         &self,
         id: usize,
@@ -665,6 +668,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kstdfscall(
         &self,
         id: usize,
+        desc: Arc<SpinRwLock<FileDescription>>,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],

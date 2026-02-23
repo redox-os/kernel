@@ -68,7 +68,7 @@ enum State {
 
 #[derive(Debug)]
 enum Response {
-    Regular(Result<usize>, u8),
+    Regular(Result<usize>, u8, bool),
     Fd(Arc<RwLock<FileDescription>>),
     MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
 }
@@ -76,7 +76,7 @@ enum Response {
 impl Response {
     fn as_regular(self) -> Result<usize> {
         match self {
-            Response::Regular(res, _) => res,
+            Response::Regular(res, _, _) => res,
             Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
@@ -116,12 +116,22 @@ enum ParsedCqe {
         base_addr: VirtualAddress,
         page_count: usize,
     },
+    RespondAndNotifyOnDetach {
+        tag: u32,
+        res: Result<usize>,
+        extra0: u8,
+    },
 }
 impl ParsedCqe {
     fn parse_cqe(cqe: &Cqe) -> Result<Self> {
         Ok(
             match CqeOpcode::try_from_raw(cqe.flags & 0b111).ok_or(Error::new(EINVAL))? {
                 CqeOpcode::RespondRegular => Self::RegularResponse {
+                    tag: cqe.tag,
+                    res: Error::demux(cqe.result as usize),
+                    extra0: cqe.extra_raw[0],
+                },
+                CqeOpcode::RespondAndNotifyOnDetach => Self::RespondAndNotifyOnDetach {
                     tag: cqe.tag,
                     res: Error::demux(cqe.result as usize),
                     extra0: cqe.extra_raw[0],
@@ -765,7 +775,10 @@ impl UserInner {
     fn handle_parsed(&self, cqe: &ParsedCqe, token: &mut CleanLockToken) -> Result<()> {
         match *cqe {
             ParsedCqe::RegularResponse { tag, res, extra0 } => {
-                self.respond(tag, Response::Regular(res, extra0), token)?
+                self.respond(tag, Response::Regular(res, extra0, false), token)?
+            }
+            ParsedCqe::RespondAndNotifyOnDetach { tag, res, extra0 } => {
+                self.respond(tag, Response::Regular(res, extra0, true), token)?
             }
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
@@ -917,7 +930,7 @@ impl UserInner {
                     } => {
                         // Convert ECANCELED to EINTR if a request was being canceled (currently always
                         // due to signals).
-                        if let Response::Regular(ref mut res, _) = response
+                        if let Response::Regular(ref mut res, _, _) = response
                             && canceling
                             && *res == Err(Error::new(ECANCELED))
                         {
@@ -925,7 +938,7 @@ impl UserInner {
                         }
 
                         // TODO: Require ECANCELED?
-                        if let Response::Regular(ref mut res, _) = response
+                        if let Response::Regular(ref mut res, _, _) = response
                             && !canceling
                             && *res == Err(Error::new(EINTR))
                         {
@@ -1362,7 +1375,7 @@ impl KernelScheme for UserScheme {
         address.release()?;
 
         match result? {
-            Response::Regular(res, fl) => Ok({
+            Response::Regular(res, fl, _) => Ok({
                 let fd = res?;
                 OpenResult::SchemeLocal(
                     fd,
@@ -1583,6 +1596,25 @@ impl KernelScheme for UserScheme {
 
         Ok(())
     }
+
+    fn detach(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        println!("detach(id={id}");
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+        self.inner.todo.send(
+            Sqe {
+                opcode: Opcode::Detach as u8,
+                sqe_flags: SqeFlags::empty(),
+                _rsvd: 0,
+                tag: 0,
+                args: [id as u64, 0, 0, 0, 0, 0],
+                caller: ctx.pid as u64,
+            },
+            token,
+        );
+        event::trigger(self.inner.root_id, self.inner.scheme_id.get(), EVENT_READ);
+        Ok(())
+    }
+
     fn kdup(
         &self,
         file: usize,
@@ -1604,7 +1636,7 @@ impl KernelScheme for UserScheme {
         address.release()?;
 
         match result? {
-            Response::Regular(res, fl) => Ok({
+            Response::Regular(res, fl, _) => Ok({
                 let fd = res?;
                 OpenResult::SchemeLocal(
                     fd,
@@ -1864,6 +1896,7 @@ impl KernelScheme for UserScheme {
     fn kstdfscall(
         &self,
         id: usize,
+        desc: Arc<spin::RwLock<FileDescription>>,
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
@@ -1894,10 +1927,18 @@ impl KernelScheme for UserScheme {
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
         }
-        inner
-            .call_inner(Vec::new(), sqe, address.span(), token)?
-            .as_regular()
+
+        match inner.call_inner(Vec::new(), sqe, address.span(), token)? {
+            Response::Regular(res, _, notify_on_detach) => {
+                desc.write()
+                    .internal_flags
+                    .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
+                res
+            }
+            _ => Err(Error::new(EIO)),
+        }
     }
+
     fn kfdwrite(
         &self,
         number: usize,
@@ -1960,7 +2001,7 @@ impl KernelScheme for UserScheme {
         )?;
 
         let descriptions_opt = match res {
-            Response::Regular(res, _) => {
+            Response::Regular(res, _, _) => {
                 return match res {
                     Ok(_) => Err(Error::new(EIO)),
                     Err(e) => Err(e),

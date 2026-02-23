@@ -26,7 +26,8 @@ pub struct FileDescription {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub struct InternalFlags: u32 {
-        const POSITIONED = 1;
+        const POSITIONED = 1 << 0;
+        const NOTIFY_ON_NEXT_DETACH = 1 << 1;
     }
 }
 impl FileDescription {
@@ -82,9 +83,21 @@ impl FileDescription {
 
 impl FileDescriptor {
     pub fn close(self, token: &mut CleanLockToken) -> Result<()> {
+        {
+            let description = self.description.read();
+            if description
+                .internal_flags
+                .contains(InternalFlags::NOTIFY_ON_NEXT_DETACH)
+            {
+                let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+                scheme.detach(description.number, token)?;
+            }
+        }
+
         if let Ok(file) = Arc::try_unwrap(self.description).map(RwLock::into_inner) {
             file.try_close(token)?;
         }
+
         Ok(())
     }
 }
