@@ -268,8 +268,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             (Handle::TopLevel, InternalFlags::POSITIONED)
         } else if path_str == "bsp" {
             (Handle::Bsp, InternalFlags::empty())
-        } else if path_str.starts_with("cpu-") {
-            let path_str = &path_str[4..];
+        } else if let Some(path_str) = path_str.strip_prefix("cpu-") {
             let cpu_id = u8::from_str_radix(&path_str[..2], 16).or(Err(Error::new(ENOENT)))?;
             let path_str = path_str[2..].trim_end_matches('/');
 
@@ -278,8 +277,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     Handle::Avail(LogicalCpuId::new(cpu_id.into())),
                     InternalFlags::POSITIONED,
                 )
-            } else if path_str.starts_with('/') {
-                let path_str = &path_str[1..];
+            } else if let Some(path_str) = path_str.strip_prefix('/') {
                 Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str)?
             } else {
                 return Err(Error::new(ENOENT));
