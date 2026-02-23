@@ -80,16 +80,12 @@ impl WaitCondition {
         {
             let mut contexts = self.contexts.lock(token.token());
 
-            // TODO: retain
-            let mut i = 0;
-            while i < contexts.len() {
-                if Weak::as_ptr(&contexts[i]) == Arc::as_ptr(&current_context_ref) {
-                    contexts.remove(i);
-                    waited = false;
-                    break;
-                } else {
-                    i += 1;
-                }
+            if let Some(index) = contexts
+                .iter()
+                .position(|c| Weak::as_ptr(c) == Arc::as_ptr(&current_context_ref))
+            {
+                contexts.remove(index);
+                waited = false;
             }
         }
 
