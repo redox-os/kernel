@@ -1598,7 +1598,6 @@ impl KernelScheme for UserScheme {
     }
 
     fn detach(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        println!("detach(id={id}");
         let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner.todo.send(
             Sqe {
