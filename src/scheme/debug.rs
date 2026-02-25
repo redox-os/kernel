@@ -33,8 +33,9 @@ pub fn debug_input(data: u8, token: &mut CleanLockToken) {
 
 // Notify readers of input updates
 pub fn debug_notify(token: &mut CleanLockToken) {
-    for (id, _handle) in HANDLES.read(token.token()).iter() {
-        event::trigger(GlobalSchemes::Debug.scheme_id(), *id, EVENT_READ);
+    let ids: Vec<usize> = { HANDLES.read(token.token()).iter().map(|x| *x.0).collect() };
+    for id in ids {
+        event::trigger(GlobalSchemes::Debug.scheme_id(), id, EVENT_READ, token);
     }
 }
 

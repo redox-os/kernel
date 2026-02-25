@@ -139,7 +139,7 @@ pub enum SwitchResult {
 /// - `SwitchResult::AllContextsIdle`: Indicates all contexts are idle, and the CPU will switch
 ///   to an idle context.
 pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
-    let switch_time = crate::time::monotonic();
+    let switch_time = crate::time::monotonic(token);
 
     let percpu = PercpuBlock::current();
     cpu_stats::add_context_switch();

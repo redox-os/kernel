@@ -60,6 +60,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
             GlobalSchemes::Proc.scheme_id(),
             owner.get(),
             EventFlags::EVENT_READ,
+            token,
         );
     }
     {

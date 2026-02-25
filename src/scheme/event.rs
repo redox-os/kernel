@@ -119,7 +119,7 @@ impl KernelScheme for EventScheme {
             // It is always possible to write events
             ready |= EventFlags::EVENT_WRITE;
         }
-        if flags.contains(EventFlags::EVENT_READ) && !queue.is_currently_empty() {
+        if flags.contains(EventFlags::EVENT_READ) && !queue.is_currently_empty(token) {
             // It is possible to read if queue is not empty
             ready |= EventFlags::EVENT_READ;
         }

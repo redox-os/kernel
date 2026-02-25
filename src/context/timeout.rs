@@ -45,8 +45,8 @@ pub fn register(
 }
 
 pub fn trigger(token: &mut CleanLockToken) {
-    let mono = time::monotonic();
-    let real = time::realtime();
+    let mono = time::monotonic(token);
+    let real = time::realtime(token);
 
     let mut i = 0;
     loop {
@@ -76,6 +76,7 @@ pub fn trigger(token: &mut CleanLockToken) {
         } else {
             break;
         };
-        event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ);
+        drop(registry);
+        event::trigger(timeout.scheme_id, timeout.event_id, EVENT_READ, token);
     }
 }

@@ -168,10 +168,10 @@ impl KernelScheme for TimeScheme {
         for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
             let arch_time = match (handle.clock.clone(), handle.kind.clone()) {
                 (CLOCK_REALTIME, TimeSchemeKind::Default | TimeSchemeKind::ClockGettime) => {
-                    time::realtime()
+                    time::realtime(token)
                 }
                 (CLOCK_MONOTONIC, TimeSchemeKind::Default | TimeSchemeKind::ClockGettime) => {
-                    time::monotonic()
+                    time::monotonic(token)
                 }
                 (CLOCK_REALTIME, TimeSchemeKind::ClockGetres) => time::realtime_resolution(),
                 (CLOCK_MONOTONIC, TimeSchemeKind::ClockGetres) => time::monotonic_resolution(),

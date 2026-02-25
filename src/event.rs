@@ -33,8 +33,8 @@ impl EventQueue {
         }
     }
 
-    pub fn is_currently_empty(&self) -> bool {
-        self.queue.is_currently_empty()
+    pub fn is_currently_empty(&self, token: &mut CleanLockToken) -> bool {
+        self.queue.is_currently_empty(token)
     }
 
     pub fn read(&self, buf: UserSliceWo, block: bool, token: &mut CleanLockToken) -> Result<usize> {
@@ -78,7 +78,7 @@ impl EventQueue {
 
             let flags = sync(RegKey { scheme, number }, token)?;
             if !flags.is_empty() {
-                trigger(scheme, number, flags);
+                trigger(scheme, number, flags, token);
             }
         }
 
@@ -215,13 +215,10 @@ fn trigger_inner(
     }
 }
 
-pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
-    //TODO: propagate this lock token
-    let mut token = unsafe { CleanLockToken::new() };
-
+pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags, token: &mut CleanLockToken) {
     // First trigger with the original file
     let mut todo = Vec::new();
-    trigger_inner(scheme, number, flags, &mut todo, &mut token);
+    trigger_inner(scheme, number, flags, &mut todo, token);
 
     // Handle triggers on queues
     //TODO: can this be done with limited allocations?
@@ -233,7 +230,7 @@ pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags) {
                 queue_id.into(),
                 EventFlags::EVENT_READ,
                 &mut todo,
-                &mut token,
+                token,
             );
             done.insert(queue_id);
         }

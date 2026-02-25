@@ -169,7 +169,7 @@ impl UserInner {
         unsafe { self.todo.condition.notify_signal(token) };
 
         // Tell the scheme handler to read
-        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
 
         //TODO: wait for all todo and done to be processed?
         Ok(())
@@ -251,7 +251,7 @@ impl UserInner {
             }
             self.todo.send(sqe, token);
 
-            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
         }
 
         loop {
@@ -345,7 +345,7 @@ impl UserInner {
                                 },
                                 token,
                             );
-                            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+                            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
 
                             // 1. If cancellation was requested and arrived
                             // before the scheme processed the request, an
@@ -758,7 +758,7 @@ impl UserInner {
             },
             token,
         );
-        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ);
+        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
 
         Ok(())
     }
@@ -889,7 +889,7 @@ impl UserInner {
                 }
             }
             ParsedCqe::TriggerFevent { number, flags } => {
-                event::trigger(self.scheme_id, number, flags)
+                event::trigger(self.scheme_id, number, flags, token)
             }
         }
         Ok(())
@@ -971,10 +971,10 @@ impl UserInner {
         Ok(())
     }
 
-    pub fn fevent(&self, flags: EventFlags) -> Result<EventFlags> {
+    pub fn fevent(&self, flags: EventFlags, token: &mut CleanLockToken) -> Result<EventFlags> {
         // TODO: Should the root scheme also suppress events if `flags` does not contain
         // `EVENT_READ`?
-        Ok(if self.todo.is_currently_empty() {
+        Ok(if self.todo.is_currently_empty(token) {
             EventFlags::empty()
         } else {
             EventFlags::EVENT_READ.intersection(flags)
@@ -1574,7 +1574,12 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        event::trigger(self.inner.root_id, self.inner.scheme_id.get(), EVENT_READ);
+        event::trigger(
+            self.inner.root_id,
+            self.inner.scheme_id.get(),
+            EVENT_READ,
+            token,
+        );
 
         Ok(())
     }

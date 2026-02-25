@@ -258,7 +258,7 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
         let string = format_call(a, b, c, d, e, f, g);
         println!("{}", string);
 
-        crate::time::monotonic()
+        crate::time::monotonic(token)
     } else {
         0
     };
@@ -290,7 +290,7 @@ pub fn debug_end(
         return;
     }
     let debug_duration =
-        debug_info.accumulated_time + (crate::time::monotonic() - debug_info.this_switch_time);
+        debug_info.accumulated_time + (crate::time::monotonic(token) - debug_info.this_switch_time);
 
     let context_lock = crate::context::current();
     {

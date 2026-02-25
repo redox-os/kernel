@@ -123,13 +123,13 @@ impl KernelScheme for PipeScheme {
 
         let can_remove = if is_write_not_read {
             pipe.writer_is_alive.store(false, Ordering::SeqCst);
-            event::trigger(scheme_id, key, EVENT_READ);
+            event::trigger(scheme_id, key, EVENT_READ, token);
             pipe.read_condition.notify(token);
 
             !pipe.reader_is_alive.load(Ordering::SeqCst)
         } else {
             pipe.reader_is_alive.store(false, Ordering::SeqCst);
-            event::trigger(scheme_id, key | WRITE_NOT_READ_BIT, EVENT_WRITE);
+            event::trigger(scheme_id, key | WRITE_NOT_READ_BIT, EVENT_WRITE, token);
             pipe.write_condition.notify(token);
 
             !pipe.writer_is_alive.load(Ordering::SeqCst)
@@ -257,6 +257,7 @@ impl KernelScheme for PipeScheme {
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
+                    token,
                 );
                 pipe.write_condition.notify(token);
 
@@ -319,7 +320,7 @@ impl KernelScheme for PipeScheme {
             }
 
             if bytes_written > 0 {
-                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
+                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
                 pipe.read_condition.notify(token);
 
                 return Ok(bytes_written);
@@ -390,7 +391,7 @@ impl KernelScheme for PipeScheme {
             let fds_written = vec.len() - before_len;
 
             if fds_written > 0 {
-                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ);
+                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
                 pipe.read_condition.notify(token);
 
                 return Ok(fds_written);
@@ -454,6 +455,7 @@ impl KernelScheme for PipeScheme {
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
+                    token,
                 );
                 pipe.write_condition.notify(token);
 

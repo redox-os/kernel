@@ -1,8 +1,10 @@
+use crate::sync::CleanLockToken;
+
 #[cfg(feature = "acpi")]
 use super::device::hpet;
 use super::device::pit;
 
-pub fn monotonic_absolute() -> u128 {
+pub fn monotonic_absolute(token: &mut CleanLockToken) -> u128 {
     // The paravirtualized TSC is already guaranteed to be monotonic, and thus doesn't need to be
     // readjusted.
     #[cfg(feature = "x86_kvm_pv")]
@@ -10,7 +12,7 @@ pub fn monotonic_absolute() -> u128 {
         return ns;
     }
 
-    *crate::time::OFFSET.lock() + hpet_or_pit()
+    *crate::time::OFFSET.lock(token.token()) + hpet_or_pit()
 }
 fn hpet_or_pit() -> u128 {
     #[cfg(feature = "acpi")]

@@ -1,6 +1,6 @@
-use crate::time::NANOS_PER_SEC;
+use crate::{sync::CleanLockToken, time::NANOS_PER_SEC};
 
-pub fn monotonic_absolute() -> u128 {
+pub fn monotonic_absolute(_token: &mut CleanLockToken) -> u128 {
     //TODO: aarch64 generic timer counter
     let ticks: usize;
     unsafe { core::arch::asm!("mrs {}, cntpct_el0", out(reg) ticks) };

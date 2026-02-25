@@ -128,7 +128,7 @@ impl InterruptHandler for GenericTimer {
     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
         self.clear_irq();
         {
-            *time::OFFSET.lock() += self.clk_freq as u128;
+            *time::OFFSET.lock(token.token()) += self.clk_freq as u128;
         }
 
         timeout::trigger(token);

@@ -228,9 +228,12 @@ pub fn syscall(
                 token,
             )
             .map(|()| 0),
-            SYS_CLOCK_GETTIME => {
-                clock_gettime(b, UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?).map(|()| 0)
-            }
+            SYS_CLOCK_GETTIME => clock_gettime(
+                b,
+                UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?,
+                token,
+            )
+            .map(|()| 0),
             SYS_FUTEX => futex(b, c, d, e, f, token),
 
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),

@@ -1,4 +1,4 @@
-use crate::{dtb::get_mmio_address, time};
+use crate::{dtb::get_mmio_address, sync::CleanLockToken, time};
 use core::ptr::read_volatile;
 
 static RTC_DR: usize = 0x000;
@@ -13,7 +13,8 @@ pub unsafe fn init(fdt: &fdt::Fdt) {
             Some(phys) => {
                 let mut rtc = Pl031rtc { phys };
                 info!("PL031 RTC at {:#x}", rtc.phys);
-                *time::START.lock() = (rtc.time() as u128) * time::NANOS_PER_SEC;
+                let mut token = unsafe { CleanLockToken::new() };
+                *time::START.lock(token.token()) = (rtc.time() as u128) * time::NANOS_PER_SEC;
             }
             None => {
                 warn!("No PL031 RTC registers");

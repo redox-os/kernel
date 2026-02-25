@@ -12,7 +12,7 @@ use crate::{
     percpu::PercpuBlock,
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        L0, L1, L2,
+        L0, L1, L4,
     },
     syscall::error::Result,
 };
@@ -23,8 +23,8 @@ pub use self::{
     switch::switch,
 };
 
-pub type ContextLock = RwLock<L2, Context>;
-pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L2, Context>;
+pub type ContextLock = RwLock<L4, Context>;
+pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L4, Context>;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
