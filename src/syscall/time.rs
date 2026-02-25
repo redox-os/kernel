@@ -11,10 +11,10 @@ use crate::{
 
 use super::usercopy::{UserSliceRo, UserSliceWo};
 
-pub fn clock_gettime(clock: usize, buf: UserSliceWo) -> Result<()> {
+pub fn clock_gettime(clock: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
     let arch_time = match clock {
-        CLOCK_REALTIME => time::realtime(),
-        CLOCK_MONOTONIC => time::monotonic(),
+        CLOCK_REALTIME => time::realtime(token),
+        CLOCK_MONOTONIC => time::monotonic(token),
         _ => return Err(Error::new(EINVAL)),
     };
 
@@ -32,7 +32,7 @@ pub fn nanosleep(
 ) -> Result<()> {
     let req = unsafe { req_buf.read_exact::<TimeSpec>()? };
 
-    let start = time::monotonic();
+    let start = time::monotonic(token);
     let end = start + (req.tv_sec as u128 * time::NANOS_PER_SEC) + (req.tv_nsec as u128);
 
     let current_context = context::current();
@@ -56,7 +56,7 @@ pub fn nanosleep(
     let was_interrupted = current_context.write(token.token()).wake.take().is_some();
 
     if let Some(rem_buf) = rem_buf_opt {
-        let current = time::monotonic();
+        let current = time::monotonic(token);
 
         rem_buf.copy_exactly(&if current < end {
             let diff = end - current;

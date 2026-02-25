@@ -167,16 +167,15 @@ unsafe fn ioapic_unmask(irq: usize) {
 interrupt_stack!(pit_stack, |_stack| {
     // Saves CPU time by not sending IRQ event irq_trigger(0);
 
+    let mut token = unsafe { CleanLockToken::new() };
     {
-        *time::OFFSET.lock() += pit::RATE;
+        *time::OFFSET.lock(token.token()) += pit::RATE;
     }
 
     unsafe { eoi(0) };
 
     // Wake up other CPUs
     ipi(IpiKind::Pit, IpiTarget::Other);
-
-    let mut token = unsafe { CleanLockToken::new() };
 
     // Any better way of doing this?
     timeout::trigger(&mut token);

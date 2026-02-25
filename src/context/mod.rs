@@ -11,7 +11,8 @@ use crate::{
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     sync::{
-        ArcRwLockWriteGuard, CleanLockToken, L0, L1, L4, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard
+        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        L0, L1, L4,
     },
     syscall::error::Result,
 };

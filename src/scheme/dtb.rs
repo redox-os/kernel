@@ -161,7 +161,7 @@ impl KernelScheme for DtbScheme {
         dst_buf.copy_common_bytes_from_slice(src_buf)
     }
 
-    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+    fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
         //TODO: construct useful path?
         buf.copy_common_bytes_from_slice("/scheme/kernel.dtb/".as_bytes())
     }

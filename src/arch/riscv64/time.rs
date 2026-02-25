@@ -3,13 +3,15 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use crate::sync::CleanLockToken;
+
 static MTIME_FREQ_HZ: AtomicUsize = AtomicUsize::new(0);
 
 pub fn init(freq_hz: usize) {
     MTIME_FREQ_HZ.store(freq_hz, Ordering::Relaxed);
 }
 
-pub fn monotonic_absolute() -> u128 {
+pub fn monotonic_absolute(_token: &mut CleanLockToken) -> u128 {
     let freq_hz = MTIME_FREQ_HZ.load(Ordering::Relaxed);
     if freq_hz > 0 {
         let counter: usize;

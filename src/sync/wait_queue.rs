@@ -71,7 +71,7 @@ impl<T> WaitQueue<T> {
             }
         }
     }
-pub fn receive_into_user(
+    pub fn receive_into_user(
         &self,
         buf: UserSliceWo,
         block: bool,
@@ -82,13 +82,16 @@ pub fn receive_into_user(
 
         loop {
             let mut preempt = PreemptGuard::new(&current_context_ref, token);
-            
+
             let mut inner = self.inner.lock(preempt.token().token());
 
             if inner.is_empty() {
                 if block {
                     let (_, mut inner_token) = inner.token_split();
-                    if !self.condition.wait_setup(&current_context_ref, reason, inner_token.token()) {
+                    if !self
+                        .condition
+                        .wait_setup(&current_context_ref, reason, inner_token.token())
+                    {
                         return Err(Error::new(EINTR));
                     }
 
@@ -97,8 +100,9 @@ pub fn receive_into_user(
 
                     context::switch(token);
 
-                    self.condition.wait_cleanup(&current_context_ref, token.token());
-                    
+                    self.condition
+                        .wait_cleanup(&current_context_ref, token.token());
+
                     continue;
                 } else if buf.is_empty() {
                     return Ok(0);

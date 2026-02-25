@@ -10,7 +10,7 @@ use alloc::{string::String, vec::Vec};
 
 /// Get the sys:stat data as displayed to the user.
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    let start_time_sec = *START.lock() / 1_000_000_000;
+    let start_time_sec = *START.lock(token.token()) / 1_000_000_000;
 
     let (contexts_running, contexts_blocked) = get_contexts_stats(token);
     let res = format!(

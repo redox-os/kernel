@@ -45,8 +45,8 @@ pub fn register(
 }
 
 pub fn trigger(token: &mut CleanLockToken) {
-    let mono = time::monotonic();
-    let real = time::realtime();
+    let mono = time::monotonic(token);
+    let real = time::realtime(token);
 
     let mut i = 0;
     loop {

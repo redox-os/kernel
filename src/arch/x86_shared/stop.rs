@@ -69,7 +69,7 @@ fn userspace_acpi_shutdown(token: &mut CleanLockToken) {
         return;
     }
     info!("Waiting one second for ACPI driver to run the shutdown sequence.");
-    let initial = time::monotonic();
+    let initial = time::monotonic(token);
 
     // Since this driver is a userspace process, and we do not use any magic like directly
     // context switching, we have to wait for the userspace driver to complete, with a timeout.
@@ -81,7 +81,7 @@ fn userspace_acpi_shutdown(token: &mut CleanLockToken) {
         // TODO: Waitpid with timeout? Because, what if the ACPI driver would crash?
         let _ = context::switch(token);
 
-        let current = time::monotonic();
+        let current = time::monotonic(token);
         if current - initial > time::NANOS_PER_SEC {
             info!("Timeout reached, thus falling back to other shutdown methods.");
             return;
