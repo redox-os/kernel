@@ -288,7 +288,7 @@ fn call_normal(
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     if flags.contains(CallFlags::STD_FS) {
-        scheme.kstdfscall(number, payload, flags, metadata, token)
+        scheme.kstdfscall(number, file.description, payload, flags, metadata, token)
     } else {
         scheme.kcall(number, payload, flags, metadata, token)
     }
