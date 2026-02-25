@@ -305,8 +305,8 @@ impl KernelScheme for SchemeList {
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
         match self.get_user_inner(id, token) {
-            Some(inner) => inner.fevent(flags),
-            _ => Err(Error::new(EBADF)),
+            Some(inner) => inner.fevent(flags, token),
+            _ => return Err(Error::new(EBADF)),
         }
     }
 

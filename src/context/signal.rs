@@ -78,7 +78,7 @@ pub fn excp_handler(excp: syscall::Exception) {
 
     let context = current.write(token.token());
 
-    let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+    let Some(_eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         // TODO: Let procmgr print this?
         info!(
             "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {current:p}",

@@ -33,8 +33,8 @@ impl EventQueue {
         }
     }
 
-    pub fn is_currently_empty(&self) -> bool {
-        self.queue.is_currently_empty()
+    pub fn is_currently_empty(&self, token: &mut CleanLockToken) -> bool {
+        self.queue.is_currently_empty(token)
     }
 
     pub fn read(&self, buf: UserSliceWo, block: bool, token: &mut CleanLockToken) -> Result<usize> {

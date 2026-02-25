@@ -971,10 +971,10 @@ impl UserInner {
         Ok(())
     }
 
-    pub fn fevent(&self, flags: EventFlags) -> Result<EventFlags> {
+    pub fn fevent(&self, flags: EventFlags, token: &mut CleanLockToken) -> Result<EventFlags> {
         // TODO: Should the root scheme also suppress events if `flags` does not contain
         // `EVENT_READ`?
-        Ok(if self.todo.is_currently_empty() {
+        Ok(if self.todo.is_currently_empty(token) {
             EventFlags::empty()
         } else {
             EventFlags::EVENT_READ.intersection(flags)
