@@ -28,13 +28,13 @@ pub struct SessionData {
     file_id: usize,
 }
 impl SessionData {
-    fn add_event(&mut self, event: PtraceEvent) {
+    fn add_event(&mut self, event: PtraceEvent, token: &mut CleanLockToken) {
         self.events.push_back(event);
 
         // Notify nonblocking tracers
         if self.events.len() == 1 {
             // If the list of events was previously empty, alert now
-            proc_trigger_event(self.file_id, EVENT_READ);
+            proc_trigger_event(self.file_id, EVENT_READ, token);
         }
     }
 
@@ -119,12 +119,12 @@ pub fn close_tracee(session: &Session, token: &mut CleanLockToken) {
     session.tracer.notify(token);
 
     let data = session.data.lock();
-    proc_trigger_event(data.file_id, EVENT_READ);
+    proc_trigger_event(data.file_id, EVENT_READ, token);
 }
 
 /// Trigger a notification to the event: scheme
-fn proc_trigger_event(file_id: usize, flags: EventFlags) {
-    event::trigger(GlobalSchemes::Proc.scheme_id(), file_id, flags);
+fn proc_trigger_event(file_id: usize, flags: EventFlags, token: &mut CleanLockToken) {
+    event::trigger(GlobalSchemes::Proc.scheme_id(), file_id, flags, token);
 }
 
 /// Dispatch an event to any tracer tracing `self`. This will cause
@@ -140,7 +140,7 @@ pub fn send_event(event: PtraceEvent, token: &mut CleanLockToken) -> Option<()> 
     }
 
     // Add event to queue
-    data.add_event(event);
+    data.add_event(event, token);
     // Notify tracer
     session.tracer.notify(token);
 
@@ -219,7 +219,7 @@ pub fn breakpoint_callback(
             .reached = true;
 
         // Add event to queue
-        data.add_event(event.unwrap_or(ptrace_event!(match_flags)));
+        data.add_event(event.unwrap_or(ptrace_event!(match_flags)), token);
 
         // Wake up sleeping tracer
         session.tracer.notify(token);

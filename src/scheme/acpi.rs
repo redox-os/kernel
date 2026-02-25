@@ -3,7 +3,7 @@ use core::{
     sync::atomic::{self, AtomicUsize},
 };
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
@@ -61,13 +61,17 @@ pub fn register_kstop(token: &mut CleanLockToken) -> bool {
     *KSTOP_FLAG.lock() = true;
     let mut waiters_awoken = KSTOP_WAITCOND.notify(token);
 
-    let handles = HANDLES.read(token.token());
+    let fds: Vec<usize> = {
+        HANDLES
+            .read(token.token())
+            .iter()
+            .filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe)
+            .map(|(fd, _)| *fd)
+            .collect()
+    };
 
-    for (&fd, _) in handles
-        .iter()
-        .filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe)
-    {
-        event::trigger(GlobalSchemes::Acpi.scheme_id(), fd, EVENT_READ);
+    for fd in fds {
+        event::trigger(GlobalSchemes::Acpi.scheme_id(), fd, EVENT_READ, token);
         waiters_awoken += 1;
     }
 
