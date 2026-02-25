@@ -1610,7 +1610,12 @@ impl KernelScheme for UserScheme {
             },
             token,
         );
-        event::trigger(self.inner.root_id, self.inner.scheme_id.get(), EVENT_READ);
+        event::trigger(
+            self.inner.root_id,
+            self.inner.scheme_id.get(),
+            EVENT_READ,
+            token,
+        );
         Ok(())
     }
 
