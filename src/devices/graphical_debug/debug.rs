@@ -11,12 +11,19 @@ unsafe impl Send for Display {}
 
 static FONT: &[u8] = include_bytes!("../../../res/unifont.font");
 
+enum Mode {
+    Plain,
+    Esc,
+    Csi,
+}
+
 pub struct DebugDisplay {
     pub(super) display: Display,
     x: usize,
     y: usize,
     w: usize,
     h: usize,
+    mode: Mode,
 }
 
 impl DebugDisplay {
@@ -41,6 +48,7 @@ impl DebugDisplay {
             y: 0,
             w,
             h,
+            mode: Mode::Plain,
         }
     }
 
@@ -51,8 +59,42 @@ impl DebugDisplay {
                 self.y = (self.y + 1) % self.h;
             }
 
-            if b == b'\n' {
-                continue;
+            if b == b'\r' {
+                self.x = 0;
+            }
+
+            match (b, &self.mode) {
+                // Byte 0x1B starts ESC sequence
+                (0x1B, _) => {
+                    self.mode = Mode::Esc;
+                    continue;
+                }
+                // Ignore other nonprintable characters
+                (0x00..=0x1F | 0x80..=0xFF, _) => {
+                    self.mode = Mode::Plain;
+                    continue;
+                }
+                // '[' after ESC starts CSI sequence
+                (b'[', Mode::Esc) => {
+                    self.mode = Mode::Csi;
+                    continue;
+                }
+                // Capture any bytes after ESC
+                (_, Mode::Esc) => {
+                    self.mode = Mode::Plain;
+                    continue;
+                }
+                // Byte 0x40 to 0x7E ends CSI
+                (0x40..=0x7E, Mode::Csi) => {
+                    self.mode = Mode::Plain;
+                    continue;
+                }
+                // Capture any bytes after CSI
+                (_, Mode::Csi) => {
+                    continue;
+                }
+                // Allow any other bytes
+                (_, Mode::Plain) => {}
             }
 
             if self.x == 0 {
