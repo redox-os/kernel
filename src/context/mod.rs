@@ -69,15 +69,29 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: RwLock<L1, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
+static CONTEXTS: RwLock<L1, ContextData> = RwLock::new(ContextData::new());
+
+// The new struct that stores data related to all the contexts
+pub struct ContextData {
+    pub set: [BTreeSet<ContextRef>; 40],
+}
+
+impl ContextData {
+    pub const fn new() -> Self {
+        const EMPTY_SET: BTreeSet<ContextRef> = BTreeSet::new();
+        Self {
+            set: [EMPTY_SET; 40],
+        }
+    }
+}
 
 /// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
+pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, ContextData> {
     CONTEXTS.read(token)
 }
 
 /// Get the global schemes list, mutable
-pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
+pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, ContextData> {
     CONTEXTS.write(token)
 }
 
