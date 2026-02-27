@@ -74,6 +74,7 @@ impl EventQueue {
                     data: event.data,
                 },
                 event.flags,
+                token,
             );
 
             let flags = sync(RegKey { scheme, number }, token)?;
@@ -116,7 +117,7 @@ pub struct RegKey {
     pub number: usize,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct QueueKey {
     pub queue: EventQueueId,
     pub id: usize,
@@ -125,25 +126,30 @@ pub struct QueueKey {
 
 type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
 
-static REGISTRY: Once<spin::RwLock<Registry>> = Once::new();
+static REGISTRY: Once<RwLock<L1, Registry>> = Once::new();
 
 /// Initialize registry, called if needed
-fn init_registry() -> spin::RwLock<Registry> {
-    spin::RwLock::new(Registry::new())
+fn init_registry() -> RwLock<L1, Registry> {
+    RwLock::new(Registry::new())
 }
 
 /// Get the global schemes list, const
-fn registry() -> spin::RwLockReadGuard<'static, Registry> {
-    REGISTRY.call_once(init_registry).read()
+fn registry(token: &'_ mut CleanLockToken) -> RwLockReadGuard<'_, L1, Registry> {
+    REGISTRY.call_once(init_registry).read(token.token())
 }
 
 /// Get the global schemes list, mutable
-pub fn registry_mut() -> spin::RwLockWriteGuard<'static, Registry> {
-    REGISTRY.call_once(init_registry).write()
+pub fn registry_mut(token: &'_ mut CleanLockToken) -> RwLockWriteGuard<'_, L1, Registry> {
+    REGISTRY.call_once(init_registry).write(token.token())
 }
 
-pub fn register(reg_key: RegKey, queue_key: QueueKey, flags: EventFlags) {
-    let mut registry = registry_mut();
+pub fn register(
+    reg_key: RegKey,
+    queue_key: QueueKey,
+    flags: EventFlags,
+    token: &mut CleanLockToken,
+) {
+    let mut registry = registry_mut(token);
 
     let entry = registry.entry(reg_key).or_default();
 
@@ -158,7 +164,7 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
     let mut flags = EventFlags::empty();
 
     {
-        let registry = registry();
+        let registry = registry(token);
 
         if let Some(queue_list) = registry.get(&reg_key) {
             for (_queue_key, &queue_flags) in queue_list.iter() {
@@ -172,8 +178,8 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
     scheme.fevent(reg_key.number, flags, token)
 }
 
-pub fn unregister_file(scheme: SchemeId, number: usize) {
-    let mut registry = registry_mut();
+pub fn unregister_file(scheme: SchemeId, number: usize, token: &mut CleanLockToken) {
+    let mut registry = registry_mut(token);
 
     registry.remove(&RegKey { scheme, number });
 }
@@ -190,28 +196,39 @@ fn trigger_inner(
     todo: &mut Vec<EventQueueId>,
     token: &mut CleanLockToken,
 ) {
-    let registry = registry();
-    if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
-        for (queue_key, &queue_flags) in queue_list.iter() {
-            let common_flags = flags & queue_flags;
-            if !common_flags.is_empty() {
-                let queue_opt = {
-                    let queues = queues(token.token());
-                    queues.get(&queue_key.queue).cloned()
-                };
-                if let Some(queue) = queue_opt {
-                    queue.queue.send(
-                        Event {
-                            id: queue_key.id,
-                            flags: common_flags,
-                            data: queue_key.data,
-                        },
-                        token,
-                    );
-                    todo.push(queue_key.queue);
+    let mut matching_keys = Vec::new();
+    {
+        let registry = registry(token);
+        if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
+            for (queue_key, &queue_flags) in queue_list.iter() {
+                let common_flags = flags & queue_flags;
+                if !common_flags.is_empty() {
+                    matching_keys.push((queue_key.clone(), common_flags));
                 }
             }
         }
+    }
+
+    let mut queue_to_send: Vec<(Event, Arc<EventQueue>)> = Vec::new();
+
+    for (queue_key, common_flags) in matching_keys {
+        let queue_opt = queues(token.token()).get(&queue_key.queue).cloned();
+
+        if let Some(queue) = queue_opt {
+            queue_to_send.push((
+                Event {
+                    id: queue_key.id,
+                    flags: common_flags,
+                    data: queue_key.data,
+                },
+                queue,
+            ));
+            todo.push(queue_key.queue);
+        }
+    }
+
+    for (event, queue) in queue_to_send {
+        queue.queue.send(event, token);
     }
 }
 
