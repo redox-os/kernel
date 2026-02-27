@@ -233,6 +233,9 @@ fn trigger_inner(
 
     for (event, queue) in queue_to_send {
         queue.queue.send(event, token);
+        if let Some(queue) = Arc::into_inner(queue) {
+            queue.into_drop(token);
+        }
     }
 }
 
