@@ -1323,8 +1323,14 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         Ok(())
     }
-    fn release(mut self) -> Result<()> {
-        self.release_inner()
+    pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
+        self.release_inner()?;
+        if let Some(addrsp) = self.addrsp.take() {
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
+            }
+        }
+        Ok(())
     }
 }
 impl<const READ: bool, const WRITE: bool> Drop for CaptureGuard<READ, WRITE> {
@@ -1372,7 +1378,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        address.release()?;
+        address.release(token)?;
 
         match result? {
             Response::Regular(res, fl, _) => Ok({
@@ -1637,7 +1643,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        address.release()?;
+        address.release(token)?;
 
         match result? {
             Response::Regular(res, fl, _) => Ok({
@@ -1665,7 +1671,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
 
@@ -1698,7 +1704,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
 
         result
     }
@@ -1732,7 +1738,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
 
         result
     }
@@ -1755,7 +1761,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
     fn getdents(
@@ -1789,7 +1795,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
@@ -1806,7 +1812,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
@@ -1823,7 +1829,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result.map(|_| ())
     }
     fn kfmap(

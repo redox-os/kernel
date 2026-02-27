@@ -48,7 +48,9 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
 
     // Files must be closed while context is valid so that messages can be passed
     close_files.force_close_all(token);
-    drop(addrspace_opt);
+    if let Some(addrspace) = addrspace_opt {
+        addrspace.into_drop(token);
+    }
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
         let mut guard = context_lock.write(token.token());
