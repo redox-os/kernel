@@ -1533,16 +1533,23 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        self.inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Flink,
-                [file, address.base(), address.len()],
-                address.span(),
-                token,
-            )?
-            .as_regular()?;
+        match self.inner.call(
+            ctx,
+            Vec::new(),
+            Opcode::Flink,
+            [file, address.base(), address.len()],
+            address.span(),
+            token,
+        ) {
+            Ok(res) => {
+                address.release(token)?;
+                res.as_regular()
+            }
+            Err(err) => {
+                let _ = address.release(token);
+                Err(err)
+            }
+        }?;
         Ok(())
     }
 
