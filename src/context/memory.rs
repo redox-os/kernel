@@ -3,6 +3,7 @@ use arrayvec::ArrayVec;
 use core::{
     cmp,
     fmt::Debug,
+    mem::ManuallyDrop,
     num::NonZeroUsize,
     ops::Bound,
     sync::atomic::{AtomicU32, Ordering},
@@ -132,6 +133,9 @@ impl AddrSpaceWrapper {
                 }
             }
         }
+    }
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.inner.into_inner().into_drop(token);
     }
 }
 
@@ -720,6 +724,28 @@ impl AddrSpace {
         self.grants.insert(grant);
 
         Ok(selected_span.base)
+    }
+
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        ManuallyDrop::new(self).inner_drop(token);
+    }
+
+    fn inner_drop(&mut self, token: &mut CleanLockToken) {
+        for mut grant in core::mem::take(&mut self.grants).into_iter() {
+            // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
+            // prevent unmapping the mapped range twice (which would corrupt only the scheme
+            // provider), but it won't be able to double free any range after this address space
+            // has been dropped!
+            grant.info.unpin();
+
+            // TODO: Optimize away clearing the actual page tables? Since this address space is no
+            // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
+            // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
+            // the underlying pages (and send some funmaps).
+            let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
+
+            let _ = res.unmap(token);
+        }
     }
 }
 
@@ -2257,23 +2283,11 @@ pub struct Table {
 
 impl Drop for AddrSpace {
     fn drop(&mut self) {
-        //TODO: DANGER: unmap requires a CleanLockToken, this cheats!
         let mut token = unsafe { CleanLockToken::new() };
-
-        for mut grant in core::mem::take(&mut self.grants).into_iter() {
-            // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
-            // prevent unmapping the mapped range twice (which would corrupt only the scheme
-            // provider), but it won't be able to double free any range after this address space
-            // has been dropped!
-            grant.info.unpin();
-
-            // TODO: Optimize away clearing the actual page tables? Since this address space is no
-            // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
-            // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
-            // the underlying pages (and send some funmaps).
-            let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
-
-            let _ = res.unmap(&mut token);
+        self.inner_drop(&mut token);
+        #[cfg(feature = "drop_panic")]
+        {
+            panic!("AddrSpace dropped");
         }
     }
 }

@@ -1,7 +1,7 @@
 use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
-    mem::{self, size_of},
+    mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
@@ -512,16 +512,17 @@ impl BorrowedHtBuf {
         Ok(unsafe { &mut *self.buf_mut().as_mut_ptr().cast() })
     }
     */
-}
-impl Drop for BorrowedHtBuf {
-    fn drop(&mut self) {
+
+    pub fn into_drop(mut self, token: &mut CleanLockToken) {
+        ManuallyDrop::new(self).inner_drop(token);
+    }
+
+    fn inner_drop(&mut self, token: &mut CleanLockToken) {
         let context = context::current();
 
         let Some(inner) = self.inner.take() else {
             return;
         };
-        //TODO: do not allow drop so lock token can be passed in
-        let mut token = unsafe { CleanLockToken::new() };
         let mut context = context.write(token.token());
         {
             *(if self.head_and_not_tail {
@@ -529,6 +530,17 @@ impl Drop for BorrowedHtBuf {
             } else {
                 &mut context.syscall_tail
             }) = SyscallFrame::Free(inner);
+        }
+    }
+}
+
+impl Drop for BorrowedHtBuf {
+    fn drop(&mut self) {
+        let mut token = unsafe { CleanLockToken::new() };
+        self.inner_drop(&mut token);
+        #[cfg(feature = "drop_panic")]
+        {
+            panic!("BorrowedHtBuf dropped");
         }
     }
 }

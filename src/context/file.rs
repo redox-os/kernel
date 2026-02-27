@@ -73,7 +73,7 @@ impl FileDescription {
     /// Try closing a file, although at this point the description will be destroyed anyway, if
     /// doing so fails.
     pub fn try_close(self, token: &mut CleanLockToken) -> Result<()> {
-        event::unregister_file(self.scheme, self.number);
+        event::unregister_file(self.scheme, self.number, token);
 
         let scheme = scheme::get_scheme(token.token(), self.scheme)?;
 

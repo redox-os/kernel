@@ -436,7 +436,7 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let _ = try_stop_context(context, token, |context: &mut Context| {
+                let old_ctx = try_stop_context(context, token, |context: &mut Context| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -449,6 +449,11 @@ impl KernelScheme for ProcScheme {
 
                     Ok(context.set_addr_space(Some(new)))
                 })?;
+                if let Some(old_ctx) = old_ctx {
+                    if let Some(addrspace) = Arc::into_inner(old_ctx) {
+                        addrspace.into_drop(token);
+                    }
+                }
                 let _ = ptrace::send_event(
                     crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0),
                     token,
@@ -457,7 +462,11 @@ impl KernelScheme for ProcScheme {
             Handle {
                 kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
                 ..
-            } => drop(addrspace),
+            } => {
+                if let Some(addrspace) = Arc::into_inner(addrspace) {
+                    addrspace.into_drop(token);
+                }
+            }
 
             Handle {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },

@@ -1260,6 +1260,10 @@ impl UserInner {
 
         Ok(num_fds)
     }
+
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.todo.condition.into_drop(token);
+    }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     destroyed: bool,
@@ -1323,8 +1327,20 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         Ok(())
     }
-    fn release(mut self) -> Result<()> {
-        self.release_inner()
+    pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
+        self.release_inner()?;
+        if let Some(addrsp) = self.addrsp.take() {
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
+            }
+        }
+        if let Some(src) = self.head.src.take() {
+            src.into_drop(token);
+        }
+        if let Some(src) = self.tail.src.take() {
+            src.into_drop(token);
+        }
+        Ok(())
     }
 }
 impl<const READ: bool, const WRITE: bool> Drop for CaptureGuard<READ, WRITE> {
@@ -1372,7 +1388,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        address.release()?;
+        address.release(token)?;
 
         match result? {
             Response::Regular(res, fl, _) => Ok({
@@ -1396,16 +1412,23 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        self.inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::UnlinkAt,
-                [file, address.base(), address.len(), flags],
-                address.span(),
-                token,
-            )?
-            .as_regular()?;
+        match self.inner.call(
+            ctx,
+            Vec::new(),
+            Opcode::UnlinkAt,
+            [file, address.base(), address.len(), flags],
+            address.span(),
+            token,
+        ) {
+            Ok(res) => {
+                address.release(token)?;
+                res.as_regular()
+            }
+            Err(e) => {
+                let _ = address.release(token);
+                Err(e)
+            }
+        }?;
         Ok(())
     }
 
@@ -1510,16 +1533,23 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        self.inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Flink,
-                [file, address.base(), address.len()],
-                address.span(),
-                token,
-            )?
-            .as_regular()?;
+        match self.inner.call(
+            ctx,
+            Vec::new(),
+            Opcode::Flink,
+            [file, address.base(), address.len()],
+            address.span(),
+            token,
+        ) {
+            Ok(res) => {
+                address.release(token)?;
+                res.as_regular()
+            }
+            Err(err) => {
+                let _ = address.release(token);
+                Err(err)
+            }
+        }?;
         Ok(())
     }
 
@@ -1531,16 +1561,23 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        self.inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Frename,
-                [file, address.base(), address.len()],
-                address.span(),
-                token,
-            )?
-            .as_regular()?;
+        match self.inner.call(
+            ctx,
+            Vec::new(),
+            Opcode::Frename,
+            [file, address.base(), address.len()],
+            address.span(),
+            token,
+        ) {
+            Ok(res) => {
+                address.release(token)?;
+                res.as_regular()
+            }
+            Err(err) => {
+                let _ = address.release(token);
+                Err(err)
+            }
+        }?;
         Ok(())
     }
 
@@ -1637,7 +1674,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        address.release()?;
+        address.release(token)?;
 
         match result? {
             Response::Regular(res, fl, _) => Ok({
@@ -1665,7 +1702,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
 
@@ -1698,7 +1735,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
 
         result
     }
@@ -1732,7 +1769,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
 
         result
     }
@@ -1755,7 +1792,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
     fn getdents(
@@ -1789,7 +1826,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
@@ -1806,7 +1843,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
@@ -1823,7 +1860,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result.map(|_| ())
     }
     fn kfmap(
@@ -1893,9 +1930,16 @@ impl KernelScheme for UserScheme {
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
         }
-        inner
-            .call_inner(Vec::new(), sqe, address.span(), token)?
-            .as_regular()
+        match inner.call_inner(Vec::new(), sqe, address.span(), token) {
+            Ok(res) => {
+                address.release(token)?;
+                res.as_regular()
+            }
+            Err(e) => {
+                let _ = address.release(token);
+                Err(e)
+            }
+        }
     }
     fn kstdfscall(
         &self,
@@ -1931,15 +1975,18 @@ impl KernelScheme for UserScheme {
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
         }
-
         match inner.call_inner(Vec::new(), sqe, address.span(), token)? {
             Response::Regular(res, _, notify_on_detach) => {
+                address.release(token)?;
                 desc.write()
                     .internal_flags
                     .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
                 res
             }
-            _ => Err(Error::new(EIO)),
+            _ => {
+                let _ = address.release(token);
+                Err(Error::new(EIO))
+            }
         }
     }
 

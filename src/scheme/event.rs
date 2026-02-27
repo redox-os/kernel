@@ -43,10 +43,13 @@ impl KernelScheme for EventScheme {
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let id = EventQueueId::from(id);
-        queues_mut(token.token())
+        let queue = queues_mut(token.token())
             .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(()))
+            .ok_or(Error::new(EBADF))?;
+        if let Some(queue) = Arc::into_inner(queue) {
+            queue.into_drop(token);
+        }
+        Ok(())
     }
 
     fn kread(
