@@ -2,7 +2,6 @@ use alloc::{sync::Arc, vec::Vec};
 use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
-use spin::RwLock;
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -13,7 +12,7 @@ use crate::{
         ContextRef,
     },
     event,
-    sync::CleanLockToken,
+    sync::{CleanLockToken, RwLock},
     syscall::flag::{EventFlags, O_CREAT, O_RDWR},
 };
 

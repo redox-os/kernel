@@ -48,7 +48,7 @@ impl EventQueue {
                 let context_ref = context::current();
                 let context = context_ref.read(token.token());
 
-                let files = context.files.read();
+                let files = context.files.read(token.token());
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
                     Some(file) => file.clone(),
                     None => return Err(Error::new(EBADF)),
@@ -56,7 +56,7 @@ impl EventQueue {
             };
 
             let (scheme, number) = {
-                let description = file.description.read();
+                let description = file.description.read(token.token());
                 (description.scheme, description.number)
             };
 

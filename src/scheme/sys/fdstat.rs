@@ -29,7 +29,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         owners: HashMap<Ref<AddrSpaceWrapper>, String>,
         scheme: Box<str>,
     }
-    let mut map = HashMap::<Ref<RwLock<FileDescription>>, Descr>::new();
+    let mut map = HashMap::<Ref<LockedFileDescription>, Descr>::new();
 
     let mut report = String::new();
     'contexts: for context in context::contexts(token.token())

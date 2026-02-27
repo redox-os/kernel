@@ -114,12 +114,12 @@ enum ContextHandle {
     Sighandler,
     Start,
     NewFiletable {
-        filetable: Arc<spin::RwLock<FdTbl>>,
+        filetable: Arc<RwLock<L1, FdTbl>>,
         binary_format: bool,
         data: Box<[u8]>,
     },
     Filetable {
-        filetable: Weak<spin::RwLock<FdTbl>>,
+        filetable: Weak<RwLock<L1, FdTbl>>,
         binary_format: bool,
         data: Box<[u8]>,
     },
@@ -138,7 +138,7 @@ enum ContextHandle {
     CurrentFiletable,
 
     AwaitingFiletableChange {
-        new_ft: Arc<spin::RwLock<FdTbl>>,
+        new_ft: Arc<RwLock<L1, FdTbl>>,
     },
 
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
@@ -354,7 +354,7 @@ impl ProcScheme {
                 *data = if binary_format {
                     let mut data = Vec::new();
                     for index in filetable
-                        .read()
+                        .read(token.token())
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
                     {
@@ -366,7 +366,7 @@ impl ProcScheme {
 
                     let mut data = String::new();
                     for index in filetable
-                        .read()
+                        .read(token.token())
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
                     {
@@ -767,7 +767,8 @@ impl KernelScheme for ProcScheme {
                     }
                     let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
-                    let new_filetable = Arc::new(spin::RwLock::new(filetable.read().clone()));
+                    let new_filetable =
+                        Arc::new(RwLock::new(filetable.read(token.token()).clone()));
 
                     handle(
                         Handle {
@@ -835,9 +836,9 @@ impl KernelScheme for ProcScheme {
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
     let file_descriptor = context::current()
         .read(token.token())
-        .get_file(FileHandle::from(fd))
+        .get_file(FileHandle::from(fd), token)
         .ok_or(Error::new(EBADF))?;
-    let desc = file_descriptor.description.read();
+    let desc = file_descriptor.description.read(token.token());
     let (scheme_id, number) = (desc.scheme, desc.number);
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
