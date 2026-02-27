@@ -1260,6 +1260,10 @@ impl UserInner {
 
         Ok(num_fds)
     }
+
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.todo.condition.into_drop(token);
+    }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
     destroyed: bool,

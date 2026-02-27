@@ -225,10 +225,17 @@ impl SchemeList {
 
     /// Remove a scheme
     fn remove(&self, id: usize, token: &mut CleanLockToken) {
-        assert!(handles()
-            .write(token.token())
-            .remove(&SchemeId(id))
-            .is_some());
+        let scheme = handles().write(token.token()).remove(&SchemeId(id));
+
+        assert!(scheme.is_some());
+        match scheme {
+            Some(Handle::Scheme(KernelSchemes::User(user))) => {
+                if let Some(user) = Arc::into_inner(user.inner) {
+                    user.into_drop(token);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

@@ -136,7 +136,28 @@ impl KernelScheme for PipeScheme {
         };
 
         if can_remove {
-            let _ = PIPES.write(token.token()).remove(&key);
+            match { PIPES.write(token.token()).remove(&key) } {
+                Some(Handle::Pipe(pipe)) => {
+                    if let Some(pipe) = Arc::into_inner(pipe) {
+                        {
+                            pipe.read_condition.into_drop(token);
+                        }
+                        {
+                            pipe.write_condition.into_drop(token);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(pipe) = Arc::into_inner(pipe) {
+            {
+                pipe.read_condition.into_drop(token);
+            }
+            {
+                pipe.write_condition.into_drop(token);
+            }
         }
 
         Ok(())

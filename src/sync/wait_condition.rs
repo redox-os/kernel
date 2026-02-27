@@ -1,3 +1,5 @@
+use core::mem::ManuallyDrop;
+
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
@@ -124,14 +126,26 @@ impl WaitCondition {
 
         waited
     }
+
+    pub fn into_drop(mut self, token: &mut CleanLockToken) {
+        ManuallyDrop::new(self).inner_drop(token);
+    }
+
+    fn inner_drop(&mut self, token: &mut CleanLockToken) {
+        unsafe {
+            self.notify_signal(token);
+        }
+    }
 }
 
 impl Drop for WaitCondition {
     fn drop(&mut self) {
         //TODO: drop violates lock tokens
-        unsafe {
-            let mut token = CleanLockToken::new();
-            self.notify_signal(&mut token);
-        };
+        let mut token = unsafe { CleanLockToken::new() };
+        self.inner_drop(&mut token);
+        #[cfg(feature = "drop_panic")]
+        {
+            panic!("WaitCondition dropped");
+        }
     }
 }

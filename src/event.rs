@@ -85,6 +85,10 @@ impl EventQueue {
 
         Ok(events.len())
     }
+
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.queue.condition.into_drop(token);
+    }
 }
 
 pub type EventQueueList = HashMap<EventQueueId, Arc<EventQueue>>;
