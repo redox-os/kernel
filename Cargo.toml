@@ -94,6 +94,7 @@ multi_core = ["acpi"]
 profiling = []
 #TODO: remove when threading issues are fixed
 pti = []
+drop_panic = []
 qemu_debug = []
 serial_debug = []
 system76_ec_debug = []

@@ -3,6 +3,7 @@ use arrayvec::ArrayVec;
 use core::{
     cmp,
     fmt::Debug,
+    mem::ManuallyDrop,
     num::NonZeroUsize,
     ops::Bound,
     sync::atomic::{AtomicU32, Ordering},
@@ -13,11 +14,10 @@ use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
     arch::paging::PAGE_SIZE,
-    context::arch::setup_new_utable,
+    context::{arch::setup_new_utable, file::LockedFileDescription},
     cpu_set::LogicalCpuSet,
     memory::{
-        deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
-        PageInfo, RaiiFrame, RefCount, RefKind,
+        AddRefError, Enomem, Frame, PageInfo, RaiiFrame, RefCount, RefKind, deallocate_frame, get_page_info, init_frame, the_zeroed_frame
     },
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,
@@ -63,7 +63,7 @@ impl UnmapResult {
         };
 
         let (scheme_id, number) = {
-            let desc = description.write();
+            let desc = description.write(token.token());
             (desc.scheme, desc.number)
         };
 
@@ -132,6 +132,9 @@ impl AddrSpaceWrapper {
                 }
             }
         }
+    }
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.inner.into_inner().into_drop(token);
     }
 }
 
@@ -721,6 +724,28 @@ impl AddrSpace {
 
         Ok(selected_span.base)
     }
+
+    pub fn into_drop(self, token: &mut CleanLockToken) {
+        ManuallyDrop::new(self).inner_drop(token);
+    }
+
+    fn inner_drop(&mut self, token: &mut CleanLockToken) {
+        for mut grant in core::mem::take(&mut self.grants).into_iter() {
+            // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
+            // prevent unmapping the mapped range twice (which would corrupt only the scheme
+            // provider), but it won't be able to double free any range after this address space
+            // has been dropped!
+            grant.info.unpin();
+
+            // TODO: Optimize away clearing the actual page tables? Since this address space is no
+            // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
+            // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
+            // the underlying pages (and send some funmaps).
+            let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
+
+            let _ = res.unmap(token);
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1110,7 +1135,7 @@ pub struct Grant {
 
 #[derive(Clone, Debug)]
 pub struct GrantFileRef {
-    pub description: Arc<RwLock<FileDescription>>,
+    pub description: Arc<LockedFileDescription>,
     pub base_offset: usize,
 }
 
@@ -2257,23 +2282,11 @@ pub struct Table {
 
 impl Drop for AddrSpace {
     fn drop(&mut self) {
-        //TODO: DANGER: unmap requires a CleanLockToken, this cheats!
         let mut token = unsafe { CleanLockToken::new() };
-
-        for mut grant in core::mem::take(&mut self.grants).into_iter() {
-            // Unpinning the grant is allowed, because pinning only occurs in UserScheme calls to
-            // prevent unmapping the mapped range twice (which would corrupt only the scheme
-            // provider), but it won't be able to double free any range after this address space
-            // has been dropped!
-            grant.info.unpin();
-
-            // TODO: Optimize away clearing the actual page tables? Since this address space is no
-            // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
-            // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
-            // the underlying pages (and send some funmaps).
-            let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
-
-            let _ = res.unmap(&mut token);
+        self.inner_drop(&mut token);
+        #[cfg(feature = "drop_panic")]
+        {
+            panic!("AddrSpace dropped");
         }
     }
 }
@@ -2642,7 +2655,7 @@ fn correct_inner<'l>(
             drop(addr_space_guard);
 
             let (scheme_id, scheme_number) = {
-                let desc = &file_ref.description.read();
+                let desc = &file_ref.description.read(token.token());
                 (desc.scheme, desc.number)
             };
             let user_inner = scheme::get_scheme(token.token(), scheme_id)

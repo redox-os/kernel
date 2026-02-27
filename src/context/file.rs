@@ -3,12 +3,13 @@
 use crate::{
     event,
     scheme::{self, SchemeId},
-    sync::CleanLockToken,
+    sync::{CleanLockToken, L1, RwLock},
     syscall::error::Result,
 };
 use alloc::sync::Arc;
-use spin::RwLock;
 use syscall::{schemev2::NewFdFlags, RwFlags, O_APPEND, O_NONBLOCK};
+
+pub type LockedFileDescription = RwLock<L1, FileDescription>;
 
 /// A file description
 #[derive(Clone, Copy, Debug)]
@@ -64,7 +65,7 @@ impl InternalFlags {
 #[must_use = "File descriptors must be closed"]
 pub struct FileDescriptor {
     /// Corresponding file description
-    pub description: Arc<RwLock<FileDescription>>,
+    pub description: Arc<RwLock<L1, FileDescription>>,
     /// Cloexec flag
     pub cloexec: bool,
 }
@@ -73,7 +74,7 @@ impl FileDescription {
     /// Try closing a file, although at this point the description will be destroyed anyway, if
     /// doing so fails.
     pub fn try_close(self, token: &mut CleanLockToken) -> Result<()> {
-        event::unregister_file(self.scheme, self.number);
+        event::unregister_file(self.scheme, self.number, token);
 
         let scheme = scheme::get_scheme(token.token(), self.scheme)?;
 
@@ -84,7 +85,7 @@ impl FileDescription {
 impl FileDescriptor {
     pub fn close(self, token: &mut CleanLockToken) -> Result<()> {
         {
-            let description = self.description.read();
+            let description = self.description.read(token.token());
             if description
                 .internal_flags
                 .contains(InternalFlags::NOTIFY_ON_NEXT_DETACH)

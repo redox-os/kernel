@@ -9,7 +9,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 use slab::Slab;
-use spin::{Mutex, RwLock};
+use spin::Mutex;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -18,24 +18,19 @@ use syscall::{
 
 use crate::{
     context::{
-        self,
-        context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
-        file::{FileDescription, FileDescriptor, InternalFlags},
-        memory::{
-            AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
-            PageSpan, DANGLING,
-        },
-        BorrowedHtBuf, ContextLock, PreemptGuard, Status,
+        self, BorrowedHtBuf, ContextLock, PreemptGuard, Status, context::{HardBlockedReason, bulk_add_fds, bulk_insert_fds}, file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription}, memory::{
+            AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, DANGLING, Grant, GrantFileRef, MmapMode, PageSpan
+        }
     },
     event,
     memory::Frame,
-    paging::{Page, VirtualAddress, PAGE_SIZE},
+    paging::{PAGE_SIZE, Page, VirtualAddress},
     scheme::SchemeId,
-    sync::{CleanLockToken, WaitQueue},
+    sync::{CleanLockToken, RwLock, WaitQueue},
     syscall::{
         data::Map,
         error::*,
-        flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
+        flag::{EVENT_READ, EventFlags, MapFlags, O_NONBLOCK, PROT_READ},
         usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
@@ -57,7 +52,7 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<ContextLock>,
-        fds: Vec<Arc<RwLock<FileDescription>>>,
+        fds: Vec<Arc<LockedFileDescription>>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
@@ -69,8 +64,8 @@ enum State {
 #[derive(Debug)]
 enum Response {
     Regular(Result<usize>, u8, bool),
-    Fd(Arc<RwLock<FileDescription>>),
-    MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
+    Fd(Arc<LockedFileDescription>),
+    MultipleFds(Option<Vec<Arc<LockedFileDescription>>>),
 }
 
 impl Response {
@@ -198,7 +193,7 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        fds: Vec<Arc<RwLock<FileDescription>>>,
+        fds: Vec<Arc<LockedFileDescription>>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
@@ -225,7 +220,7 @@ impl UserInner {
 
     fn call_inner(
         &self,
-        fds: Vec<Arc<RwLock<FileDescription>>>,
+        fds: Vec<Arc<LockedFileDescription>>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
@@ -785,7 +780,7 @@ impl UserInner {
                 Response::Fd({
                     context::current()
                         .read(token.token())
-                        .remove_file(FileHandle::from(fd))
+                        .remove_file(FileHandle::from(fd), token)
                         .ok_or(Error::new(EINVAL))?
                         .description
                 }),
@@ -828,10 +823,13 @@ impl UserInner {
                 } else {
                     let fd = context::current()
                         .read(token.token())
-                        .add_file(FileDescriptor {
-                            description,
-                            cloexec: true,
-                        })
+                        .add_file(
+                            FileDescriptor {
+                                description,
+                                cloexec: true,
+                            },
+                            token,
+                        )
                         .ok_or(Error::new(EMFILE))?;
                     UserSlice::wo(dst_fd_or_ptr, size_of::<usize>())?.write_usize(fd.get())?;
                 }
@@ -1134,7 +1132,7 @@ impl UserInner {
 
     pub fn call_fdwrite(
         &self,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
         _arg: u64,
         metadata: &[u64],
@@ -1166,7 +1164,7 @@ impl UserInner {
 
     fn handle_movefd(
         &self,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         request_id: usize,
         _flags: FmoveFdFlags,
     ) -> Result<usize> {
@@ -1323,8 +1321,14 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 
         Ok(())
     }
-    fn release(mut self) -> Result<()> {
-        self.release_inner()
+    pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
+        self.release_inner()?;
+        if let Some(addrsp) = self.addrsp.take() {
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
+            }
+        }
+        Ok(())
     }
 }
 impl<const READ: bool, const WRITE: bool> Drop for CaptureGuard<READ, WRITE> {
@@ -1372,7 +1376,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        address.release()?;
+        address.release(token)?;
 
         match result? {
             Response::Regular(res, fl, _) => Ok({
@@ -1637,7 +1641,7 @@ impl KernelScheme for UserScheme {
             token,
         );
 
-        address.release()?;
+        address.release(token)?;
 
         match result? {
             Response::Regular(res, fl, _) => Ok({
@@ -1665,7 +1669,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
 
@@ -1698,7 +1702,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
 
         result
     }
@@ -1732,7 +1736,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
 
         result
     }
@@ -1755,7 +1759,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
     fn getdents(
@@ -1789,7 +1793,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
@@ -1806,7 +1810,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result.map(|_| ())
     }
     fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
@@ -1823,7 +1827,7 @@ impl KernelScheme for UserScheme {
                 token,
             )?
             .as_regular();
-        address.release()?;
+        address.release(token)?;
         result.map(|_| ())
     }
     fn kfmap(
@@ -1900,7 +1904,7 @@ impl KernelScheme for UserScheme {
     fn kstdfscall(
         &self,
         id: usize,
-        desc: Arc<spin::RwLock<FileDescription>>,
+        desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
@@ -1934,7 +1938,7 @@ impl KernelScheme for UserScheme {
 
         match inner.call_inner(Vec::new(), sqe, address.span(), token)? {
             Response::Regular(res, _, notify_on_detach) => {
-                desc.write()
+                desc.write(token.token())
                     .internal_flags
                     .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
                 res
@@ -1946,7 +1950,7 @@ impl KernelScheme for UserScheme {
     fn kfdwrite(
         &self,
         number: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
         arg: u64,
         _metadata: &[u64],
