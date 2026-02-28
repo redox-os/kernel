@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
-use core::{fmt::Write, num::NonZeroUsize, str};
+use core::{fmt::Write, iter::Iterator, num::NonZeroUsize, str};
 
 fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();
@@ -24,7 +24,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
         {
             let mut contexts = context::contexts(token.token());
             let (contexts, mut token) = contexts.token_split();
-            for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
+            for context_ref in contexts.set.iter().flatten().filter_map(|r| r.upgrade()) {
                 let context = context_ref.read(token.token());
                 rows.push((context.pid, context.name, context.files.read().clone()));
             }

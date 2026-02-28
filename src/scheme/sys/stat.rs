@@ -1,3 +1,5 @@
+use core::iter::Iterator;
+
 use crate::{
     context::{contexts, ContextRef, Status},
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
@@ -76,7 +78,9 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     let mut contexts = contexts(token.token());
     let (contexts, mut token) = contexts.token_split();
     let statuses = contexts
+        .set
         .iter()
+        .flatten()
         .filter_map(ContextRef::upgrade)
         .map(|context| context.read(token.token()).status.clone())
         .collect::<Vec<_>>();
