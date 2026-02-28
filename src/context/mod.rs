@@ -112,7 +112,7 @@ pub fn init(token: &mut CleanLockToken) {
 
     let context_lock = Arc::new(ContextLock::new(context));
 
-    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    contexts_mut(token.token()).set[20].insert(ContextRef(Arc::clone(&context_lock)));
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -174,7 +174,7 @@ pub fn spawn(
 
     let context_lock = Arc::new(ContextLock::new(Context::new(owner_proc_id)?));
 
-    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    contexts_mut(token.token()).set[20].insert(ContextRef(Arc::clone(&context_lock)));
 
     {
         let mut context = context_lock.write(token.token());

@@ -174,7 +174,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     {
         let contexts_data = contexts(token.token());
         let contexts_list = &contexts_data.set;
-        let mut bookmarks = percpu.bookmarks.clone().into_inner();
+        let mut bookmarks = percpu.bookmarks.borrow_mut();
         let mut balance = percpu.balance.get();
         let mut i = percpu.last_queue.get() % 40;
 
@@ -191,16 +191,16 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             return SwitchResult::Switched;
         }
 
-        let idle_context = percpu.switch_internals.idle_context();
-
-        // Stateful flag used to skip the idle process the first time it shows up.
-        // After that, this flag is set to `false` so the idle process can be
-        // picked up.
-        let mut skip_idle = true;
-
         let mut empty_queues = 0;
+        let mut tot_iters = 0;
 
         'priority: loop {
+            tot_iters += 1;
+
+            if tot_iters > 5000 {
+                break;
+            }
+
             i = (i + 1) % 40;
             let contexts = contexts_list.get(i).expect("i should be between [0, 39]!");
 
@@ -210,23 +210,28 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 if empty_queues >= 40 {
                     break;
                 }
+                continue;
             } else {
                 empty_queues = 0;
             }
 
-            if balance[i] > sched_prio_to_weight[20] {
-                balance[i] -= sched_prio_to_weight[20];
-            } else {
+            if balance[i] < sched_prio_to_weight[20] {
                 balance[i] += sched_prio_to_weight[i]; // 1024
                 continue;
             }
 
             let start_bound = match &bookmarks[i] {
-                Some(bookmark_lock) => Bound::Excluded(ContextRef(Arc::clone(bookmark_lock))),
+                Some(weak_bookmark) => match weak_bookmark.upgrade() {
+                    Some(bookmark_lock) => Bound::Excluded(ContextRef(bookmark_lock)),
+                    None => Bound::Unbounded,
+                },
                 None => Bound::Unbounded,
             };
             let end_bound = match &bookmarks[i] {
-                Some(bookmark_lock) => Bound::Excluded(ContextRef(Arc::clone(bookmark_lock))),
+                Some(weak_bookmark) => match weak_bookmark.upgrade() {
+                    Some(bookmark_lock) => Bound::Included(ContextRef(bookmark_lock)),
+                    None => Bound::Unbounded,
+                },
                 None => Bound::Unbounded,
             };
 
@@ -236,6 +241,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 .filter_map(ContextRef::upgrade)
             {
                 {
+                    if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
+                        continue;
+                    }
                     // Lock next context
                     // We are careful not to lock this context twice
                     let mut next_context_guard = unsafe { next_context_lock.write_arc() };
@@ -247,8 +255,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                         // Store locks for previous and next context and break out from loop
                         // for the switch
                         switch_context_opt = Some((prev_context_guard, next_context_guard));
-                        bookmarks[i] = Some(Arc::clone(&next_context_lock));
-                        percpu.bookmarks.replace(bookmarks);
+                        bookmarks[i] = Some(Arc::downgrade(&next_context_lock));
+                        balance[i] -= sched_prio_to_weight[20];
                         break 'priority;
                     }
                 }

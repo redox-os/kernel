@@ -16,7 +16,7 @@ use crate::{
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
-    sync::{RwLock, L2},
+    sync::{RwLock, L4},
     syscall::debug::SyscallDebugInfo,
 };
 
@@ -33,7 +33,7 @@ pub struct PercpuBlock {
     pub wants_tlb_shootdown: AtomicBool,
     pub balance: Cell<[usize; 40]>,
     pub last_queue: Cell<usize>,
-    pub bookmarks: RefCell<[Option<Arc<RwLock<L2, Context>>>; 40]>,
+    pub bookmarks: RefCell<[Option<Weak<RwLock<L4, Context>>>; 40]>,
 
     // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
     // first to avoid cache invalidation.
