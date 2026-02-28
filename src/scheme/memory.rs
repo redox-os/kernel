@@ -5,7 +5,7 @@ use rmm::PhysicalAddress;
 
 use crate::{
     context::{
-        file::InternalFlags,
+        file::{FileDescription, InternalFlags},
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
     },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
@@ -19,7 +19,7 @@ use crate::paging::entry::EntryFlags;
 use crate::syscall::{
     data::{Map, StatVfs},
     error::*,
-    flag::MapFlags,
+    flag::{CallFlags, MapFlags},
     usercopy::UserSliceWo,
 };
 
@@ -334,5 +334,33 @@ impl KernelScheme for MemoryScheme {
         dst.copy_exactly(&stat)?;
 
         Ok(())
+    }
+    fn kstdfscall(
+        &self,
+        id: usize,
+        _desc: Arc<spin::RwLock<FileDescription>>,
+        payload: UserSliceRw,
+        _flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        use syscall::flag::StdFsCallKind::{self, *};
+        let Some(raw_kind) = metadata.first().map(|v| *v as u8) else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+        let Some(kind) = StdFsCallKind::try_from_raw(raw_kind) else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+
+        match kind {
+            Fstatvfs => {
+                if payload.len() != core::mem::size_of::<StatVfs>() {
+                    return Err(Error::new(EINVAL));
+                }
+                self.kfstatvfs(id, UserSliceWo::new(payload.addr(), payload.len())?, token)
+                    .map(|_| 0)
+            }
+            _ => Err(Error::new(EOPNOTSUPP)),
+        }
     }
 }
