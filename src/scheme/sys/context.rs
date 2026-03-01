@@ -2,7 +2,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::fmt::Write;
+use core::{fmt::Write, iter::Iterator};
 
 use crate::{context, paging::PAGE_SIZE, sync::CleanLockToken, syscall::error::Result};
 
@@ -16,7 +16,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let mut contexts = context::contexts(token.token());
         let (contexts, mut token) = contexts.token_split();
-        for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
+        for context_ref in contexts.set.iter().flatten().filter_map(|r| r.upgrade()) {
             let context = context_ref.read(token.token());
 
             let mut stat_string = String::new();

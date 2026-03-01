@@ -3,7 +3,9 @@
 //! handling process states and synchronization.
 use core::{
     cell::{Cell, RefCell},
-    hint, mem,
+    hint,
+    iter::Iterator,
+    mem,
     ops::Bound,
     sync::atomic::Ordering,
 };
@@ -25,6 +27,14 @@ enum UpdateResult {
     CanSwitch,
     Skip,
 }
+
+// Copied directly from linux
+const sched_prio_to_weight: [usize; 40] = [
+    /* -20 */ 88761, 71755, 56483, 46273, 36291, /* -15 */ 29154, 23254, 18705, 14949,
+    11916, /* -10 */ 9548, 7620, 6100, 4904, 3906, /*  -5 */ 3121, 2501, 1991, 1586,
+    1277, /*   0 */ 1024, 820, 655, 526, 423, /*   5 */ 335, 272, 215, 172, 137,
+    /*  10 */ 110, 87, 70, 56, 45, /*  15 */ 36, 29, 23, 18, 15,
+];
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
@@ -162,7 +172,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     let mut switch_context_opt = None;
     {
-        let contexts = contexts(token.token());
+        let contexts_data = contexts(token.token());
+        let contexts_list = &contexts_data.set;
+        let mut bookmarks = percpu.bookmarks.borrow_mut();
+        let mut balance = percpu.balance.get();
+        let mut i = percpu.last_queue.get() % 40;
 
         // Lock the previous context.
         let prev_context_lock = crate::context::current();
@@ -177,54 +191,79 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             return SwitchResult::Switched;
         }
 
-        let idle_context = percpu.switch_internals.idle_context();
+        let mut empty_queues = 0;
+        let mut tot_iters = 0;
 
-        // Stateful flag used to skip the idle process the first time it shows up.
-        // After that, this flag is set to `false` so the idle process can be
-        // picked up.
-        let mut skip_idle = true;
+        'priority: loop {
+            tot_iters += 1;
 
-        // Attempt to locate the next context to switch to.
-        for next_context_lock in contexts
-            // Include all contexts with IDs greater than the current...
-            .range((
-                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
-                Bound::Unbounded,
-            ))
-            // ... and all contexts with IDs less than the current...
-            .chain(contexts.range((
-                Bound::Unbounded,
-                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
-            )))
-            .filter_map(ContextRef::upgrade)
-            // ... and the idle context...
-            .chain(Some(Arc::clone(&idle_context)))
-        // ... but not the current context (note the `Bound::Excluded`),
-        // which is already locked.
-        {
-            if Arc::ptr_eq(&next_context_lock, &idle_context) && skip_idle {
-                // Skip idle process the first time it shows up, but allow it
-                // to be picked up again the next time.
-                skip_idle = false;
+            if tot_iters > 5000 {
+                break;
+            }
+
+            i = (i + 1) % 40;
+            let contexts = contexts_list.get(i).expect("i should be between [0, 39]!");
+
+            if contexts.is_empty() {
+                empty_queues += 1;
+                balance[i] = 0;
+                if empty_queues >= 40 {
+                    break;
+                }
+                continue;
+            } else {
+                empty_queues = 0;
+            }
+
+            if balance[i] < sched_prio_to_weight[20] {
+                balance[i] += sched_prio_to_weight[i]; // 1024
                 continue;
             }
 
-            {
-                // Lock next context
-                // We are careful not to lock this context twice
-                let mut next_context_guard = unsafe { next_context_lock.write_arc() };
+            let start_bound = match &bookmarks[i] {
+                Some(weak_bookmark) => match weak_bookmark.upgrade() {
+                    Some(bookmark_lock) => Bound::Excluded(ContextRef(bookmark_lock)),
+                    None => Bound::Unbounded,
+                },
+                None => Bound::Unbounded,
+            };
+            let end_bound = match &bookmarks[i] {
+                Some(weak_bookmark) => match weak_bookmark.upgrade() {
+                    Some(bookmark_lock) => Bound::Included(ContextRef(bookmark_lock)),
+                    None => Bound::Unbounded,
+                },
+                None => Bound::Unbounded,
+            };
 
-                // Check if the context is runnable and can be switched to.
-                if let UpdateResult::CanSwitch =
-                    unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
+            for next_context_lock in contexts
+                .range((start_bound, Bound::Unbounded))
+                .chain(contexts.range((Bound::Unbounded, end_bound)))
+                .filter_map(ContextRef::upgrade)
+            {
                 {
-                    // Store locks for previous and next context and break out from loop
-                    // for the switch
-                    switch_context_opt = Some((prev_context_guard, next_context_guard));
-                    break;
+                    if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
+                        continue;
+                    }
+                    // Lock next context
+                    // We are careful not to lock this context twice
+                    let mut next_context_guard = unsafe { next_context_lock.write_arc() };
+
+                    // Check if the context is runnable and can be switched to.
+                    if let UpdateResult::CanSwitch =
+                        unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
+                    {
+                        // Store locks for previous and next context and break out from loop
+                        // for the switch
+                        switch_context_opt = Some((prev_context_guard, next_context_guard));
+                        bookmarks[i] = Some(Arc::downgrade(&next_context_lock));
+                        balance[i] -= sched_prio_to_weight[20];
+                        break 'priority;
+                    }
                 }
             }
         }
+        percpu.balance.set(balance);
+        percpu.last_queue.set(i);
     };
 
     // Update per-cpu times
