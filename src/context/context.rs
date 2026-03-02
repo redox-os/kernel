@@ -513,7 +513,7 @@ impl BorrowedHtBuf {
     }
     */
 
-    pub fn into_drop(mut self, token: &mut CleanLockToken) {
+    pub fn into_drop(self, token: &mut CleanLockToken) {
         ManuallyDrop::new(self).inner_drop(token);
     }
 

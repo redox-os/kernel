@@ -240,7 +240,7 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
 
 pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed: bool) {
     let offset = if allowed {
-        u16::try_from(size_of::<TaskStateSegment>()).unwrap()
+        u16::try_from(size_of::<TaskStateSegment>()).expect("guaranteed to fit in u16")
     } else {
         0xFFFF
     };
