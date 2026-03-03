@@ -2,8 +2,8 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{collections::BTreeSet, sync::Arc};
-use core::num::NonZeroUsize;
+use alloc::{collections::BTreeSet, string::String, sync::Arc};
+use core::{borrow::BorrowMut, num::NonZeroUsize};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -121,6 +121,36 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
+}
+
+pub fn set_priority(
+    context_lock: &Arc<RwLock<L4, Context>>,
+    new_prio: usize,
+    mut global_token: LockToken<'_, L0>,
+    local_token: &mut CleanLockToken,
+) -> Result<(), String> {
+    if new_prio >= 40 {
+        return Err("Priority out of bounds".into());
+    }
+
+    let mut contexts = contexts_mut(global_token.token());
+    let old_prio = context_lock.read(local_token.token()).prio;
+
+    if old_prio == new_prio {
+        return Ok(());
+    }
+
+    let was_runnable = contexts.set[old_prio].remove(&ContextRef(Arc::clone(context_lock)));
+
+    {
+        let mut guard = context_lock.write(local_token.token());
+        guard.prio = new_prio;
+    }
+
+    if was_runnable {
+        contexts.set[new_prio].insert(ContextRef(Arc::clone(context_lock)));
+    }
+    Ok(())
 }
 
 pub fn current() -> Arc<ContextLock> {
