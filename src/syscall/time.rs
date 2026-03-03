@@ -43,10 +43,10 @@ pub fn nanosleep(
     {
         let mut context = current_context.write(token.token());
 
-        if let Some((tctl, pctl, _)) = context.sigcontrol() {
-            if tctl.currently_pending_unblocked(pctl) != 0 {
-                return Err(Error::new(EINTR));
-            }
+        if let Some((tctl, pctl, _)) = context.sigcontrol()
+            && tctl.currently_pending_unblocked(pctl) != 0
+        {
+            return Err(Error::new(EINTR));
         }
 
         context.wake = Some(end);

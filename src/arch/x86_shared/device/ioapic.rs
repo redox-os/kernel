@@ -29,13 +29,13 @@ impl IoApicRegs {
         unsafe { self.pointer.offset(4) }
     }
     fn write_ioregsel(&mut self, value: u32) {
-        unsafe { ptr::write_volatile::<u32>(self.ioregsel() as *mut u32, value) }
+        unsafe { ptr::write_volatile::<u32>(self.ioregsel().cast_mut(), value) }
     }
     fn read_iowin(&self) -> u32 {
         unsafe { ptr::read_volatile::<u32>(self.iowin()) }
     }
     fn write_iowin(&mut self, value: u32) {
-        unsafe { ptr::write_volatile::<u32>(self.iowin() as *mut u32, value) }
+        unsafe { ptr::write_volatile::<u32>(self.iowin().cast_mut(), value) }
     }
     fn read_reg(&mut self, reg: u8) -> u32 {
         self.write_ioregsel(reg.into());

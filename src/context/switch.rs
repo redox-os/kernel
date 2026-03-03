@@ -55,13 +55,12 @@ unsafe fn update_runnable(
     }
 
     // If context is soft-blocked and has a wake-up time, check if it should wake up.
-    if context.status.is_soft_blocked() {
-        if let Some(wake) = context.wake {
-            if switch_time >= wake {
-                context.wake = None;
-                context.unblock_no_ipi();
-            }
-        }
+    if context.status.is_soft_blocked()
+        && let Some(wake) = context.wake
+        && switch_time >= wake
+    {
+        context.wake = None;
+        context.unblock_no_ipi();
     }
 
     // If the context is runnable, indicate it can be switched to.

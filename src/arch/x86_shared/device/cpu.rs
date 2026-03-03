@@ -229,11 +229,11 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
         };
     }
 
-    if let Some(info) = cpuid.get_advanced_power_mgmt_info() {
-        if info.has_invariant_tsc() {
-            write!(w, " constant_tsc")?
-        };
-    }
+    if let Some(info) = cpuid.get_advanced_power_mgmt_info()
+        && info.has_invariant_tsc()
+    {
+        write!(w, " constant_tsc")?
+    };
 
     if let Some(info) = cpuid.get_extended_feature_info() {
         if info.has_fsgsbase() {

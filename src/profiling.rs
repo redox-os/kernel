@@ -219,7 +219,7 @@ pub unsafe fn init() {
     let profiling = RingBuffer::create();
 
     BUFS[percpu.cpu_id.get() as usize].store(
-        profiling as *const _ as *mut _,
+        (profiling as *const RingBuffer).cast_mut(),
         core::sync::atomic::Ordering::SeqCst,
     );
     unsafe {

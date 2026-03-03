@@ -485,10 +485,8 @@ impl KernelScheme for PipeScheme {
 
             if !pipe.writer_is_alive.load(Ordering::SeqCst) {
                 return Ok(0);
-            } else {
-                if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
-                    return Err(Error::new(EINTR));
-                }
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
+                return Err(Error::new(EINTR));
             }
         }
     }

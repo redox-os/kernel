@@ -146,10 +146,10 @@ pub fn futex(
                     context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
                         tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
                     });
-                    if let Some((tctl, pctl, _)) = context.sigcontrol() {
-                        if tctl.currently_pending_unblocked(pctl) != 0 {
-                            return Err(Error::new(EINTR));
-                        }
+                    if let Some((tctl, pctl, _)) = context.sigcontrol()
+                        && tctl.currently_pending_unblocked(pctl) != 0
+                    {
+                        return Err(Error::new(EINTR));
                     }
 
                     context.block("futex");

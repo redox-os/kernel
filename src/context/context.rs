@@ -238,11 +238,11 @@ impl Context {
     pub fn unblock(&mut self) -> bool {
         if self.unblock_no_ipi() {
             // TODO: Only send IPI if currently running?
-            if let Some(cpu_id) = self.cpu_id {
-                if cpu_id != crate::cpu_id() {
-                    // Send IPI if not on current CPU
-                    ipi(IpiKind::Wakeup, IpiTarget::Other);
-                }
+            if let Some(cpu_id) = self.cpu_id
+                && cpu_id != crate::cpu_id()
+            {
+                // Send IPI if not on current CPU
+                ipi(IpiKind::Wakeup, IpiTarget::Other);
             }
 
             true

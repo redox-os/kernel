@@ -1329,10 +1329,10 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
         self.release_inner()?;
-        if let Some(addrsp) = self.addrsp.take() {
-            if let Some(addrsp) = Arc::into_inner(addrsp) {
-                addrsp.into_drop(token);
-            }
+        if let Some(addrsp) = self.addrsp.take()
+            && let Some(addrsp) = Arc::into_inner(addrsp)
+        {
+            addrsp.into_drop(token);
         }
         if let Some(src) = self.head.src.take() {
             src.into_drop(token);

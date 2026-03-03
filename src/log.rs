@@ -53,10 +53,8 @@ impl<'a> Writer<'a> {
     }
 
     pub fn write(&mut self, buf: &[u8], preserve: bool) {
-        if preserve {
-            if let Some(ref mut log) = *self.log {
-                log.write(buf);
-            }
+        if preserve && let Some(ref mut log) = *self.log {
+            log.write(buf);
         }
 
         if let Some(display) = &mut *self.display {
