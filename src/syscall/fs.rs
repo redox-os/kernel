@@ -635,7 +635,7 @@ pub fn mremap(
         let base = addr_space.acquire_write().mmap(
             &addr_space,
             requested_dst_base,
-            NonZeroUsize::new(1).unwrap(),
+            NonZeroUsize::new(1).expect("value specified is not zero"),
             map_flags,
             &mut Vec::new(),
             |page, page_flags, mapper, flusher| {
@@ -687,7 +687,7 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken
             .checked_add_unsigned(guard.offset)
             .ok_or(Error::new(EOVERFLOW))?,
         SEEK_END => pos
-            .checked_add_unsigned(fsize.unwrap())
+            .checked_add_unsigned(fsize.expect("fsize not None as whence is SEEK_END"))
             .ok_or(Error::new(EOVERFLOW))?,
         _ => return Err(Error::new(EINVAL)),
     };
