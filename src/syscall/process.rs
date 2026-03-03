@@ -1,5 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
-use core::{mem, num::NonZeroUsize};
+use core::{iter::Iterator, mem, num::NonZeroUsize};
 
 use rmm::Arch;
 use spin::RwLock;
@@ -8,12 +8,13 @@ use syscall::data::GlobalSchemes;
 use crate::{
     context::{
         context::SyscallFrame,
+        contexts,
         file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
     event,
-    sync::CleanLockToken,
+    sync::{CleanLockToken, LockToken},
     syscall::flag::{EventFlags, O_CREAT, O_RDWR},
 };
 
@@ -271,4 +272,55 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
         )
         .expect("failed to insert fd to current context")
         .get()
+}
+
+pub unsafe fn setpriority(which: usize, who: usize, prio: usize) -> Result<usize> {
+    if prio >= 40 {
+        return Err(Error::new(EINVAL));
+    }
+
+    if which != 0 {
+        return Err(Error::new(EINVAL)); // TODO: Support for PRIO_PGRP and PRIO_USER
+    }
+
+    let mut token = unsafe { CleanLockToken::new() };
+    let mut local_token = unsafe { CleanLockToken::new() };
+
+    let context_lock = {
+        if who == 0 {
+            context::current()
+        } else {
+            let contexts_guard = contexts(token.token());
+
+            let found = contexts_guard
+                .set
+                .iter()
+                .flatten()
+                .filter_map(|r| r.upgrade())
+                .find(|c| {
+                    let guard = c.read(local_token.token());
+                    guard.pid == who
+                });
+
+            match found {
+                Some(c) => c,
+                None => return Err(Error::new(ESRCH)),
+            }
+        }
+    };
+
+    {
+        let current_lock = context::current();
+        let current_euid = context::current().read(local_token.token()).euid;
+        let target_euid = context_lock.read(local_token.token()).euid;
+
+        if current_euid != 0 && current_euid != target_euid {
+            return Err(Error::new(EPERM));
+        }
+    }
+
+    match context::set_priority(&context_lock, prio, token.token(), &mut local_token) {
+        Ok(_) => Ok(0),
+        Err(_) => Err(Error::new(ESRCH)),
+    }
 }
