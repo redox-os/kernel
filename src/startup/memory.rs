@@ -95,8 +95,10 @@ impl MemoryMap {
         } else {
             align_up(end)
         };
-        if start < end {
-            self.entries[self.size] = MemoryEntry { start, end, kind };
+        if start < end
+            && let Some(entry) = self.entries.get_mut(self.size)
+        {
+            *entry = MemoryEntry { start, end, kind };
             self.size += 1;
         }
     }
