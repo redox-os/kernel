@@ -449,10 +449,10 @@ impl KernelScheme for ProcScheme {
 
                     Ok(context.set_addr_space(Some(new)))
                 })?;
-                if let Some(old_ctx) = old_ctx {
-                    if let Some(addrspace) = Arc::into_inner(old_ctx) {
-                        addrspace.into_drop(token);
-                    }
+                if let Some(old_ctx) = old_ctx
+                    && let Some(addrspace) = Arc::into_inner(old_ctx)
+                {
+                    addrspace.into_drop(token);
                 }
                 let _ = ptrace::send_event(
                     crate::syscall::ptrace_event!(PTRACE_EVENT_ADDRSPACE_SWITCH, 0),

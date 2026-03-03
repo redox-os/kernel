@@ -49,9 +49,10 @@ module_inception = "allow" # Used for context::context
 # to allocate. If you implement default, it can be allocated without evidence using the
 # ..Default::default() syntax. Not fun in kernel space
 new_without_default = "allow"
-not_unsafe_ptr_arg_deref = "warn" # TODO: address occurrences and then deny
+not_unsafe_ptr_arg_deref = "deny"
 or_fun_call = "allow" # Used to make it nicer to return errors, for example, .ok_or(Error::new(ESRCH))
 precedence = "deny"
+ptr_cast_constness = "deny"
 too_many_arguments = "allow" # This is needed in some cases, like for syscall
 # Avoid panicking in the kernel without information about the panic. Use expect
 # TODO: address occurrences and then deny
