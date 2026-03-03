@@ -324,3 +324,32 @@ pub unsafe fn setpriority(which: usize, who: usize, prio: usize) -> Result<usize
         Err(_) => Err(Error::new(ESRCH)),
     }
 }
+
+pub fn getpriority(which: usize, who: usize) -> Result<usize> {
+    let mut token = unsafe { CleanLockToken::new() };
+    let mut local_token = unsafe { CleanLockToken::new() };
+
+    let context_lock = {
+        if who == 0 {
+            context::current()
+        } else {
+            let contexts_guard = contexts(token.token());
+
+            let found = contexts_guard
+                .set
+                .iter()
+                .flatten()
+                .filter_map(|r| r.upgrade())
+                .find(|c| {
+                    let guard = c.read(local_token.token());
+                    guard.pid == who
+                });
+
+            match found {
+                Some(c) => c,
+                None => return Err(Error::new(ESRCH)),
+            }
+        }
+    };
+    Ok(context_lock.read(local_token.token()).prio)
+}

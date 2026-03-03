@@ -239,7 +239,7 @@ pub fn syscall(
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
             SYS_MREMAP => mremap(b, c, d, e, f, token),
             SYS_SETPRIORITY => unsafe { process::setpriority(b, c, d) },
-
+            SYS_GETPRIORITY => process::getpriority(b, c),
             _ => Err(Error::new(ENOSYS)),
         }
     }
