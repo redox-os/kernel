@@ -280,12 +280,12 @@ unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: Mem
                 *area_i -= 1; // delete the original memory chunk
                 areas[other_i] = areas[*area_i];
             } else {
-                other_i += 1;
+                other_i = other_i.saturating_add(1);
             }
         }
 
         areas[*area_i].base = PhysicalAddress::new(area.start);
-        areas[*area_i].size = area.end - area.start;
+        areas[*area_i].size = area.end.saturating_sub(area.start);
         *area_i += 1;
     }
 }
@@ -327,7 +327,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
 
         let kernel_area = (*MEMORY_MAP.get()).kernel().unwrap();
         let kernel_base = kernel_area.start;
-        let kernel_size = kernel_area.end - kernel_area.start;
+        let kernel_size = kernel_area.end.saturating_sub(kernel_area.start);
         // Map kernel at KERNEL_OFFSET and identity map too
         for i in 0..kernel_size / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * PAGE_SIZE);
@@ -347,7 +347,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
 
         for area in (*MEMORY_MAP.get()).identity_mapped() {
             let base = area.start;
-            let size = area.end - area.start;
+            let size = area.end.saturating_sub(area.start);
             for i in 0..size / PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
@@ -362,7 +362,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         //map dev mem
         for area in (*MEMORY_MAP.get()).devices() {
             let base = area.start;
-            let size = area.end - area.start;
+            let size = area.end.saturating_sub(area.start);
             for i in 0..size / PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
@@ -438,11 +438,11 @@ pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Opti
         let areas = crate::memory::areas();
 
         // First, calculate how much memory we have
-        let mut size = 0;
+        let mut size = 0_usize;
         for area in areas.iter() {
             if area.size > 0 {
                 debug!("{:X?}", area);
-                size += area.size;
+                size = size.saturating_add(area.size);
             }
         }
 
