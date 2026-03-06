@@ -133,11 +133,7 @@ pub enum SwitchResult {
     AllContextsIdle,
 }
 
-/// Selects and switches to the next context using a round-robin scheduler.
-///
-/// This function performs the context switch, checking each context in a loop for eligibility
-/// until it finds a context ready to run. If no other context is runnable, it returns to the
-/// idle context.
+/// Switches to the next context using the scheduler function, select_next_context.
 ///
 /// # Warning
 /// This is not memory-unsafe to call. But do NOT call this while holding locks!
@@ -168,100 +164,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     let cpu_id = crate::cpu_id();
 
-    let mut switch_context_opt = None;
-    {
-        let contexts_data = contexts(token.token());
-        let contexts_list = &contexts_data.set;
-        let mut bookmarks = percpu.bookmarks.borrow_mut();
-        let mut balance = percpu.balance.get();
-        let mut i = percpu.last_queue.get() % 40;
-
-        // Lock the previous context.
-        let prev_context_lock = crate::context::current();
-        // We are careful not to lock this context twice
-        let prev_context_guard = unsafe { prev_context_lock.write_arc() };
-
-        if !prev_context_guard.is_preemptable() {
-            // Unset global lock
-            arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-
-            // Pretend to have finished switching, so CPU is not idled
-            return SwitchResult::Switched;
-        }
-
-        let mut empty_queues = 0;
-        let mut tot_iters = 0;
-
-        'priority: loop {
-            tot_iters += 1;
-
-            if tot_iters > 5000 {
-                break;
-            }
-
-            i = (i + 1) % 40;
-            let contexts = contexts_list.get(i).expect("i should be between [0, 39]!");
-
-            if contexts.is_empty() {
-                empty_queues += 1;
-                balance[i] = 0;
-                if empty_queues >= 40 {
-                    break;
-                }
-                continue;
-            } else {
-                empty_queues = 0;
-            }
-
-            if balance[i] < sched_prio_to_weight[20] {
-                balance[i] += sched_prio_to_weight[i];
-                continue;
-            }
-
-            let start_bound = match &bookmarks[i] {
-                Some(weak_bookmark) => match weak_bookmark.upgrade() {
-                    Some(bookmark_lock) => Bound::Excluded(ContextRef(bookmark_lock)),
-                    None => Bound::Unbounded,
-                },
-                None => Bound::Unbounded,
-            };
-            let end_bound = match &bookmarks[i] {
-                Some(weak_bookmark) => match weak_bookmark.upgrade() {
-                    Some(bookmark_lock) => Bound::Included(ContextRef(bookmark_lock)),
-                    None => Bound::Unbounded,
-                },
-                None => Bound::Unbounded,
-            };
-
-            for next_context_lock in contexts
-                .range((start_bound, Bound::Unbounded))
-                .chain(contexts.range((Bound::Unbounded, end_bound)))
-                .filter_map(ContextRef::upgrade)
-            {
-                {
-                    if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
-                        continue;
-                    }
-                    // Lock next context
-                    // We are careful not to lock this context twice
-                    let mut next_context_guard = unsafe { next_context_lock.write_arc() };
-
-                    // Check if the context is runnable and can be switched to.
-                    if let UpdateResult::CanSwitch =
-                        unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
-                    {
-                        // Store locks for previous and next context and break out from loop
-                        // for the switch
-                        switch_context_opt = Some((prev_context_guard, next_context_guard));
-                        bookmarks[i] = Some(Arc::downgrade(&next_context_lock));
-                        balance[i] -= sched_prio_to_weight[20];
-                        break 'priority;
-                    }
-                }
-            }
-        }
-        percpu.balance.set(balance);
-        percpu.last_queue.set(i);
+    let switch_context_opt = match select_next_context(token, percpu, cpu_id, switch_time) {
+        Ok(opt) => opt,
+        Err(early_ret) => return early_ret,
     };
 
     // Update per-cpu times
@@ -364,6 +269,124 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             SwitchResult::AllContextsIdle
         }
     }
+}
+
+/// This is the scheduler function which currently utilises Deficit Weighted Round Robin Scheduler
+fn select_next_context(
+    token: &mut CleanLockToken,
+    percpu: &PercpuBlock,
+    cpu_id: LogicalCpuId,
+    switch_time: u128,
+) -> Result<Option<(ArcContextLockWriteGuard, ArcContextLockWriteGuard)>, SwitchResult> {
+    let contexts_data = contexts(token.token());
+    let contexts_list = &contexts_data.set;
+    let mut bookmarks = percpu.bookmarks.borrow_mut();
+    let mut balance = percpu.balance.get();
+    let mut i = percpu.last_queue.get() % 40;
+
+    // Lock the previous context.
+    let prev_context_lock = crate::context::current();
+    // We are careful not to lock this context twice
+    let mut prev_context_guard = unsafe { prev_context_lock.write_arc() };
+
+    if !prev_context_guard.is_preemptable() {
+        // Unset global lock
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+
+        // Pretend to have finished switching, so CPU is not idled
+        return Err(SwitchResult::Switched);
+    }
+
+    let mut empty_queues = 0;
+    let mut tot_iters = 0;
+    let mut next_context_guard_opt = None;
+
+    'priority: loop {
+        tot_iters += 1;
+
+        if tot_iters > 5000 {
+            break;
+        }
+
+        i = (i + 1) % 40;
+        let contexts = contexts_list.get(i).expect("i should be between [0, 39]!");
+
+        if contexts.is_empty() {
+            empty_queues += 1;
+            balance[i] = 0;
+            if empty_queues >= 40 {
+                break;
+            }
+            continue;
+        } else {
+            empty_queues = 0;
+        }
+
+        if balance[i] < sched_prio_to_weight[20] {
+            balance[i] += sched_prio_to_weight[i];
+            continue;
+        }
+
+        let start_bound = match &bookmarks[i] {
+            Some(weak_bookmark) => match weak_bookmark.upgrade() {
+                Some(bookmark_lock) => Bound::Excluded(ContextRef(bookmark_lock)),
+                None => Bound::Unbounded,
+            },
+            None => Bound::Unbounded,
+        };
+        let end_bound = match &bookmarks[i] {
+            Some(weak_bookmark) => match weak_bookmark.upgrade() {
+                Some(bookmark_lock) => Bound::Included(ContextRef(bookmark_lock)),
+                None => Bound::Unbounded,
+            },
+            None => Bound::Unbounded,
+        };
+
+        for next_context_lock in contexts
+            .range((start_bound, Bound::Unbounded))
+            .chain(contexts.range((Bound::Unbounded, end_bound)))
+            .filter_map(ContextRef::upgrade)
+        {
+            {
+                if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
+                    continue;
+                }
+                // Lock next context
+                // We are careful not to lock this context twice
+                let mut next_context_guard = unsafe { next_context_lock.write_arc() };
+
+                // Check if the context is runnable and can be switched to.
+                if let UpdateResult::CanSwitch =
+                    unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
+                {
+                    // Store locks for previous and next context and break out from loop
+                    // for the switch
+                    next_context_guard_opt = Some(next_context_guard);
+                    bookmarks[i] = Some(Arc::downgrade(&next_context_lock));
+                    balance[i] -= sched_prio_to_weight[20];
+                    break 'priority;
+                }
+            }
+        }
+    }
+    percpu.balance.set(balance);
+    percpu.last_queue.set(i);
+
+    if let Some(next_context_guard) = next_context_guard_opt {
+        return Ok(Some((prev_context_guard, next_context_guard)));
+    }
+
+    if let UpdateResult::CanSwitch =
+        unsafe { update_runnable(&mut prev_context_guard, cpu_id, switch_time) }
+    {
+        // Unset global lock
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+
+        // Pretend to have finished switching, so CPU is not idled
+        return Err(SwitchResult::Switched);
+    }
+
+    Ok(None)
 }
 
 /// Holds per-CPU state necessary for context switching.
