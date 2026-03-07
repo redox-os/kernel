@@ -1,6 +1,7 @@
-use alloc::{sync::Arc, vec::Vec};
+use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap, HashSet};
+use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use smallvec::SmallVec;
 use spin::Once;
 use syscall::data::GlobalSchemes;
 
@@ -193,70 +194,79 @@ pub fn unregister_file(scheme: SchemeId, number: usize, token: &mut CleanLockTok
 //
 // }
 
+const MAX_EVENT: usize = 8;
+
+#[must_use]
 fn trigger_inner(
     scheme: SchemeId,
     number: usize,
     flags: EventFlags,
-    todo: &mut Vec<EventQueueId>,
+    todo: &mut SmallVec<[EventQueueId; MAX_EVENT]>,
+    offset: &mut usize,
     token: &mut CleanLockToken,
-) {
-    let mut matching_keys = Vec::new();
+) -> bool {
+    let mut matching_keys: SmallVec<[(QueueKey, EventFlags); MAX_EVENT]> = SmallVec::new();
+    let mut full = false;
+
     {
         let registry = registry(token);
         if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
-            for (queue_key, &queue_flags) in queue_list.iter() {
+            for (queue_key, &queue_flags) in queue_list.iter().skip(*offset) {
                 let common_flags = flags & queue_flags;
                 if !common_flags.is_empty() {
+                    if matching_keys.len() == matching_keys.inline_size() {
+                        full = true;
+                        break;
+                    }
                     matching_keys.push((queue_key.clone(), common_flags));
                 }
+                *offset += 1;
             }
         }
     }
 
-    let mut queue_to_send: Vec<(Event, Arc<EventQueue>)> = Vec::new();
+    while let Some((queue_key, common_flags)) = matching_keys.pop() {
+        let Some(queue) = queues(token.token()).get(&queue_key.queue).cloned() else {
+            continue;
+        };
 
-    for (queue_key, common_flags) in matching_keys {
-        let queue_opt = queues(token.token()).get(&queue_key.queue).cloned();
+        let event = Event {
+            id: queue_key.id,
+            flags: common_flags,
+            data: queue_key.data,
+        };
 
-        if let Some(queue) = queue_opt {
-            queue_to_send.push((
-                Event {
-                    id: queue_key.id,
-                    flags: common_flags,
-                    data: queue_key.data,
-                },
-                queue,
-            ));
-            todo.push(queue_key.queue);
-        }
-    }
-
-    for (event, queue) in queue_to_send {
+        todo.push(queue_key.queue);
         queue.queue.send(event, token);
         if let Some(queue) = Arc::into_inner(queue) {
             queue.into_drop(token);
         }
     }
+
+    full
 }
 
 pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags, token: &mut CleanLockToken) {
+    let mut todo = SmallVec::<[EventQueueId; MAX_EVENT]>::new();
+    let mut done = SmallVec::<[EventQueueId; MAX_EVENT]>::new();
+
     // First trigger with the original file
-    let mut todo = Vec::new();
-    trigger_inner(scheme, number, flags, &mut todo, token);
+    let mut offset = 0;
+    while trigger_inner(scheme, number, flags, &mut todo, &mut offset, token) {}
 
     // Handle triggers on queues
-    //TODO: can this be done with limited allocations?
-    let mut done = HashSet::new();
     while let Some(queue_id) = todo.pop() {
-        if !done.contains(&queue_id) {
-            trigger_inner(
+        if let Err(insert_idx) = done.binary_search(&queue_id) {
+            done.insert(insert_idx, queue_id);
+            let mut offset = 0;
+            while trigger_inner(
                 GlobalSchemes::Event.scheme_id(),
                 queue_id.into(),
                 EventFlags::EVENT_READ,
                 &mut todo,
+                &mut offset,
                 token,
-            );
-            done.insert(queue_id);
+            ) {}
         }
     }
 }
