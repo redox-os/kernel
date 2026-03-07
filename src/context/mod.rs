@@ -2,8 +2,8 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{collections::BTreeSet, sync::Arc};
-use core::num::NonZeroUsize;
+use alloc::{collections::BTreeSet, string::String, sync::Arc};
+use core::{borrow::BorrowMut, num::NonZeroUsize};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -69,15 +69,29 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: RwLock<L1, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
+static CONTEXTS: RwLock<L1, ContextData> = RwLock::new(ContextData::new());
+
+// The new struct that stores data related to all the contexts
+pub struct ContextData {
+    pub set: [BTreeSet<ContextRef>; 40],
+}
+
+impl ContextData {
+    pub const fn new() -> Self {
+        const EMPTY_SET: BTreeSet<ContextRef> = BTreeSet::new();
+        Self {
+            set: [EMPTY_SET; 40],
+        }
+    }
+}
 
 /// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
+pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, ContextData> {
     CONTEXTS.read(token)
 }
 
 /// Get the global schemes list, mutable
-pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
+pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, ContextData> {
     CONTEXTS.write(token)
 }
 
@@ -98,7 +112,7 @@ pub fn init(token: &mut CleanLockToken) {
 
     let context_lock = Arc::new(ContextLock::new(context));
 
-    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    contexts_mut(token.token()).set[20].insert(ContextRef(Arc::clone(&context_lock)));
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -107,6 +121,36 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
+}
+
+pub fn set_priority(
+    context_lock: &Arc<RwLock<L4, Context>>,
+    new_prio: usize,
+    mut global_token: LockToken<'_, L0>,
+    local_token: &mut CleanLockToken,
+) -> Result<(), String> {
+    if new_prio >= 40 {
+        return Err("Priority out of bounds".into());
+    }
+
+    let mut contexts = contexts_mut(global_token.token());
+    let old_prio = context_lock.read(local_token.token()).prio;
+
+    if old_prio == new_prio {
+        return Ok(());
+    }
+
+    let was_runnable = contexts.set[old_prio].remove(&ContextRef(Arc::clone(context_lock)));
+
+    {
+        let mut guard = context_lock.write(local_token.token());
+        guard.prio = new_prio;
+    }
+
+    if was_runnable {
+        contexts.set[new_prio].insert(ContextRef(Arc::clone(context_lock)));
+    }
+    Ok(())
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -160,7 +204,7 @@ pub fn spawn(
 
     let context_lock = Arc::new(ContextLock::new(Context::new(owner_proc_id)?));
 
-    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    contexts_mut(token.token()).set[20].insert(ContextRef(Arc::clone(&context_lock)));
 
     {
         let mut context = context_lock.write(token.token());
