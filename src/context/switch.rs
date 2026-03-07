@@ -297,8 +297,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 prev_context.syscall_debug_info = percpu
                     .syscall_debug_info
                     .replace(next_context.syscall_debug_info);
-                prev_context.syscall_debug_info.on_switch_from();
-                next_context.syscall_debug_info.on_switch_to();
+                prev_context.syscall_debug_info.on_switch_from(token);
+                next_context.syscall_debug_info.on_switch_to(token);
             }
 
             percpu

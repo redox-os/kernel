@@ -211,13 +211,13 @@ impl SyscallDebugInfo {
     }
 
     #[cfg(feature = "syscall_debug")]
-    pub fn on_switch_from(&mut self) {
-        let now = crate::time::monotonic();
+    pub fn on_switch_from(&mut self, token: &mut CleanLockToken) {
+        let now = crate::time::monotonic(token);
         self.accumulated_time += now - core::mem::replace(&mut self.this_switch_time, now);
     }
     #[cfg(feature = "syscall_debug")]
-    pub fn on_switch_to(&mut self) {
-        self.this_switch_time = crate::time::monotonic();
+    pub fn on_switch_to(&mut self, token: &mut CleanLockToken) {
+        self.this_switch_time = crate::time::monotonic(token);
     }
 }
 
