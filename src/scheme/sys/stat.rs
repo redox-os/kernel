@@ -1,4 +1,7 @@
+use core::fmt::Write as _;
+
 use crate::{
+    arch::device::cpu,
     context::{contexts, ContextRef, Status},
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
     percpu::get_all_stats,
@@ -45,7 +48,7 @@ fn get_cpu_stats() -> String {
         total_kernel += stat.kernel;
         total_idle += stat.idle;
         total_irq += stat.irq;
-        cpu_data += &format!("{}\n", stat.to_string(id));
+        let _ = write!(&mut cpu_data, "cpu{} {}\n", id.get(), stat);
     }
     format!(
         "cpu  {total_user} {total_nice} {total_kernel} {total_idle} {total_irq}\n\
@@ -57,15 +60,16 @@ fn get_cpu_stats() -> String {
 fn get_irq_stats() -> String {
     let irq = irq_counts();
     let mut irq_total = 0;
-    let per_irq = irq
-        .iter()
-        .map(|c| {
-            irq_total += *c;
-            format!("{c}")
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("IRQs {irq_total} {per_irq}")
+    let mut output = String::with_capacity(64);
+    for &c in irq.iter() {
+        irq_total += c;
+    }
+    let _ = write!(output, "IRQs {}", irq_total);
+    for &c in irq.iter() {
+        let _ = write!(output, " {}", c);
+    }
+
+    output
 }
 
 /// Format contexts stats.

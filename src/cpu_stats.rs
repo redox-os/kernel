@@ -1,5 +1,8 @@
 use alloc::{string::String, vec::Vec};
-use core::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use core::{
+    fmt,
+    sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
+};
 
 use crate::cpu_set::LogicalCpuId;
 
@@ -107,16 +110,12 @@ impl CpuStats {
     }
 }
 
-impl CpuStatsData {
-    pub fn to_string(&self, cpu_id: LogicalCpuId) -> String {
-        format!(
-            "cpu{} {} {} {} {} {}",
-            cpu_id.get(),
-            self.user,
-            self.nice,
-            self.kernel,
-            self.idle,
-            self.irq,
+impl fmt::Display for CpuStatsData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} {} {} {} {}",
+            self.user, self.nice, self.kernel, self.idle, self.irq,
         )
     }
 }
