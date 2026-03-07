@@ -329,7 +329,7 @@ impl AddrSpaceWrapper {
         requested_dst_base: Option<Page>,
         new_page_count: usize,
         new_flags: MapFlags,
-        notify_files: &mut Vec<UnmapResult>,
+        mut notify_files_out: Option<&mut Vec<UnmapResult>>,
     ) -> Result<Page> {
         let dst_lock = self;
         let mut dst = dst_lock.acquire_write();
@@ -360,13 +360,16 @@ impl AddrSpaceWrapper {
             }
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED) => {
                 let unpin = false;
-                notify_files.append(&mut AddrSpace::munmap_inner(
+                let notify_files = AddrSpace::munmap_inner(
                     &mut dst.grants,
                     &mut dst.table.utable,
                     &mut dst_flusher,
                     PageSpan::new(base, new_page_count),
                     unpin,
-                )?);
+                )?;
+                if let Some(notify_files_out) = notify_files_out.as_mut() {
+                    notify_files_out.extend(notify_files);
+                }
 
                 base
             }
@@ -401,7 +404,7 @@ impl AddrSpaceWrapper {
 
         if new_page_count < src_span.count {
             let unpin = false;
-            notify_files.append(&mut AddrSpace::munmap_inner(
+            let notify_files: Vec<UnmapResult> = AddrSpace::munmap_inner(
                 src_grants,
                 src_mapper,
                 src_flusher,
@@ -410,7 +413,10 @@ impl AddrSpaceWrapper {
                     src_span.count - new_page_count,
                 ),
                 unpin,
-            )?);
+            )?;
+            if let Some(notify_files_out) = notify_files_out.as_mut() {
+                notify_files_out.extend(notify_files);
+            }
         }
 
         let mut remaining_src_span =
@@ -662,7 +668,7 @@ impl AddrSpace {
         flags: MapFlags,
         map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut Flusher) -> Result<Grant>,
     ) -> Result<Page> {
-        self.mmap(dst_lock, None, page_count, flags, &mut Vec::new(), map)
+        self.mmap(dst_lock, None, page_count, flags, None, map)
     }
     pub fn mmap(
         &mut self,
@@ -670,7 +676,7 @@ impl AddrSpace {
         requested_base_opt: Option<Page>,
         page_count: NonZeroUsize,
         flags: MapFlags,
-        notify_files_out: &mut Vec<UnmapResult>,
+        notify_files_out: Option<&mut Vec<UnmapResult>>,
         map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut Flusher) -> Result<Grant>,
     ) -> Result<Page> {
         debug_assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
@@ -695,7 +701,9 @@ impl AddrSpace {
                         requested_span,
                         unpin,
                     )?;
-                    notify_files_out.append(&mut notify_files);
+                    if let Some(notify_files_out) = notify_files_out {
+                        notify_files_out.append(&mut notify_files);
+                    }
 
                     requested_span
                 } else {

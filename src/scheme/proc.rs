@@ -525,7 +525,7 @@ impl KernelScheme for ProcScheme {
                         requested_dst_base,
                         src_page_count.get(),
                         map.flags,
-                        &mut notify_files,
+                        Some(&mut notify_files),
                     )?
                 } else {
                     let mut dst_addrsp_guard = dst_addr_space.acquire_write();
@@ -534,7 +534,7 @@ impl KernelScheme for ProcScheme {
                         requested_dst_base,
                         src_page_count,
                         map.flags,
-                        &mut notify_files,
+                        Some(&mut notify_files),
                         |dst_page, _, dst_mapper, flusher| {
                             Grant::borrow(
                                 Arc::clone(addrspace),
@@ -574,7 +574,7 @@ impl KernelScheme for ProcScheme {
                     None,
                     NonZeroUsize::new(1).unwrap(),
                     MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-                    &mut Vec::new(),
+                    None,
                     |page, flags, mapper, flusher| {
                         Grant::allocated_shared_one_page(
                             frame.get(),

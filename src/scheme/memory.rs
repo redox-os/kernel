@@ -98,7 +98,7 @@ impl MemoryScheme {
             (map.address != 0 || fixed).then_some(span.base),
             page_count,
             map.flags,
-            &mut notify_files,
+            Some(&mut notify_files),
             |dst_page, flags, mapper, flusher| {
                 let span = PageSpan::new(dst_page, page_count.get());
                 if is_phys_contiguous {
