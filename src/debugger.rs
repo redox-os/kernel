@@ -78,11 +78,20 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
                 for (base, info) in addr_space.grants.iter() {
                     let size = info.page_count() * PAGE_SIZE;
 
+                    let flags = format_args!(
+                        "{}{}{}{}",
+                        if info.flags().has_user() { "u" } else { "k" },
+                        if info.flags().has_present() { "r" } else { "-" },
+                        if info.flags().has_write() { "w" } else { "-" },
+                        if info.flags().has_execute() { "x" } else { "-" },
+                    );
+
                     #[cfg(target_arch = "aarch64")]
                     println!(
-                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
+                        "    virt 0x{:016x}:0x{:016x} {} size 0x{:08x} {:?}",
                         base.start_address().data(),
                         base.next_by(info.page_count() - 1).start_address().data() + 0xFFF,
+                        flags,
                         size,
                         info.provider,
                     );
@@ -91,18 +100,20 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
                     #[cfg(target_arch = "x86")]
                     println!(
-                        "    virt 0x{:08x}:0x{:08x} size 0x{:08x} {:?}",
+                        "    virt 0x{:08x}:0x{:08x} {} size 0x{:08x} {:?}",
                         base.start_address().data(),
                         base.next_by(info.page_count()).start_address().data() + 0xFFF,
+                        flags,
                         size,
                         info.provider,
                     );
 
                     #[cfg(target_arch = "x86_64")]
                     println!(
-                        "    virt 0x{:016x}:0x{:016x} size 0x{:08x} {:?}",
+                        "    virt 0x{:016x}:0x{:016x} {} size 0x{:08x} {:?}",
                         base.start_address().data(),
                         base.start_address().data() + size - 1,
+                        flags,
                         size,
                         info.provider,
                     );
