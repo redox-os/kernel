@@ -10,6 +10,7 @@ use core::{
 use alloc::{string::String, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use smallvec::SmallVec;
 use spin::{Mutex, Once};
 use syscall::{
     data::GlobalSchemes,
@@ -61,7 +62,7 @@ const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
 /// Add to the input queue
 pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
     COUNTS.lock()[irq as usize] += 1;
-    let fds: Vec<usize> = {
+    let fds: SmallVec<[usize; 8]> = {
         HANDLES
             .read(token.token())
             .iter()
