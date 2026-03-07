@@ -2,12 +2,7 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use core::{
-    mem,
-    mem::size_of,
-    num::NonZeroUsize,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{mem, mem::size_of, num::NonZeroUsize};
 use slab::Slab;
 use spin::{Mutex, RwLock};
 use syscall::{
@@ -50,8 +45,6 @@ pub struct UserInner {
 
     // TODO: custom packed radix tree data structure
     states: Mutex<Slab<State>>,
-
-    unmounting: AtomicBool,
 }
 
 enum State {
@@ -166,23 +159,8 @@ impl UserInner {
             scheme_id,
             context,
             todo: WaitQueue::new(),
-            unmounting: AtomicBool::new(false),
             states: Mutex::new(Slab::with_capacity(32)),
         }
-    }
-
-    pub fn unmount(&self, token: &mut CleanLockToken) -> Result<()> {
-        // First, block new requests and prepare to return EOF
-        self.unmounting.store(true, Ordering::SeqCst);
-
-        // Wake up any blocked scheme handler
-        unsafe { self.todo.condition.notify_signal(token) };
-
-        // Tell the scheme handler to read
-        event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
-
-        //TODO: wait for all todo and done to be processed?
-        Ok(())
     }
 
     fn next_id(&self) -> Result<u32> {
@@ -230,10 +208,6 @@ impl UserInner {
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
     ) -> Result<Response> {
-        if self.unmounting.load(Ordering::SeqCst) {
-            return Err(Error::new(ENODEV));
-        }
-
         {
             // Disable preemption to avoid context switches between setting the
             // process state and sending the scheme request. The process is made
@@ -704,17 +678,12 @@ impl UserInner {
         // If O_NONBLOCK is used, do not block
         let nonblock = flags & O_NONBLOCK as u32 != 0;
 
-        // If unmounting, do not block so that EOF can be returned immediately
-        let block = !(nonblock || self.unmounting.load(Ordering::SeqCst));
-
         match self
             .todo
-            .receive_into_user(buf, block, "UserInner::read (v2)", token)
+            .receive_into_user(buf, !nonblock, "UserInner::read (v2)", token)
         {
             // If we received requests, return them to the scheme handler
             Ok(byte_count) => Ok(byte_count),
-            // If there were no requests and we were unmounting, return EOF
-            Err(Error { errno: EAGAIN }) if self.unmounting.load(Ordering::SeqCst) => Ok(0),
             // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
             // occurred, return that.
             Err(error) => Err(error),

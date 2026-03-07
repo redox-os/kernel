@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
-    pub inner: Mutex<L1, VecDeque<T>>,
+    inner: Mutex<L1, VecDeque<T>>,
     pub condition: WaitCondition,
 }
 
@@ -25,51 +25,6 @@ impl<T> WaitQueue<T> {
     }
     pub fn is_currently_empty(&self, token: &mut CleanLockToken) -> bool {
         self.inner.lock(token.token()).is_empty()
-    }
-
-    pub fn receive(
-        &self,
-        block: bool,
-        reason: &'static str,
-        token: &mut CleanLockToken,
-    ) -> Result<T> {
-        let current_context_ref = context::current();
-
-        loop {
-            let mut preempt = PreemptGuard::new(&current_context_ref, token);
-
-            let mut inner = self.inner.lock(preempt.token().token());
-
-            match inner.pop_front() {
-                Some(t) => {
-                    return Ok(t);
-                }
-                _ => {
-                    if block {
-                        let (_, mut inner_token) = inner.token_split();
-                        if !self.condition.wait_setup(
-                            &current_context_ref,
-                            reason,
-                            inner_token.token(),
-                        ) {
-                            return Err(Error::new(EINTR));
-                        }
-
-                        drop(inner);
-                        drop(preempt);
-
-                        context::switch(token);
-
-                        self.condition
-                            .wait_cleanup(&current_context_ref, token.token());
-
-                        continue;
-                    } else {
-                        return Err(Error::new(EAGAIN));
-                    }
-                }
-            }
-        }
     }
     pub fn receive_into_user(
         &self,
