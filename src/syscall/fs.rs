@@ -637,7 +637,7 @@ pub fn mremap(
             requested_dst_base,
             NonZeroUsize::new(1).expect("value specified is not zero"),
             map_flags,
-            &mut Vec::new(),
+            None,
             |page, page_flags, mapper, flusher| {
                 let frame = raii_frame.take();
                 // XXX: add_ref(RefKind::Shared) is internally done by borrow_frame_enforce_rw_allocated(src_span.base).
@@ -663,7 +663,7 @@ pub fn mremap(
             requested_dst_base,
             new_page_count,
             map_flags,
-            &mut Vec::new(),
+            None,
         )?;
 
         Ok(base.start_address().data())

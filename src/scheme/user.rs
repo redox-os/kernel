@@ -568,7 +568,7 @@ impl UserInner {
                 Some(free_span.base),
                 ONE,
                 map_flags | MAP_FIXED_NOREPLACE,
-                &mut Vec::new(),
+                None,
                 move |dst_page, page_flags, mapper, flusher| {
                     let is_pinned = true;
                     Grant::allocated_shared_one_page(
@@ -606,7 +606,7 @@ impl UserInner {
                 Some(first_middle_dst_page),
                 middle_page_count,
                 map_flags | MAP_FIXED_NOREPLACE,
-                &mut Vec::new(),
+                None,
                 move |dst_page, _, mapper, flusher| {
                     let eager = true;
 
@@ -663,7 +663,7 @@ impl UserInner {
                 Some(tail_dst_page),
                 ONE,
                 map_flags | MAP_FIXED_NOREPLACE,
-                &mut Vec::new(),
+                None,
                 move |dst_page, page_flags, mapper, flusher| {
                     let is_pinned = true;
                     Grant::allocated_shared_one_page(
@@ -1109,7 +1109,7 @@ impl UserInner {
                 dst_base,
                 page_count_nz,
                 map.flags,
-                &mut notify_files,
+                Some(&mut notify_files),
                 |dst_base, flags, mapper, flusher| {
                     Grant::borrow_fmap(
                         PageSpan::new(dst_base, page_count),

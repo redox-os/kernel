@@ -96,7 +96,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             None,
             page_count,
             MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-            &mut Vec::new(),
+            None,
             |page, flags, mapper, flusher| {
                 let shared = false;
                 Ok(Grant::zeroed(
