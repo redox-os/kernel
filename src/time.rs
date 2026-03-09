@@ -1,5 +1,5 @@
 use crate::{
-    sync::{CleanLockToken, Mutex, L1},
+    sync::{CleanLockToken, Mutex, RwLock, L1},
     syscall::error::{Error, Result, EINVAL},
 };
 
@@ -9,7 +9,7 @@ pub const NANOS_PER_SEC: u128 = 1_000_000_000;
 /// Kernel start time, measured in nanoseconds since Unix epoch
 pub static START: Mutex<L1, u128> = Mutex::new(0);
 /// Kernel up time, measured in nanoseconds since `START_TIME`
-pub static OFFSET: Mutex<L1, u128> = Mutex::new(0);
+pub static OFFSET: RwLock<L1, u128> = RwLock::new(0);
 
 pub fn monotonic(token: &mut CleanLockToken) -> u128 {
     crate::arch::time::monotonic_absolute(token)

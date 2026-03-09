@@ -169,7 +169,7 @@ interrupt_stack!(pit_stack, |_stack| {
 
     let mut token = unsafe { CleanLockToken::new() };
     {
-        *time::OFFSET.lock(token.token()) += pit::RATE;
+        *time::OFFSET.write(token.token()) += pit::RATE;
     }
 
     unsafe { eoi(0) };
