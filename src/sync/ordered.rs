@@ -270,6 +270,7 @@ impl<'a, L: Level, T: ?Sized + 'a> core::ops::DerefMut for MutexGuard<'a, L, T> 
     }
 }
 
+#[derive(Debug)]
 pub struct RwLock<L: Level, T> {
     inner: spin::RwLock<T>,
     _phantom: PhantomData<L>,

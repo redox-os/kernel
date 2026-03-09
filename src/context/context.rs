@@ -5,13 +5,15 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
-use spin::RwLock;
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
     arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
     common::aligned_box::AlignedBox,
-    context::{self, arch, file::FileDescriptor},
+    context::{
+        self, arch,
+        file::{FileDescriptor, LockedFileDescription},
+    },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
     ipi::{ipi, IpiKind, IpiTarget},
@@ -19,7 +21,7 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::CleanLockToken,
+    sync::{CleanLockToken, RwLock, L1},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -27,7 +29,6 @@ use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE
 
 use super::{
     empty_cr3,
-    file::FileDescription,
     memory::{AddrSpaceWrapper, GrantFileRef},
 };
 
@@ -130,7 +131,7 @@ pub struct Context {
     /// The name of the context
     pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
-    pub files: Arc<RwLock<FdTbl>>,
+    pub files: Arc<spin::RwLock<FdTbl>>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,
@@ -190,7 +191,7 @@ impl Context {
             kstack: None,
             addr_space: None,
             name: ArrayString::new(),
-            files: Arc::new(RwLock::new(FdTbl::new())),
+            files: Arc::new(spin::RwLock::new(FdTbl::new())),
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
@@ -823,11 +824,12 @@ impl FdTbl {
         &self,
         scheme_id: SchemeId,
         scheme_number: usize,
+        token: &mut CleanLockToken,
     ) -> Result<FileDescriptor> {
         self.iter()
             .flatten()
             .find(|&context_fd| {
-                let desc = context_fd.description.read();
+                let desc = context_fd.description.read(token.token());
                 desc.scheme == scheme_id && desc.number == scheme_number
             })
             .cloned()
@@ -940,7 +942,7 @@ impl FdTbl {
 }
 
 pub fn bulk_add_fds(
-    descriptions: Vec<Arc<RwLock<FileDescription>>>,
+    descriptions: Vec<Arc<LockedFileDescription>>,
     payload: UserSliceRw,
     cloexec: bool,
     token: &mut CleanLockToken,
@@ -973,7 +975,7 @@ pub fn bulk_add_fds(
 }
 
 pub fn bulk_insert_fds(
-    descriptions: Vec<Arc<RwLock<FileDescription>>>,
+    descriptions: Vec<Arc<LockedFileDescription>>,
     payload: UserSliceRw,
     cloexec: bool,
     token: &mut CleanLockToken,

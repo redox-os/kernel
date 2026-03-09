@@ -57,7 +57,7 @@ impl EventQueue {
             };
 
             let (scheme, number) = {
-                let description = file.description.read();
+                let description = file.description.read(token.token());
                 (description.scheme, description.number)
             };
 

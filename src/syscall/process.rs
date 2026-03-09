@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
-use spin::RwLock;
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -13,7 +12,7 @@ use crate::{
         ContextRef,
     },
     event,
-    sync::CleanLockToken,
+    sync::{CleanLockToken, RwLock},
     syscall::flag::{EventFlags, O_CREAT, O_RDWR},
 };
 
@@ -38,7 +37,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     {
         let mut context = context_lock.write(token.token());
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
-            .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
+            .map_or_else(|_| FdTbl::new(), spin::RwLock::into_inner);
         addrspace_opt = context
             .set_addr_space(None)
             .and_then(|a| Arc::try_unwrap(a).ok());

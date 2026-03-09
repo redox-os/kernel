@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::{mem, mem::size_of, num::NonZeroUsize};
 use slab::Slab;
-use spin::{Mutex, RwLock};
+use spin::Mutex;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -15,7 +15,7 @@ use crate::{
     context::{
         self,
         context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
-        file::{FileDescription, FileDescriptor, InternalFlags},
+        file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
@@ -26,7 +26,7 @@ use crate::{
     memory::Frame,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
-    sync::{CleanLockToken, WaitQueue},
+    sync::{CleanLockToken, RwLock, WaitQueue},
     syscall::{
         data::Map,
         error::*,
@@ -50,7 +50,7 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<ContextLock>,
-        fds: Vec<Arc<RwLock<FileDescription>>>,
+        fds: Vec<Arc<LockedFileDescription>>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
@@ -62,8 +62,8 @@ enum State {
 #[derive(Debug)]
 enum Response {
     Regular(Result<usize>, u8, bool),
-    Fd(Arc<RwLock<FileDescription>>),
-    MultipleFds(Option<Vec<Arc<RwLock<FileDescription>>>>),
+    Fd(Arc<LockedFileDescription>),
+    MultipleFds(Option<Vec<Arc<LockedFileDescription>>>),
 }
 
 impl Response {
@@ -176,7 +176,7 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        fds: Vec<Arc<RwLock<FileDescription>>>,
+        fds: Vec<Arc<LockedFileDescription>>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
@@ -203,7 +203,7 @@ impl UserInner {
 
     fn call_inner(
         &self,
-        fds: Vec<Arc<RwLock<FileDescription>>>,
+        fds: Vec<Arc<LockedFileDescription>>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
@@ -1011,7 +1011,10 @@ impl UserInner {
         let (pid, desc) = {
             let context_lock = context::current();
             let context = context_lock.read(token.token());
-            let desc = context.files.read().find_by_scheme(self.scheme_id, file)?;
+            let desc = context
+                .files
+                .read()
+                .find_by_scheme(self.scheme_id, file, token)?;
             (context.pid, desc.description)
         };
 
@@ -1103,7 +1106,7 @@ impl UserInner {
 
     pub fn call_fdwrite(
         &self,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
         _arg: u64,
         metadata: &[u64],
@@ -1135,7 +1138,7 @@ impl UserInner {
 
     fn handle_movefd(
         &self,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         request_id: usize,
         _flags: FmoveFdFlags,
     ) -> Result<usize> {
@@ -1913,7 +1916,7 @@ impl KernelScheme for UserScheme {
     fn kstdfscall(
         &self,
         id: usize,
-        desc: Arc<spin::RwLock<FileDescription>>,
+        desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
@@ -1947,7 +1950,7 @@ impl KernelScheme for UserScheme {
         match inner.call_inner(Vec::new(), sqe, address.span(), token)? {
             Response::Regular(res, _, notify_on_detach) => {
                 address.release(token)?;
-                desc.write()
+                desc.write(token.token())
                     .internal_flags
                     .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
                 res
@@ -1962,7 +1965,7 @@ impl KernelScheme for UserScheme {
     fn kfdwrite(
         &self,
         number: usize,
-        descs: Vec<Arc<RwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
         arg: u64,
         _metadata: &[u64],

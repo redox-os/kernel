@@ -17,7 +17,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::hash_map::{DefaultHashBuilder, HashMap};
-use spin::{Once, RwLock as SpinRwLock};
+use spin::Once;
 use syscall::{
     data::{GlobalSchemes, NewFdParams},
     error::*,
@@ -26,12 +26,9 @@ use syscall::{
 
 use crate::{
     context::{
-        self,
-        file::{FileDescription, InternalFlags},
-        memory::AddrSpaceWrapper,
-        ContextLock,
+        self, ContextLock, file::{FileDescription, InternalFlags, LockedFileDescription}, memory::AddrSpaceWrapper
     },
-    sync::{CleanLockToken, LockToken, RwLock, L0, L1},
+    sync::{CleanLockToken, L0, L1, LockToken, RwLock},
     syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
 };
 
@@ -266,7 +263,7 @@ impl KernelScheme for SchemeList {
                 let scheme = scheme_id;
                 let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
 
-                return Ok(OpenResult::External(Arc::new(SpinRwLock::new(
+                return Ok(OpenResult::External(Arc::new(RwLock::new(
                     FileDescription {
                         scheme,
                         number: params.number,
@@ -361,7 +358,7 @@ impl KernelScheme for SchemeList {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<SpinRwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
         arg: u64,
         metadata: &[u64],
@@ -675,7 +672,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kstdfscall(
         &self,
         id: usize,
-        desc: Arc<SpinRwLock<FileDescription>>,
+        desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -686,7 +683,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<SpinRwLock<FileDescription>>>,
+        descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
         args: u64,
         metadata: &[u64],
@@ -709,7 +706,7 @@ pub trait KernelScheme: Send + Sync + 'static {
 #[derive(Debug)]
 pub enum OpenResult {
     SchemeLocal(usize, InternalFlags),
-    External(Arc<SpinRwLock<FileDescription>>),
+    External(Arc<LockedFileDescription>),
 }
 pub struct CallerCtx {
     pub pid: usize,

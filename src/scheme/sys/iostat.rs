@@ -40,7 +40,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                     Some(ref file) => file.clone(),
                 };
 
-                let description = file.description.read();
+                let description = file.description.read(token.token());
 
                 let _ = write!(
                     string,

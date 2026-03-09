@@ -4,17 +4,16 @@ use core::{mem::size_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 use redox_path::RedoxPath;
-use spin::RwLock;
 
 use crate::{
     context::{
         self,
-        file::{FileDescription, FileDescriptor, InternalFlags},
+        file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
     },
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, FileHandle, KernelScheme, OpenResult, StrOrBytes},
-    sync::CleanLockToken,
+    sync::{CleanLockToken, RwLock},
     syscall::{data::Stat, error::*, flag::*},
 };
 
@@ -32,7 +31,7 @@ pub fn file_op_generic_ext<T>(
     token: &mut CleanLockToken,
     op: impl FnOnce(
         &dyn KernelScheme,
-        Arc<RwLock<FileDescription>>,
+        Arc<LockedFileDescription>,
         FileDescription,
         &mut CleanLockToken,
     ) -> Result<T>,
@@ -42,7 +41,7 @@ pub fn file_op_generic_ext<T>(
             .read(token.token())
             .get_file(fd)
             .ok_or(Error::new(EBADF))?;
-        let desc = *file.description.read();
+        let desc = *file.description.read(token.token());
         (file, desc)
     };
 
@@ -79,7 +78,7 @@ pub fn openat(
         .get_file(fh)
         .ok_or(Error::new(EBADF))?;
 
-    let description = pipe.description.read();
+    let description = pipe.description.read(token.token());
 
     let caller_ctx = context::current()
         .read(token.token())
@@ -135,7 +134,7 @@ pub fn unlinkat(
         .get_file(fh)
         .ok_or(Error::new(EBADF))?;
 
-    let description = pipe.description.read();
+    let description = pipe.description.read(token.token());
 
     let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
@@ -183,7 +182,7 @@ fn duplicate_file(
             cloexec,
         })
     } else {
-        let description = { *file.description.read() };
+        let description = { *file.description.read(token.token()) };
 
         let new_description = {
             let scheme = scheme::get_scheme(token.token(), description.scheme)?;
@@ -282,7 +281,7 @@ fn call_normal(
     .ok_or(Error::new(EBADF))?;
 
     let (scheme_id, number) = {
-        let desc = file.description.read();
+        let desc = file.description.read(token.token());
         (desc.scheme, desc.number)
     };
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
@@ -330,7 +329,7 @@ fn fdwrite_inner(
             let current_lock = context::current();
             let current = current_lock.read(token.token());
             let file_descriptor = current.get_file(socket).ok_or(Error::new(EBADF))?;
-            let desc = &file_descriptor.description.read();
+            let desc = &file_descriptor.description.read(token.token());
             (desc.scheme, desc.number)
         };
         let scheme = scheme::get_scheme(token.token(), scheme)?;
@@ -381,7 +380,7 @@ fn call_fdread(
             let current_lock = context::current();
             let current = current_lock.read(token.token());
             let file_descriptor = current.get_file(fd).ok_or(Error::new(EBADF))?;
-            let desc = file_descriptor.description.read();
+            let desc = file_descriptor.description.read(token.token());
             (desc.scheme, desc.number)
         };
         let scheme = scheme::get_scheme(token.token(), scheme)?;
@@ -417,7 +416,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
 
-    let description = file.description.read();
+    let description = file.description.read(token.token());
 
     if cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC {
         // Not in match because 'files' cannot be locked
@@ -463,7 +462,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                     let new_flags =
                         (description.flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
                     drop(description);
-                    file.description.write().flags = new_flags;
+                    file.description.write(token.token()).flags = new_flags;
                     Ok(0)
                 }
                 _ => Err(Error::new(EINVAL)),
@@ -488,7 +487,7 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
-    let description = file.description.read();
+    let description = file.description.read(token.token());
 
     let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
@@ -517,7 +516,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
-    let description = file.description.read();
+    let description = file.description.read(token.token());
 
     let scheme = scheme::get_scheme(token.token(), description.scheme)?;
 
@@ -679,7 +678,7 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken
         })
     })?;
 
-    let mut guard = desc.write();
+    let mut guard = desc.write(token.token());
 
     let new_pos = match whence {
         SEEK_SET => pos,
@@ -710,7 +709,7 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) ->
             ))
         })?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
-        let offset = &mut desc_arc.write().offset;
+        let offset = &mut desc_arc.write(token.token()).offset;
         *offset = offset.saturating_add(bytes_read as u64)
     }
     Ok(bytes_read)
@@ -730,7 +729,7 @@ pub fn sys_write(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -
             ))
         })?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
-        let offset = &mut desc_arc.write().offset;
+        let offset = &mut desc_arc.write(token.token()).offset;
         *offset = offset.saturating_add(bytes_written as u64)
     }
     Ok(bytes_written)
