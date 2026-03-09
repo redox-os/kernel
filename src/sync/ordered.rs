@@ -203,6 +203,9 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
     }
 }
 
+#[cfg(feature = "busy_panic")]
+const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
+
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
     pub const fn new(val: T) -> Self {
@@ -221,8 +224,25 @@ impl<L: Level, T> Mutex<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> MutexGuard<'a, L, T> {
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_lock() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock may triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.lock();
         MutexGuard {
-            inner: self.inner.lock(),
+            inner,
             lock_token: LockToken::downgraded(lock_token),
         }
     }
@@ -327,8 +347,25 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> RwLockWriteGuard<'a, L, T> {
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_write() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock may triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.write();
         RwLockWriteGuard {
-            inner: self.inner.write(),
+            inner,
             lock_token: LockToken::downgraded(lock_token),
         }
     }
@@ -346,8 +383,25 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> RwLockReadGuard<'a, L, T> {
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_read() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock may triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.read();
         RwLockReadGuard {
-            inner: self.inner.read(),
+            inner,
             lock_token: LockToken::downgraded(lock_token),
         }
     }
