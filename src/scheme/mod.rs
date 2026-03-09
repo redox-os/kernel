@@ -26,9 +26,12 @@ use syscall::{
 
 use crate::{
     context::{
-        self, ContextLock, file::{FileDescription, InternalFlags, LockedFileDescription}, memory::AddrSpaceWrapper
+        self,
+        file::{FileDescription, InternalFlags, LockedFileDescription},
+        memory::AddrSpaceWrapper,
+        ContextLock,
     },
-    sync::{CleanLockToken, L0, L1, LockToken, RwLock},
+    sync::{CleanLockToken, LockToken, RwLock, L0, L1},
     syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
 };
 

@@ -89,32 +89,43 @@ pub struct L4 {}
 #[derive(Debug)]
 pub struct L5 {}
 
+#[derive(Debug)]
+pub struct L6 {}
+
 impl Level for L0 {}
 impl Level for L1 {}
 impl Level for L2 {}
 impl Level for L3 {}
 impl Level for L4 {}
 impl Level for L5 {}
+impl Level for L6 {}
 
 impl Lower<L1> for L0 {}
 impl Lower<L2> for L0 {}
 impl Lower<L3> for L0 {}
 impl Lower<L4> for L0 {}
 impl Lower<L5> for L0 {}
+impl Lower<L6> for L0 {}
 
 impl Lower<L2> for L1 {}
 impl Lower<L3> for L1 {}
 impl Lower<L4> for L1 {}
 impl Lower<L5> for L1 {}
+impl Lower<L6> for L1 {}
 
 impl Lower<L3> for L2 {}
 impl Lower<L4> for L2 {}
 impl Lower<L5> for L2 {}
+impl Lower<L6> for L2 {}
 
 impl Lower<L4> for L3 {}
 impl Lower<L5> for L3 {}
+impl Lower<L6> for L3 {}
 
 impl Lower<L5> for L4 {}
+impl Lower<L6> for L4 {}
+
+impl Lower<L6> for L5 {}
 
 /// Indicate that the implementor is higher that the level O
 pub trait Higher<O: Level>: Level {}

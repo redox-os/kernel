@@ -12,11 +12,11 @@ use crate::{
         file::{FileDescription, InternalFlags, LockedFileDescription},
     },
     event,
-    sync::{CleanLockToken, L1, RwLock, WaitCondition},
+    sync::{CleanLockToken, RwLock, WaitCondition, L1},
     syscall::{
         data::Stat,
-        error::{EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE, Error, Result},
-        flag::{EVENT_READ, EVENT_WRITE, EventFlags, MODE_FIFO, O_NONBLOCK},
+        error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
+        flag::{EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };

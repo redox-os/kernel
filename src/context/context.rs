@@ -16,12 +16,12 @@ use crate::{
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
-    ipi::{IpiKind, IpiTarget, ipi},
-    memory::{Enomem, Frame, RaiiFrame, allocate_p2frame, deallocate_p2frame},
+    ipi::{ipi, IpiKind, IpiTarget},
+    memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, L1, L4, LockToken, RwLock},
+    sync::{CleanLockToken, LockToken, RwLock, L1, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -131,7 +131,7 @@ pub struct Context {
     /// The name of the context
     pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
-    pub files: Arc<spin::RwLock<FdTbl>>,
+    pub files: Arc<LockedFdTbl>,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,
@@ -191,7 +191,7 @@ impl Context {
             kstack: None,
             addr_space: None,
             name: ArrayString::new(),
-            files: Arc::new(spin::RwLock::new(FdTbl::new())),
+            files: Arc::new(RwLock::new(FdTbl::new())),
             userspace: false,
             fmap_ret: None,
             being_sigkilled: false,
@@ -266,30 +266,45 @@ impl Context {
 
     /// Add a file to the lowest available slot.
     /// Return the file descriptor number or None if no slot was found
-    pub fn add_file(&self, file: FileDescriptor) -> Option<FileHandle> {
-        self.add_file_min(file, 0)
+    pub fn add_file(
+        &self,
+        file: FileDescriptor,
+        lock_token: &mut LockToken<L4>,
+    ) -> Option<FileHandle> {
+        self.add_file_min(file, 0, lock_token)
     }
 
     /// Add a file to the lowest available slot greater than or equal to min.
     /// Return the file descriptor number or None if no slot was found
-    pub fn add_file_min(&self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
-        self.files.write().add_file_min(file, min)
+    pub fn add_file_min(
+        &self,
+        file: FileDescriptor,
+        min: usize,
+        lock_token: &mut LockToken<L4>,
+    ) -> Option<FileHandle> {
+        self.files.write(lock_token.token()).add_file_min(file, min)
     }
 
     /// Bulk-add multiple files to the POSIX file table
     pub fn bulk_add_files_posix(
         &self,
         files_to_add: Vec<FileDescriptor>,
+        lock_token: &mut LockToken<L4>,
     ) -> Option<Vec<FileHandle>> {
-        self.files.write().bulk_add_files_posix(files_to_add)
+        self.files
+            .write(lock_token.token())
+            .bulk_add_files_posix(files_to_add)
     }
 
     /// Bulk-insert multiple files into to the upper file table contiguously
     pub fn bulk_insert_files_upper(
         &self,
         files_to_insert: Vec<FileDescriptor>,
+        lock_token: &mut LockToken<L4>,
     ) -> Option<Vec<FileHandle>> {
-        self.files.write().bulk_insert_files_upper(files_to_insert)
+        self.files
+            .write(lock_token.token())
+            .bulk_insert_files_upper(files_to_insert)
     }
 
     /// Bulk-insert multiple files into to the upper file table manually
@@ -297,37 +312,61 @@ impl Context {
         &self,
         files_to_insert: Vec<FileDescriptor>,
         handles: &[FileHandle],
+        lock_token: &mut LockToken<L4>,
     ) -> Result<()> {
         self.files
-            .write()
+            .write(lock_token.token())
             .bulk_insert_files_upper_manual(files_to_insert, handles)
     }
 
     /// Get a file
-    pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        self.files.read().get_file(i)
+    pub fn get_file(
+        &self,
+        i: FileHandle,
+        lock_token: &mut LockToken<L4>,
+    ) -> Option<FileDescriptor> {
+        self.files.read(lock_token.token()).get_file(i)
     }
 
     /// Bulk get files
-    pub fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
-        self.files.read().bulk_get_files(handles)
+    pub fn bulk_get_files(
+        &self,
+        handles: &[FileHandle],
+        lock_token: &mut LockToken<L4>,
+    ) -> Result<Vec<FileDescriptor>> {
+        self.files.read(lock_token.token()).bulk_get_files(handles)
     }
 
     /// Insert a file with a specific handle number. This is used by dup2
     /// Return the file descriptor number or None if the slot was not empty, or i was invalid
-    pub fn insert_file(&self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
-        self.files.write().insert_file(i, file)
+    pub fn insert_file(
+        &self,
+        i: FileHandle,
+        file: FileDescriptor,
+        lock_token: &mut LockToken<L4>,
+    ) -> Option<FileHandle> {
+        self.files.write(lock_token.token()).insert_file(i, file)
     }
 
     /// Remove a file
     // TODO: adjust files vector to smaller size if possible
-    pub fn remove_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        self.files.write().remove_file(i)
+    pub fn remove_file(
+        &self,
+        i: FileHandle,
+        lock_token: &mut LockToken<L4>,
+    ) -> Option<FileDescriptor> {
+        self.files.write(lock_token.token()).remove_file(i)
     }
 
     /// Bulk remove files
-    pub fn bulk_remove_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
-        self.files.write().bulk_remove_files(handles)
+    pub fn bulk_remove_files(
+        &self,
+        handles: &[FileHandle],
+        lock_token: &mut LockToken<L4>,
+    ) -> Result<Vec<FileDescriptor>> {
+        self.files
+            .write(lock_token.token())
+            .bulk_remove_files(handles)
     }
 
     pub fn is_current_context(&self) -> bool {
@@ -581,6 +620,8 @@ pub struct FdTbl {
     pub upper_fdtbl: Vec<Option<FileDescriptor>>,
     active_count: usize,
 }
+
+pub type LockedFdTbl = RwLock<L5, FdTbl>;
 
 impl FdTbl {
     pub fn new() -> Self {
@@ -955,7 +996,8 @@ pub fn bulk_add_fds(
         return Ok(0);
     }
     let current_lock = context::current();
-    let current = current_lock.write(token.token());
+    let mut current = current_lock.write(token.token());
+    let (current, mut token) = current.token_split();
 
     let files: Vec<FileDescriptor> = descriptions
         .into_iter()
@@ -965,7 +1007,7 @@ pub fn bulk_add_fds(
         })
         .collect();
     let handles = current
-        .bulk_add_files_posix(files)
+        .bulk_add_files_posix(files, &mut token)
         .ok_or(Error::new(EMFILE))?;
     let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
     for (handle, chunk) in handles.iter().zip(payload_chunks) {
@@ -998,12 +1040,13 @@ pub fn bulk_insert_fds(
         .read_usize()?;
 
     let current_lock = context::current();
-    let current = current_lock.write(token.token());
+    let mut current = current_lock.write(token.token());
+    let (current, mut token) = current.token_split();
 
     if first_fd == usize::MAX {
         let files = files_iter.collect::<Vec<_>>();
         let handles = current
-            .bulk_insert_files_upper(files)
+            .bulk_insert_files_upper(files, &mut token)
             .ok_or(Error::new(EMFILE))?;
         let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
         for (handle, chunk) in handles.iter().zip(payload_chunks) {
@@ -1016,7 +1059,7 @@ pub fn bulk_insert_fds(
             .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
             .collect::<Result<_, _>>()?;
         let files = files_iter.collect::<Vec<_>>();
-        current.bulk_insert_files_upper_manual(files, &handles)?;
+        current.bulk_insert_files_upper_manual(files, &handles, &mut token)?;
         Ok(handles.len())
     }
 }

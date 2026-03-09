@@ -37,7 +37,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     {
         let mut context = context_lock.write(token.token());
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
-            .map_or_else(|_| FdTbl::new(), spin::RwLock::into_inner);
+            .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
         addrspace_opt = context
             .set_addr_space(None)
             .and_then(|a| Arc::try_unwrap(a).ok());
@@ -267,6 +267,7 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
                 cloexec,
             },
             syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
+            token,
         )
         .expect("failed to insert fd to current context")
         .get()

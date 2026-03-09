@@ -17,7 +17,8 @@ use crate::{
     context::{arch::setup_new_utable, file::LockedFileDescription},
     cpu_set::LogicalCpuSet,
     memory::{
-        AddRefError, Enomem, Frame, PageInfo, RaiiFrame, RefCount, RefKind, deallocate_frame, get_page_info, init_frame, the_zeroed_frame
+        deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
+        PageInfo, RaiiFrame, RefCount, RefKind,
     },
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,

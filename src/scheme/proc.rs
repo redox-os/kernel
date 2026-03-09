@@ -2,7 +2,7 @@ use crate::{
     arch::paging::{Page, VirtualAddress},
     context::{
         self,
-        context::{HardBlockedReason, SignalState},
+        context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
         Context, ContextLock, Status,
@@ -114,12 +114,12 @@ enum ContextHandle {
     Sighandler,
     Start,
     NewFiletable {
-        filetable: Arc<spin::RwLock<FdTbl>>,
+        filetable: Arc<LockedFdTbl>,
         binary_format: bool,
         data: Box<[u8]>,
     },
     Filetable {
-        filetable: Weak<spin::RwLock<FdTbl>>,
+        filetable: Weak<LockedFdTbl>,
         binary_format: bool,
         data: Box<[u8]>,
     },
@@ -138,7 +138,7 @@ enum ContextHandle {
     CurrentFiletable,
 
     AwaitingFiletableChange {
-        new_ft: Arc<spin::RwLock<FdTbl>>,
+        new_ft: Arc<LockedFdTbl>,
     },
 
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
@@ -354,7 +354,7 @@ impl ProcScheme {
                 *data = if binary_format {
                     let mut data = Vec::new();
                     for index in filetable
-                        .read()
+                        .read(token.token())
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
                     {
@@ -366,7 +366,7 @@ impl ProcScheme {
 
                     let mut data = String::new();
                     for index in filetable
-                        .read()
+                        .read(token.token())
                         .enumerate()
                         .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
                     {
@@ -767,7 +767,8 @@ impl KernelScheme for ProcScheme {
                     }
                     let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
-                    let new_filetable = Arc::new(spin::RwLock::new(filetable.read().clone()));
+                    let new_filetable =
+                        Arc::new(RwLock::new(filetable.read(token.token()).clone()));
 
                     handle(
                         Handle {
@@ -835,7 +836,7 @@ impl KernelScheme for ProcScheme {
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
     let file_descriptor = context::current()
         .read(token.token())
-        .get_file(FileHandle::from(fd))
+        .get_file(FileHandle::from(fd), token)
         .ok_or(Error::new(EBADF))?;
     let (scheme_id, number) = {
         let desc = file_descriptor.description.read(token.token());

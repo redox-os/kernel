@@ -754,7 +754,7 @@ impl UserInner {
                 Response::Fd({
                     context::current()
                         .read(token.token())
-                        .remove_file(FileHandle::from(fd))
+                        .remove_file(FileHandle::from(fd), token)
                         .ok_or(Error::new(EINVAL))?
                         .description
                 }),
@@ -793,14 +793,18 @@ impl UserInner {
                             description,
                             cloexec: true,
                         },
+                        token,
                     );
                 } else {
                     let fd = context::current()
                         .read(token.token())
-                        .add_file(FileDescriptor {
-                            description,
-                            cloexec: true,
-                        })
+                        .add_file(
+                            FileDescriptor {
+                                description,
+                                cloexec: true,
+                            },
+                            token,
+                        )
                         .ok_or(Error::new(EMFILE))?;
                     UserSlice::wo(dst_fd_or_ptr, size_of::<usize>())?.write_usize(fd.get())?;
                 }
@@ -1012,11 +1016,11 @@ impl UserInner {
             let context_lock = context::current();
             let mut context = context_lock.read(token.token());
             let (context, mut lock_token) = context.token_split();
-            let desc =
-                context
-                    .files
-                    .read()
-                    .find_by_scheme(self.scheme_id, file, &mut lock_token)?;
+            let desc = context.files.read(token.token()).find_by_scheme(
+                self.scheme_id,
+                file,
+                &mut lock_token,
+            )?;
             (context.pid, desc.description)
         };
 
