@@ -3,13 +3,13 @@
 use crate::{
     event,
     scheme::{self, SchemeId},
-    sync::{CleanLockToken, RwLock, L5},
+    sync::{CleanLockToken, RwLock, L6},
     syscall::error::Result,
 };
 use alloc::sync::Arc;
 use syscall::{schemev2::NewFdFlags, RwFlags, O_APPEND, O_NONBLOCK};
 
-pub type LockedFileDescription = RwLock<L5, FileDescription>;
+pub type LockedFileDescription = RwLock<L6, FileDescription>;
 
 /// A file description
 #[derive(Clone, Copy, Debug)]

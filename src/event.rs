@@ -47,8 +47,8 @@ impl EventQueue {
         for event in events {
             let file = {
                 let context_ref = context::current();
-                let context = context_ref.read(token.token());
-
+                let mut context = context_ref.read(token.token());
+                let (context, mut token) = context.token_split();
                 let files = context.files.read(token.token());
                 match files.get(event.id).ok_or(Error::new(EBADF))? {
                     Some(file) => file.clone(),

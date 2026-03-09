@@ -752,11 +752,14 @@ impl UserInner {
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
                 Response::Fd({
-                    context::current()
-                        .read(token.token())
-                        .remove_file(FileHandle::from(fd), token)
-                        .ok_or(Error::new(EINVAL))?
-                        .description
+                    {
+                        let current_lock = context::current();
+                        let mut current = current_lock.read(token.token());
+                        let (context, mut token) = current.token_split();
+                        context.remove_file(FileHandle::from(fd), &mut token)
+                    }
+                    .ok_or(Error::new(EINVAL))?
+                    .description
                 }),
                 token,
             )?,
@@ -787,23 +790,28 @@ impl UserInner {
 
                 // FIXME: Description can leak if there is no additional file table space.
                 if flags.contains(FobtainFdFlags::MANUAL_FD) {
-                    context::current().read(token.token()).insert_file(
+                    let current_lock = context::current();
+                    let mut current = current_lock.read(token.token());
+                    let (context, mut token) = current.token_split();
+                    context.insert_file(
                         FileHandle::from(dst_fd_or_ptr),
                         FileDescriptor {
                             description,
                             cloexec: true,
                         },
-                        token,
+                        &mut token,
                     );
                 } else {
-                    let fd = context::current()
-                        .read(token.token())
+                    let current_lock = context::current();
+                    let mut current = current_lock.read(token.token());
+                    let (context, mut token) = current.token_split();
+                    let fd = context
                         .add_file(
                             FileDescriptor {
                                 description,
                                 cloexec: true,
                             },
-                            token,
+                            &mut token,
                         )
                         .ok_or(Error::new(EMFILE))?;
                     UserSlice::wo(dst_fd_or_ptr, size_of::<usize>())?.write_usize(fd.get())?;
@@ -1013,14 +1021,12 @@ impl UserInner {
         }
 
         let (pid, desc) = {
-            let context_lock = context::current();
-            let mut context = context_lock.read(token.token());
-            let (context, mut lock_token) = context.token_split();
-            let desc = context.files.read(token.token()).find_by_scheme(
-                self.scheme_id,
-                file,
-                &mut lock_token,
-            )?;
+            let current_lock = context::current();
+            let mut current = current_lock.read(token.token());
+            let (context, mut token) = current.token_split();
+            let mut files = context.files.read(token.token());
+            let (files, mut token) = files.token_split();
+            let desc = files.find_by_scheme(self.scheme_id, file, &mut token)?;
             (context.pid, desc.description)
         };
 

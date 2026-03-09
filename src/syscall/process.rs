@@ -253,8 +253,10 @@ unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
 }
 
 fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLockToken) -> usize {
-    context::current()
-        .write(token.token())
+    let current_lock = context::current();
+    let mut current = current_lock.read(token.token());
+    let (context, mut token) = current.token_split();
+    context
         .add_file_min(
             FileDescriptor {
                 description: Arc::new(RwLock::new(FileDescription {
@@ -267,7 +269,7 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
                 cloexec,
             },
             syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
-            token,
+            &mut token,
         )
         .expect("failed to insert fd to current context")
         .get()

@@ -37,10 +37,10 @@ pub fn file_op_generic_ext<T>(
     ) -> Result<T>,
 ) -> Result<T> {
     let (file, desc) = {
-        let file = context::current()
-            .read(token.token())
-            .get_file(fd, token)
-            .ok_or(Error::new(EBADF))?;
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        let file = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
         let desc = *file.description.read(token.token());
         (file, desc)
     };
@@ -73,12 +73,11 @@ pub fn openat(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let pipe = context::current()
-        .read(token.token())
-        .get_file(fh, token)
-        .ok_or(Error::new(EBADF))?;
-
     let (scheme_id, number) = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
         (desc.scheme, desc.number)
     };
@@ -114,14 +113,16 @@ pub fn openat(
         }
     };
 
-    context::current()
-        .read(token.token())
+    let current_lock = context::current();
+    let mut current = current_lock.read(token.token());
+    let (context, mut token) = current.token_split();
+    context
         .add_file(
             FileDescriptor {
                 description: new_description,
                 cloexec: flags as usize & O_CLOEXEC == O_CLOEXEC,
             },
-            token,
+            &mut token,
         )
         .ok_or(Error::new(EMFILE))
 }
@@ -135,12 +136,12 @@ pub fn unlinkat(
     token: &mut CleanLockToken,
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let pipe = context::current()
-        .read(token.token())
-        .get_file(fh, token)
-        .ok_or(Error::new(EBADF))?;
 
     let (number, scheme_id) = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
         (desc.number, desc.scheme)
     };
@@ -162,9 +163,12 @@ pub fn unlinkat(
 /// Close syscall
 pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
     let file = {
-        let context_lock = context::current();
-        let context = context_lock.read(token.token());
-        context.remove_file(fd, token).ok_or(Error::new(EBADF))?
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        context
+            .remove_file(fd, &mut token)
+            .ok_or(Error::new(EBADF))?
     };
 
     file.close(token)
@@ -177,11 +181,12 @@ fn duplicate_file(
     token: &mut CleanLockToken,
 ) -> Result<FileDescriptor> {
     let (caller_ctx, file) = {
-        let context_lock = context::current();
-        let context = context_lock.read(token.token());
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
         (
             context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
+            context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?,
         )
     };
 
@@ -220,10 +225,11 @@ fn duplicate_file(
 /// Duplicate file descriptor
 pub fn dup(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<FileHandle> {
     let new_file = duplicate_file(fd, buf, false, token)?;
-
-    context::current()
-        .read(token.token())
-        .add_file(new_file, token)
+    let current_lock = context::current();
+    let mut current = current_lock.read(token.token());
+    let (context, mut token) = current.token_split();
+    context
+        .add_file(new_file, &mut token)
         .ok_or(Error::new(EMFILE))
 }
 
@@ -240,11 +246,11 @@ pub fn dup2(
         let _ = close(new_fd, token);
         let new_file = duplicate_file(fd, buf, false, token)?;
 
-        let context_ref = context::current();
-        let context = context_ref.read(token.token());
-
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
         context
-            .insert_file(new_fd, new_file, token)
+            .insert_file(new_fd, new_file, &mut token)
             .ok_or(Error::new(EMFILE))
     }
 }
@@ -280,13 +286,14 @@ fn call_normal(
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
-    let file = (match (
-        context::current().read(token.token()),
-        flags.contains(CallFlags::CONSUME),
-    ) {
-        (ctxt, true) => ctxt.remove_file(fd, token),
-        (ctxt, false) => ctxt.get_file(fd, token),
-    })
+    let file = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        match (current.token_split(), flags.contains(CallFlags::CONSUME)) {
+            ((ctxt, mut token), true) => ctxt.remove_file(fd, &mut token),
+            ((ctxt, mut token), false) => ctxt.get_file(fd, &mut token),
+        }
+    }
     .ok_or(Error::new(EBADF))?;
 
     let (scheme_id, number) = {
@@ -337,22 +344,25 @@ fn fdwrite_inner(
         let (scheme, number) = {
             let current_lock = context::current();
             let mut current = current_lock.read(token.token());
-            let (current, mut lock_token) = current.token_split();
-            let file_descriptor = current.get_file(socket, token).ok_or(Error::new(EBADF))?;
-            let desc = &file_descriptor.description.read(lock_token.token());
+            let (context, mut token) = current.token_split();
+            let file_descriptor = context
+                .get_file(socket, &mut token)
+                .ok_or(Error::new(EBADF))?;
+            let desc = &file_descriptor.description.read(token.token());
             (desc.scheme, desc.number)
         };
         let scheme = scheme::get_scheme(token.token(), scheme)?;
 
         let current_lock = context::current();
-        let current = current_lock.read(token.token());
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
         (
             scheme,
             number,
             if flags.contains(CallFlags::FD_CLONE) {
-                current.bulk_get_files(&target_fds, token)
+                context.bulk_get_files(&target_fds, &mut token)
             } else {
-                current.bulk_remove_files(&target_fds, token)
+                context.bulk_remove_files(&target_fds, &mut token)
             }?
             .into_iter()
             .map(|f| f.description)
@@ -389,9 +399,9 @@ fn call_fdread(
         let (scheme, number) = {
             let current_lock = context::current();
             let mut current = current_lock.read(token.token());
-            let (current, mut lock_token) = current.token_split();
-            let file_descriptor = current.get_file(fd, token).ok_or(Error::new(EBADF))?;
-            let desc = file_descriptor.description.read(lock_token.token());
+            let (context, mut token) = current.token_split();
+            let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
+            let desc = file_descriptor.description.read(token.token());
             (desc.scheme, desc.number)
         };
         let scheme = scheme::get_scheme(token.token(), scheme)?;
@@ -422,10 +432,13 @@ pub fn sendfd(
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken) -> Result<usize> {
-    let file = context::current()
-        .read(token.token())
-        .get_file(fd, token)
-        .ok_or(Error::new(EBADF))?;
+    let file = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        context.get_file(fd, &mut token)
+    }
+    .ok_or(Error::new(EBADF))?;
 
     let (scheme_id, number, flags) = {
         let desc = file.description.write(token.token());
@@ -436,11 +449,11 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         // Not in match because 'files' cannot be locked
         let new_file = duplicate_file(fd, UserSlice::empty(), cmd == F_DUPFD_CLOEXEC, token)?;
 
-        let context_lock = context::current();
-        let context = context_lock.read(token.token());
-
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
         return context
-            .add_file_min(new_file, arg, token)
+            .add_file_min(new_file, arg, &mut token)
             .ok_or(Error::new(EMFILE))
             .map(FileHandle::into);
     }
@@ -454,11 +467,12 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
     // Perform kernel operation if scheme agrees
     {
-        let context_lock = context::current();
-        let mut context = context_lock.read(token.token());
-        let (context, mut lock_token) = context.token_split();
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
 
         let mut files = context.files.write(token.token());
+        let (files, mut token) = files.token_split();
         match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
                 F_GETFD => {
@@ -475,7 +489,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                 F_GETFL => Ok(flags as usize),
                 F_SETFL => {
                     let new_flags = (flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
-                    file.description.write(lock_token.token()).flags = new_flags;
+                    file.description.write(token.token()).flags = new_flags;
                     Ok(0)
                 }
                 _ => Err(Error::new(EINVAL)),
@@ -486,11 +500,15 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 }
 
 pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
-    let file = context::current()
-        .read(token.token())
-        .get_file(fd, token)
-        .ok_or(Error::new(EBADF))?;
+    let (caller_ctx, file) = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        (
+            context.caller_ctx(),
+            context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?,
+        )
+    };
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -518,11 +536,15 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
-    let file = context::current()
-        .read(token.token())
-        .get_file(fd, token)
-        .ok_or(Error::new(EBADF))?;
+    let (caller_ctx, file) = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        (
+            context.caller_ctx(),
+            context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?,
+        )
+    };
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;

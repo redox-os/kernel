@@ -865,7 +865,7 @@ impl FdTbl {
         &self,
         scheme_id: SchemeId,
         scheme_number: usize,
-        token: &mut LockToken<L4>,
+        token: &mut LockToken<L5>,
     ) -> Result<FileDescriptor> {
         self.iter()
             .flatten()
