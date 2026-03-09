@@ -16,12 +16,12 @@ use crate::{
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
-    ipi::{ipi, IpiKind, IpiTarget},
-    memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
+    ipi::{IpiKind, IpiTarget, ipi},
+    memory::{Enomem, Frame, RaiiFrame, allocate_p2frame, deallocate_p2frame},
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, RwLock, L1},
+    sync::{CleanLockToken, L1, L4, LockToken, RwLock},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -824,7 +824,7 @@ impl FdTbl {
         &self,
         scheme_id: SchemeId,
         scheme_number: usize,
-        token: &mut CleanLockToken,
+        token: &mut LockToken<L4>,
     ) -> Result<FileDescriptor> {
         self.iter()
             .flatten()

@@ -1010,11 +1010,13 @@ impl UserInner {
 
         let (pid, desc) = {
             let context_lock = context::current();
-            let context = context_lock.read(token.token());
-            let desc = context
-                .files
-                .read()
-                .find_by_scheme(self.scheme_id, file, token)?;
+            let mut context = context_lock.read(token.token());
+            let (context, mut lock_token) = context.token_split();
+            let desc =
+                context
+                    .files
+                    .read()
+                    .find_by_scheme(self.scheme_id, file, &mut lock_token)?;
             (context.pid, desc.description)
         };
 

@@ -333,9 +333,10 @@ fn fdwrite_inner(
     let (scheme, number, descs_to_send) = {
         let (scheme, number) = {
             let current_lock = context::current();
-            let current = current_lock.read(token.token());
+            let mut current = current_lock.read(token.token());
+            let (current, mut lock_token) = current.token_split();
             let file_descriptor = current.get_file(socket).ok_or(Error::new(EBADF))?;
-            let desc = &file_descriptor.description.read(token.token());
+            let desc = &file_descriptor.description.read(lock_token.token());
             (desc.scheme, desc.number)
         };
         let scheme = scheme::get_scheme(token.token(), scheme)?;
@@ -384,9 +385,10 @@ fn call_fdread(
     let (scheme, number) = {
         let (scheme, number) = {
             let current_lock = context::current();
-            let current = current_lock.read(token.token());
+            let mut current = current_lock.read(token.token());
+            let (current, mut lock_token) = current.token_split();
             let file_descriptor = current.get_file(fd).ok_or(Error::new(EBADF))?;
-            let desc = file_descriptor.description.read(token.token());
+            let desc = file_descriptor.description.read(lock_token.token());
             (desc.scheme, desc.number)
         };
         let scheme = scheme::get_scheme(token.token(), scheme)?;
@@ -422,7 +424,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         .get_file(fd)
         .ok_or(Error::new(EBADF))?;
 
-    let description = file.description.read(token.token());
+    let (scheme_id, number, flags) = {
+        let desc = file.description.write(token.token());
+        (desc.scheme, desc.number, desc.flags)
+    };
 
     if cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC {
         // Not in match because 'files' cannot be locked
@@ -439,15 +444,16 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
     // Communicate fcntl with scheme
     if cmd != F_GETFD && cmd != F_SETFD {
-        let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+        let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
-        scheme.fcntl(description.number, cmd, arg, token)?;
+        scheme.fcntl(number, cmd, arg, token)?;
     };
 
     // Perform kernel operation if scheme agrees
     {
         let context_lock = context::current();
-        let context = context_lock.read(token.token());
+        let mut context = context_lock.read(token.token());
+        let (context, mut lock_token) = context.token_split();
 
         let mut files = context.files.write();
         match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
@@ -463,12 +469,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                     file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
                     Ok(0)
                 }
-                F_GETFL => Ok(description.flags as usize),
+                F_GETFL => Ok(flags as usize),
                 F_SETFL => {
-                    let new_flags =
-                        (description.flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
-                    drop(description);
-                    file.description.write(token.token()).flags = new_flags;
+                    let new_flags = (flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
+                    file.description.write(lock_token.token()).flags = new_flags;
                     Ok(0)
                 }
                 _ => Err(Error::new(EINVAL)),
