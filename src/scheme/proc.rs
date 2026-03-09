@@ -837,8 +837,10 @@ fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(Kerne
         .read(token.token())
         .get_file(FileHandle::from(fd))
         .ok_or(Error::new(EBADF))?;
-    let desc = file_descriptor.description.read(token.token());
-    let (scheme_id, number) = (desc.scheme, desc.number);
+    let (scheme_id, number) = {
+        let desc = file_descriptor.description.read(token.token());
+        (desc.scheme, desc.number)
+    };
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     Ok((scheme, number))

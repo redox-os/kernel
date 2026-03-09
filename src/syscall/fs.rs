@@ -78,7 +78,10 @@ pub fn openat(
         .get_file(fh)
         .ok_or(Error::new(EBADF))?;
 
-    let description = pipe.description.read(token.token());
+    let (scheme_id, number) = {
+        let desc = pipe.description.read(token.token());
+        (desc.scheme, desc.number)
+    };
 
     let caller_ctx = context::current()
         .read(token.token())
@@ -86,10 +89,10 @@ pub fn openat(
         .filter_uid_gid(euid, egid);
 
     let new_description = {
-        let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+        let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
         let res = scheme.kopenat(
-            description.number,
+            number,
             StrOrBytes::from_str(&path_buf),
             flags,
             fcntl_flags,
@@ -102,7 +105,7 @@ pub fn openat(
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
                     internal_flags,
-                    scheme: description.scheme,
+                    scheme: scheme_id,
                     number,
                     flags: (flags & !O_CLOEXEC) as u32,
                 }))
@@ -134,9 +137,12 @@ pub fn unlinkat(
         .get_file(fh)
         .ok_or(Error::new(EBADF))?;
 
-    let description = pipe.description.read(token.token());
+    let (number, scheme_id) = {
+        let desc = pipe.description.read(token.token());
+        (desc.number, desc.scheme)
+    };
 
-    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     let caller_ctx = context::current()
         .read(token.token())
@@ -147,7 +153,7 @@ pub fn unlinkat(
     let mut path_buf = BorrowedHtBuf::head()?;
     let path = path_buf.use_for_string(raw_path)?;
     */
-    scheme.unlinkat(description.number, &path_buf, flags, caller_ctx, token)
+    scheme.unlinkat(number, &path_buf, flags, caller_ctx, token)
 }
 
 /// Close syscall
@@ -487,9 +493,12 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
-    let description = file.description.read(token.token());
+    let (number, scheme_id) = {
+        let desc = file.description.read(token.token());
+        (desc.number, desc.scheme)
+    };
 
-    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     // TODO: Check EXDEV.
     /*
@@ -498,7 +507,7 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
     }
     */
 
-    scheme.flink(description.number, reference.as_ref(), caller_ctx, token)
+    scheme.flink(number, reference.as_ref(), caller_ctx, token)
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
@@ -516,9 +525,12 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
-    let description = file.description.read(token.token());
+    let (number, scheme_id) = {
+        let desc = file.description.read(token.token());
+        (desc.number, desc.scheme)
+    };
 
-    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     // TODO: Check EXDEV.
     /*
@@ -527,7 +539,7 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     }
     */
 
-    scheme.frename(description.number, reference.as_ref(), caller_ctx, token)
+    scheme.frename(number, reference.as_ref(), caller_ctx, token)
 }
 
 /// File status

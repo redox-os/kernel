@@ -3,7 +3,7 @@
 use crate::{
     event,
     scheme::{self, SchemeId},
-    sync::{CleanLockToken, L1, RwLock},
+    sync::{CleanLockToken, RwLock, L1},
     syscall::error::Result,
 };
 use alloc::sync::Arc;
@@ -65,7 +65,7 @@ impl InternalFlags {
 #[must_use = "File descriptors must be closed"]
 pub struct FileDescriptor {
     /// Corresponding file description
-    pub description: Arc<RwLock<L1, FileDescription>>,
+    pub description: Arc<LockedFileDescription>,
     /// Cloexec flag
     pub cloexec: bool,
 }
@@ -85,13 +85,13 @@ impl FileDescription {
 impl FileDescriptor {
     pub fn close(self, token: &mut CleanLockToken) -> Result<()> {
         {
-            let description = self.description.read(token.token());
-            if description
-                .internal_flags
-                .contains(InternalFlags::NOTIFY_ON_NEXT_DETACH)
-            {
-                let scheme = scheme::get_scheme(token.token(), description.scheme)?;
-                scheme.detach(description.number, token)?;
+            let (scheme_id, number, internal_flags) = {
+                let desc = self.description.read(token.token());
+                (desc.scheme, desc.number, desc.internal_flags)
+            };
+            if internal_flags.contains(InternalFlags::NOTIFY_ON_NEXT_DETACH) {
+                let scheme = scheme::get_scheme(token.token(), scheme_id)?;
+                scheme.detach(number, token)?;
             }
         }
 
