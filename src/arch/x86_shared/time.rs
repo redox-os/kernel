@@ -12,7 +12,8 @@ pub fn monotonic_absolute(token: &mut CleanLockToken) -> u128 {
         return ns;
     }
 
-    *crate::time::OFFSET.lock(token.token()) + hpet_or_pit()
+    let offset = { *crate::time::OFFSET.read(token.token()) };
+    offset + hpet_or_pit()
 }
 fn hpet_or_pit() -> u128 {
     #[cfg(feature = "acpi")]

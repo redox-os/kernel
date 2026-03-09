@@ -98,7 +98,8 @@ pub fn init(token: &mut CleanLockToken) {
 
     let context_lock = Arc::new(ContextLock::new(context));
 
-    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    let context_ref = ContextRef(Arc::clone(&context_lock));
+    contexts_mut(token.token()).insert(context_ref);
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -158,20 +159,21 @@ pub fn spawn(
 ) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let context_lock = Arc::new(ContextLock::new(Context::new(owner_proc_id)?));
+    let mut context = Context::new(owner_proc_id)?;
 
-    contexts_mut(token.token()).insert(ContextRef(Arc::clone(&context_lock)));
+    let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
+    context
+        .arch
+        .setup_initial_call(&stack, func, userspace_allowed);
 
-    {
-        let mut context = context_lock.write(token.token());
-        let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
-        context
-            .arch
-            .setup_initial_call(&stack, func, userspace_allowed);
+    context.kstack = Some(stack);
+    context.userspace = userspace_allowed;
 
-        context.kstack = Some(stack);
-        context.userspace = userspace_allowed;
-    }
+    let context_lock = Arc::new(ContextLock::new(context));
+    let context_ref = ContextRef(Arc::clone(&context_lock));
+
+    contexts_mut(token.token()).insert(context_ref);
+
     Ok(context_lock)
 }
 
