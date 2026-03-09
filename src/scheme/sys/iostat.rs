@@ -25,8 +25,13 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
             let mut contexts = context::contexts(token.token());
             let (contexts, mut token) = contexts.token_split();
             for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
-                let context = context_ref.read(token.token());
-                rows.push((context.pid, context.name, context.files.read().clone()));
+                let mut current = context_ref.read(token.token());
+                let (context, mut token) = current.token_split();
+                rows.push((
+                    context.pid,
+                    context.name,
+                    context.files.read(token.token()).clone(),
+                ));
             }
         }
         rows.sort_by_key(|row| row.0);
@@ -40,7 +45,10 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                     Some(ref file) => file.clone(),
                 };
 
-                let description = file.description.read();
+                let (scheme, number, flags) = {
+                    let desc = file.description.read(token.token());
+                    (desc.scheme, desc.number, desc.flags)
+                };
 
                 let _ = write!(
                     string,
@@ -51,13 +59,13 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                         "U"
                     },
                     fd & !syscall::UPPER_FDTBL_TAG,
-                    description.scheme.get(),
-                    description.number,
-                    description.flags
+                    scheme.get(),
+                    number,
+                    flags
                 );
 
                 let scheme = {
-                    match scheme::get_scheme(token.token(), description.scheme) {
+                    match scheme::get_scheme(token.token(), scheme) {
                         Ok(scheme) => scheme.clone(),
                         Err(_) => {
                             let _ = writeln!(string, "no scheme",);
@@ -66,11 +74,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                     }
                 };
 
-                match scheme.kfpath(
-                    description.number,
-                    fpath_user.reinterpret_unchecked(),
-                    token,
-                ) {
+                match scheme.kfpath(number, fpath_user.reinterpret_unchecked(), token) {
                     Ok(path_len) => {
                         fpath_user.copy_to_slice(&mut fpath_kernel)?;
                         let fname = str::from_utf8(&fpath_kernel[..path_len]).unwrap_or("?");

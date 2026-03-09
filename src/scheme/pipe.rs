@@ -4,12 +4,12 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use syscall::{data::GlobalSchemes, CallFlags};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
-use spin::{Mutex, RwLock as SpinRwLock};
+use spin::Mutex;
 
 use crate::{
     context::{
         context::{bulk_add_fds, bulk_insert_fds},
-        file::{FileDescription, InternalFlags},
+        file::{FileDescription, InternalFlags, LockedFileDescription},
     },
     event,
     sync::{CleanLockToken, RwLock, WaitCondition, L1},
@@ -371,7 +371,7 @@ impl KernelScheme for PipeScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        mut descs: Vec<Arc<SpinRwLock<FileDescription>>>,
+        mut descs: Vec<Arc<LockedFileDescription>>,
         _flags: CallFlags,
         _args: u64,
         _metadata: &[u64],
@@ -499,5 +499,5 @@ pub struct Pipe {
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
-    fd_queue: Mutex<VecDeque<Arc<SpinRwLock<FileDescription>>>>,
+    fd_queue: Mutex<VecDeque<Arc<LockedFileDescription>>>,
 }

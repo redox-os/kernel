@@ -5,7 +5,7 @@ use rmm::PhysicalAddress;
 
 use crate::{
     context::{
-        file::{FileDescription, InternalFlags},
+        file::{FileDescription, InternalFlags, LockedFileDescription},
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
     },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
@@ -338,7 +338,7 @@ impl KernelScheme for MemoryScheme {
     fn kstdfscall(
         &self,
         id: usize,
-        _desc: Arc<spin::RwLock<FileDescription>>,
+        _desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],

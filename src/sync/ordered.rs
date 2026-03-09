@@ -89,32 +89,43 @@ pub struct L4 {}
 #[derive(Debug)]
 pub struct L5 {}
 
+#[derive(Debug)]
+pub struct L6 {}
+
 impl Level for L0 {}
 impl Level for L1 {}
 impl Level for L2 {}
 impl Level for L3 {}
 impl Level for L4 {}
 impl Level for L5 {}
+impl Level for L6 {}
 
 impl Lower<L1> for L0 {}
 impl Lower<L2> for L0 {}
 impl Lower<L3> for L0 {}
 impl Lower<L4> for L0 {}
 impl Lower<L5> for L0 {}
+impl Lower<L6> for L0 {}
 
 impl Lower<L2> for L1 {}
 impl Lower<L3> for L1 {}
 impl Lower<L4> for L1 {}
 impl Lower<L5> for L1 {}
+impl Lower<L6> for L1 {}
 
 impl Lower<L3> for L2 {}
 impl Lower<L4> for L2 {}
 impl Lower<L5> for L2 {}
+impl Lower<L6> for L2 {}
 
 impl Lower<L4> for L3 {}
 impl Lower<L5> for L3 {}
+impl Lower<L6> for L3 {}
 
 impl Lower<L5> for L4 {}
+impl Lower<L6> for L4 {}
+
+impl Lower<L6> for L5 {}
 
 /// Indicate that the implementor is higher that the level O
 pub trait Higher<O: Level>: Level {}
@@ -192,6 +203,9 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
     }
 }
 
+#[cfg(feature = "busy_panic")]
+const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
+
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
     pub const fn new(val: T) -> Self {
@@ -210,8 +224,25 @@ impl<L: Level, T> Mutex<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> MutexGuard<'a, L, T> {
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_lock() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock may triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.lock();
         MutexGuard {
-            inner: self.inner.lock(),
+            inner,
             lock_token: LockToken::downgraded(lock_token),
         }
     }
@@ -270,6 +301,7 @@ impl<'a, L: Level, T: ?Sized + 'a> core::ops::DerefMut for MutexGuard<'a, L, T> 
     }
 }
 
+#[derive(Debug)]
 pub struct RwLock<L: Level, T> {
     inner: spin::RwLock<T>,
     _phantom: PhantomData<L>,
@@ -315,8 +347,25 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> RwLockWriteGuard<'a, L, T> {
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_write() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock may triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.write();
         RwLockWriteGuard {
-            inner: self.inner.write(),
+            inner,
             lock_token: LockToken::downgraded(lock_token),
         }
     }
@@ -334,8 +383,25 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> RwLockReadGuard<'a, L, T> {
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_read() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock may triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.read();
         RwLockReadGuard {
-            inner: self.inner.read(),
+            inner,
             lock_token: LockToken::downgraded(lock_token),
         }
     }

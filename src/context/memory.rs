@@ -14,7 +14,7 @@ use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
     arch::paging::PAGE_SIZE,
-    context::arch::setup_new_utable,
+    context::{arch::setup_new_utable, file::LockedFileDescription},
     cpu_set::LogicalCpuSet,
     memory::{
         deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
@@ -64,7 +64,7 @@ impl UnmapResult {
         };
 
         let (scheme_id, number) = {
-            let desc = description.write();
+            let desc = description.write(token.token());
             (desc.scheme, desc.number)
         };
 
@@ -1144,7 +1144,7 @@ pub struct Grant {
 
 #[derive(Clone, Debug)]
 pub struct GrantFileRef {
-    pub description: Arc<RwLock<FileDescription>>,
+    pub description: Arc<LockedFileDescription>,
     pub base_offset: usize,
 }
 
@@ -2664,7 +2664,7 @@ fn correct_inner<'l>(
             drop(addr_space_guard);
 
             let (scheme_id, scheme_number) = {
-                let desc = &file_ref.description.read();
+                let desc = &file_ref.description.read(token.token());
                 (desc.scheme, desc.number)
             };
             let user_inner = scheme::get_scheme(token.token(), scheme_id)
