@@ -368,7 +368,7 @@ impl KernelScheme for SchemeList {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
-            Some(inner) => inner.call_fdwrite(descs, flags, arg, metadata),
+            Some(inner) => inner.call_fdwrite(descs, flags, arg, metadata, token),
             None => Err(Error::new(EBADF)),
         }
     }

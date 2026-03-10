@@ -4,7 +4,6 @@ use alloc::{
 };
 use core::{mem, mem::size_of, num::NonZeroUsize};
 use slab::Slab;
-use spin::Mutex;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -26,7 +25,7 @@ use crate::{
     memory::Frame,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
-    sync::{CleanLockToken, RwLock, WaitQueue},
+    sync::{CleanLockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{
         data::Map,
         error::*,
@@ -44,7 +43,7 @@ pub struct UserInner {
     todo: WaitQueue<Sqe>,
 
     // TODO: custom packed radix tree data structure
-    states: Mutex<Slab<State>>,
+    states: Mutex<L1, Slab<State>>,
 }
 
 enum State {
@@ -163,9 +162,9 @@ impl UserInner {
         }
     }
 
-    fn next_id(&self) -> Result<u32> {
+    fn next_id(&self, token: &mut CleanLockToken) -> Result<u32> {
         let idx = {
-            let mut states = self.states.lock();
+            let mut states = self.states.lock(token.token());
             states.insert(State::Placeholder)
         };
 
@@ -188,7 +187,7 @@ impl UserInner {
                 opcode: opcode as u8,
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
-                tag: self.next_id()?,
+                tag: self.next_id(token)?,
                 caller: ctx.pid as u64,
                 args: {
                     let mut a = args.args();
@@ -221,7 +220,7 @@ impl UserInner {
                 .write(token.token())
                 .block("UserInner::call");
             {
-                let mut states = self.states.lock();
+                let mut states = self.states.lock(token.token());
                 states[sqe.tag as usize] = State::Waiting {
                     context: Arc::downgrade(&current_context),
                     fds,
@@ -258,7 +257,7 @@ impl UserInner {
                     }
                 };
 
-                let mut states = self.states.lock();
+                let mut states = self.states.lock(token.token());
                 match states.get_mut(sqe.tag as usize) {
                     // invalid state
                     None => return Err(Error::new(EBADFD)),
@@ -713,9 +712,9 @@ impl UserInner {
     ) -> Result<()> {
         info!("REQUEST FMAP");
 
-        let tag = self.next_id()?;
+        let tag = self.next_id(token)?;
         {
-            let mut states = self.states.lock();
+            let mut states = self.states.lock(token.token());
             states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
         }
 
@@ -774,7 +773,7 @@ impl UserInner {
                 let description = {
                     match self
                         .states
-                        .lock()
+                        .lock(token.token())
                         .get_mut(tag as usize)
                         .ok_or(Error::new(EINVAL))?
                     {
@@ -841,7 +840,7 @@ impl UserInner {
                 }
 
                 let context = {
-                    let mut states = self.states.lock();
+                    let mut states = self.states.lock(token.token());
                     match states.get_mut(tag as usize) {
                         Some(o) => match mem::replace(o, State::Placeholder) {
                             // invalid state
@@ -892,7 +891,7 @@ impl UserInner {
         let to_close: Vec<FileDescription>;
 
         {
-            let mut states = self.states.lock();
+            let mut states = self.states.lock(token.token());
             match states.get_mut(tag as usize) {
                 Some(o) => match mem::replace(o, State::Placeholder) {
                     // invalid state
@@ -1036,7 +1035,7 @@ impl UserInner {
                 opcode: Opcode::MmapPrep as u8,
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
-                tag: self.next_id()?,
+                tag: self.next_id(token)?,
                 args: [
                     file as u64,
                     unaligned_size as u64,
@@ -1122,6 +1121,7 @@ impl UserInner {
         flags: CallFlags,
         _arg: u64,
         metadata: &[u64],
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         if metadata.is_empty() {
             return Err(Error::new(EINVAL));
@@ -1142,7 +1142,7 @@ impl UserInner {
                 if flags.contains(CallFlags::FD_CLONE) {
                     movefd_flags |= FmoveFdFlags::CLONE;
                 }
-                self.handle_movefd(descs, metadata[1] as usize, movefd_flags)
+                self.handle_movefd(descs, metadata[1] as usize, movefd_flags, token)
             }
             _ => Err(Error::new(EINVAL)),
         }
@@ -1153,11 +1153,12 @@ impl UserInner {
         descs: Vec<Arc<LockedFileDescription>>,
         request_id: usize,
         _flags: FmoveFdFlags,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let num_fds = descs.len();
         match self
             .states
-            .lock()
+            .lock(token.token())
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
@@ -1218,7 +1219,7 @@ impl UserInner {
     ) -> Result<usize> {
         let descriptions = match self
             .states
-            .lock()
+            .lock(token.token())
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
@@ -1898,7 +1899,7 @@ impl KernelScheme for UserScheme {
             opcode: Opcode::Call as u8,
             sqe_flags: SqeFlags::empty(),
             _rsvd: 0,
-            tag: inner.next_id()?,
+            tag: inner.next_id(token)?,
             caller: ctx.pid as u64,
             args: [
                 id as u64,
@@ -1943,7 +1944,7 @@ impl KernelScheme for UserScheme {
             opcode: Opcode::StdFsCall as u8,
             sqe_flags: SqeFlags::empty(),
             _rsvd: 0,
-            tag: inner.next_id()?,
+            tag: inner.next_id(token)?,
             caller: ctx.pid as u64,
             args: [
                 id as u64,
