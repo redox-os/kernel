@@ -19,13 +19,13 @@ use crate::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
             PageSpan, DANGLING,
         },
-        BorrowedHtBuf, ContextLock, PreemptGuard, Status,
+        BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },
     event,
     memory::Frame,
     paging::{Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
-    sync::{CleanLockToken, Mutex, RwLock, WaitQueue, L1},
+    sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{
         data::Map,
         error::*,
@@ -241,23 +241,25 @@ impl UserInner {
             context::switch(token);
 
             {
-                let mut eintr_if_sigkill = |callee_responsible: &mut PageSpan| {
-                    // If SIGKILL was found without waiting for scheme, EINTR directly. In that
-                    // case, data loss doesn't matter.
-                    if context::current().read(token.token()).being_sigkilled {
-                        // Callee must deallocate memory, rather than the caller. This is less optimal
-                        // for TLB, but we don't really have any other choice. The scheme must be able
-                        // to access the borrowed memory until it has responded to the request.
-                        *callee_responsible =
-                            core::mem::replace(caller_responsible, PageSpan::empty());
+                let mut eintr_if_sigkill =
+                    |callee_responsible: &mut PageSpan, token: &mut LockToken<L1>| {
+                        // If SIGKILL was found without waiting for scheme, EINTR directly. In that
+                        // case, data loss doesn't matter.
+                        if context::current().read(token.token()).being_sigkilled {
+                            // Callee must deallocate memory, rather than the caller. This is less optimal
+                            // for TLB, but we don't really have any other choice. The scheme must be able
+                            // to access the borrowed memory until it has responded to the request.
+                            *callee_responsible =
+                                core::mem::replace(caller_responsible, PageSpan::empty());
 
-                        Err(Error::new(EINTR))
-                    } else {
-                        Ok(())
-                    }
-                };
+                            Err(Error::new(EINTR))
+                        } else {
+                            Ok(())
+                        }
+                    };
 
                 let mut states = self.states.lock(token.token());
+                let (states, mut token) = states.token_split();
                 match states.get_mut(sqe.tag as usize) {
                     // invalid state
                     None => return Err(Error::new(EBADFD)),
@@ -269,7 +271,8 @@ impl UserInner {
                             context,
                             fds,
                         } => {
-                            let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                            let maybe_eintr =
+                                eintr_if_sigkill(&mut callee_responsible, &mut token.token());
                             *o = State::Waiting {
                                 canceling: true,
                                 callee_responsible,
@@ -295,7 +298,7 @@ impl UserInner {
                             context,
                             mut callee_responsible,
                         } => {
-                            let maybe_eintr = eintr_if_sigkill(&mut callee_responsible);
+                            let maybe_eintr = eintr_if_sigkill(&mut callee_responsible, &mut token);
                             let current_context = context::current();
 
                             *o = State::Waiting {
@@ -316,7 +319,7 @@ impl UserInner {
                             // We do not want to preempt between sending the
                             // cancellation and blocking again where we might
                             // miss a wakeup.
-                            let mut preempt = PreemptGuard::new(&current_context, token);
+                            let mut preempt = PreemptGuardL1::new(&current_context, &mut token);
                             let token = preempt.token();
 
                             self.todo.send(
@@ -892,6 +895,7 @@ impl UserInner {
 
         {
             let mut states = self.states.lock(token.token());
+            let (states, mut token) = states.token_split();
             match states.get_mut(tag as usize) {
                 Some(o) => match mem::replace(o, State::Placeholder) {
                     // invalid state

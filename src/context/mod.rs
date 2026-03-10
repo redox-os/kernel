@@ -210,3 +210,27 @@ impl Drop for PreemptGuard<'_> {
         self.context.write(self.token.token()).preempt_locks -= 1;
     }
 }
+
+/// Variant of PreemptGuard behind a one-level token
+pub struct PreemptGuardL1<'a> {
+    context: &'a ContextLock,
+    token: &'a mut LockToken<'a, L1>,
+}
+
+impl<'a> PreemptGuardL1<'a> {
+    pub fn new(context: &'a ContextLock, token: &'a mut LockToken<'a, L1>) -> PreemptGuardL1<'a> {
+        context.write(token.token()).preempt_locks += 1;
+        PreemptGuardL1 { context, token }
+    }
+
+    /// Get a mutable reference to the underlying `LockToken<L1>`.
+    pub fn token(&mut self) -> &mut LockToken<'a, L1> {
+        self.token
+    }
+}
+
+impl Drop for PreemptGuardL1<'_> {
+    fn drop(&mut self) {
+        self.context.write(self.token.token()).preempt_locks -= 1;
+    }
+}
