@@ -7,12 +7,12 @@ use alloc::{
 
 use crate::{
     context::{self, ContextLock, PreemptGuard},
-    sync::{CleanLockToken, LockToken, Lower, Mutex, L1, L2, L3},
+    sync::{CleanLockToken, Mutex, L1},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<L3, Vec<Weak<ContextLock>>>,
+    contexts: Mutex<L1, Vec<Weak<ContextLock>>>,
 }
 
 impl WaitCondition {
@@ -48,8 +48,7 @@ impl WaitCondition {
         len
     }
 
-    /// Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function.
-    /// Wrapper to wait_setup -> drop(guard) -> context::switch -> wait_cleanup without currently holding lock for guard.
+    // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
     pub fn wait<T>(&self, guard: T, reason: &'static str, token: &mut CleanLockToken) -> bool {
         let current_context_ref = context::current();
         {
@@ -59,68 +58,36 @@ impl WaitCondition {
             // to deadlock if we were woken up immediately.
             let mut preempt = PreemptGuard::new(&current_context_ref, token);
             let token = preempt.token();
-            if !self.wait_setup(&current_context_ref, reason, token.token()) {
-                return false;
+            {
+                let mut context = current_context_ref.write(token.token());
+                if let Some((control, pctl, _)) = context.sigcontrol()
+                    && control.currently_pending_unblocked(pctl) != 0
+                {
+                    return false;
+                }
+                context.block(reason);
             }
+
+            self.contexts
+                .lock(token.token())
+                .push(Arc::downgrade(&current_context_ref));
 
             drop(guard);
         }
 
         context::switch(token);
 
-        self.wait_cleanup(&current_context_ref, token.token())
-    }
-
-    /// Enqueues the context and sets it to blocked.
-    /// Returns true if successfully blocked, false if a signal is pending.
-    pub fn wait_setup<'a, LP>(
-        &self,
-        current_context_ref: &Arc<ContextLock>,
-        reason: &'static str,
-        mut lock_token: LockToken<'a, LP>,
-    ) -> bool
-    where
-        LP: Lower<L2>,
-    {
-        {
-            let mut context = current_context_ref.write(LockToken::downgraded(lock_token.token()));
-            if let Some((control, pctl, _)) = context.sigcontrol()
-                && control.currently_pending_unblocked(pctl) != 0
-            {
-                return false;
-            }
-            context.block(reason);
-        }
-
-        self.contexts
-            .lock(LockToken::downgraded(lock_token))
-            .push(Arc::downgrade(current_context_ref));
-
-        true
-    }
-
-    /// Cleans up the wait list after waking up.
-    /// Returns true if we actually waited, false if we were removed by signal/notify_signal.
-    pub fn wait_cleanup<'a, LP>(
-        &self,
-        current_context_ref: &Arc<ContextLock>,
-        lock_token: LockToken<'a, LP>,
-    ) -> bool
-    where
-        LP: Lower<L1>,
-    {
         let mut waited = true;
-        let mut contexts = self.contexts.lock(LockToken::downgraded(lock_token));
 
-        // TODO: retain
-        let mut i = 0;
-        while i < contexts.len() {
-            if Weak::as_ptr(&contexts[i]) == Arc::as_ptr(current_context_ref) {
-                contexts.remove(i);
+        {
+            let mut contexts = self.contexts.lock(token.token());
+
+            if let Some(index) = contexts
+                .iter()
+                .position(|c| Weak::as_ptr(c) == Arc::as_ptr(&current_context_ref))
+            {
+                contexts.remove(index);
                 waited = false;
-                break;
-            } else {
-                i += 1;
             }
         }
 
