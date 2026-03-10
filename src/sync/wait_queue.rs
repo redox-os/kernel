@@ -1,9 +1,9 @@
 use alloc::collections::VecDeque;
+use spin::Mutex;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    context::{self, PreemptGuard},
-    sync::{CleanLockToken, Mutex, WaitCondition, L1},
+    sync::{CleanLockToken, WaitCondition},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -12,7 +12,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
-    inner: Mutex<L1, VecDeque<T>>,
+    pub inner: Mutex<VecDeque<T>>,
     pub condition: WaitCondition,
 }
 
@@ -23,8 +23,8 @@ impl<T> WaitQueue<T> {
             condition: WaitCondition::new(),
         }
     }
-    pub fn is_currently_empty(&self, token: &mut CleanLockToken) -> bool {
-        self.inner.lock(token.token()).is_empty()
+    pub fn is_currently_empty(&self) -> bool {
+        self.inner.lock().is_empty()
     }
     pub fn receive_into_user(
         &self,
@@ -33,31 +33,14 @@ impl<T> WaitQueue<T> {
         reason: &'static str,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let current_context_ref = context::current();
-
         loop {
-            let mut preempt = PreemptGuard::new(&current_context_ref, token);
-
-            let mut inner = self.inner.lock(preempt.token().token());
+            let mut inner = self.inner.lock();
 
             if inner.is_empty() {
                 if block {
-                    let (_, mut inner_token) = inner.token_split();
-                    if !self
-                        .condition
-                        .wait_setup(&current_context_ref, reason, inner_token.token())
-                    {
+                    if !self.condition.wait(inner, reason, token) {
                         return Err(Error::new(EINTR));
                     }
-
-                    drop(inner);
-                    drop(preempt);
-
-                    context::switch(token);
-
-                    self.condition
-                        .wait_cleanup(&current_context_ref, token.token());
-
                     continue;
                 } else if buf.is_empty() {
                     return Ok(0);
@@ -91,7 +74,7 @@ impl<T> WaitQueue<T> {
 
     pub fn send(&self, value: T, token: &mut CleanLockToken) -> usize {
         let len = {
-            let mut inner = self.inner.lock(token.token());
+            let mut inner = self.inner.lock();
             inner.push_back(value);
             inner.len()
         };
