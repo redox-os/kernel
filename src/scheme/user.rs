@@ -322,14 +322,14 @@ impl UserInner {
                             let mut preempt = PreemptGuardL1::new(&current_context, &mut token);
                             let token = preempt.token();
 
-                            self.todo.send(
+                            self.todo.send_locked(
                                 Sqe {
                                     opcode: Opcode::Cancel as u8,
                                     sqe_flags: SqeFlags::ONEWAY,
                                     tag: sqe.tag,
                                     ..Default::default()
                                 },
-                                token,
+                                &mut token.token(),
                             );
                             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
 

@@ -3,7 +3,7 @@ use spin::Mutex;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    sync::{CleanLockToken, WaitCondition},
+    sync::{CleanLockToken, LockToken, WaitCondition, L1},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -73,12 +73,16 @@ impl<T> WaitQueue<T> {
     }
 
     pub fn send(&self, value: T, token: &mut CleanLockToken) -> usize {
+        self.send_locked(value, &mut token.token().downgrade())
+    }
+
+    pub fn send_locked<'a>(&self, value: T, token: &'a mut LockToken<'a, L1>) -> usize {
         let len = {
             let mut inner = self.inner.lock();
             inner.push_back(value);
             inner.len()
         };
-        self.condition.notify(token);
+        self.condition.notify_locked(token);
         len
     }
 }

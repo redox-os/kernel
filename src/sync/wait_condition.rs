@@ -7,12 +7,12 @@ use alloc::{
 
 use crate::{
     context::{self, ContextLock, PreemptGuard},
-    sync::{CleanLockToken, Mutex, L1},
+    sync::{CleanLockToken, LockToken, Mutex, L1, L2},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<L1, Vec<Weak<ContextLock>>>,
+    contexts: Mutex<L2, Vec<Weak<ContextLock>>>,
 }
 
 impl WaitCondition {
@@ -24,6 +24,10 @@ impl WaitCondition {
 
     // Notify all waiters
     pub fn notify(&self, token: &mut CleanLockToken) -> usize {
+        self.notify_locked(&mut token.token().downgrade())
+    }
+
+    pub fn notify_locked<'a>(&self, token: &'a mut LockToken<'a, L1>) -> usize {
         let mut contexts = self.contexts.lock(token.token());
         let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
