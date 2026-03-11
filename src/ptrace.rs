@@ -170,6 +170,7 @@ pub fn wait(session: Arc<Session>, token: &mut CleanLockToken) -> Result<()> {
         // Lock the data, to make sure we're reading the final value before going
         // to sleep.
         let data = session.data.lock();
+        let mut token = token.downgrade();
 
         // Wake up if a breakpoint is already reached or there's an unread event
         if data.breakpoint.as_ref().map(|b| b.reached).unwrap_or(false) || !data.events.is_empty() {
@@ -178,7 +179,7 @@ pub fn wait(session: Arc<Session>, token: &mut CleanLockToken) -> Result<()> {
 
         // Go to sleep, and drop the lock on our data, which will allow other the
         // tracer to wake us up.
-        if session.tracer.wait(data, "ptrace::wait", token) {
+        if session.tracer.wait(data, "ptrace::wait", &mut token) {
             // We successfully waited, wake up!
             break;
         }
@@ -223,10 +224,11 @@ pub fn breakpoint_callback(
 
         // Wake up sleeping tracer
         session.tracer.notify(token);
+        let mut token = token.downgrade();
 
         if session
             .tracee
-            .wait(data, "ptrace::breakpoint_callback", token)
+            .wait(data, "ptrace::breakpoint_callback", &mut token)
         {
             // We successfully waited, wake up!
             break Some(breakpoint.flags);

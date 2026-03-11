@@ -270,10 +270,11 @@ impl KernelScheme for AcpiScheme {
 
                 loop {
                     let flag_guard = KSTOP_FLAG.lock();
+                    let mut token = token.downgrade();
 
                     if *flag_guard {
                         break;
-                    } else if !KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop", token) {
+                    } else if !KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop", &mut token) {
                         return Err(Error::new(EINTR));
                     }
                 }

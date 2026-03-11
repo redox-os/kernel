@@ -255,7 +255,7 @@ impl KernelScheme for PipeScheme {
 
         loop {
             let mut vec = pipe.queue.lock(token.token());
-            let (vec, mut token) = vec.token_split();
+            let (mut vec, mut token) = vec.into_split();
 
             let (s1, s2) = vec.as_slices();
             let s1_count = core::cmp::min(user_buf.len(), s1.len());
@@ -279,9 +279,9 @@ impl KernelScheme for PipeScheme {
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
-                    token,
+                    token.token(),
                 );
-                pipe.write_condition.notify_locked(token);
+                pipe.write_condition.notify_locked(token.token());
 
                 return Ok(bytes_read);
             } else if user_buf.is_empty() {
@@ -292,7 +292,7 @@ impl KernelScheme for PipeScheme {
                 return Ok(0);
             } else if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
-            } else if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read", &mut token) {
                 return Err(Error::new(EINTR));
             }
         }
@@ -314,7 +314,7 @@ impl KernelScheme for PipeScheme {
 
         loop {
             let mut vec = pipe.queue.lock(token.token());
-            let (vec, mut token) = vec.token_split();
+            let (mut vec, mut token) = vec.into_split();
 
             if !pipe.reader_is_alive.load(Ordering::Relaxed) {
                 return Err(Error::new(EPIPE));
@@ -343,8 +343,13 @@ impl KernelScheme for PipeScheme {
             }
 
             if bytes_written > 0 {
-                event::trigger_locked(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
-                pipe.read_condition.notify_locked(token);
+                event::trigger_locked(
+                    GlobalSchemes::Pipe.scheme_id(),
+                    key,
+                    EVENT_READ,
+                    token.token(),
+                );
+                pipe.read_condition.notify_locked(token.token());
 
                 return Ok(bytes_written);
             } else if user_buf.is_empty() {
@@ -353,7 +358,10 @@ impl KernelScheme for PipeScheme {
 
             if fcntl_flags & O_NONBLOCK as u32 != 0 {
                 return Err(Error::new(EAGAIN));
-            } else if !pipe.write_condition.wait(vec, "PipeWrite::write", token) {
+            } else if !pipe
+                .write_condition
+                .wait(vec, "PipeWrite::write", &mut token)
+            {
                 return Err(Error::new(EINTR));
             }
         }
@@ -392,8 +400,8 @@ impl KernelScheme for PipeScheme {
         };
 
         loop {
-            let mut vec = pipe.fd_queue.lock(token.token());
-            let (vec, mut token) = vec.token_split();
+            let vec = pipe.fd_queue.lock(token.token());
+            let (mut vec, mut token) = vec.into_split();
 
             if !pipe.reader_is_alive.load(Ordering::Relaxed) {
                 return Err(Error::new(EPIPE));
@@ -415,13 +423,21 @@ impl KernelScheme for PipeScheme {
             let fds_written = vec.len() - before_len;
 
             if fds_written > 0 {
-                event::trigger_locked(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
-                pipe.read_condition.notify_locked(token);
+                event::trigger_locked(
+                    GlobalSchemes::Pipe.scheme_id(),
+                    key,
+                    EVENT_READ,
+                    token.token(),
+                );
+                pipe.read_condition.notify_locked(token.token());
 
                 return Ok(fds_written);
             }
 
-            if !pipe.write_condition.wait(vec, "PipeWrite::write", token) {
+            if !pipe
+                .write_condition
+                .wait(vec, "PipeWrite::write", &mut token)
+            {
                 return Err(Error::new(EINTR));
             }
         }
@@ -451,8 +467,8 @@ impl KernelScheme for PipeScheme {
         }
 
         loop {
-            let mut vec = pipe.fd_queue.lock(token.token());
-            let (vec, mut token) = vec.token_split();
+            let vec = pipe.fd_queue.lock(token.token());
+            let (mut vec, mut token) = vec.into_split();
 
             let fds_available = vec.len();
             let max_fds_read = payload.len() / core::mem::size_of::<usize>();
@@ -480,16 +496,16 @@ impl KernelScheme for PipeScheme {
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
-                    token,
+                    token.token(),
                 );
-                pipe.write_condition.notify_locked(token);
+                pipe.write_condition.notify_locked(token.token());
 
                 return Ok(fds_to_read);
             }
 
             if !pipe.writer_is_alive.load(Ordering::SeqCst) {
                 return Ok(0);
-            } else if !pipe.read_condition.wait(vec, "PipeRead::read", token) {
+            } else if !pipe.read_condition.wait(vec, "PipeRead::read", &mut token) {
                 return Err(Error::new(EINTR));
             }
         }

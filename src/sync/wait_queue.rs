@@ -35,10 +35,11 @@ impl<T> WaitQueue<T> {
     ) -> Result<usize> {
         loop {
             let mut inner = self.inner.lock();
+            let mut token = token.downgrade();
 
             if inner.is_empty() {
                 if block {
-                    if !self.condition.wait(inner, reason, token) {
+                    if !self.condition.wait(inner, reason, &mut token) {
                         return Err(Error::new(EINTR));
                     }
                     continue;

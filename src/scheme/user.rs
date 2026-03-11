@@ -259,7 +259,7 @@ impl UserInner {
                     };
 
                 let mut states = self.states.lock(token.token());
-                let (states, mut token) = states.token_split();
+                let (mut states, mut token) = states.into_split();
                 match states.get_mut(sqe.tag as usize) {
                     // invalid state
                     None => return Err(Error::new(EBADFD)),
