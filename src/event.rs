@@ -9,7 +9,7 @@ use crate::{
     context,
     scheme::{self, SchemeExt, SchemeId},
     sync::{
-        CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0, L1,
+        CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0, L1, L2,
     },
     syscall::{
         data::Event,
@@ -87,8 +87,8 @@ impl EventQueue {
         Ok(events.len())
     }
 
-    pub fn into_drop(self, token: &mut CleanLockToken) {
-        self.queue.condition.into_drop(token);
+    pub fn into_drop(self, token: LockToken<'_, L1>) {
+        self.queue.condition.into_drop_locked(token);
     }
 }
 
@@ -103,16 +103,16 @@ pub fn next_queue_id() -> EventQueueId {
 }
 
 // Current event queues
-static QUEUES: RwLock<L1, EventQueueList> =
+static QUEUES: RwLock<L2, EventQueueList> =
     RwLock::new(EventQueueList::with_hasher(DefaultHashBuilder::new()));
 
 /// Get the event queues list, const
-pub fn queues(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, EventQueueList> {
+pub fn queues(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L2, EventQueueList> {
     QUEUES.read(token)
 }
 
 /// Get the event queues list, mutable
-pub fn queues_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, EventQueueList> {
+pub fn queues_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L2, EventQueueList> {
     QUEUES.write(token)
 }
 
@@ -131,20 +131,20 @@ pub struct QueueKey {
 
 type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
 
-static REGISTRY: Once<RwLock<L1, Registry>> = Once::new();
+static REGISTRY: Once<RwLock<L2, Registry>> = Once::new();
 
 /// Initialize registry, called if needed
-fn init_registry() -> RwLock<L1, Registry> {
+fn init_registry() -> RwLock<L2, Registry> {
     RwLock::new(Registry::new())
 }
 
 /// Get the global schemes list, const
-fn registry(token: &'_ mut CleanLockToken) -> RwLockReadGuard<'_, L1, Registry> {
+fn registry<'a>(token: &'a mut LockToken<'a, L1>) -> RwLockReadGuard<'a, L2, Registry> {
     REGISTRY.call_once(init_registry).read(token.token())
 }
 
 /// Get the global schemes list, mutable
-pub fn registry_mut(token: &'_ mut CleanLockToken) -> RwLockWriteGuard<'_, L1, Registry> {
+pub fn registry_mut<'a>(token: &'a mut LockToken<'a, L1>) -> RwLockWriteGuard<'a, L2, Registry> {
     REGISTRY.call_once(init_registry).write(token.token())
 }
 
@@ -154,7 +154,8 @@ pub fn register(
     flags: EventFlags,
     token: &mut CleanLockToken,
 ) {
-    let mut registry = registry_mut(token);
+    let mut token = token.downgrade();
+    let mut registry = registry_mut(&mut token);
 
     let entry = registry.entry(reg_key).or_default();
 
@@ -169,7 +170,8 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
     let mut flags = EventFlags::empty();
 
     {
-        let registry = registry(token);
+        let mut token = token.downgrade();
+        let registry = registry(&mut token);
 
         if let Some(queue_list) = registry.get(&reg_key) {
             for (_queue_key, &queue_flags) in queue_list.iter() {
@@ -184,7 +186,8 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
 }
 
 pub fn unregister_file(scheme: SchemeId, number: usize, token: &mut CleanLockToken) {
-    let mut registry = registry_mut(token);
+    let mut token = token.downgrade();
+    let mut registry = registry_mut(&mut token);
 
     registry.remove(&RegKey { scheme, number });
 }
@@ -203,13 +206,14 @@ fn trigger_inner(
     flags: EventFlags,
     todo: &mut SmallVec<[EventQueueId; MAX_EVENT]>,
     offset: &mut usize,
-    token: &mut CleanLockToken,
+    mut token: LockToken<'_, L1>,
 ) -> bool {
     let mut matching_keys: SmallVec<[(QueueKey, EventFlags); MAX_EVENT]> = SmallVec::new();
     let mut full = false;
 
     {
-        let registry = registry(token);
+        let mut token = token.token();
+        let registry = registry(&mut token);
         if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
             for (queue_key, &queue_flags) in queue_list.iter().skip(*offset) {
                 let common_flags = flags & queue_flags;
@@ -226,7 +230,7 @@ fn trigger_inner(
     }
 
     while let Some((queue_key, common_flags)) = matching_keys.pop() {
-        let Some(queue) = queues(token.token()).get(&queue_key.queue).cloned() else {
+        let Some(queue) = QUEUES.read(token.token()).get(&queue_key.queue).cloned() else {
             continue;
         };
 
@@ -237,9 +241,9 @@ fn trigger_inner(
         };
 
         todo.push(queue_key.queue);
-        queue.queue.send(event, token);
+        queue.queue.send_locked(event, token.token());
         if let Some(queue) = Arc::into_inner(queue) {
-            queue.into_drop(token);
+            queue.into_drop(token.token());
         }
     }
 
@@ -247,12 +251,21 @@ fn trigger_inner(
 }
 
 pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags, token: &mut CleanLockToken) {
+    trigger_locked(scheme, number, flags, token.token().downgrade());
+}
+
+pub fn trigger_locked(
+    scheme: SchemeId,
+    number: usize,
+    flags: EventFlags,
+    mut token: LockToken<'_, L1>,
+) {
     let mut todo = SmallVec::<[EventQueueId; MAX_EVENT]>::new();
     let mut done = SmallVec::<[EventQueueId; MAX_EVENT]>::new();
 
     // First trigger with the original file
     let mut offset = 0;
-    while trigger_inner(scheme, number, flags, &mut todo, &mut offset, token) {}
+    while trigger_inner(scheme, number, flags, &mut todo, &mut offset, token.token()) {}
 
     // Handle triggers on queues
     while let Some(queue_id) = todo.pop() {
@@ -265,7 +278,7 @@ pub fn trigger(scheme: SchemeId, number: usize, flags: EventFlags, token: &mut C
                 EventFlags::EVENT_READ,
                 &mut todo,
                 &mut offset,
-                token,
+                token.token(),
             ) {}
         }
     }

@@ -329,9 +329,14 @@ impl UserInner {
                                     tag: sqe.tag,
                                     ..Default::default()
                                 },
-                                &mut token.token(),
+                                token.token(),
                             );
-                            event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
+                            event::trigger_locked(
+                                self.root_id,
+                                self.scheme_id.get(),
+                                EVENT_READ,
+                                token.token(),
+                            );
 
                             // 1. If cancellation was requested and arrived
                             // before the scheme processed the request, an

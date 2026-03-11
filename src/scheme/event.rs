@@ -47,7 +47,7 @@ impl KernelScheme for EventScheme {
             .remove(&id)
             .ok_or(Error::new(EBADF))?;
         if let Some(queue) = Arc::into_inner(queue) {
-            queue.into_drop(token);
+            queue.into_drop(token.downgrade());
         }
         Ok(())
     }

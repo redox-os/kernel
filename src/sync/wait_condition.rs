@@ -7,12 +7,12 @@ use alloc::{
 
 use crate::{
     context::{self, ContextLock, PreemptGuard},
-    sync::{CleanLockToken, LockToken, Mutex, L1, L2},
+    sync::{CleanLockToken, LockToken, Mutex, L1, L3},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<L2, Vec<Weak<ContextLock>>>,
+    contexts: Mutex<L3, Vec<Weak<ContextLock>>>,
 }
 
 impl WaitCondition {
@@ -24,11 +24,11 @@ impl WaitCondition {
 
     // Notify all waiters
     pub fn notify(&self, token: &mut CleanLockToken) -> usize {
-        self.notify_locked(&mut token.token().downgrade())
+        self.notify_locked(token.token().downgrade())
     }
 
-    pub fn notify_locked<'a>(&self, token: &'a mut LockToken<'a, L1>) -> usize {
-        let mut contexts = self.contexts.lock(token.token());
+    pub fn notify_locked(&self, token: LockToken<'_, L1>) -> usize {
+        let mut contexts = self.contexts.lock(token);
         let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
@@ -40,8 +40,8 @@ impl WaitCondition {
     }
 
     // Notify as though a signal woke the waiters
-    pub unsafe fn notify_signal(&self, token: &mut CleanLockToken) -> usize {
-        let mut contexts = self.contexts.lock(token.token());
+    pub unsafe fn notify_signal(&self, token: LockToken<'_, L1>) -> usize {
+        let mut contexts = self.contexts.lock(token);
         let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
         for context_weak in contexts.iter() {
@@ -99,10 +99,14 @@ impl WaitCondition {
     }
 
     pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.into_drop_locked(token.token().downgrade());
+    }
+
+    pub fn into_drop_locked(self, token: LockToken<'_, L1>) {
         ManuallyDrop::new(self).inner_drop(token);
     }
 
-    fn inner_drop(&mut self, token: &mut CleanLockToken) {
+    fn inner_drop(&mut self, token: LockToken<'_, L1>) {
         unsafe {
             self.notify_signal(token);
         }
@@ -113,7 +117,7 @@ impl Drop for WaitCondition {
     fn drop(&mut self) {
         //TODO: drop violates lock tokens
         let mut token = unsafe { CleanLockToken::new() };
-        self.inner_drop(&mut token);
+        self.inner_drop(token.downgrade());
         #[cfg(feature = "drop_panic")]
         {
             panic!("WaitCondition dropped");

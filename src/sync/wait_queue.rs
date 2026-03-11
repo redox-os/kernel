@@ -73,10 +73,10 @@ impl<T> WaitQueue<T> {
     }
 
     pub fn send(&self, value: T, token: &mut CleanLockToken) -> usize {
-        self.send_locked(value, &mut token.token().downgrade())
+        self.send_locked(value, token.token().downgrade())
     }
 
-    pub fn send_locked<'a>(&self, value: T, token: &'a mut LockToken<'a, L1>) -> usize {
+    pub fn send_locked(&self, value: T, token: LockToken<'_, L1>) -> usize {
         let len = {
             let mut inner = self.inner.lock();
             inner.push_back(value);
