@@ -47,7 +47,7 @@ impl KernelScheme for EventScheme {
             .remove(&id)
             .ok_or(Error::new(EBADF))?;
         if let Some(queue) = Arc::into_inner(queue) {
-            queue.into_drop(token);
+            queue.into_drop(token.downgrade());
         }
         Ok(())
     }
@@ -122,7 +122,7 @@ impl KernelScheme for EventScheme {
             // It is always possible to write events
             ready |= EventFlags::EVENT_WRITE;
         }
-        if flags.contains(EventFlags::EVENT_READ) && !queue.is_currently_empty() {
+        if flags.contains(EventFlags::EVENT_READ) && !queue.is_currently_empty(token) {
             // It is possible to read if queue is not empty
             ready |= EventFlags::EVENT_READ;
         }

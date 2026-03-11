@@ -6,13 +6,13 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, ContextLock, PreemptGuard},
-    sync::{CleanLockToken, Mutex, L1},
+    context::{self, ContextLock, PreemptGuard, PreemptGuardL1, PreemptGuardL2},
+    sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<L1, Vec<Weak<ContextLock>>>,
+    contexts: Mutex<L3, Vec<Weak<ContextLock>>>,
 }
 
 impl WaitCondition {
@@ -24,7 +24,11 @@ impl WaitCondition {
 
     // Notify all waiters
     pub fn notify(&self, token: &mut CleanLockToken) -> usize {
-        let mut contexts = self.contexts.lock(token.token());
+        self.notify_locked(token.token().downgrade())
+    }
+
+    pub fn notify_locked(&self, token: LockToken<'_, L1>) -> usize {
+        let mut contexts = self.contexts.lock(token);
         let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
@@ -36,8 +40,8 @@ impl WaitCondition {
     }
 
     // Notify as though a signal woke the waiters
-    pub unsafe fn notify_signal(&self, token: &mut CleanLockToken) -> usize {
-        let mut contexts = self.contexts.lock(token.token());
+    pub unsafe fn notify_signal(&self, token: LockToken<'_, L1>) -> usize {
+        let mut contexts = self.contexts.lock(token);
         let (contexts, mut token) = contexts.token_split();
         let len = contexts.len();
         for context_weak in contexts.iter() {
@@ -48,15 +52,32 @@ impl WaitCondition {
         len
     }
 
-    // Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function
-    pub fn wait<T>(&self, guard: T, reason: &'static str, token: &mut CleanLockToken) -> bool {
+    /// Wait until notified. Unlocks guard when blocking is ready. Returns false if resumed by a signal or the notify_signal function.
+    /// SAFETY: Caller MUST ensure the given token is coming from the guard. There is no compiler check to do it.
+    pub fn wait<'a, T>(
+        &self,
+        guard: T,
+        reason: &'static str,
+        token: &'a mut LockToken<'a, L1>,
+    ) -> bool {
+        let mut token = token.downgrade();
+        self.wait_inner(guard, reason, &mut token)
+    }
+
+    pub fn wait_inner<'a, T>(
+        &self,
+        guard: T,
+        reason: &'static str,
+        token: &'a mut LockToken<'a, L2>,
+    ) -> bool {
         let current_context_ref = context::current();
         {
             // Avoid a context switch between blocking ourselves and adding
             // ourselves to the wait list as otherwise we might miss a wakeup.
             // We cannot add ourselves to the wait list first as that would lead
             // to deadlock if we were woken up immediately.
-            let mut preempt = PreemptGuard::new(&current_context_ref, token);
+            let mut token = token.token();
+            let mut preempt = PreemptGuardL2::new(&current_context_ref, &mut token);
             let token = preempt.token();
             {
                 let mut context = current_context_ref.write(token.token());
@@ -75,7 +96,11 @@ impl WaitCondition {
             drop(guard);
         }
 
-        context::switch(token);
+        {
+            // SAFETY: Guaranteed by caller
+            let token = unsafe { &mut CleanLockToken::new() };
+            context::switch(token);
+        }
 
         let mut waited = true;
 
@@ -95,10 +120,14 @@ impl WaitCondition {
     }
 
     pub fn into_drop(self, token: &mut CleanLockToken) {
+        self.into_drop_locked(token.token().downgrade());
+    }
+
+    pub fn into_drop_locked(self, token: LockToken<'_, L1>) {
         ManuallyDrop::new(self).inner_drop(token);
     }
 
-    fn inner_drop(&mut self, token: &mut CleanLockToken) {
+    fn inner_drop(&mut self, token: LockToken<'_, L1>) {
         unsafe {
             self.notify_signal(token);
         }
@@ -109,7 +138,7 @@ impl Drop for WaitCondition {
     fn drop(&mut self) {
         //TODO: drop violates lock tokens
         let mut token = unsafe { CleanLockToken::new() };
-        self.inner_drop(&mut token);
+        self.inner_drop(token.downgrade());
         #[cfg(feature = "drop_panic")]
         {
             panic!("WaitCondition dropped");

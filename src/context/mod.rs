@@ -12,7 +12,7 @@ use crate::{
     percpu::PercpuBlock,
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        L0, L1, L4,
+        L0, L1, L2, L4,
     },
     syscall::error::Result,
 };
@@ -206,6 +206,54 @@ impl<'a> PreemptGuard<'a> {
 }
 
 impl Drop for PreemptGuard<'_> {
+    fn drop(&mut self) {
+        self.context.write(self.token.token()).preempt_locks -= 1;
+    }
+}
+
+/// Variant of PreemptGuard behind a one-level token
+pub struct PreemptGuardL1<'a> {
+    context: &'a ContextLock,
+    token: &'a mut LockToken<'a, L1>,
+}
+
+impl<'a> PreemptGuardL1<'a> {
+    pub fn new(context: &'a ContextLock, token: &'a mut LockToken<'a, L1>) -> PreemptGuardL1<'a> {
+        context.write(token.token()).preempt_locks += 1;
+        PreemptGuardL1 { context, token }
+    }
+
+    /// Get a mutable reference to the underlying `LockToken<L1>`.
+    pub fn token(&mut self) -> &mut LockToken<'a, L1> {
+        self.token
+    }
+}
+
+impl Drop for PreemptGuardL1<'_> {
+    fn drop(&mut self) {
+        self.context.write(self.token.token()).preempt_locks -= 1;
+    }
+}
+
+/// Variant of PreemptGuard behind a one-level token
+pub struct PreemptGuardL2<'a> {
+    context: &'a ContextLock,
+    token: &'a mut LockToken<'a, L2>,
+}
+
+impl<'a> PreemptGuardL2<'a> {
+    pub fn new(context: &'a ContextLock, token: &'a mut LockToken<'a, L2>) -> PreemptGuardL2<'a> {
+        context.write(token.token()).preempt_locks += 1;
+        PreemptGuardL2 { context, token }
+    }
+
+    /// Get a mutable reference to the underlying `LockToken<L2>`.
+    pub fn token(&mut self) -> &mut LockToken<'a, L2> {
+        self.token
+    }
+}
+
+impl Drop for PreemptGuardL2<'_> {
     fn drop(&mut self) {
         self.context.write(self.token.token()).preempt_locks -= 1;
     }

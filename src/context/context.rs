@@ -986,7 +986,7 @@ pub fn bulk_add_fds(
     descriptions: Vec<Arc<LockedFileDescription>>,
     payload: UserSliceRw,
     cloexec: bool,
-    token: &mut CleanLockToken,
+    token: &mut LockToken<L1>,
 ) -> Result<usize> {
     let cnt = descriptions.len();
     if payload.len() != cnt * size_of::<usize>() {
@@ -1020,7 +1020,7 @@ pub fn bulk_insert_fds(
     descriptions: Vec<Arc<LockedFileDescription>>,
     payload: UserSliceRw,
     cloexec: bool,
-    token: &mut CleanLockToken,
+    token: &mut LockToken<L1>,
 ) -> Result<usize> {
     let cnt = descriptions.len();
     if payload.len() != cnt * size_of::<usize>() {

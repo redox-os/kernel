@@ -286,6 +286,12 @@ impl<'a, L: Level, T: ?Sized + 'a> MutexGuard<'a, L, T> {
     pub fn token_split(&mut self) -> (&mut T, LockToken<'_, L>) {
         (&mut self.inner, self.lock_token.token())
     }
+
+    /// Split the guard into two parts, the first is the owned content
+    /// the second a [`LockToken`] that can be used for further locking
+    pub fn into_split(self) -> (spin::MutexGuard<'a, T>, LockToken<'a, L>) {
+        (self.inner, self.lock_token)
+    }
 }
 
 impl<'a, L: Level, T: ?Sized + 'a> core::ops::Deref for MutexGuard<'a, L, T> {
