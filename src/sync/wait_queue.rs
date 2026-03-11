@@ -1,9 +1,8 @@
 use alloc::collections::VecDeque;
-use spin::Mutex;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    sync::{CleanLockToken, LockToken, WaitCondition, L1},
+    sync::{CleanLockToken, LockToken, Mutex, WaitCondition, L1},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -12,7 +11,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
-    pub inner: Mutex<VecDeque<T>>,
+    inner: Mutex<L1, VecDeque<T>>,
     pub condition: WaitCondition,
 }
 
@@ -23,8 +22,8 @@ impl<T> WaitQueue<T> {
             condition: WaitCondition::new(),
         }
     }
-    pub fn is_currently_empty(&self) -> bool {
-        self.inner.lock().is_empty()
+    pub fn is_currently_empty(&self, token: &mut CleanLockToken) -> bool {
+        self.inner.lock(token.token()).is_empty()
     }
     pub fn receive_into_user(
         &self,
@@ -34,8 +33,8 @@ impl<T> WaitQueue<T> {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         loop {
-            let mut inner = self.inner.lock();
-            let mut token = token.downgrade();
+            let inner = self.inner.lock(token.token());
+            let (mut inner, mut token) = inner.into_split();
 
             if inner.is_empty() {
                 if block {
@@ -77,9 +76,9 @@ impl<T> WaitQueue<T> {
         self.send_locked(value, token.token().downgrade())
     }
 
-    pub fn send_locked(&self, value: T, token: LockToken<'_, L1>) -> usize {
+    pub fn send_locked(&self, value: T, mut token: LockToken<'_, L1>) -> usize {
         let len = {
-            let mut inner = self.inner.lock();
+            let mut inner = self.inner.lock(token.token());
             inner.push_back(value);
             inner.len()
         };
