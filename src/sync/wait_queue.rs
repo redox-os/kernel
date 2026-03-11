@@ -2,7 +2,7 @@ use alloc::collections::VecDeque;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    sync::{CleanLockToken, LockToken, Mutex, WaitCondition, L1},
+    sync::{CleanLockToken, LockToken, Mutex, WaitCondition, L1, L2},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
-    inner: Mutex<L1, VecDeque<T>>,
+    inner: Mutex<L2, VecDeque<T>>,
     pub condition: WaitCondition,
 }
 
@@ -38,7 +38,7 @@ impl<T> WaitQueue<T> {
 
             if inner.is_empty() {
                 if block {
-                    if !self.condition.wait(inner, reason, &mut token) {
+                    if !self.condition.wait_inner(inner, reason, &mut token) {
                         return Err(Error::new(EINTR));
                     }
                     continue;

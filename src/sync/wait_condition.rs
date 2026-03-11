@@ -6,8 +6,8 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, ContextLock, PreemptGuard, PreemptGuardL1},
-    sync::{CleanLockToken, LockToken, Mutex, L1, L3},
+    context::{self, ContextLock, PreemptGuard, PreemptGuardL1, PreemptGuardL2},
+    sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
 #[derive(Debug)]
@@ -60,6 +60,16 @@ impl WaitCondition {
         reason: &'static str,
         token: &'a mut LockToken<'a, L1>,
     ) -> bool {
+        let mut token = token.downgrade();
+        self.wait_inner(guard, reason, &mut token)
+    }
+
+    pub fn wait_inner<'a, T>(
+        &self,
+        guard: T,
+        reason: &'static str,
+        token: &'a mut LockToken<'a, L2>,
+    ) -> bool {
         let current_context_ref = context::current();
         {
             // Avoid a context switch between blocking ourselves and adding
@@ -67,7 +77,7 @@ impl WaitCondition {
             // We cannot add ourselves to the wait list first as that would lead
             // to deadlock if we were woken up immediately.
             let mut token = token.token();
-            let mut preempt = PreemptGuardL1::new(&current_context_ref, &mut token);
+            let mut preempt = PreemptGuardL2::new(&current_context_ref, &mut token);
             let token = preempt.token();
             {
                 let mut context = current_context_ref.write(token.token());
