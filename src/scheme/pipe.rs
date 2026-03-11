@@ -4,7 +4,6 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use syscall::{data::GlobalSchemes, CallFlags};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
-use spin::Mutex;
 
 use crate::{
     context::{
@@ -12,7 +11,7 @@ use crate::{
         file::{FileDescription, InternalFlags, LockedFileDescription},
     },
     event,
-    sync::{CleanLockToken, RwLock, WaitCondition, L1},
+    sync::{CleanLockToken, Mutex, RwLock, WaitCondition, L1},
     syscall::{
         data::Stat,
         error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
@@ -100,14 +99,15 @@ impl KernelScheme for PipeScheme {
 
         if is_writer_not_reader
             && flags.contains(EVENT_WRITE)
-            && (pipe.queue.lock().len() <= MAX_QUEUE_SIZE
+            && (pipe.queue.lock(token.token()).len() <= MAX_QUEUE_SIZE
                 || !pipe.reader_is_alive.load(Ordering::Acquire))
         {
             ready |= EventFlags::EVENT_WRITE;
         }
         if !is_writer_not_reader
             && flags.contains(EVENT_READ)
-            && (!pipe.queue.lock().is_empty() || !pipe.writer_is_alive.load(Ordering::Acquire))
+            && (!pipe.queue.lock(token.token()).is_empty()
+                || !pipe.writer_is_alive.load(Ordering::Acquire))
         {
             ready |= EventFlags::EVENT_READ;
         }
@@ -254,7 +254,8 @@ impl KernelScheme for PipeScheme {
         let pipe = Self::get_pipe(key, token)?;
 
         loop {
-            let mut vec = pipe.queue.lock();
+            let mut vec = pipe.queue.lock(token.token());
+            let (vec, mut token) = vec.token_split();
 
             let (s1, s2) = vec.as_slices();
             let s1_count = core::cmp::min(user_buf.len(), s1.len());
@@ -274,13 +275,13 @@ impl KernelScheme for PipeScheme {
             let _ = vec.drain(..bytes_read);
 
             if bytes_read > 0 {
-                event::trigger(
+                event::trigger_locked(
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
                     token,
                 );
-                pipe.write_condition.notify(token);
+                pipe.write_condition.notify_locked(token);
 
                 return Ok(bytes_read);
             } else if user_buf.is_empty() {
@@ -312,7 +313,8 @@ impl KernelScheme for PipeScheme {
         let pipe = Self::get_pipe(key, token)?;
 
         loop {
-            let mut vec = pipe.queue.lock();
+            let mut vec = pipe.queue.lock(token.token());
+            let (vec, mut token) = vec.token_split();
 
             if !pipe.reader_is_alive.load(Ordering::Relaxed) {
                 return Err(Error::new(EPIPE));
@@ -341,8 +343,8 @@ impl KernelScheme for PipeScheme {
             }
 
             if bytes_written > 0 {
-                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
-                pipe.read_condition.notify(token);
+                event::trigger_locked(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
+                pipe.read_condition.notify_locked(token);
 
                 return Ok(bytes_written);
             } else if user_buf.is_empty() {
@@ -390,7 +392,8 @@ impl KernelScheme for PipeScheme {
         };
 
         loop {
-            let mut vec = pipe.fd_queue.lock();
+            let mut vec = pipe.fd_queue.lock(token.token());
+            let (vec, mut token) = vec.token_split();
 
             if !pipe.reader_is_alive.load(Ordering::Relaxed) {
                 return Err(Error::new(EPIPE));
@@ -412,8 +415,8 @@ impl KernelScheme for PipeScheme {
             let fds_written = vec.len() - before_len;
 
             if fds_written > 0 {
-                event::trigger(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
-                pipe.read_condition.notify(token);
+                event::trigger_locked(GlobalSchemes::Pipe.scheme_id(), key, EVENT_READ, token);
+                pipe.read_condition.notify_locked(token);
 
                 return Ok(fds_written);
             }
@@ -448,7 +451,8 @@ impl KernelScheme for PipeScheme {
         }
 
         loop {
-            let mut vec = pipe.fd_queue.lock();
+            let mut vec = pipe.fd_queue.lock(token.token());
+            let (vec, mut token) = vec.token_split();
 
             let fds_available = vec.len();
             let max_fds_read = payload.len() / core::mem::size_of::<usize>();
@@ -461,24 +465,24 @@ impl KernelScheme for PipeScheme {
                         fds_to_transfer,
                         payload,
                         flags.contains(CallFlags::FD_CLOEXEC),
-                        token,
+                        &mut token,
                     )?;
                 } else {
                     bulk_add_fds(
                         fds_to_transfer,
                         payload,
                         flags.contains(CallFlags::FD_CLOEXEC),
-                        token,
+                        &mut token,
                     )?;
                 }
 
-                event::trigger(
+                event::trigger_locked(
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
                     EVENT_WRITE,
                     token,
                 );
-                pipe.write_condition.notify(token);
+                pipe.write_condition.notify_locked(token);
 
                 return Ok(fds_to_read);
             }
@@ -495,9 +499,9 @@ impl KernelScheme for PipeScheme {
 pub struct Pipe {
     read_condition: WaitCondition, // signals whether there are available bytes to read
     write_condition: WaitCondition, // signals whether there is room for additional bytes
-    queue: Mutex<VecDeque<u8>>,
+    queue: Mutex<L1, VecDeque<u8>>,
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
-    fd_queue: Mutex<VecDeque<Arc<LockedFileDescription>>>,
+    fd_queue: Mutex<L1, VecDeque<Arc<LockedFileDescription>>>,
 }

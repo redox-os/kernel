@@ -1236,19 +1236,20 @@ impl UserInner {
             _ => return Err(Error::new(ENOENT)),
         };
 
+        let mut token = token.downgrade();
         let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
             bulk_insert_fds(
                 descriptions,
                 payload,
                 flags.contains(FobtainFdFlags::CLOEXEC),
-                token,
+                &mut token.token(),
             )?
         } else {
             bulk_add_fds(
                 descriptions,
                 payload,
                 flags.contains(FobtainFdFlags::CLOEXEC),
-                token,
+                &mut token.token(),
             )?
         };
 
@@ -2056,20 +2057,21 @@ impl KernelScheme for UserScheme {
             Response::MultipleFds(fds) => fds,
         };
 
+        let mut token = token.downgrade();
         let num_fds = if let Some(descriptions) = descriptions_opt {
             if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
                 bulk_insert_fds(
                     descriptions,
                     payload,
                     recvfd_flags.contains(RecvFdFlags::CLOEXEC),
-                    token,
+                    &mut token,
                 )?
             } else {
                 bulk_add_fds(
                     descriptions,
                     payload,
                     recvfd_flags.contains(RecvFdFlags::CLOEXEC),
-                    token,
+                    &mut token,
                 )?
             }
         } else {
