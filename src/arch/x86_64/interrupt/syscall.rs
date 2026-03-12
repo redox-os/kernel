@@ -144,18 +144,6 @@ pub unsafe extern "C" fn syscall_instruction() {
     // instruction, whereas debuggers expect the iretq behavior of returning to after the
     // instruction.
 
-    // TODO: Which one is faster?
-    //      bt DWORD PTR [rsp + 16], 8
-    //  or,
-    //      bt BYTE PTR [rsp + 17], 0
-    //  or,
-    //      test BYTE PTR [rsp + 17], 1
-    //  or,
-    //      test WORD PTR [rsp + 16], 0x100
-    //  or,
-    //      test DWORD PTR [rsp + 16], 0x100
-    //  ?
-
     "test BYTE PTR [rsp + 17], 1;",
     // If set, return using IRETQ instead.
     "jnz 2f;",
