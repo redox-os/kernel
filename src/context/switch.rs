@@ -213,6 +213,12 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 // We are careful not to lock this context twice
                 let mut next_context_guard = unsafe { next_context_lock.write_arc() };
 
+                // Isolate possible deadlock to this core
+                // TODO: Remove this if deadlock eliminated
+                if next_context_guard.cpu_id.is_some_and(|c| c != cpu_id) {
+                    continue;
+                }
+
                 // Check if the context is runnable and can be switched to.
                 if let UpdateResult::CanSwitch =
                     unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
@@ -269,13 +275,23 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 mem::transmute::<&'_ mut Context, &'_ mut Context>(&mut *next_context_guard)
             };
 
-            percpu
-                .switch_internals
-                .switch_result
-                .set(Some(SwitchResultInner {
-                    _prev_guard: prev_context_guard,
-                    _next_guard: next_context_guard,
-                }));
+            if let Some(old) =
+                percpu
+                    .switch_internals
+                    .switch_result
+                    .replace(Some(SwitchResultInner {
+                        _prev_guard: prev_context_guard,
+                        _next_guard: next_context_guard,
+                    }))
+            {
+                drop(old);
+                // The guards *should* have been dropped from switch_finish_hook.
+                // Primitive testing shows this doesn't happen, but there are no guarantees.
+                #[cfg(feature = "drop_panic")]
+                {
+                    panic!("The context guard is dropped too late. This can cause deadlock.");
+                }
+            }
 
             /*let (ptrace_session, ptrace_flags) = if let Some((session, bp)) = ptrace::sessions()
                 .get(&next_context.pid)
