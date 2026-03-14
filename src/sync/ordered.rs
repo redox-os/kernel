@@ -233,7 +233,7 @@ impl<L: Level, T> Mutex<L, T> {
                     None => {
                         i -= 1;
                         if i == 0 {
-                            panic!("Deadlock may triggered")
+                            panic!("Deadlock at mutex may have triggered")
                         }
                     }
                 }
@@ -362,7 +362,7 @@ impl<L: Level, T> RwLock<L, T> {
                     None => {
                         i -= 1;
                         if i == 0 {
-                            panic!("Deadlock may triggered")
+                            panic!("Deadlock at write may have triggered")
                         }
                     }
                 }
@@ -398,7 +398,7 @@ impl<L: Level, T> RwLock<L, T> {
                     None => {
                         i -= 1;
                         if i == 0 {
-                            panic!("Deadlock may triggered")
+                            panic!("Deadlock at read may have triggered")
                         }
                     }
                 }
