@@ -7,7 +7,7 @@ use slab::Slab;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
-    SendFdFlags, MAP_FIXED_NOREPLACE,
+    SendFdFlags, StdFsCallKind, MAP_FIXED_NOREPLACE,
 };
 
 use crate::{
@@ -27,7 +27,7 @@ use crate::{
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{
-        data::Map,
+        data::{Map, StdFsCallMeta},
         error::*,
         flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
         usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
@@ -1939,10 +1939,11 @@ impl KernelScheme for UserScheme {
     fn kstdfscall(
         &self,
         id: usize,
+        _kind: StdFsCallKind,
         desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         _flags: CallFlags,
-        metadata: &[u64],
+        metadata: StdFsCallMeta,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2079,6 +2080,24 @@ impl KernelScheme for UserScheme {
         };
 
         Ok(num_fds)
+    }
+    fn translate_std_fs_call(
+        &self,
+        id: usize,
+        desc: Arc<LockedFileDescription>,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let &[kind, arg1, arg2, ..] = metadata else {
+            return Err(Error::new(EINVAL));
+        };
+        let Some(kind) = StdFsCallKind::try_from_raw(kind as u8) else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+        let metadata = StdFsCallMeta::new(kind, arg1, arg2);
+        self.kstdfscall(id, kind, desc, payload, flags, metadata, token)
     }
 }
 

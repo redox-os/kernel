@@ -212,6 +212,12 @@ impl UserSliceRw {
     pub fn rw(base: usize, size: usize) -> Result<Self> {
         Self::new(base, size)
     }
+    pub fn into_ro(self) -> Result<UserSliceRo> {
+        UserSliceRo::ro(self.base, self.len)
+    }
+    pub fn into_wo(self) -> Result<UserSliceWo> {
+        UserSliceWo::wo(self.base, self.len)
+    }
 }
 
 fn is_kernel_mem(slice: &[u8]) -> bool {
