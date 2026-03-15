@@ -6,7 +6,7 @@ pub fn resource(_token: &mut CleanLockToken) -> Result<Vec<u8>> {
         "Redox\n{}\n{}\n{}\n",
         env!("CARGO_PKG_VERSION"),
         env!("TARGET").split('-').next().unwrap(),
-        env!("COOKBOOK_TIME_IDENT")
+        env!("COOKBOOK_COMMIT_IDENT")
     )
     .into_bytes())
 }
