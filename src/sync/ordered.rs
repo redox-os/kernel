@@ -414,7 +414,24 @@ impl<L: Level, T> RwLock<L, T> {
 
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
-        core::mem::forget(self.inner.write());
+        #[cfg(feature = "busy_panic")]
+        let inner = {
+            let mut i = DEADLOCK_SPIN_CAP;
+            loop {
+                match self.inner.try_write() {
+                    Some(inner) => break inner,
+                    None => {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock at write arc may have triggered")
+                        }
+                    }
+                }
+            }
+        };
+        #[cfg(not(feature = "busy_panic"))]
+        let inner = self.inner.write();
+        core::mem::forget(inner);
         ArcRwLockWriteGuard {
             rwlock: self.clone(),
         }
