@@ -9,27 +9,58 @@ workflow:
     - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
 
 stages:
-  - host
   - build
   - test
   # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
 
-build:
+x86_64:
+  stage: build
+  script:
+    - mkdir -p target/${ARCH}
+    - redoxer env make BUILD=target/${ARCH}
+  variables:
+    ARCH: "x86_64"
+
+aarch64:
+  stage: build
+  image: "redoxos/redoxer:aarch64"
+  script:
+    - mkdir -p target/${ARCH}
+    - redoxer env make BUILD=target/${ARCH}
+  variables:
+    ARCH: "aarch64"
+
+i586:
   stage: build
   script:
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
-  parallel:
-    matrix:
-      - ARCH: [x86_64, i686, aarch64, riscv64gc]
+  variables:
+    ARCH: "i586"
+
+riscv64gc:
+  stage: build
+  script:
+    - mkdir -p target/${ARCH}
+    - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
+  variables:
+    ARCH: "riscv64gc"
 
 fmt:
-  stage: host
+  stage: test
+  needs: []
   script:
       - rustup component add rustfmt
       - rustfmt --check
 
-unit_test:
+x86_64:relibc:
   stage: test
+  needs: [x86_64]
   script:
-    - TARGET=x86_64-unknown-redox redoxer test
+    - mkdir -p target/${ARCH} target/${ARCH}-unknown-redox/sysroot/usr/lib/boot
+    - redoxer env make BUILD=target/${ARCH}
+    - redoxer pkg relibc-tests-bins
+    - cp target/${ARCH}/kernel target/${ARCH}-unknown-redox/sysroot/usr/lib/boot/
+    - timeout -s KILL 9m redoxer exec sh -c "cd /root/relibc-tests && sh -e ./run.sh"
+  variables:
+    ARCH: "x86_64"
