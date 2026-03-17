@@ -10,6 +10,7 @@ workflow:
 
 stages:
   - build
+  - cross-build
   - test
   # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
 
@@ -22,7 +23,7 @@ x86_64:
     ARCH: "x86_64"
 
 aarch64:
-  stage: build
+  stage: cross-build
   image: "redoxos/redoxer:aarch64"
   script:
     - mkdir -p target/${ARCH}
@@ -31,7 +32,7 @@ aarch64:
     ARCH: "aarch64"
 
 i586:
-  stage: build
+  stage: cross-build
   script:
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
@@ -39,7 +40,7 @@ i586:
     ARCH: "i586"
 
 riscv64gc:
-  stage: build
+  stage: cross-build
   script:
     - mkdir -p target/${ARCH}
     - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
@@ -47,20 +48,32 @@ riscv64gc:
     ARCH: "riscv64gc"
 
 fmt:
-  stage: test
-  needs: []
+  stage: build
   script:
       - rustup component add rustfmt
       - rustfmt --check
+
+x86_64:boot:
+  stage: test
+  needs: [x86_64]
+  script:
+    - mkdir -p target/${ARCH}
+    - redoxer env make BUILD=target/${ARCH}
+    - timeout -s KILL 9m redoxer exec --folder target/${ARCH}:/usr/lib/boot true
+  variables:
+    ARCH: "x86_64"
 
 x86_64:relibc:
   stage: test
   needs: [x86_64]
   script:
-    - mkdir -p target/${ARCH} target/${ARCH}-unknown-redox/sysroot/usr/lib/boot
+    - mkdir -p target/${ARCH}
     - redoxer env make BUILD=target/${ARCH}
     - redoxer pkg relibc-tests-bins
+    - mkdir -p target/${ARCH}-unknown-redox/sysroot/usr/lib/boot
     - cp target/${ARCH}/kernel target/${ARCH}-unknown-redox/sysroot/usr/lib/boot/
     - timeout -s KILL 9m redoxer exec sh -c "cd /root/relibc-tests && sh -e ./run.sh"
+  # Not guaranteed to succeed all of them
+  allow_failure: true
   variables:
     ARCH: "x86_64"
