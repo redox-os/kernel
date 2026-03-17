@@ -59,7 +59,7 @@ x86_64:boot:
   script:
     - mkdir -p target/${ARCH}
     - redoxer env make BUILD=target/${ARCH}
-    - timeout -s KILL 9m redoxer exec --folder target/${ARCH}:/usr/lib/boot true
+    - timeout -s KILL 9m redoxer exec --folder target/${ARCH}:/usr/lib/boot uname -a
   variables:
     ARCH: "x86_64"
 
@@ -70,10 +70,13 @@ x86_64:relibc:
     - mkdir -p target/${ARCH}
     - redoxer env make BUILD=target/${ARCH}
     - redoxer pkg relibc-tests-bins
-    - mkdir -p target/${ARCH}-unknown-redox/sysroot/usr/lib/boot
-    - cp target/${ARCH}/kernel target/${ARCH}-unknown-redox/sysroot/usr/lib/boot/
-    - timeout -s KILL 9m redoxer exec sh -c "cd /root/relibc-tests && sh -e ./run.sh"
+    - mkdir -p target/${TARGET}/sysroot/usr/lib/boot
+    - cp target/${ARCH}/kernel target/${TARGET}/sysroot/usr/lib/boot/
+    # TODO: pkg command need to be polished
+    - rm -rf target/${TARGET}/sysroot/{etc,pkg,include,share}
+    - timeout -s KILL 9m redoxer exec  --folder target/${TARGET}/sysroot:/ sh -c "cd /root/relibc-tests && sh -e ./run.sh"
   # Not guaranteed to succeed all of them
   allow_failure: true
   variables:
     ARCH: "x86_64"
+    TARGET: "x86_64-unknown-redox"
