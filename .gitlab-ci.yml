@@ -58,8 +58,9 @@ x86_64:boot:
   needs: [x86_64]
   script:
     - mkdir -p target/${ARCH}
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
     - redoxer env make BUILD=target/${ARCH}
-    - timeout -s KILL 9m redoxer exec --folder target/${ARCH}:/usr/lib/boot uname -a
+    - timeout -s KILL 9m redoxer exec --folder target/${ARCH}/:/usr/lib/boot uname -a
   variables:
     ARCH: "x86_64"
 
@@ -74,7 +75,7 @@ x86_64:relibc:
     - cp target/${ARCH}/kernel target/${TARGET}/sysroot/usr/lib/boot/
     # TODO: pkg command need to be polished
     - rm -rf target/${TARGET}/sysroot/{etc,pkg,include,share}
-    - timeout -s KILL 9m redoxer exec  --folder target/${TARGET}/sysroot:/ sh -c "cd /root/relibc-tests && sh -e ./run.sh"
+    - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ sh -c "cd /root/relibc-tests && sh -e ./run.sh"
   # Not guaranteed to succeed all of them
   allow_failure: true
   variables:
