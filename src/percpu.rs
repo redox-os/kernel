@@ -12,10 +12,11 @@ use syscall::PtraceFlags;
 
 use crate::{
     arch::device::ArchPercpuMisc,
-    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
+    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu, Context},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
+    sync::{RwLock, L4},
     syscall::debug::SyscallDebugInfo,
 };
 
@@ -30,6 +31,8 @@ pub struct PercpuBlock {
     pub current_addrsp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
     pub new_addrsp_tmp: Cell<Option<Arc<AddrSpaceWrapper>>>,
     pub wants_tlb_shootdown: AtomicBool,
+    pub balance: Cell<[usize; 40]>,
+    pub last_queue: Cell<usize>,
 
     // TODO: Put mailbox queues here, e.g. for TLB shootdown? Just be sure to 128-byte align it
     // first to avoid cache invalidation.
@@ -184,6 +187,8 @@ impl PercpuBlock {
             current_addrsp: RefCell::new(None),
             new_addrsp_tmp: Cell::new(None),
             wants_tlb_shootdown: AtomicBool::new(false),
+            balance: Cell::new([0; 40]),
+            last_queue: Cell::new(39),
             ptrace_flags: Cell::new(PtraceFlags::empty()),
             ptrace_session: RefCell::new(None),
             inside_syscall: Cell::new(false),

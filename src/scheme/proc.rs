@@ -1187,8 +1187,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Interrupt => {
-                        let mut guard = context.write(token.token());
-                        guard.unblock();
+                        context::wakeup_context(&context);
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::ForceKill => {
