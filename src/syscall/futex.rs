@@ -200,8 +200,7 @@ pub fn futex(
                             i += 1;
                             continue;
                         }
-                        // futex.context_lock.write(token.token()).unblock();
-                        context::wakeup_context(&futex.context_lock);
+                        futex.context_lock.write(token.token()).unblock();
                         futexes.swap_remove(i);
                         woken += 1;
                     }

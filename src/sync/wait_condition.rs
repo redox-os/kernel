@@ -33,8 +33,7 @@ impl WaitCondition {
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
             if let Some(context_ref) = context_weak.upgrade() {
-                // context_ref.write(token.token()).unblock();
-                context::wakeup_context(&context_ref);
+                context_ref.write(token.token()).unblock();
             }
         }
         len
@@ -47,8 +46,7 @@ impl WaitCondition {
         let len = contexts.len();
         for context_weak in contexts.iter() {
             if let Some(context_ref) = context_weak.upgrade() {
-                // context_ref.write(token.token()).unblock();
-                context::wakeup_context(&context_ref);
+                context_ref.write(token.token()).unblock();
             }
         }
         len

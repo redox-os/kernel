@@ -2,11 +2,7 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{
-    collections::{BTreeSet, VecDeque},
-    string::String,
-    sync::Arc,
-};
+use alloc::{collections::BTreeSet, sync::Arc};
 use core::num::NonZeroUsize;
 
 use crate::{
@@ -75,22 +71,6 @@ pub use self::arch::empty_cr3;
 // the context file descriptors.
 static CONTEXTS: RwLock<L1, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
-// Actual context store for the scheduler
-static RUN_CONTEXTS: RwLock<L1, RunContextData> = RwLock::new(RunContextData::new());
-
-pub struct RunContextData {
-    set: [VecDeque<ContextRef>; 40],
-}
-
-impl RunContextData {
-    pub const fn new() -> Self {
-        const EMPTY_VEC: VecDeque<ContextRef> = VecDeque::new();
-        Self {
-            set: [EMPTY_VEC; 40],
-        }
-    }
-}
-
 /// Get the global schemes list, const
 pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
     CONTEXTS.read(token)
@@ -99,14 +79,6 @@ pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<Co
 /// Get the global schemes list, mutable
 pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
     CONTEXTS.write(token)
-}
-
-pub fn run_contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.read(token)
-}
-
-pub fn run_contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.write(token)
 }
 
 pub fn init(token: &mut CleanLockToken) {
@@ -123,7 +95,6 @@ pub fn init(token: &mut CleanLockToken) {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
-    context.enqueued = false;
 
     let context_lock = Arc::new(ContextLock::new(context));
 
@@ -137,52 +108,6 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
-}
-
-pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>) {
-    let mut global_token = unsafe { CleanLockToken::new() };
-    let mut local_token = unsafe { CleanLockToken::new() };
-
-    let mut run_queues = run_contexts_mut(global_token.token());
-    let mut context = context_lock.write(local_token.token());
-
-    context.wake = None;
-
-    /*
-        if context.status.is_soft_blocked() {
-            context.status = Status::Runnable;
-            context.status_reason = "";
-
-            if !context.enqueued {
-                let prio = context.prio;
-                run_queues.set[prio].push_back(ContextRef(Arc::clone(context_lock)));
-                context.enqueued = true;
-            }
-    }
-     */
-
-    context.unblock();
-
-    if context.status.is_runnable() && !context.running && !context.enqueued {
-        let prio = context.prio;
-        run_queues.set[prio].push_back(ContextRef(Arc::clone(context_lock)));
-        context.enqueued = true;
-    }
-}
-
-pub fn set_priority(
-    context_lock: &Arc<RwLock<L4, Context>>,
-    new_prio: usize,
-    local_token: &mut CleanLockToken,
-) -> Result<(), String> {
-    if new_prio >= 40 {
-        return Err("Priority out of bounds".into());
-    }
-
-    let mut guard = context_lock.write(local_token.token());
-    guard.prio = new_prio;
-
-    Ok(())
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -248,10 +173,6 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     contexts_mut(token.token()).insert(context_ref);
-
-    let run_ref = ContextRef(Arc::clone(&context_lock));
-    run_contexts_mut(token.token()).set[20].push_back(run_ref);
-    context_lock.write(token.token()).enqueued = true;
 
     Ok(context_lock)
 }

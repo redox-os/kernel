@@ -13,7 +13,6 @@ use crate::{
     context::{
         self, arch,
         file::{FileDescriptor, LockedFileDescription},
-        run_contexts_mut,
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
@@ -138,10 +137,6 @@ pub struct Context {
     pub userspace: bool,
     pub being_sigkilled: bool,
     pub fmap_ret: Option<Frame>,
-    /// Priority
-    pub prio: usize,
-    /// Enqueued
-    pub enqueued: bool,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,
@@ -199,8 +194,6 @@ impl Context {
             files: Arc::new(RwLock::new(FdTbl::new())),
             userspace: false,
             fmap_ret: None,
-            prio: 20,
-            enqueued: false,
             being_sigkilled: false,
             owner_proc_id,
 
