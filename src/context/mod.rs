@@ -150,6 +150,23 @@ pub fn init(token: &mut CleanLockToken) {
     }
 }
 
+pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>) {
+    let mut global_token = unsafe { CleanLockToken::new() };
+    let mut local_token = unsafe { CleanLockToken::new() };
+
+    let mut run_queues = run_contexts_mut(global_token.token());
+    let mut context = context_lock.write(local_token.token());
+
+    context.wake = None;
+    context.unblock();
+
+    if context.status.is_runnable() && !context.running && !context.enqueued {
+        let prio = context.prio;
+        run_queues.set[prio].push_back(ContextRef(Arc::clone(context_lock)));
+        context.enqueued = true;
+    }
+}
+
 pub fn current() -> Arc<ContextLock> {
     PercpuBlock::current()
         .switch_internals
