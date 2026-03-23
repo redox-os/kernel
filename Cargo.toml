@@ -120,3 +120,7 @@ panic = "abort"
 panic = "abort"
 #lto = true
 debug = "full"
+
+[patch.crates-io]
+redox_syscall = { path = "../../redox_syscall" }
+libredox = { path = "../../libredox" }
