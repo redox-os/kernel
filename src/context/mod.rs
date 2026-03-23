@@ -135,6 +135,7 @@ pub fn init(token: &mut CleanLockToken) {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
+    context.enqueued = false;
 
     let context_lock = Arc::new(ContextLock::new(context));
 
@@ -212,6 +213,10 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     free_contexts(token.token().downgrade()).insert(context_ref);
+
+    let run_ref = ContextRef(Arc::clone(&context_lock));
+    run_contexts_mut(token.token()).set[20].push_back(run_ref);
+    context_lock.write(token.token()).enqueued = true;
 
     Ok(context_lock)
 }
