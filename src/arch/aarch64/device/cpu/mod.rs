@@ -19,6 +19,7 @@ enum ImplementerID {
     Broadcom,
     Cavium,
     Digital,
+    Fujitsu,
     Infineon,
     Motorola,
     Nvidia,
@@ -26,11 +27,12 @@ enum ImplementerID {
     Qualcomm,
     Marvell,
     Intel,
+    Ampere,
 }
 
-const IMPLEMENTERS: [&'static str; 12] = [
-    "Unknown", "Arm", "Broadcom", "Cavium", "Digital", "Infineon", "Motorola", "Nvidia", "AMCC",
-    "Qualcomm", "Marvell", "Intel",
+const IMPLEMENTERS: [&'static str; 14] = [
+    "Unknown", "Arm", "Broadcom", "Cavium", "Digital", "Fujitsu", "Infineon", "Motorola", "Nvidia",
+    "AMCC", "Qualcomm", "Marvell", "Intel", "Ampere",
 ];
 
 enum VariantID {
@@ -106,6 +108,7 @@ impl CpuInfo {
             0x42 => IMPLEMENTERS[ImplementerID::Broadcom as usize],
             0x43 => IMPLEMENTERS[ImplementerID::Cavium as usize],
             0x44 => IMPLEMENTERS[ImplementerID::Digital as usize],
+            0x46 => IMPLEMENTERS[ImplementerID::Fujitsu as usize],
             0x49 => IMPLEMENTERS[ImplementerID::Infineon as usize],
             0x4d => IMPLEMENTERS[ImplementerID::Motorola as usize],
             0x4e => IMPLEMENTERS[ImplementerID::Nvidia as usize],
@@ -113,6 +116,7 @@ impl CpuInfo {
             0x51 => IMPLEMENTERS[ImplementerID::Qualcomm as usize],
             0x56 => IMPLEMENTERS[ImplementerID::Marvell as usize],
             0x69 => IMPLEMENTERS[ImplementerID::Intel as usize],
+            0xc0 => IMPLEMENTERS[ImplementerID::Ampere as usize],
             _ => IMPLEMENTERS[ImplementerID::Unknown as usize],
         };
 
