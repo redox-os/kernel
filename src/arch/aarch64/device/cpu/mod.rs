@@ -100,7 +100,6 @@ struct CpuInfo {
 impl CpuInfo {
     fn new() -> CpuInfo {
         let midr = unsafe { control_regs::midr() };
-        println!("MIDR: 0x{:x}", midr);
         let midr = MachineId(midr);
 
         let implementer = match midr.get_implementer() {
