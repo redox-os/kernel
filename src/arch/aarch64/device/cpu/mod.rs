@@ -1,6 +1,7 @@
 use core::fmt::{Result, Write};
 
 use crate::device::cpu::registers::control_regs;
+use crate::device::cpu::registers::id_regs;
 
 pub mod registers;
 
@@ -95,6 +96,8 @@ struct CpuInfo {
     architecture: &'static str,
     part_number: &'static str,
     revision: &'static str,
+    aa64isar0: id_regs::AA64Isar0,
+    aa64isar1: id_regs::AA64Isar1,
 }
 
 impl CpuInfo {
@@ -159,12 +162,17 @@ impl CpuInfo {
             _ => REVISIONS[RevisionID::Unknown as usize],
         };
 
+        let aa64isar0 = id_regs::aa64isar0();
+        let aa64isar1 = id_regs::aa64isar1();
+
         CpuInfo {
             implementer,
             variant,
             architecture,
             part_number,
             revision,
+            aa64isar0,
+            aa64isar1,
         }
     }
 }
@@ -177,6 +185,93 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     writeln!(w, "Architecture version: {}", cpuinfo.architecture)?;
     writeln!(w, "Part Number: {}", cpuinfo.part_number)?;
     writeln!(w, "Revision: {}", cpuinfo.revision)?;
+
+    // Print detected CPU features.
+    // Follow the naming convention estabilished by `std::arch::is_aarch64_feature_detected`.
+    write!(w, "Features:")?;
+
+    // ID_AA64ISAR0_EL1
+    if cpuinfo.aa64isar0.has_feat_rng() {
+        write!(w, " rand")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_flagm() {
+        write!(w, " flagm")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_flagm2() {
+        write!(w, " flagm2")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_fhm() {
+        write!(w, " fhm")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_dotprod() {
+        write!(w, " dotprod")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_sm3() && cpuinfo.aa64isar0.has_feat_sm4() {
+        write!(w, " sm4")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_sha512() && cpuinfo.aa64isar0.has_feat_sha3() {
+        write!(w, " sha3")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_rdm() {
+        write!(w, " rdm")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_lse() {
+        write!(w, " lse")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_lse128() {
+        write!(w, " lse128")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_crc() {
+        write!(w, " crc")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_sha1() && cpuinfo.aa64isar0.has_feat_sha256() {
+        write!(w, " sha2")?;
+    }
+    if cpuinfo.aa64isar0.has_feat_aes() && cpuinfo.aa64isar0.has_feat_pmull() {
+        write!(w, " aes")?;
+    }
+
+    // ID_AA64ISAR1_EL1
+    if cpuinfo.aa64isar1.has_feat_i8mm() {
+        write!(w, " i8mm")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_bf16() {
+        write!(w, " bf16")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_sb() {
+        write!(w, " sb")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_frintts() {
+        write!(w, " frintts")?;
+    }
+    if cpuinfo.aa64isar1.gpi() != 0 || cpuinfo.aa64isar1.gpa() != 0 {
+        write!(w, " pacg")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_lrcpc() {
+        write!(w, " rcpc")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_lrcpc2() {
+        write!(w, " rcpc2")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_lrcpc3() {
+        write!(w, " rcpc3")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_fcma() {
+        write!(w, " fcma")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_jscvt() {
+        write!(w, " jsconv")?;
+    }
+    if cpuinfo.aa64isar1.api() != 0 || cpuinfo.aa64isar1.apa() != 0 {
+        write!(w, " paca")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_dpb() {
+        write!(w, " dpb")?;
+    }
+    if cpuinfo.aa64isar1.has_feat_dpb2() {
+        write!(w, " dpb2")?;
+    }
+
     writeln!(w)?;
 
     Ok(())
