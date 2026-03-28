@@ -1,10 +1,8 @@
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 use core::{
     fmt,
     sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
 };
-
-use crate::cpu_set::LogicalCpuId;
 
 // Note: Using AtomicUsize rather than AtomicU64 as 32bit x86 doesn't support the latter
 /// The number of times (overall) where a CPU switched from one context to another.

@@ -20,8 +20,6 @@ use crate::{
     },
 };
 
-use crate::context::context::FdTbl;
-
 use super::{CallerCtx, KernelSchemes, OpenResult};
 use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{

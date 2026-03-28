@@ -26,7 +26,7 @@ use crate::{
     sync::CleanLockToken,
 };
 
-use super::{context::HardBlockedReason, file::FileDescription};
+use super::context::HardBlockedReason;
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
