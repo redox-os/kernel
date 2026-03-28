@@ -267,45 +267,39 @@ unsafe fn new_tables<A: Arch>(areas: &'static [MemoryArea]) {
     }
 }
 
-unsafe fn inner<A: Arch>() {
+fn main() {
     unsafe {
-        let areas = A::init();
+        let areas = EmulateArch::init();
 
         // Debug table
         //dump_tables(PageTable::<A>::top());
 
-        new_tables::<A>(areas);
+        new_tables::<EmulateArch>(areas);
 
         //dump_tables(PageTable::<A>::top());
 
         for i in &[1, 2, 4, 8, 16, 32] {
             let phys = PhysicalAddress::new(i * MEGABYTE);
-            let virt = A::phys_to_virt(phys);
+            let virt = EmulateArch::phys_to_virt(phys);
 
             // Test read
             println!(
                 "0x{:X} (0x{:X}) = 0x{:X}",
                 virt.data(),
                 phys.data(),
-                A::read::<u8>(virt)
+                EmulateArch::read::<u8>(virt)
             );
 
             // Test write
-            A::write::<u8>(virt, 0x5A);
+            EmulateArch::write::<u8>(virt, 0x5A);
 
             // Test read
             println!(
                 "0x{:X} (0x{:X}) = 0x{:X}",
                 virt.data(),
                 phys.data(),
-                A::read::<u8>(virt)
+                EmulateArch::read::<u8>(virt)
             );
         }
-    }
-}
-
-fn main() {
-    unsafe {
-        inner::<EmulateArch>();
     }
 }
