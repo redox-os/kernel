@@ -13,7 +13,7 @@ pub struct PageMapper<A, F> {
 }
 
 impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
-    pub unsafe fn new(table_kind: TableKind, table_addr: PhysicalAddress, allocator: F) -> Self {
+    unsafe fn new(table_kind: TableKind, table_addr: PhysicalAddress, allocator: F) -> Self {
         Self {
             table_kind,
             table_addr,
@@ -128,25 +128,24 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
                     //TODO: check for overwriting entry
                     table.set_entry(i, entry);
                     return Some(PageFlush::new(virt));
-                } else {
-                    let next_opt = table.next(i);
-                    let next = match next_opt {
-                        Some(some) => some,
-                        None => {
-                            let next_phys = self.allocator.allocate_one()?;
-                            //TODO: correct flags?
-                            let flags = A::ENTRY_FLAG_DEFAULT_TABLE
-                                | if virt.kind() == TableKind::User {
-                                    A::ENTRY_FLAG_TABLE_USER
-                                } else {
-                                    0
-                                };
-                            table.set_entry(i, PageEntry::new(next_phys.data(), flags));
-                            table.next(i)?
-                        }
-                    };
-                    table = next;
                 }
+
+                let next = match table.next(i) {
+                    Some(some) => some,
+                    None => {
+                        let next_phys = self.allocator.allocate_one()?;
+                        //TODO: correct flags?
+                        let flags = A::ENTRY_FLAG_DEFAULT_TABLE
+                            | if virt.kind() == TableKind::User {
+                                A::ENTRY_FLAG_TABLE_USER
+                            } else {
+                                0
+                            };
+                        table.set_entry(i, PageEntry::new(next_phys.data(), flags));
+                        table.next(i)?
+                    }
+                };
+                table = next;
             }
         }
     }
@@ -166,14 +165,12 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         f: impl FnOnce(&mut PageTable<A>, usize) -> T,
     ) -> Option<T> {
         let mut table = self.table();
-        unsafe {
-            loop {
-                let i = table.index_of(virt)?;
-                if table.level() == 0 {
-                    return Some(f(&mut table, i));
-                } else {
-                    table = table.next(i)?;
-                }
+        loop {
+            let i = table.index_of(virt)?;
+            if table.level() == 0 {
+                return Some(f(&mut table, i));
+            } else {
+                table = unsafe { table.next(i)? };
             }
         }
     }
@@ -223,30 +220,29 @@ unsafe fn unmap_phys_inner<A: Arch>(
             table.set_entry(i, PageEntry::new(0, 0));
             let entry = entry_opt?;
 
-            Some((entry.address().ok()?, entry.flags()))
-        } else {
-            let mut subtable = table.next(i)?;
-
-            let res =
-                unmap_phys_inner(virt, &mut subtable, initial_level, unmap_parents, allocator)?;
-
-            //TODO: This is a bad idea for architectures where the kernel mappings are done in the process tables,
-            // as these mappings may become out of sync
-            if unmap_parents {
-                // TODO: Use a counter? This would reduce the remaining number of available bits, but could be
-                // faster (benchmark is needed).
-                let is_still_populated = (0..A::PAGE_ENTRIES)
-                    .map(|j| subtable.entry(j).expect("must be within bounds"))
-                    .any(|e| e.present());
-
-                if !is_still_populated {
-                    allocator.free_one(subtable.phys());
-                    table.set_entry(i, PageEntry::new(0, 0));
-                }
-            }
-
-            Some(res)
+            return Some((entry.address().ok()?, entry.flags()));
         }
+
+        let mut subtable = table.next(i)?;
+
+        let res = unmap_phys_inner(virt, &mut subtable, initial_level, unmap_parents, allocator)?;
+
+        //TODO: This is a bad idea for architectures where the kernel mappings are done in the process tables,
+        // as these mappings may become out of sync
+        if unmap_parents {
+            // TODO: Use a counter? This would reduce the remaining number of available bits, but could be
+            // faster (benchmark is needed).
+            let is_still_populated = (0..A::PAGE_ENTRIES)
+                .map(|j| subtable.entry(j).expect("must be within bounds"))
+                .any(|e| e.present());
+
+            if !is_still_populated {
+                allocator.free_one(subtable.phys());
+                table.set_entry(i, PageEntry::new(0, 0));
+            }
+        }
+
+        Some(res)
     }
 }
 impl<A, F: core::fmt::Debug> core::fmt::Debug for PageMapper<A, F> {
