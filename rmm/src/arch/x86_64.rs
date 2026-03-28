@@ -32,25 +32,19 @@ impl Arch for X8664Arch {
 
     #[inline(always)]
     unsafe fn invalidate(address: VirtualAddress) {
-        unsafe {
-            asm!("invlpg [{0}]", in(reg) address.data());
-        }
+        unsafe { asm!("invlpg [{0}]", in(reg) address.data()) };
     }
 
     #[inline(always)]
     unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
-        unsafe {
-            let address: usize;
-            asm!("mov {0}, cr3", out(reg) address);
-            PhysicalAddress::new(address)
-        }
+        let address: usize;
+        unsafe { asm!("mov {0}, cr3", out(reg) address) };
+        PhysicalAddress::new(address)
     }
 
     #[inline(always)]
     unsafe fn set_table(_table_kind: TableKind, address: PhysicalAddress) {
-        unsafe {
-            asm!("mov cr3, {0}", in(reg) address.data());
-        }
+        unsafe { asm!("mov cr3, {0}", in(reg) address.data()) };
     }
 
     fn virt_is_valid(address: VirtualAddress) -> bool {

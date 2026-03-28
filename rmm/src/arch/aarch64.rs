@@ -68,18 +68,16 @@ impl Arch for AArch64Arch {
 
     #[inline(always)]
     unsafe fn table(table_kind: TableKind) -> PhysicalAddress {
-        unsafe {
-            let address: usize;
-            match table_kind {
-                TableKind::User => {
-                    asm!("mrs {0}, ttbr0_el1", out(reg) address);
-                }
-                TableKind::Kernel => {
-                    asm!("mrs {0}, ttbr1_el1", out(reg) address);
-                }
+        let address: usize;
+        match table_kind {
+            TableKind::User => {
+                unsafe { asm!("mrs {0}, ttbr0_el1", out(reg) address) };
             }
-            PhysicalAddress::new(address)
+            TableKind::Kernel => {
+                unsafe { asm!("mrs {0}, ttbr1_el1", out(reg) address) };
+            }
         }
+        PhysicalAddress::new(address)
     }
 
     #[inline(always)]
