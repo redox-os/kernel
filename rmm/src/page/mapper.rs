@@ -12,20 +12,13 @@ pub struct PageMapper<A, F> {
     _phantom: PhantomData<fn() -> A>,
 }
 
-impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
+impl<A: Arch, F> PageMapper<A, F> {
     unsafe fn new(table_kind: TableKind, table_addr: PhysicalAddress, allocator: F) -> Self {
         Self {
             table_kind,
             table_addr,
             allocator,
             _phantom: PhantomData,
-        }
-    }
-
-    pub unsafe fn create(table_kind: TableKind, mut allocator: F) -> Option<Self> {
-        unsafe {
-            let table_addr = allocator.allocate_one()?;
-            Some(Self::new(table_kind, table_addr, allocator))
         }
     }
 
@@ -60,6 +53,27 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         &mut self.allocator
     }
 
+    fn visit<T>(
+        &self,
+        virt: VirtualAddress,
+        f: impl FnOnce(&mut PageTable<A>, usize) -> T,
+    ) -> Option<T> {
+        let mut table = self.table();
+        loop {
+            let i = table.index_of(virt)?;
+            if table.level() == 0 {
+                return Some(f(&mut table, i));
+            } else {
+                table = unsafe { table.next(i)? };
+            }
+        }
+    }
+
+    pub fn translate(&self, virt: VirtualAddress) -> Option<(PhysicalAddress, PageFlags<A>)> {
+        let entry = self.visit(virt, |p1, i| unsafe { p1.entry(i) })??;
+        Some((entry.address().ok()?, entry.flags()))
+    }
+
     pub unsafe fn remap_with_full(
         &mut self,
         virt: VirtualAddress,
@@ -81,6 +95,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
             .flatten()
         }
     }
+
     pub unsafe fn remap_with(
         &mut self,
         virt: VirtualAddress,
@@ -92,12 +107,22 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
             })
         }
     }
+
     pub unsafe fn remap(
         &mut self,
         virt: VirtualAddress,
         flags: PageFlags<A>,
     ) -> Option<PageFlush<A>> {
         unsafe { self.remap_with(virt, |_| flags).map(|(_, _, flush)| flush) }
+    }
+}
+
+impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
+    pub unsafe fn create(table_kind: TableKind, mut allocator: F) -> Option<Self> {
+        unsafe {
+            let table_addr = allocator.allocate_one()?;
+            Some(Self::new(table_kind, table_addr, allocator))
+        }
     }
 
     pub unsafe fn map(
@@ -149,6 +174,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
             }
         }
     }
+
     pub unsafe fn map_linearly(
         &mut self,
         phys: PhysicalAddress,
@@ -159,31 +185,15 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
             self.map_phys(virt, phys, flags).map(|flush| (virt, flush))
         }
     }
-    fn visit<T>(
-        &self,
-        virt: VirtualAddress,
-        f: impl FnOnce(&mut PageTable<A>, usize) -> T,
-    ) -> Option<T> {
-        let mut table = self.table();
-        loop {
-            let i = table.index_of(virt)?;
-            if table.level() == 0 {
-                return Some(f(&mut table, i));
-            } else {
-                table = unsafe { table.next(i)? };
-            }
-        }
-    }
-    pub fn translate(&self, virt: VirtualAddress) -> Option<(PhysicalAddress, PageFlags<A>)> {
-        let entry = self.visit(virt, |p1, i| unsafe { p1.entry(i) })??;
-        Some((entry.address().ok()?, entry.flags()))
-    }
 
     pub unsafe fn unmap(
         &mut self,
         virt: VirtualAddress,
         unmap_parents: bool,
-    ) -> Option<PageFlush<A>> {
+    ) -> Option<PageFlush<A>>
+    where
+        F: FrameAllocator,
+    {
         unsafe {
             let (old, _, flush) = self.unmap_phys(virt, unmap_parents)?;
             self.allocator.free_one(old);
@@ -205,6 +215,7 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         }
     }
 }
+
 unsafe fn unmap_phys_inner<A: Arch>(
     virt: VirtualAddress,
     table: &mut PageTable<A>,
@@ -245,6 +256,7 @@ unsafe fn unmap_phys_inner<A: Arch>(
         Some(res)
     }
 }
+
 impl<A, F: core::fmt::Debug> core::fmt::Debug for PageMapper<A, F> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PageMapper")
