@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy)]
 pub struct RiscV64Sv39Arch;
@@ -31,10 +31,6 @@ impl Arch for RiscV64Sv39Arch {
     const ENTRY_FLAG_WRITE_COMBINING: usize = 0;
 
     const PHYS_OFFSET: usize = 0xFFFF_FFC0_0000_0000;
-
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("RiscV64Sv39Arch::init unimplemented");
-    }
 
     #[inline(always)]
     unsafe fn invalidate(address: VirtualAddress) {

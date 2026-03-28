@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy, Debug)]
 pub struct X8664Arch;
@@ -25,10 +25,6 @@ impl Arch for X8664Arch {
     const ENTRY_FLAG_WRITE_COMBINING: usize = 1 << 7;
 
     const PHYS_OFFSET: usize = Self::PAGE_NEGATIVE_MASK + (Self::PAGE_ADDRESS_SIZE >> 1) as usize; // PML4 slot 256 and onwards
-
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("X8664Arch::init unimplemented");
-    }
 
     #[inline(always)]
     unsafe fn invalidate(address: VirtualAddress) {

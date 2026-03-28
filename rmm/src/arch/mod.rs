@@ -1,6 +1,6 @@
 use core::ptr;
 
-use crate::{MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{PhysicalAddress, TableKind, VirtualAddress};
 
 //TODO: Support having all page tables compile on all architectures
 #[cfg(all(feature = "std", target_pointer_width = "64"))]
@@ -60,8 +60,6 @@ pub trait Arch: Clone + Copy {
     const ENTRY_ADDRESS_SIZE: usize = 1 << Self::ENTRY_ADDRESS_WIDTH; // size of addressable physical memory, in pages
     const ENTRY_ADDRESS_MASK: usize = Self::ENTRY_ADDRESS_SIZE - 1; // Mask of physical address, starting at 0th bit
     const ENTRY_FLAGS_MASK: usize = !(Self::ENTRY_ADDRESS_MASK << Self::ENTRY_ADDRESS_SHIFT);
-
-    unsafe fn init() -> &'static [MemoryArea];
 
     #[inline(always)]
     unsafe fn read<T>(address: VirtualAddress) -> T {

@@ -1,7 +1,7 @@
 //TODO: USE PAE
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy)]
 pub struct X86Arch;
@@ -26,10 +26,6 @@ impl Arch for X86Arch {
     const ENTRY_FLAG_WRITE_COMBINING: usize = 1 << 7;
 
     const PHYS_OFFSET: usize = 0x8000_0000;
-
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("X86Arch::init unimplemented");
-    }
 
     #[inline(always)]
     unsafe fn invalidate(address: VirtualAddress) {

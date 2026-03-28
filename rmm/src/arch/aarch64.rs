@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy)]
 pub struct AArch64Arch;
@@ -35,10 +35,6 @@ impl Arch for AArch64Arch {
     const ENTRY_FLAG_WRITE_COMBINING: usize = 0;
 
     const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
-
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("AArch64Arch::init unimplemented");
-    }
 
     #[inline(always)]
     unsafe fn invalidate(address: VirtualAddress) {
