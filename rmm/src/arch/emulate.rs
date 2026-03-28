@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, marker::PhantomData, mem, ptr, sync::Mutex};
+extern crate std;
+
+use std::{boxed::Box, collections::BTreeMap, marker::PhantomData, mem, ptr, sync::Mutex, vec};
 
 use crate::{
     arch::x86_64::X8664Arch, page::PageFlags, Arch, MemoryArea, PageEntry, PhysicalAddress,

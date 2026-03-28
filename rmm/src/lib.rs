@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 
 pub use crate::{allocator::*, arch::*, page::*};
 
