@@ -103,27 +103,20 @@ impl Arch for AArch64Arch {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::AArch64Arch;
-    use crate::Arch;
+const _: () = {
+    assert!(AArch64Arch::PAGE_SIZE == 4096);
+    assert!(AArch64Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(AArch64Arch::PAGE_ADDRESS_SHIFT == 48);
+    assert!(AArch64Arch::PAGE_ADDRESS_SIZE == 0x0001_0000_0000_0000);
+    assert!(AArch64Arch::PAGE_ADDRESS_MASK == 0x0000_FFFF_FFFF_F000);
+    assert!(AArch64Arch::PAGE_ENTRY_SIZE == 8);
+    assert!(AArch64Arch::PAGE_ENTRIES == 512);
+    assert!(AArch64Arch::PAGE_ENTRY_MASK == 0x1FF);
+    assert!(AArch64Arch::PAGE_NEGATIVE_MASK == 0xFFFF_0000_0000_0000);
 
-    #[test]
-    fn constants() {
-        assert_eq!(AArch64Arch::PAGE_SIZE, 4096);
-        assert_eq!(AArch64Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(AArch64Arch::PAGE_ADDRESS_SHIFT, 48);
-        assert_eq!(AArch64Arch::PAGE_ADDRESS_SIZE, 0x0001_0000_0000_0000);
-        assert_eq!(AArch64Arch::PAGE_ADDRESS_MASK, 0x0000_FFFF_FFFF_F000);
-        assert_eq!(AArch64Arch::PAGE_ENTRY_SIZE, 8);
-        assert_eq!(AArch64Arch::PAGE_ENTRIES, 512);
-        assert_eq!(AArch64Arch::PAGE_ENTRY_MASK, 0x1FF);
-        assert_eq!(AArch64Arch::PAGE_NEGATIVE_MASK, 0xFFFF_0000_0000_0000);
+    assert!(AArch64Arch::ENTRY_ADDRESS_SIZE == 0x0000_0100_0000_0000);
+    assert!(AArch64Arch::ENTRY_ADDRESS_MASK == 0x0000_00FF_FFFF_FFFF);
+    assert!(AArch64Arch::ENTRY_FLAGS_MASK == 0xFFF0_0000_0000_0FFF);
 
-        assert_eq!(AArch64Arch::ENTRY_ADDRESS_SIZE, 0x0000_0100_0000_0000);
-        assert_eq!(AArch64Arch::ENTRY_ADDRESS_MASK, 0x0000_00FF_FFFF_FFFF);
-        assert_eq!(AArch64Arch::ENTRY_FLAGS_MASK, 0xFFF0_0000_0000_0FFF);
-
-        assert_eq!(AArch64Arch::PHYS_OFFSET, 0xFFFF_8000_0000_0000);
-    }
-}
+    assert!(AArch64Arch::PHYS_OFFSET == 0xFFFF_8000_0000_0000);
+};

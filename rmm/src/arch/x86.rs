@@ -54,27 +54,20 @@ impl Arch for X86Arch {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{VirtualAddress, X86Arch};
-    use crate::Arch;
+const _: () = {
+    assert!(X86Arch::PAGE_SIZE == 4096);
+    assert!(X86Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(X86Arch::PAGE_ADDRESS_SHIFT == 32);
+    assert!(X86Arch::PAGE_ADDRESS_SIZE == 0x0000_0001_0000_0000);
+    assert!(X86Arch::PAGE_ADDRESS_MASK == 0xFFFF_F000);
+    assert!(X86Arch::PAGE_ENTRY_SIZE == 4);
+    assert!(X86Arch::PAGE_ENTRIES == 1024);
+    assert!(X86Arch::PAGE_ENTRY_MASK == 0x3FF);
+    assert!(X86Arch::PAGE_NEGATIVE_MASK == 0x0000_0000_0000);
 
-    #[test]
-    fn constants() {
-        assert_eq!(X86Arch::PAGE_SIZE, 4096);
-        assert_eq!(X86Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(X86Arch::PAGE_ADDRESS_SHIFT, 32);
-        assert_eq!(X86Arch::PAGE_ADDRESS_SIZE, 0x0000_0001_0000_0000);
-        assert_eq!(X86Arch::PAGE_ADDRESS_MASK, 0xFFFF_F000);
-        assert_eq!(X86Arch::PAGE_ENTRY_SIZE, 4);
-        assert_eq!(X86Arch::PAGE_ENTRIES, 1024);
-        assert_eq!(X86Arch::PAGE_ENTRY_MASK, 0x3FF);
-        assert_eq!(X86Arch::PAGE_NEGATIVE_MASK, 0x0000_0000_0000);
+    assert!(X86Arch::ENTRY_ADDRESS_SIZE == 0x0000_0000_0010_0000);
+    assert!(X86Arch::ENTRY_ADDRESS_MASK == 0x000F_FFFF);
+    assert!(X86Arch::ENTRY_FLAGS_MASK == 0x0000_0FFF);
 
-        assert_eq!(X86Arch::ENTRY_ADDRESS_SIZE, 0x0000_0000_0010_0000);
-        assert_eq!(X86Arch::ENTRY_ADDRESS_MASK, 0x000F_FFFF);
-        assert_eq!(X86Arch::ENTRY_FLAGS_MASK, 0x0000_0FFF);
-
-        assert_eq!(X86Arch::PHYS_OFFSET, 0x8000_0000);
-    }
-}
+    assert!(X86Arch::PHYS_OFFSET == 0x8000_0000);
+};

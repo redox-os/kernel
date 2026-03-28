@@ -79,29 +79,29 @@ impl Arch for RiscV64Sv39Arch {
     }
 }
 
+const _: () = {
+    assert!(RiscV64Sv39Arch::PAGE_SIZE == 4096);
+    assert!(RiscV64Sv39Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(RiscV64Sv39Arch::PAGE_ADDRESS_SHIFT == 39);
+    assert!(RiscV64Sv39Arch::PAGE_ADDRESS_SIZE == 0x0000_0080_0000_0000);
+    assert!(RiscV64Sv39Arch::PAGE_ADDRESS_MASK == 0x0000_007F_FFFF_F000);
+    assert!(RiscV64Sv39Arch::PAGE_ENTRY_SIZE == 8);
+    assert!(RiscV64Sv39Arch::PAGE_ENTRIES == 512);
+    assert!(RiscV64Sv39Arch::PAGE_ENTRY_MASK == 0x1FF);
+    assert!(RiscV64Sv39Arch::PAGE_NEGATIVE_MASK == 0xFFFF_FF80_0000_0000);
+
+    assert!(RiscV64Sv39Arch::ENTRY_ADDRESS_SIZE == 0x0000_1000_0000_0000);
+    assert!(RiscV64Sv39Arch::ENTRY_ADDRESS_MASK == 0x0000_0FFF_FFFF_FFFF);
+    assert!(RiscV64Sv39Arch::ENTRY_FLAGS_MASK == 0xFFC0_0000_0000_03FF);
+
+    assert!(RiscV64Sv39Arch::PHYS_OFFSET == 0xFFFF_FFC0_0000_0000);
+};
+
 #[cfg(test)]
 mod tests {
     use super::RiscV64Sv39Arch;
     use crate::Arch;
 
-    #[test]
-    fn constants() {
-        assert_eq!(RiscV64Sv39Arch::PAGE_SIZE, 4096);
-        assert_eq!(RiscV64Sv39Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(RiscV64Sv39Arch::PAGE_ADDRESS_SHIFT, 39);
-        assert_eq!(RiscV64Sv39Arch::PAGE_ADDRESS_SIZE, 0x0000_0080_0000_0000);
-        assert_eq!(RiscV64Sv39Arch::PAGE_ADDRESS_MASK, 0x0000_007F_FFFF_F000);
-        assert_eq!(RiscV64Sv39Arch::PAGE_ENTRY_SIZE, 8);
-        assert_eq!(RiscV64Sv39Arch::PAGE_ENTRIES, 512);
-        assert_eq!(RiscV64Sv39Arch::PAGE_ENTRY_MASK, 0x1FF);
-        assert_eq!(RiscV64Sv39Arch::PAGE_NEGATIVE_MASK, 0xFFFF_FF80_0000_0000);
-
-        assert_eq!(RiscV64Sv39Arch::ENTRY_ADDRESS_SIZE, 0x0000_1000_0000_0000);
-        assert_eq!(RiscV64Sv39Arch::ENTRY_ADDRESS_MASK, 0x0000_0FFF_FFFF_FFFF);
-        assert_eq!(RiscV64Sv39Arch::ENTRY_FLAGS_MASK, 0xFFC0_0000_0000_03FF);
-
-        assert_eq!(RiscV64Sv39Arch::PHYS_OFFSET, 0xFFFF_FFC0_0000_0000);
-    }
     #[test]
     fn is_canonical() {
         use super::VirtualAddress;

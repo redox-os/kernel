@@ -63,29 +63,29 @@ impl Arch for X8664Arch {
     }
 }
 
+const _: () = {
+    assert!(X8664Arch::PAGE_SIZE == 4096);
+    assert!(X8664Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(X8664Arch::PAGE_ADDRESS_SHIFT == 48);
+    assert!(X8664Arch::PAGE_ADDRESS_SIZE == 0x0001_0000_0000_0000);
+    assert!(X8664Arch::PAGE_ADDRESS_MASK == 0x0000_FFFF_FFFF_F000);
+    assert!(X8664Arch::PAGE_ENTRY_SIZE == 8);
+    assert!(X8664Arch::PAGE_ENTRIES == 512);
+    assert!(X8664Arch::PAGE_ENTRY_MASK == 0x1FF);
+    assert!(X8664Arch::PAGE_NEGATIVE_MASK == 0xFFFF_0000_0000_0000);
+
+    assert!(X8664Arch::ENTRY_ADDRESS_SIZE == 0x0000_0100_0000_0000);
+    assert!(X8664Arch::ENTRY_ADDRESS_MASK == 0x0000_00FF_FFFF_FFFF);
+    assert!(X8664Arch::ENTRY_FLAGS_MASK == 0xFFF0_0000_0000_0FFF);
+
+    assert!(X8664Arch::PHYS_OFFSET == 0xFFFF_8000_0000_0000);
+};
+
 #[cfg(test)]
 mod tests {
     use super::{VirtualAddress, X8664Arch};
     use crate::Arch;
 
-    #[test]
-    fn constants() {
-        assert_eq!(X8664Arch::PAGE_SIZE, 4096);
-        assert_eq!(X8664Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(X8664Arch::PAGE_ADDRESS_SHIFT, 48);
-        assert_eq!(X8664Arch::PAGE_ADDRESS_SIZE, 0x0001_0000_0000_0000);
-        assert_eq!(X8664Arch::PAGE_ADDRESS_MASK, 0x0000_FFFF_FFFF_F000);
-        assert_eq!(X8664Arch::PAGE_ENTRY_SIZE, 8);
-        assert_eq!(X8664Arch::PAGE_ENTRIES, 512);
-        assert_eq!(X8664Arch::PAGE_ENTRY_MASK, 0x1FF);
-        assert_eq!(X8664Arch::PAGE_NEGATIVE_MASK, 0xFFFF_0000_0000_0000);
-
-        assert_eq!(X8664Arch::ENTRY_ADDRESS_SIZE, 0x0000_0100_0000_0000);
-        assert_eq!(X8664Arch::ENTRY_ADDRESS_MASK, 0x0000_00FF_FFFF_FFFF);
-        assert_eq!(X8664Arch::ENTRY_FLAGS_MASK, 0xFFF0_0000_0000_0FFF);
-
-        assert_eq!(X8664Arch::PHYS_OFFSET, 0xFFFF_8000_0000_0000);
-    }
     #[test]
     fn is_canonical() {
         fn yes(address: usize) {
