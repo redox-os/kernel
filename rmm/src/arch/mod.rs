@@ -79,17 +79,9 @@ pub trait Arch: Clone + Copy {
     }
 
     unsafe fn invalidate(address: VirtualAddress);
-
-    #[inline(always)]
-    unsafe fn invalidate_all() {
-        unsafe {
-            //TODO: this stub only works on x86_64, maybe make the arch implement this?
-            Self::set_table(TableKind::User, Self::table(TableKind::User));
-        }
-    }
+    unsafe fn invalidate_all();
 
     unsafe fn table(table_kind: TableKind) -> PhysicalAddress;
-
     unsafe fn set_table(table_kind: TableKind, address: PhysicalAddress);
 
     #[inline(always)]

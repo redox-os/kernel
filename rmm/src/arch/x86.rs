@@ -37,6 +37,11 @@ impl Arch for X86Arch {
     }
 
     #[inline(always)]
+    unsafe fn invalidate_all() {
+        unsafe { Self::set_table(TableKind::User, Self::table(TableKind::User)) };
+    }
+
+    #[inline(always)]
     unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
         let address: usize;
         unsafe { asm!("mov {0}, cr3", out(reg) address) };
