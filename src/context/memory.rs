@@ -2886,14 +2886,18 @@ impl<'a, 'addrsp> Flusher<'a, 'addrsp> {
         }
 
         for entry in pages {
-            let PageQueueEntry::Free {
-                base,
-                phys_contiguous_count,
-            } = entry
-            else {
-                continue;
-            };
-            handle_free_action(base, phys_contiguous_count);
+            match entry {
+                PageQueueEntry::Free {
+                    base,
+                    phys_contiguous_count,
+                } => {
+                    handle_free_action(base, phys_contiguous_count);
+                }
+                PageQueueEntry::Other { actions } => {
+                    // We currently invalidate everything on each flush
+                    let _ = actions;
+                }
+            }
         }
     }
 }
