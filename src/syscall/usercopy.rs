@@ -144,13 +144,6 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
             .copy_to_slice(&mut ret)?;
         Ok(u32::from_ne_bytes(ret))
     }
-    pub fn read_u64(self) -> Result<u64> {
-        let mut ret = 0_u64.to_ne_bytes();
-        self.limit(8)
-            .ok_or(Error::new(EINVAL))?
-            .copy_to_slice(&mut ret)?;
-        Ok(u64::from_ne_bytes(ret))
-    }
     pub fn usizes(self) -> impl Iterator<Item = Result<usize>> {
         self.in_exact_chunks(core::mem::size_of::<usize>())
             .map(Self::read_usize)
