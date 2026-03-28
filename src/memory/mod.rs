@@ -239,10 +239,7 @@ pub unsafe fn deallocate_frame(frame: Frame) {
 // Helper function for quickly mapping device memory
 pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAddress {
     unsafe {
-        let mut mapper_lock = KernelMapper::lock();
-        let mapper = mapper_lock
-            .get_mut()
-            .expect("KernelMapper mapper locked re-entrant in map_device_memory");
+        let mut mapper = KernelMapper::lock_rw();
         let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
         let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
         for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {

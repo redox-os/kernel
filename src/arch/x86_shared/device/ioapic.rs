@@ -237,7 +237,7 @@ pub fn src_overrides() -> &'static [Override] {
 }
 
 #[cfg(feature = "acpi")]
-pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static MadtIoApic) {
+pub unsafe fn handle_ioapic(mapper: &mut KernelMapper<true>, madt_ioapic: &'static MadtIoApic) {
     unsafe {
         // map the I/O APIC registers
 
@@ -250,10 +250,6 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper, madt_ioapic: &'static Mad
         assert!(mapper.translate(page.start_address()).is_none());
 
         mapper
-            .get_mut()
-            .expect(
-                "expected KernelMapper not to be locked re-entrant while mapping I/O APIC memory",
-            )
             .map_phys(
                 page.start_address(),
                 frame.base(),
@@ -314,7 +310,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 }
 
 #[allow(dead_code)]
-pub unsafe fn init(active_table: &mut KernelMapper) {
+pub unsafe fn init(active_table: &mut KernelMapper<true>) {
     unsafe {
         let bsp_apic_id = ApicId::new(u32::from(
             cpuid().get_feature_info().unwrap().initial_local_apic_id(),

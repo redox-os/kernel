@@ -36,13 +36,9 @@ pub(super) fn init(madt: Madt) {
     let trampoline_page = Page::containing_address(VirtualAddress::new(TRAMPOLINE));
     let (result, page_table_physaddr) = unsafe {
         //TODO: do not have writable and executable!
-        let mut mapper = KernelMapper::lock();
+        let mut mapper = KernelMapper::lock_rw();
 
         let result = mapper
-            .get_mut()
-            .expect(
-                "expected kernel page table not to be recursively locked while initializing MADT",
-            )
             .map_phys(
                 trampoline_page.start_address(),
                 trampoline_frame.base(),
@@ -147,11 +143,7 @@ pub(super) fn init(madt: Madt) {
 
     // Unmap trampoline
     let (_frame, _, flush) = unsafe {
-        KernelMapper::lock()
-            .get_mut()
-            .expect(
-                "expected kernel page table not to be recursively locked while initializing MADT",
-            )
+        KernelMapper::lock_rw()
             .unmap_phys(trampoline_page.start_address(), true)
             .expect("failed to unmap trampoline page")
     };

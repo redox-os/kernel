@@ -149,7 +149,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
 
         debug!("self-modifying features: {:?}", enable);
 
-        let mut mapper = KernelMapper::lock();
+        let mut mapper = KernelMapper::lock_rw();
         for reloc in relocs.iter().copied() {
             let name = core::str::from_utf8(core::slice::from_raw_parts(
                 reloc.name_start,
@@ -166,8 +166,6 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
             );
             for page in dst_pages.pages() {
                 mapper
-                    .get_mut()
-                    .unwrap()
                     .remap(
                         page.start_address(),
                         PageFlags::new().write(true).execute(true).global(true),
@@ -239,8 +237,6 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
 
             for page in dst_pages.pages() {
                 mapper
-                    .get_mut()
-                    .unwrap()
                     .remap(
                         page.start_address(),
                         PageFlags::new().write(false).execute(true).global(true),

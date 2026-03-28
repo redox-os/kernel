@@ -17,12 +17,24 @@ static LOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// needs to be expended, it must not be held while memory allocations are done!
 // TODO: Make the lock finer-grained so that e.g. the heap part can be independent from e.g.
 // PHYS_PML4?
-pub struct KernelMapper {
+pub struct KernelMapper<const RW: bool> {
     mapper: crate::paging::PageMapper,
-    ro: bool,
 }
-impl KernelMapper {
-    pub fn lock() -> Self {
+
+impl KernelMapper<false> {
+    pub fn lock_ro() -> Self {
+        KernelMapper::lock()
+    }
+}
+
+impl KernelMapper<true> {
+    pub fn lock_rw() -> Self {
+        KernelMapper::lock()
+    }
+}
+
+impl<const RW: bool> KernelMapper<RW> {
+    fn lock() -> Self {
         let mapper =
             unsafe { PageMapper::current(TableKind::Kernel, crate::memory::TheFrameAllocator) };
 
@@ -46,25 +58,30 @@ impl KernelMapper {
         atomic::compiler_fence(Ordering::Acquire);
 
         let ro = prev_count > 0;
-        Self { mapper, ro }
-    }
 
-    pub fn get_mut(&mut self) -> Option<&mut crate::paging::PageMapper> {
-        if self.ro {
-            None
-        } else {
-            Some(&mut self.mapper)
+        if RW && ro {
+            panic!("KernelMapper locked re-entrant when write access is requested");
         }
+
+        Self { mapper }
     }
 }
-impl core::ops::Deref for KernelMapper {
+
+impl<const RW: bool> core::ops::Deref for KernelMapper<RW> {
     type Target = crate::paging::PageMapper;
 
     fn deref(&self) -> &Self::Target {
         &self.mapper
     }
 }
-impl Drop for KernelMapper {
+
+impl core::ops::DerefMut for KernelMapper<true> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.mapper
+    }
+}
+
+impl<const RW: bool> Drop for KernelMapper<RW> {
     fn drop(&mut self) {
         if LOCK_COUNT.fetch_sub(1, Ordering::Relaxed) == 1 {
             LOCK_OWNER.store(NO_PROCESSOR, Ordering::Release);

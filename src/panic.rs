@@ -77,7 +77,7 @@ fn panic_handler_inner(info: &PanicInfo) -> ! {
 #[inline(never)]
 pub unsafe fn stack_trace() {
     unsafe {
-        let mapper = KernelMapper::lock();
+        let mapper = KernelMapper::lock_ro();
 
         let kernel_ptr = crate::KERNEL_OFFSET as *const u8;
         let elf_header: &FileHeader<NativeEndian> = object::pod::from_bytes(slice::from_raw_parts(
