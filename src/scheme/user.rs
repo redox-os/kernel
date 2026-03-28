@@ -258,7 +258,7 @@ impl UserInner {
                         }
                     };
 
-                let mut states = self.states.lock(token.token());
+                let states = self.states.lock(token.token());
                 let (mut states, mut token) = states.into_split();
                 match states.get_mut(sqe.tag as usize) {
                     // invalid state

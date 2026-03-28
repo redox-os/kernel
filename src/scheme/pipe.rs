@@ -8,7 +8,7 @@ use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use crate::{
     context::{
         context::{bulk_add_fds, bulk_insert_fds},
-        file::{FileDescription, InternalFlags, LockedFileDescription},
+        file::{InternalFlags, LockedFileDescription},
     },
     event,
     sync::{CleanLockToken, Mutex, RwLock, WaitCondition, L1},
@@ -254,7 +254,7 @@ impl KernelScheme for PipeScheme {
         let pipe = Self::get_pipe(key, token)?;
 
         loop {
-            let mut vec = pipe.queue.lock(token.token());
+            let vec = pipe.queue.lock(token.token());
             let (mut vec, mut token) = vec.into_split();
 
             let (s1, s2) = vec.as_slices();
@@ -313,7 +313,7 @@ impl KernelScheme for PipeScheme {
         let pipe = Self::get_pipe(key, token)?;
 
         loop {
-            let mut vec = pipe.queue.lock(token.token());
+            let vec = pipe.queue.lock(token.token());
             let (mut vec, mut token) = vec.into_split();
 
             if !pipe.reader_is_alive.load(Ordering::Relaxed) {

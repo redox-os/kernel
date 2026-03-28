@@ -5,7 +5,7 @@
 
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EACCES, EBADFD, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
+    EACCES, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::{

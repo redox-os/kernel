@@ -1,7 +1,6 @@
 use core::fmt::Write as _;
 
 use crate::{
-    arch::device::cpu,
     context::{contexts, ContextRef, Status},
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
     percpu::get_all_stats,

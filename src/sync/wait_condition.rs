@@ -6,7 +6,7 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, ContextLock, PreemptGuard, PreemptGuardL1, PreemptGuardL2},
+    context::{self, ContextLock, PreemptGuardL2},
     sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
