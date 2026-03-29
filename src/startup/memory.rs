@@ -379,13 +379,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         }
 
         debug!("Table: {:X}", mapper.table().phys().data());
-        for i in 0..A::PAGE_ENTRIES {
-            if let Some(entry) = mapper.table().entry(i)
-                && entry.present()
-            {
-                debug!("{}: {:X}", i, entry.data());
-            }
-        }
+        mapper.table().debug_entries(|args| debug!("{args}"));
 
         // Use the new table
         mapper.make_current();
