@@ -13,12 +13,12 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
     let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
     let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size - 1));
     for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-        unsafe {
-            let phys = mapper
-                .allocator_mut()
-                .allocate_one()
-                .expect("failed to allocate kernel heap");
-            let flush = mapper
+        let phys = mapper
+            .allocator_mut()
+            .allocate_one()
+            .expect("failed to allocate kernel heap");
+        let flush = unsafe {
+            mapper
                 .map_phys(
                     page.start_address(),
                     phys,
@@ -26,9 +26,9 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
                         .write(true)
                         .global(cfg!(not(feature = "pti"))),
                 )
-                .expect("failed to map kernel heap");
-            flush_all.consume(flush);
-        }
+                .expect("failed to map kernel heap")
+        };
+        flush_all.consume(flush);
     }
 
     flush_all.flush();

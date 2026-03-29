@@ -42,7 +42,7 @@ impl<A: Arch> PageTable<A> {
 
     unsafe fn entry_virt(&self, i: usize) -> Option<VirtualAddress> {
         if i < A::PAGE_ENTRIES {
-            Some(unsafe { A::phys_to_virt(self.phys) }.add(i * A::PAGE_ENTRY_SIZE))
+            Some(A::phys_to_virt(self.phys).add(i * A::PAGE_ENTRY_SIZE))
         } else {
             None
         }

@@ -2416,8 +2416,8 @@ pub unsafe fn copy_frame_to_frame_directly(dst: Frame, src: Frame) {
     // TODO: For new frames, when the kernel's linear phys=>virt mappings are 4k, this is almost
     // guaranteed to cause either one (or two) TLB misses.
 
-    let dst = unsafe { RmmA::phys_to_virt(dst.base()).data() as *mut u8 };
-    let src = unsafe { RmmA::phys_to_virt(src.base()).data() as *const u8 };
+    let dst = RmmA::phys_to_virt(dst.base()).data() as *mut u8;
+    let src = RmmA::phys_to_virt(src.base()).data() as *const u8;
 
     unsafe {
         dst.copy_from_nonoverlapping(src, PAGE_SIZE);

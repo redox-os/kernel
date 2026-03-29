@@ -54,13 +54,11 @@ impl<A: Arch> BuddyEntry<A> {
     }
 
     unsafe fn usage_addr(&self, page: usize) -> Option<VirtualAddress> {
-        unsafe {
-            if page < self.pages() {
-                let phys = self.base.add(page * mem::size_of::<BuddyUsage>());
-                Some(A::phys_to_virt(phys))
-            } else {
-                None
-            }
+        if page < self.pages() {
+            let phys = self.base.add(page * mem::size_of::<BuddyUsage>());
+            Some(A::phys_to_virt(phys))
+        } else {
+            None
         }
     }
 
@@ -179,8 +177,8 @@ impl<A: Arch> BuddyAllocator<A> {
     }
 }
 
-impl<A: Arch> FrameAllocator for BuddyAllocator<A> {
-    unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+unsafe impl<A: Arch> FrameAllocator for BuddyAllocator<A> {
+    fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         unsafe {
             if self.table_virt.data() == 0 {
                 return None;
@@ -287,7 +285,7 @@ impl<A: Arch> FrameAllocator for BuddyAllocator<A> {
         }
     }
 
-    unsafe fn usage(&self) -> FrameUsage {
+    fn usage(&self) -> FrameUsage {
         unsafe {
             let mut total = 0;
             let mut used = 0;

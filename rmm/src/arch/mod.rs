@@ -90,7 +90,7 @@ pub trait Arch: Clone + Copy {
     unsafe fn set_table(table_kind: TableKind, address: PhysicalAddress);
 
     #[inline(always)]
-    unsafe fn phys_to_virt(phys: PhysicalAddress) -> VirtualAddress {
+    fn phys_to_virt(phys: PhysicalAddress) -> VirtualAddress {
         match phys.data().checked_add(Self::PHYS_OFFSET) {
             Some(some) => VirtualAddress::new(some),
             None => panic!("phys_to_virt({:#x}) overflow", phys.data()),
