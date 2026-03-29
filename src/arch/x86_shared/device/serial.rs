@@ -43,14 +43,12 @@ pub unsafe fn init() {
             paging::VirtualAddress,
         };
 
-        let mut mapper = KernelMapper::lock();
+        let mut mapper = KernelMapper::lock_rw();
         let virt = VirtualAddress::new(address);
         let phys = PhysicalAddress::new(address - crate::PHYS_OFFSET);
         let flags = PageFlags::new().write(true).execute(false);
         unsafe {
             mapper
-                .get_mut()
-                .unwrap()
                 .map_phys(virt, phys, flags)
                 .expect("failed to map frame")
                 .flush();

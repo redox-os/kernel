@@ -42,11 +42,7 @@ unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::pa
     }
 }
 
-pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper) -> &'static Sdt {
-    let mapper = mapper
-        .get_mut()
-        .expect("KernelMapper mapper locked re-entrant in get_sdt");
-
+pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper<true>) -> &'static Sdt {
     let physaddr = PhysicalAddress::new(sdt_address);
 
     let sdt;
@@ -100,11 +96,11 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
         }
 
         // Search for RSDP
-        let rsdp_opt = Rsdp::get_rsdp(&mut KernelMapper::lock(), already_supplied_rsdp);
+        let rsdp_opt = Rsdp::get_rsdp(&mut KernelMapper::lock_rw(), already_supplied_rsdp);
 
         if let Some(rsdp) = rsdp_opt {
             debug!("SDT address: {:#x}", rsdp.sdt_address());
-            let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock());
+            let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock_rw());
 
             let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
                 let mut initialized = false;
@@ -141,7 +137,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
             // TODO: Don't touch ACPI tables in kernel?
 
             for sdt in rxsdt.iter() {
-                get_sdt(sdt, &mut KernelMapper::lock());
+                get_sdt(sdt, &mut KernelMapper::lock_rw());
             }
 
             for sdt_address in rxsdt.iter() {

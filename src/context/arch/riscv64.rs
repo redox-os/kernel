@@ -238,7 +238,7 @@ pub fn setup_new_utable() -> Result<Table> {
 
     // Copy higher half (kernel) mappings
     unsafe {
-        let active_ktable = KernelMapper::lock();
+        let active_ktable = KernelMapper::lock_ro();
         for pde_no in ENTRY_COUNT / 2..ENTRY_COUNT {
             if let Some(entry) = active_ktable.table().entry(pde_no) {
                 utable.table().set_entry(pde_no, entry);

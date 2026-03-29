@@ -1,6 +1,6 @@
 use core::ptr;
 
-use crate::{MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{PhysicalAddress, TableKind, VirtualAddress};
 
 //TODO: Support having all page tables compile on all architectures
 #[cfg(all(feature = "std", target_pointer_width = "64"))]
@@ -61,8 +61,6 @@ pub trait Arch: Clone + Copy {
     const ENTRY_ADDRESS_MASK: usize = Self::ENTRY_ADDRESS_SIZE - 1; // Mask of physical address, starting at 0th bit
     const ENTRY_FLAGS_MASK: usize = !(Self::ENTRY_ADDRESS_MASK << Self::ENTRY_ADDRESS_SHIFT);
 
-    unsafe fn init() -> &'static [MemoryArea];
-
     #[inline(always)]
     unsafe fn read<T>(address: VirtualAddress) -> T {
         unsafe { ptr::read(address.data() as *const T) }
@@ -79,17 +77,9 @@ pub trait Arch: Clone + Copy {
     }
 
     unsafe fn invalidate(address: VirtualAddress);
-
-    #[inline(always)]
-    unsafe fn invalidate_all() {
-        unsafe {
-            //TODO: this stub only works on x86_64, maybe make the arch implement this?
-            Self::set_table(TableKind::User, Self::table(TableKind::User));
-        }
-    }
+    unsafe fn invalidate_all();
 
     unsafe fn table(table_kind: TableKind) -> PhysicalAddress;
-
     unsafe fn set_table(table_kind: TableKind, address: PhysicalAddress);
 
     #[inline(always)]

@@ -33,7 +33,7 @@ pub unsafe fn the_local_apic() -> &'static mut LocalApic {
     unsafe { &mut *LOCAL_APIC.get() }
 }
 
-pub unsafe fn init(active_table: &mut KernelMapper) {
+pub unsafe fn init(active_table: &mut KernelMapper<true>) {
     unsafe {
         the_local_apic().init(active_table);
     }
@@ -52,12 +52,8 @@ pub struct LocalApic {
 }
 
 impl LocalApic {
-    unsafe fn init(&mut self, mapper: &mut KernelMapper) {
+    unsafe fn init(&mut self, mapper: &mut KernelMapper<true>) {
         unsafe {
-            let mapper = mapper.get_mut().expect(
-                "expected KernelMapper not to be locked re-entrant while initializing LAPIC",
-            );
-
             let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
             #[cfg(target_arch = "x86")]
             let virtaddr = rmm::VirtualAddress::new(crate::LAPIC_OFFSET);

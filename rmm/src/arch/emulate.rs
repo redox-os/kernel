@@ -10,31 +10,8 @@ use crate::{
 #[derive(Clone, Copy)]
 pub struct EmulateArch;
 
-impl Arch for EmulateArch {
-    const PAGE_SHIFT: usize = X8664Arch::PAGE_SHIFT;
-    const PAGE_ENTRY_SHIFT: usize = X8664Arch::PAGE_ENTRY_SHIFT;
-    const PAGE_LEVELS: usize = X8664Arch::PAGE_LEVELS;
-
-    const ENTRY_ADDRESS_SHIFT: usize = X8664Arch::ENTRY_ADDRESS_SHIFT;
-    const ENTRY_FLAG_DEFAULT_PAGE: usize = X8664Arch::ENTRY_FLAG_DEFAULT_PAGE;
-    const ENTRY_FLAG_DEFAULT_TABLE: usize = X8664Arch::ENTRY_FLAG_DEFAULT_TABLE;
-    const ENTRY_FLAG_PRESENT: usize = X8664Arch::ENTRY_FLAG_PRESENT;
-    const ENTRY_FLAG_READONLY: usize = X8664Arch::ENTRY_FLAG_READONLY;
-    const ENTRY_FLAG_READWRITE: usize = X8664Arch::ENTRY_FLAG_READWRITE;
-    const ENTRY_FLAG_PAGE_USER: usize = X8664Arch::ENTRY_FLAG_PAGE_USER;
-    const ENTRY_FLAG_NO_EXEC: usize = X8664Arch::ENTRY_FLAG_NO_EXEC;
-    const ENTRY_FLAG_EXEC: usize = X8664Arch::ENTRY_FLAG_EXEC;
-
-    const PHYS_OFFSET: usize = X8664Arch::PHYS_OFFSET;
-
-    const ENTRY_FLAG_GLOBAL: usize = X8664Arch::ENTRY_FLAG_GLOBAL;
-    const ENTRY_FLAG_NO_GLOBAL: usize = X8664Arch::ENTRY_FLAG_NO_GLOBAL;
-
-    const ENTRY_ADDRESS_WIDTH: usize = X8664Arch::ENTRY_ADDRESS_WIDTH;
-
-    const ENTRY_FLAG_WRITE_COMBINING: usize = X8664Arch::ENTRY_FLAG_WRITE_COMBINING;
-
-    unsafe fn init() -> &'static [MemoryArea] {
+impl EmulateArch {
+    pub unsafe fn init() -> &'static [MemoryArea] {
         unsafe {
             // Create machine with PAGE_ENTRIES pages offset mapped (2 MiB on x86_64)
             let mut machine = Machine::new(MEMORY_SIZE);
@@ -73,6 +50,31 @@ impl Arch for EmulateArch {
             &MEMORY_AREAS
         }
     }
+}
+
+impl Arch for EmulateArch {
+    const PAGE_SHIFT: usize = X8664Arch::PAGE_SHIFT;
+    const PAGE_ENTRY_SHIFT: usize = X8664Arch::PAGE_ENTRY_SHIFT;
+    const PAGE_LEVELS: usize = X8664Arch::PAGE_LEVELS;
+
+    const ENTRY_ADDRESS_SHIFT: usize = X8664Arch::ENTRY_ADDRESS_SHIFT;
+    const ENTRY_FLAG_DEFAULT_PAGE: usize = X8664Arch::ENTRY_FLAG_DEFAULT_PAGE;
+    const ENTRY_FLAG_DEFAULT_TABLE: usize = X8664Arch::ENTRY_FLAG_DEFAULT_TABLE;
+    const ENTRY_FLAG_PRESENT: usize = X8664Arch::ENTRY_FLAG_PRESENT;
+    const ENTRY_FLAG_READONLY: usize = X8664Arch::ENTRY_FLAG_READONLY;
+    const ENTRY_FLAG_READWRITE: usize = X8664Arch::ENTRY_FLAG_READWRITE;
+    const ENTRY_FLAG_PAGE_USER: usize = X8664Arch::ENTRY_FLAG_PAGE_USER;
+    const ENTRY_FLAG_NO_EXEC: usize = X8664Arch::ENTRY_FLAG_NO_EXEC;
+    const ENTRY_FLAG_EXEC: usize = X8664Arch::ENTRY_FLAG_EXEC;
+
+    const PHYS_OFFSET: usize = X8664Arch::PHYS_OFFSET;
+
+    const ENTRY_FLAG_GLOBAL: usize = X8664Arch::ENTRY_FLAG_GLOBAL;
+    const ENTRY_FLAG_NO_GLOBAL: usize = X8664Arch::ENTRY_FLAG_NO_GLOBAL;
+
+    const ENTRY_ADDRESS_WIDTH: usize = X8664Arch::ENTRY_ADDRESS_WIDTH;
+
+    const ENTRY_FLAG_WRITE_COMBINING: usize = X8664Arch::ENTRY_FLAG_WRITE_COMBINING;
 
     #[inline(always)]
     unsafe fn read<T>(address: VirtualAddress) -> T {

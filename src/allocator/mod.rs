@@ -7,11 +7,8 @@ use rmm::Flusher;
 pub use self::linked_list::Allocator;
 mod linked_list;
 
-unsafe fn map_heap(mapper: &mut KernelMapper, offset: usize, size: usize) {
+unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) {
     unsafe {
-        let mapper = mapper
-            .get_mut()
-            .expect("failed to obtain exclusive access to KernelMapper while extending heap");
         let mut flush_all = PageFlushAll::new();
 
         let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
@@ -38,7 +35,7 @@ pub unsafe fn init() {
         let size = crate::KERNEL_HEAP_SIZE;
 
         // Map heap pages
-        map_heap(&mut KernelMapper::lock(), offset, size);
+        map_heap(&mut KernelMapper::lock_rw(), offset, size);
 
         // Initialize global heap
         Allocator::init(offset, size);

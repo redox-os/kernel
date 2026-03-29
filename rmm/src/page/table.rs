@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use super::PageEntry;
-use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, VirtualAddress};
 
 pub struct PageTable<A> {
     base: VirtualAddress,
@@ -20,16 +20,6 @@ impl<A: Arch> PageTable<A> {
         }
     }
 
-    pub unsafe fn top(table_kind: TableKind) -> Self {
-        unsafe {
-            Self::new(
-                VirtualAddress::new(0),
-                A::table(table_kind),
-                A::PAGE_LEVELS - 1,
-            )
-        }
-    }
-
     pub fn base(&self) -> VirtualAddress {
         self.base
     }
@@ -43,18 +33,7 @@ impl<A: Arch> PageTable<A> {
     }
 
     pub unsafe fn virt(&self) -> VirtualAddress {
-        unsafe {
-            A::phys_to_virt(self.phys)
-
-            // Recursive mapping
-            // let mut addr = 0xFFFF_FFFF_FFFF_F000;
-            // for level in (self.level + 1 .. A::PAGE_LEVELS).rev() {
-            //     let index = (self.base.0 >> (level * A::PAGE_ENTRY_SHIFT + A::PAGE_SHIFT)) & A::PAGE_ENTRY_MASK;
-            //     addr <<= A::PAGE_ENTRY_SHIFT;
-            //     addr |= index << A::PAGE_SHIFT;
-            // }
-            // VirtualAddress::new(addr)
-        }
+        unsafe { A::phys_to_virt(self.phys) }
     }
 
     pub fn entry_base(&self, i: usize) -> Option<VirtualAddress> {
@@ -91,7 +70,7 @@ impl<A: Arch> PageTable<A> {
         }
     }
 
-    pub unsafe fn index_of(&self, address: VirtualAddress) -> Option<usize> {
+    pub fn index_of(&self, address: VirtualAddress) -> Option<usize> {
         // Canonicalize address first
         let address = VirtualAddress::new(address.data() & A::PAGE_ADDRESS_MASK);
         let level_shift = self.level * A::PAGE_ENTRY_SHIFT + A::PAGE_SHIFT;

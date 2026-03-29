@@ -27,7 +27,7 @@ unsafe impl GlobalAlloc for Allocator {
                     Err(()) => {
                         let size = heap.size();
                         super::map_heap(
-                            &mut KernelMapper::lock(),
+                            &mut KernelMapper::lock_rw(),
                             crate::KERNEL_HEAP_OFFSET + size,
                             crate::KERNEL_HEAP_SIZE,
                         );

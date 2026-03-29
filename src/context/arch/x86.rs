@@ -326,7 +326,7 @@ pub fn setup_new_utable() -> Result<Table> {
     };
 
     {
-        let active_ktable = KernelMapper::lock();
+        let active_ktable = KernelMapper::lock_ro();
 
         let copy_mapping = |p4_no| unsafe {
             let entry = active_ktable

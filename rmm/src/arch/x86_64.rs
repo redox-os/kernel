@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy, Debug)]
 pub struct X8664Arch;
@@ -26,31 +26,26 @@ impl Arch for X8664Arch {
 
     const PHYS_OFFSET: usize = Self::PAGE_NEGATIVE_MASK + (Self::PAGE_ADDRESS_SIZE >> 1) as usize; // PML4 slot 256 and onwards
 
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("X8664Arch::init unimplemented");
+    #[inline(always)]
+    unsafe fn invalidate(address: VirtualAddress) {
+        unsafe { asm!("invlpg [{0}]", in(reg) address.data()) };
     }
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
-        unsafe {
-            asm!("invlpg [{0}]", in(reg) address.data());
-        }
+    unsafe fn invalidate_all() {
+        unsafe { Self::set_table(TableKind::User, Self::table(TableKind::User)) };
     }
 
     #[inline(always)]
     unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
-        unsafe {
-            let address: usize;
-            asm!("mov {0}, cr3", out(reg) address);
-            PhysicalAddress::new(address)
-        }
+        let address: usize;
+        unsafe { asm!("mov {0}, cr3", out(reg) address) };
+        PhysicalAddress::new(address)
     }
 
     #[inline(always)]
     unsafe fn set_table(_table_kind: TableKind, address: PhysicalAddress) {
-        unsafe {
-            asm!("mov cr3, {0}", in(reg) address.data());
-        }
+        unsafe { asm!("mov cr3, {0}", in(reg) address.data()) };
     }
 
     fn virt_is_valid(address: VirtualAddress) -> bool {
@@ -63,29 +58,29 @@ impl Arch for X8664Arch {
     }
 }
 
+const _: () = {
+    assert!(X8664Arch::PAGE_SIZE == 4096);
+    assert!(X8664Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(X8664Arch::PAGE_ADDRESS_SHIFT == 48);
+    assert!(X8664Arch::PAGE_ADDRESS_SIZE == 0x0001_0000_0000_0000);
+    assert!(X8664Arch::PAGE_ADDRESS_MASK == 0x0000_FFFF_FFFF_F000);
+    assert!(X8664Arch::PAGE_ENTRY_SIZE == 8);
+    assert!(X8664Arch::PAGE_ENTRIES == 512);
+    assert!(X8664Arch::PAGE_ENTRY_MASK == 0x1FF);
+    assert!(X8664Arch::PAGE_NEGATIVE_MASK == 0xFFFF_0000_0000_0000);
+
+    assert!(X8664Arch::ENTRY_ADDRESS_SIZE == 0x0000_0100_0000_0000);
+    assert!(X8664Arch::ENTRY_ADDRESS_MASK == 0x0000_00FF_FFFF_FFFF);
+    assert!(X8664Arch::ENTRY_FLAGS_MASK == 0xFFF0_0000_0000_0FFF);
+
+    assert!(X8664Arch::PHYS_OFFSET == 0xFFFF_8000_0000_0000);
+};
+
 #[cfg(test)]
 mod tests {
     use super::{VirtualAddress, X8664Arch};
     use crate::Arch;
 
-    #[test]
-    fn constants() {
-        assert_eq!(X8664Arch::PAGE_SIZE, 4096);
-        assert_eq!(X8664Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(X8664Arch::PAGE_ADDRESS_SHIFT, 48);
-        assert_eq!(X8664Arch::PAGE_ADDRESS_SIZE, 0x0001_0000_0000_0000);
-        assert_eq!(X8664Arch::PAGE_ADDRESS_MASK, 0x0000_FFFF_FFFF_F000);
-        assert_eq!(X8664Arch::PAGE_ENTRY_SIZE, 8);
-        assert_eq!(X8664Arch::PAGE_ENTRIES, 512);
-        assert_eq!(X8664Arch::PAGE_ENTRY_MASK, 0x1FF);
-        assert_eq!(X8664Arch::PAGE_NEGATIVE_MASK, 0xFFFF_0000_0000_0000);
-
-        assert_eq!(X8664Arch::ENTRY_ADDRESS_SIZE, 0x0000_0100_0000_0000);
-        assert_eq!(X8664Arch::ENTRY_ADDRESS_MASK, 0x0000_00FF_FFFF_FFFF);
-        assert_eq!(X8664Arch::ENTRY_FLAGS_MASK, 0xFFF0_0000_0000_0FFF);
-
-        assert_eq!(X8664Arch::PHYS_OFFSET, 0xFFFF_8000_0000_0000);
-    }
     #[test]
     fn is_canonical() {
         fn yes(address: usize) {

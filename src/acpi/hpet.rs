@@ -70,20 +70,16 @@ impl Hpet {
             let frame = Frame::containing(PhysicalAddress::new(self.base_address.address as usize));
             let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));
 
-            KernelMapper::lock()
-            .get_mut()
-            .expect(
-                "KernelMapper locked re-entrant while mapping memory for GenericAddressStructure",
-            )
-            .map_phys(
-                page.start_address(),
-                frame.base(),
-                PageFlags::new()
-                    .write(true)
-                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
-            )
-            .expect("failed to map memory for GenericAddressStructure")
-            .flush();
+            KernelMapper::lock_rw()
+                .map_phys(
+                    page.start_address(),
+                    frame.base(),
+                    PageFlags::new()
+                        .write(true)
+                        .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                )
+                .expect("failed to map memory for GenericAddressStructure")
+                .flush();
         }
     }
 

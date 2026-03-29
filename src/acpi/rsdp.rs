@@ -24,7 +24,7 @@ impl Rsdp {
         unsafe { *(rsdp_ptr as *const Rsdp) }
     }
     pub fn get_rsdp(
-        mapper: &mut KernelMapper,
+        mapper: &mut KernelMapper<true>,
         already_supplied_rsdp: Option<*const u8>,
     ) -> Option<Rsdp> {
         if let Some(rsdp_ptr) = already_supplied_rsdp {
@@ -34,7 +34,7 @@ impl Rsdp {
         }
     }
     /// Search for the RSDP
-    pub fn get_rsdp_by_searching(mapper: &mut KernelMapper) -> Option<Rsdp> {
+    pub fn get_rsdp_by_searching(mapper: &mut KernelMapper<true>) -> Option<Rsdp> {
         let start_addr = 0xE_0000;
         let end_addr = 0xF_FFFF;
 
@@ -46,8 +46,6 @@ impl Rsdp {
                 let page = Page::containing_address(VirtualAddress::new(frame.base().data()));
                 let result = unsafe {
                     mapper
-                        .get_mut()
-                        .expect("KernelMapper locked re-entrant while locating RSDPs")
                         .map_phys(page.start_address(), frame.base(), PageFlags::new())
                         .expect("failed to map page while searching for RSDP")
                 };

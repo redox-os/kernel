@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy)]
 pub struct RiscV64Sv48Arch;
@@ -28,40 +28,30 @@ impl Arch for RiscV64Sv48Arch {
 
     const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("RiscV64Sv48Arch::init unimplemented");
-    }
-
     #[inline(always)]
     unsafe fn invalidate(address: VirtualAddress) {
-        unsafe {
-            asm!("sfence.vma {}", in(reg) address.data());
-        }
+        unsafe { asm!("sfence.vma {}", in(reg) address.data()) };
     }
 
     #[inline(always)]
     unsafe fn invalidate_all() {
-        unsafe {
-            asm!("sfence.vma");
-        }
+        unsafe { asm!("sfence.vma") };
     }
 
     #[inline(always)]
     unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
-        unsafe {
-            let satp: usize;
-            asm!("csrr {0}, satp", out(reg) satp);
-            PhysicalAddress::new(
-                (satp & Self::ENTRY_ADDRESS_MASK) << Self::PAGE_SHIFT, // Convert from PPN
-            )
-        }
+        let satp: usize;
+        unsafe { asm!("csrr {0}, satp", out(reg) satp) };
+        PhysicalAddress::new(
+            (satp & Self::ENTRY_ADDRESS_MASK) << Self::PAGE_SHIFT, // Convert from PPN
+        )
     }
 
     #[inline(always)]
     unsafe fn set_table(_table_kind: TableKind, address: PhysicalAddress) {
-        unsafe {
-            let satp = (9 << 60) | // Sv48 MODE
+        let satp = (9 << 60) | // Sv48 MODE
             (address.data() >> Self::PAGE_SHIFT); // Convert to PPN (TODO: ensure alignment)
+        unsafe {
             asm!("csrw satp, {0}", in(reg) satp);
             Self::invalidate_all();
         }
@@ -76,29 +66,29 @@ impl Arch for RiscV64Sv48Arch {
     }
 }
 
+const _: () = {
+    assert!(RiscV64Sv48Arch::PAGE_SIZE == 4096);
+    assert!(RiscV64Sv48Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(RiscV64Sv48Arch::PAGE_ADDRESS_SHIFT == 48);
+    assert!(RiscV64Sv48Arch::PAGE_ADDRESS_SIZE == 0x0001_0000_0000_0000);
+    assert!(RiscV64Sv48Arch::PAGE_ADDRESS_MASK == 0x0000_FFFF_FFFF_F000);
+    assert!(RiscV64Sv48Arch::PAGE_ENTRY_SIZE == 8);
+    assert!(RiscV64Sv48Arch::PAGE_ENTRIES == 512);
+    assert!(RiscV64Sv48Arch::PAGE_ENTRY_MASK == 0x1FF);
+    assert!(RiscV64Sv48Arch::PAGE_NEGATIVE_MASK == 0xFFFF_0000_0000_0000);
+
+    assert!(RiscV64Sv48Arch::ENTRY_ADDRESS_SIZE == 0x0000_1000_0000_0000);
+    assert!(RiscV64Sv48Arch::ENTRY_ADDRESS_MASK == 0x0000_0FFF_FFFF_FFFF);
+    assert!(RiscV64Sv48Arch::ENTRY_FLAGS_MASK == 0xFFC0_0000_0000_03FF);
+
+    assert!(RiscV64Sv48Arch::PHYS_OFFSET == 0xFFFF_8000_0000_0000);
+};
+
 #[cfg(test)]
 mod tests {
     use super::RiscV64Sv48Arch;
     use crate::Arch;
 
-    #[test]
-    fn constants() {
-        assert_eq!(RiscV64Sv48Arch::PAGE_SIZE, 4096);
-        assert_eq!(RiscV64Sv48Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(RiscV64Sv48Arch::PAGE_ADDRESS_SHIFT, 48);
-        assert_eq!(RiscV64Sv48Arch::PAGE_ADDRESS_SIZE, 0x0001_0000_0000_0000);
-        assert_eq!(RiscV64Sv48Arch::PAGE_ADDRESS_MASK, 0x0000_FFFF_FFFF_F000);
-        assert_eq!(RiscV64Sv48Arch::PAGE_ENTRY_SIZE, 8);
-        assert_eq!(RiscV64Sv48Arch::PAGE_ENTRIES, 512);
-        assert_eq!(RiscV64Sv48Arch::PAGE_ENTRY_MASK, 0x1FF);
-        assert_eq!(RiscV64Sv48Arch::PAGE_NEGATIVE_MASK, 0xFFFF_0000_0000_0000);
-
-        assert_eq!(RiscV64Sv48Arch::ENTRY_ADDRESS_SIZE, 0x0000_1000_0000_0000);
-        assert_eq!(RiscV64Sv48Arch::ENTRY_ADDRESS_MASK, 0x0000_0FFF_FFFF_FFFF);
-        assert_eq!(RiscV64Sv48Arch::ENTRY_FLAGS_MASK, 0xFFC0_0000_0000_03FF);
-
-        assert_eq!(RiscV64Sv48Arch::PHYS_OFFSET, 0xFFFF_8000_0000_0000);
-    }
     #[test]
     fn is_canonical() {
         use super::VirtualAddress;

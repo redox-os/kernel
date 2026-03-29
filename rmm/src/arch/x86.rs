@@ -1,7 +1,7 @@
 //TODO: USE PAE
 use core::arch::asm;
 
-use crate::{Arch, MemoryArea, PhysicalAddress, TableKind, VirtualAddress};
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
 #[derive(Clone, Copy)]
 pub struct X86Arch;
@@ -27,25 +27,26 @@ impl Arch for X86Arch {
 
     const PHYS_OFFSET: usize = 0x8000_0000;
 
-    unsafe fn init() -> &'static [MemoryArea] {
-        unimplemented!("X86Arch::init unimplemented");
+    #[inline(always)]
+    unsafe fn invalidate(address: VirtualAddress) {
+        unsafe { asm!("invlpg [{0}]", in(reg) address.data()) };
     }
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
-        asm!("invlpg [{0}]", in(reg) address.data());
+    unsafe fn invalidate_all() {
+        unsafe { Self::set_table(TableKind::User, Self::table(TableKind::User)) };
     }
 
     #[inline(always)]
     unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
         let address: usize;
-        asm!("mov {0}, cr3", out(reg) address);
+        unsafe { asm!("mov {0}, cr3", out(reg) address) };
         PhysicalAddress::new(address)
     }
 
     #[inline(always)]
     unsafe fn set_table(_table_kind: TableKind, address: PhysicalAddress) {
-        asm!("mov cr3, {0}", in(reg) address.data());
+        unsafe { asm!("mov cr3, {0}", in(reg) address.data()) };
     }
 
     fn virt_is_valid(_address: VirtualAddress) -> bool {
@@ -54,27 +55,20 @@ impl Arch for X86Arch {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{VirtualAddress, X86Arch};
-    use crate::Arch;
+const _: () = {
+    assert!(X86Arch::PAGE_SIZE == 4096);
+    assert!(X86Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(X86Arch::PAGE_ADDRESS_SHIFT == 32);
+    assert!(X86Arch::PAGE_ADDRESS_SIZE == 0x0000_0001_0000_0000);
+    assert!(X86Arch::PAGE_ADDRESS_MASK == 0xFFFF_F000);
+    assert!(X86Arch::PAGE_ENTRY_SIZE == 4);
+    assert!(X86Arch::PAGE_ENTRIES == 1024);
+    assert!(X86Arch::PAGE_ENTRY_MASK == 0x3FF);
+    assert!(X86Arch::PAGE_NEGATIVE_MASK == 0x0000_0000_0000);
 
-    #[test]
-    fn constants() {
-        assert_eq!(X86Arch::PAGE_SIZE, 4096);
-        assert_eq!(X86Arch::PAGE_OFFSET_MASK, 0xFFF);
-        assert_eq!(X86Arch::PAGE_ADDRESS_SHIFT, 32);
-        assert_eq!(X86Arch::PAGE_ADDRESS_SIZE, 0x0000_0001_0000_0000);
-        assert_eq!(X86Arch::PAGE_ADDRESS_MASK, 0xFFFF_F000);
-        assert_eq!(X86Arch::PAGE_ENTRY_SIZE, 4);
-        assert_eq!(X86Arch::PAGE_ENTRIES, 1024);
-        assert_eq!(X86Arch::PAGE_ENTRY_MASK, 0x3FF);
-        assert_eq!(X86Arch::PAGE_NEGATIVE_MASK, 0x0000_0000_0000);
+    assert!(X86Arch::ENTRY_ADDRESS_SIZE == 0x0000_0000_0010_0000);
+    assert!(X86Arch::ENTRY_ADDRESS_MASK == 0x000F_FFFF);
+    assert!(X86Arch::ENTRY_FLAGS_MASK == 0x0000_0FFF);
 
-        assert_eq!(X86Arch::ENTRY_ADDRESS_SIZE, 0x0000_0000_0010_0000);
-        assert_eq!(X86Arch::ENTRY_ADDRESS_MASK, 0x000F_FFFF);
-        assert_eq!(X86Arch::ENTRY_FLAGS_MASK, 0x0000_0FFF);
-
-        assert_eq!(X86Arch::PHYS_OFFSET, 0x8000_0000);
-    }
-}
+    assert!(X86Arch::PHYS_OFFSET == 0x8000_0000);
+};
