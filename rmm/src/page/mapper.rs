@@ -157,17 +157,6 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         }
     }
 
-    pub unsafe fn map(
-        &mut self,
-        virt: VirtualAddress,
-        flags: PageFlags<A>,
-    ) -> Option<PageFlush<A>> {
-        unsafe {
-            let phys = self.allocator.allocate_one()?;
-            self.map_phys(virt, phys, flags)
-        }
-    }
-
     pub unsafe fn map_phys(
         &mut self,
         virt: VirtualAddress,
@@ -215,17 +204,6 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         unsafe {
             let virt = A::phys_to_virt(phys);
             self.map_phys(virt, phys, flags).map(|flush| (virt, flush))
-        }
-    }
-
-    pub unsafe fn unmap(&mut self, virt: VirtualAddress) -> Option<PageFlush<A>>
-    where
-        F: FrameAllocator,
-    {
-        unsafe {
-            let (old, _, flush) = self.unmap_phys(virt)?;
-            self.allocator.free_one(old);
-            Some(flush)
         }
     }
 

@@ -235,8 +235,12 @@ unsafe fn new_tables<A: Arch>(areas: &'static [MemoryArea]) {
         let mut flush_all = PageFlushAll::new();
         for i in 0..16 {
             let virt = VirtualAddress::new(MEGABYTE + i * A::PAGE_SIZE);
+            let phys = mapper
+                .allocator_mut()
+                .allocate_one()
+                .expect("failed to map page");
             let flush = mapper
-                .map(virt, PageFlags::<A>::new().user(true).write(true))
+                .map_phys(virt, phys, PageFlags::<A>::new().user(true).write(true))
                 .expect("failed to map page");
             flush_all.consume(flush);
         }
@@ -245,7 +249,8 @@ unsafe fn new_tables<A: Arch>(areas: &'static [MemoryArea]) {
         let mut flush_all = PageFlushAll::new();
         for i in 0..16 {
             let virt = VirtualAddress::new(MEGABYTE + i * A::PAGE_SIZE);
-            let flush = mapper.unmap(virt).expect("failed to unmap page");
+            let (old, _, flush) = mapper.unmap_phys(virt).expect("failed to unmap page");
+            mapper.allocator_mut().free_one(old);
             flush_all.consume(flush);
         }
         flush_all.flush();
