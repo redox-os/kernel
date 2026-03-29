@@ -6,13 +6,9 @@ use crate::{
     syscall::FloatRegisters,
 };
 
-use crate::{
-    arch::{interrupt::InterruptStack, paging::PageMapper},
-    context::{context::Kstack, memory::Table},
-    memory::RmmA,
-};
+use crate::{arch::interrupt::InterruptStack, context::context::Kstack, memory::RmmA};
 use core::mem::offset_of;
-use rmm::{Arch, TableKind, VirtualAddress};
+use rmm::{Arch, VirtualAddress};
 use spin::Once;
 use syscall::{error::*, EnvRegisters};
 
@@ -314,34 +310,4 @@ unsafe extern "cdecl" fn switch_to_inner() {
 
         switch_hook = sym crate::context::switch_finish_hook,
     );
-}
-
-/// Allocates a new identically mapped ktable and empty utable (same memory on x86)
-pub fn setup_new_utable() -> Result<Table> {
-    use crate::memory::KernelMapper;
-
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
-            .ok_or(Error::new(ENOMEM))?
-    };
-
-    {
-        let active_ktable = KernelMapper::lock_ro();
-
-        let copy_mapping = |p4_no| unsafe {
-            let entry = active_ktable
-                .table()
-                .entry(p4_no)
-                .unwrap_or_else(|| panic!("expected kernel PML {} to be mapped", p4_no));
-
-            utable.table().set_entry(p4_no, entry)
-        };
-
-        // Copy higher half (kernel) mappings
-        for i in 512..1024 {
-            copy_mapping(i);
-        }
-    }
-
-    Ok(Table { utable })
 }

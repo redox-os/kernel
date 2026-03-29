@@ -7,6 +7,8 @@ use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 pub struct X86Arch;
 
 impl Arch for X86Arch {
+    const KERNEL_SEPARATE_TABLE: bool = false;
+
     const PAGE_SHIFT: usize = 12; // 4096 bytes
     const PAGE_ENTRY_SHIFT: usize = 10; // 1024 entries, 4 bytes each
     const PAGE_LEVELS: usize = 2; // PD, PT

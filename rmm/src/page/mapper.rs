@@ -121,7 +121,39 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
     pub unsafe fn create(table_kind: TableKind, mut allocator: F) -> Option<Self> {
         unsafe {
             let table_addr = allocator.allocate_one()?;
-            Some(Self::new(table_kind, table_addr, allocator))
+            let mut table = Self::new(table_kind, table_addr, allocator);
+
+            match (table_kind, A::KERNEL_SEPARATE_TABLE) {
+                (TableKind::Kernel, false) => {
+                    // Pre-allocate all kernel top-level page table entries so that when
+                    // the page table is copied, these entries are synced between processes.
+                    for i in A::PAGE_ENTRIES / 2..A::PAGE_ENTRIES {
+                        let phys = table
+                            .allocator
+                            .allocate_one()
+                            .expect("failed to map page table");
+                        let flags = A::ENTRY_FLAG_DEFAULT_TABLE;
+                        table
+                            .table()
+                            .set_entry(i, PageEntry::new(phys.data(), flags));
+                    }
+                }
+                (TableKind::User, false) => {
+                    // Copy higher half (kernel) mappings
+                    let active_ktable = PageMapper::current(TableKind::Kernel, ());
+                    for i in A::PAGE_ENTRIES / 2..A::PAGE_ENTRIES {
+                        if let Some(entry) = active_ktable.table().entry(i) {
+                            table.table().set_entry(i, entry);
+                        }
+                    }
+                }
+                (_, true) => {
+                    // There is a separate page table for the kernel. No need to copy the kernel
+                    // mappings to the user page table.
+                }
+            }
+
+            Some(table)
         }
     }
 
@@ -186,16 +218,12 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         }
     }
 
-    pub unsafe fn unmap(
-        &mut self,
-        virt: VirtualAddress,
-        unmap_parents: bool,
-    ) -> Option<PageFlush<A>>
+    pub unsafe fn unmap(&mut self, virt: VirtualAddress) -> Option<PageFlush<A>>
     where
         F: FrameAllocator,
     {
         unsafe {
-            let (old, _, flush) = self.unmap_phys(virt, unmap_parents)?;
+            let (old, _, flush) = self.unmap_phys(virt)?;
             self.allocator.free_one(old);
             Some(flush)
         }
@@ -204,13 +232,14 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
     pub unsafe fn unmap_phys(
         &mut self,
         virt: VirtualAddress,
-        unmap_parents: bool,
     ) -> Option<(PhysicalAddress, PageFlags<A>, PageFlush<A>)> {
+        //TODO: verify virt is aligned
+        let mut table = self.table();
+
+        let unmap_parents = A::KERNEL_SEPARATE_TABLE || table.index_of(virt)? < A::PAGE_ENTRIES / 2; // Is a userspace mapping
+
         unsafe {
-            //TODO: verify virt is aligned
-            let mut table = self.table();
-            let level = table.level();
-            unmap_phys_inner(virt, &mut table, level, unmap_parents, &mut self.allocator)
+            unmap_phys_inner(virt, &mut table, unmap_parents, &mut self.allocator)
                 .map(|(pa, pf)| (pa, pf, PageFlush::new(virt)))
         }
     }
@@ -219,7 +248,6 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
 unsafe fn unmap_phys_inner<A: Arch>(
     virt: VirtualAddress,
     table: &mut PageTable<A>,
-    initial_level: usize,
     unmap_parents: bool,
     allocator: &mut impl FrameAllocator,
 ) -> Option<(PhysicalAddress, PageFlags<A>)> {
@@ -236,10 +264,8 @@ unsafe fn unmap_phys_inner<A: Arch>(
 
         let mut subtable = table.next(i)?;
 
-        let res = unmap_phys_inner(virt, &mut subtable, initial_level, unmap_parents, allocator)?;
+        let res = unmap_phys_inner(virt, &mut subtable, unmap_parents, allocator)?;
 
-        //TODO: This is a bad idea for architectures where the kernel mappings are done in the process tables,
-        // as these mappings may become out of sync
         if unmap_parents {
             // TODO: Use a counter? This would reduce the remaining number of available bits, but could be
             // faster (benchmark is needed).

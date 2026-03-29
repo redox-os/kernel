@@ -14,7 +14,7 @@ use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
     arch::paging::PAGE_SIZE,
-    context::{arch::setup_new_utable, file::LockedFileDescription},
+    context::file::LockedFileDescription,
     cpu_set::LogicalCpuSet,
     memory::{
         deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
@@ -566,9 +566,14 @@ impl AddrSpace {
     }
 
     pub fn new() -> Result<Self> {
+        let utable = unsafe {
+            PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
+                .ok_or(Error::new(ENOMEM))?
+        };
+
         Ok(Self {
             grants: UserGrants::new(),
-            table: setup_new_utable()?,
+            table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
             used_by: LogicalCpuSet::empty(),
         })
@@ -1822,11 +1827,9 @@ impl Grant {
         for src_page in self.span().pages() {
             let dst_page = dst_base.next_by(src_page.offset_from(self.base));
 
-            let unmap_parents = true;
-
             // TODO: Validate flags?
             let Some((phys, _flags, flush)) =
-                (unsafe { src_mapper.unmap_phys(src_page.start_address(), unmap_parents) })
+                (unsafe { src_mapper.unmap_phys(src_page.start_address()) })
             else {
                 continue;
             };
@@ -1953,7 +1956,7 @@ impl Grant {
             for i in 0..self.info.page_count {
                 unsafe {
                     let (phys, _, flush) = mapper
-                        .unmap_phys(self.base.next_by(i).start_address(), true)
+                        .unmap_phys(self.base.next_by(i).start_address())
                         .expect("all physborrowed grants must be fully Present in the page tables");
                     flush.ignore();
 
@@ -1969,8 +1972,7 @@ impl Grant {
         } else {
             for page in self.span().pages() {
                 // Lazy mappings do not need to be unmapped.
-                let Some((phys, _, flush)) =
-                    (unsafe { mapper.unmap_phys(page.start_address(), true) })
+                let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address()) })
                 else {
                     continue;
                 };

@@ -9,6 +9,8 @@ pub const ACCESSED: usize = 1 << 6;
 pub const DIRTY: usize = 1 << 7;
 
 impl Arch for RiscV64Sv39Arch {
+    const KERNEL_SEPARATE_TABLE: bool = false;
+
     const PAGE_SHIFT: usize = 12; // 4096 bytes
     const PAGE_ENTRY_SHIFT: usize = 9; // 512 entries, 8 bytes each
     const PAGE_LEVELS: usize = 3; // L0, L1, L2

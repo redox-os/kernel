@@ -295,23 +295,6 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
             .expect("failed to create Mapper");
 
-        if cfg!(target_arch = "x86") {
-            // Pre-allocate all kernel PD entries so that when the page table is copied,
-            // these entries are synced between processes
-            for i in 512..1024 {
-                use rmm::{FrameAllocator, PageEntry};
-
-                let phys = mapper
-                    .allocator_mut()
-                    .allocate_one()
-                    .expect("failed to map page table");
-                let flags = A::ENTRY_FLAG_READWRITE | A::ENTRY_FLAG_DEFAULT_TABLE;
-                mapper
-                    .table()
-                    .set_entry(i, PageEntry::new(phys.data(), flags));
-            }
-        }
-
         // Map all physical areas at PHYS_OFFSET
         for area in areas.iter() {
             for i in 0..area.size / PAGE_SIZE {

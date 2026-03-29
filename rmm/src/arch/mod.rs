@@ -26,6 +26,13 @@ mod x86;
 mod x86_64;
 
 pub trait Arch: Clone + Copy {
+    /// Does the architecture use a separate page table for the kernel.
+    ///
+    /// If false, the page table entries corresponding to the top half of the
+    /// address space will be copied into the top level of every page table
+    /// and will never be unmapped when unmapping pages.
+    const KERNEL_SEPARATE_TABLE: bool;
+
     const PAGE_SHIFT: usize;
     const PAGE_ENTRY_SHIFT: usize;
     const PAGE_LEVELS: usize;
