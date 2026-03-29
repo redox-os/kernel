@@ -39,12 +39,12 @@ impl<A: Arch> BumpAllocator<A> {
             .map_or(PhysicalAddress::new(0), |a| a.base.add(off))
     }
     pub fn offset(&self) -> usize {
-        (unsafe { self.usage().total().data() - self.usage().free().data() }) * A::PAGE_SIZE
+        (self.usage().total().data() - self.usage().free().data()) * A::PAGE_SIZE
     }
 }
 
-impl<A: Arch> FrameAllocator for BumpAllocator<A> {
-    unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+unsafe impl<A: Arch> FrameAllocator for BumpAllocator<A> {
+    fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         unsafe {
             let req_size = count.data() * A::PAGE_SIZE;
 
@@ -68,7 +68,7 @@ impl<A: Arch> FrameAllocator for BumpAllocator<A> {
         unimplemented!("BumpAllocator::free not implemented");
     }
 
-    unsafe fn usage(&self) -> FrameUsage {
+    fn usage(&self) -> FrameUsage {
         let total = self.orig_areas.0.iter().map(|a| a.size).sum::<usize>() - self.orig_areas.1;
         let free = self.cur_areas.0.iter().map(|a| a.size).sum::<usize>() - self.cur_areas.1;
         FrameUsage::new(

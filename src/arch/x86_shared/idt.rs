@@ -163,7 +163,7 @@ pub fn allocate_and_init_idt(cpu_id: LogicalCpuId) -> *mut Idt {
         .expect("failed to allocate pages for backup interrupt stack");
 
     // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
-    let base_address = unsafe { RmmA::phys_to_virt(frames.base()) };
+    let base_address = RmmA::phys_to_virt(frames.base());
 
     // Stack always grows downwards.
     let backup_stack_end = base_address.data() + BACKUP_STACK_SIZE;

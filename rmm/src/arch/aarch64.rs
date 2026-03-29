@@ -6,6 +6,8 @@ use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 pub struct AArch64Arch;
 
 impl Arch for AArch64Arch {
+    const KERNEL_SEPARATE_TABLE: bool = true;
+
     const PAGE_SHIFT: usize = 12; // 4096 bytes
     const PAGE_ENTRY_SHIFT: usize = 9; // 512 entries, 8 bytes each
     const PAGE_LEVELS: usize = 4; // L0, L1, L2, L3
@@ -37,7 +39,7 @@ impl Arch for AArch64Arch {
     const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
+    fn invalidate(address: VirtualAddress) {
         unsafe {
             asm!("
             dsb ishst
@@ -49,7 +51,7 @@ impl Arch for AArch64Arch {
     }
 
     #[inline(always)]
-    unsafe fn invalidate_all() {
+    fn invalidate_all() {
         unsafe {
             asm!(
                 "
@@ -63,7 +65,7 @@ impl Arch for AArch64Arch {
     }
 
     #[inline(always)]
-    unsafe fn table(table_kind: TableKind) -> PhysicalAddress {
+    fn table(table_kind: TableKind) -> PhysicalAddress {
         let address: usize;
         match table_kind {
             TableKind::User => {

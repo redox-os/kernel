@@ -134,9 +134,7 @@ pub(super) fn init(madt: Madt) {
                     hint::spin_loop();
                 }
 
-                unsafe {
-                    RmmA::invalidate_all();
-                }
+                RmmA::invalidate_all();
             }
         }
     }
@@ -144,7 +142,7 @@ pub(super) fn init(madt: Madt) {
     // Unmap trampoline
     let (_frame, _, flush) = unsafe {
         KernelMapper::lock_rw()
-            .unmap_phys(trampoline_page.start_address(), true)
+            .unmap_phys(trampoline_page.start_address())
             .expect("failed to unmap trampoline page")
     };
     flush.flush();

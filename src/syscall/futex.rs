@@ -108,8 +108,7 @@ pub fn futex(
 
                     // On systems where virtual memory is not abundant, we might instead add an
                     // atomic usercopy function.
-                    let accessible_addr =
-                        unsafe { crate::paging::RmmA::phys_to_virt(target_physaddr) }.data();
+                    let accessible_addr = crate::paging::RmmA::phys_to_virt(target_physaddr).data();
 
                     (
                         u64::from(unsafe {

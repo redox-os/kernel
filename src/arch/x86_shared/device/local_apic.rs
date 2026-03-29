@@ -70,7 +70,7 @@ impl LocalApic {
 
             if !self.x2 {
                 debug!("Detected xAPIC at {:#x}", physaddr.data());
-                if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr, true) {
+                if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr) {
                     // Unmap xAPIC page if already mapped
                     flush.flush();
                 }

@@ -26,6 +26,13 @@ mod x86;
 mod x86_64;
 
 pub trait Arch: Clone + Copy {
+    /// Does the architecture use a separate page table for the kernel.
+    ///
+    /// If false, the page table entries corresponding to the top half of the
+    /// address space will be copied into the top level of every page table
+    /// and will never be unmapped when unmapping pages.
+    const KERNEL_SEPARATE_TABLE: bool;
+
     const PAGE_SHIFT: usize;
     const PAGE_ENTRY_SHIFT: usize;
     const PAGE_LEVELS: usize;
@@ -76,14 +83,14 @@ pub trait Arch: Clone + Copy {
         unsafe { ptr::write_bytes(address.data() as *mut u8, value, count) }
     }
 
-    unsafe fn invalidate(address: VirtualAddress);
-    unsafe fn invalidate_all();
+    fn invalidate(address: VirtualAddress);
+    fn invalidate_all();
 
-    unsafe fn table(table_kind: TableKind) -> PhysicalAddress;
+    fn table(table_kind: TableKind) -> PhysicalAddress;
     unsafe fn set_table(table_kind: TableKind, address: PhysicalAddress);
 
     #[inline(always)]
-    unsafe fn phys_to_virt(phys: PhysicalAddress) -> VirtualAddress {
+    fn phys_to_virt(phys: PhysicalAddress) -> VirtualAddress {
         match phys.data().checked_add(Self::PHYS_OFFSET) {
             Some(some) => VirtualAddress::new(some),
             None => panic!("phys_to_virt({:#x}) overflow", phys.data()),

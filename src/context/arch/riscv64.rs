@@ -1,15 +1,12 @@
 use crate::{
-    arch::{
-        interrupt::InterruptStack,
-        paging::{PageMapper, ENTRY_COUNT},
-    },
-    context::{context::Kstack, memory::Table},
+    arch::interrupt::InterruptStack,
+    context::context::Kstack,
     memory::{KernelMapper, RmmA},
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
 use core::{mem::offset_of, sync::atomic::AtomicBool};
-use rmm::{Arch, TableKind, VirtualAddress};
+use rmm::{Arch, VirtualAddress};
 use spin::Once;
 use syscall::{error::*, EnvRegisters};
 
@@ -227,24 +224,4 @@ unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
 
         switch_hook = sym crate::context::switch_finish_hook,
     );
-}
-
-/// Allocates a new empty utable
-pub fn setup_new_utable() -> Result<Table> {
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
-            .ok_or(Error::new(ENOMEM))?
-    };
-
-    // Copy higher half (kernel) mappings
-    unsafe {
-        let active_ktable = KernelMapper::lock_ro();
-        for pde_no in ENTRY_COUNT / 2..ENTRY_COUNT {
-            if let Some(entry) = active_ktable.table().entry(pde_no) {
-                utable.table().set_entry(pde_no, entry);
-            }
-        }
-    }
-
-    Ok(Table { utable })
 }

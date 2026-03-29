@@ -90,7 +90,7 @@ pub fn init(token: &mut CleanLockToken) {
     context.name.clear();
     context.name.push_str("[kmain]");
 
-    self::arch::EMPTY_CR3.call_once(|| unsafe { RmmA::table(TableKind::User) });
+    self::arch::EMPTY_CR3.call_once(|| RmmA::table(TableKind::User));
 
     context.status = Status::Runnable;
     context.running = true;

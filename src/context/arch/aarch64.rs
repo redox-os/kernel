@@ -1,11 +1,10 @@
 use crate::{
-    arch::{device::cpu::registers::control_regs, interrupt::InterruptStack, paging::PageMapper},
-    context::{context::Kstack, memory::Table},
+    arch::{device::cpu::registers::control_regs, interrupt::InterruptStack},
+    context::context::Kstack,
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
 use core::{mem, mem::offset_of, ptr, sync::atomic::AtomicBool};
-use rmm::TableKind;
 use spin::Once;
 use syscall::{EnvRegisters, Error, Result, ENOMEM};
 
@@ -389,14 +388,4 @@ unsafe extern "C" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
 
         switch_hook = sym crate::context::switch_finish_hook,
     );
-}
-
-/// Allocates a new empty utable
-pub fn setup_new_utable() -> Result<Table> {
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
-            .ok_or(Error::new(ENOMEM))?
-    };
-
-    Ok(Table { utable })
 }

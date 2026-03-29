@@ -2,31 +2,36 @@ use crate::{
     memory::KernelMapper,
     paging::{mapper::PageFlushAll, Page, PageFlags, VirtualAddress},
 };
-use rmm::Flusher;
+use rmm::{Flusher, FrameAllocator};
 
 pub use self::linked_list::Allocator;
 mod linked_list;
 
 unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) {
-    unsafe {
-        let mut flush_all = PageFlushAll::new();
+    let mut flush_all = PageFlushAll::new();
 
-        let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
-        let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size - 1));
-        for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-            let result = mapper
-                .map(
+    let heap_start_page = Page::containing_address(VirtualAddress::new(offset));
+    let heap_end_page = Page::containing_address(VirtualAddress::new(offset + size - 1));
+    for page in Page::range_inclusive(heap_start_page, heap_end_page) {
+        let phys = mapper
+            .allocator_mut()
+            .allocate_one()
+            .expect("failed to allocate kernel heap");
+        let flush = unsafe {
+            mapper
+                .map_phys(
                     page.start_address(),
+                    phys,
                     PageFlags::new()
                         .write(true)
                         .global(cfg!(not(feature = "pti"))),
                 )
-                .expect("failed to map kernel heap");
-            flush_all.consume(result);
-        }
-
-        flush_all.flush();
+                .expect("failed to map kernel heap")
+        };
+        flush_all.consume(flush);
     }
+
+    flush_all.flush();
 }
 
 pub unsafe fn init() {

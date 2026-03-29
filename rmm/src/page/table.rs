@@ -1,7 +1,6 @@
-use core::marker::PhantomData;
+use core::{fmt, marker::PhantomData};
 
-use super::PageEntry;
-use crate::{Arch, PhysicalAddress, VirtualAddress};
+use crate::{page::PageEntry, Arch, PhysicalAddress, VirtualAddress};
 
 pub struct PageTable<A> {
     base: VirtualAddress,
@@ -11,7 +10,7 @@ pub struct PageTable<A> {
 }
 
 impl<A: Arch> PageTable<A> {
-    pub unsafe fn new(base: VirtualAddress, phys: PhysicalAddress, level: usize) -> Self {
+    pub(super) unsafe fn new(base: VirtualAddress, phys: PhysicalAddress, level: usize) -> Self {
         Self {
             base,
             phys,
@@ -32,10 +31,6 @@ impl<A: Arch> PageTable<A> {
         self.level
     }
 
-    pub unsafe fn virt(&self) -> VirtualAddress {
-        unsafe { A::phys_to_virt(self.phys) }
-    }
-
     pub fn entry_base(&self, i: usize) -> Option<VirtualAddress> {
         if i < A::PAGE_ENTRIES {
             let level_shift = self.level * A::PAGE_ENTRY_SHIFT + A::PAGE_SHIFT;
@@ -45,13 +40,11 @@ impl<A: Arch> PageTable<A> {
         }
     }
 
-    pub unsafe fn entry_virt(&self, i: usize) -> Option<VirtualAddress> {
-        unsafe {
-            if i < A::PAGE_ENTRIES {
-                Some(self.virt().add(i * A::PAGE_ENTRY_SIZE))
-            } else {
-                None
-            }
+    unsafe fn entry_virt(&self, i: usize) -> Option<VirtualAddress> {
+        if i < A::PAGE_ENTRIES {
+            Some(A::phys_to_virt(self.phys).add(i * A::PAGE_ENTRY_SIZE))
+        } else {
+            None
         }
     }
 
@@ -62,7 +55,7 @@ impl<A: Arch> PageTable<A> {
         }
     }
 
-    pub unsafe fn set_entry(&mut self, i: usize, entry: PageEntry<A>) -> Option<()> {
+    pub(super) unsafe fn set_entry(&mut self, i: usize, entry: PageEntry<A>) -> Option<()> {
         unsafe {
             let addr = self.entry_virt(i)?;
             A::write::<usize>(addr, entry.data());
@@ -70,7 +63,7 @@ impl<A: Arch> PageTable<A> {
         }
     }
 
-    pub fn index_of(&self, address: VirtualAddress) -> Option<usize> {
+    pub(super) fn index_of(&self, address: VirtualAddress) -> Option<usize> {
         // Canonicalize address first
         let address = VirtualAddress::new(address.data() & A::PAGE_ADDRESS_MASK);
         let level_shift = self.level * A::PAGE_ENTRY_SHIFT + A::PAGE_SHIFT;
@@ -87,16 +80,26 @@ impl<A: Arch> PageTable<A> {
     }
 
     pub unsafe fn next(&self, i: usize) -> Option<Self> {
-        unsafe {
-            if self.level == 0 {
-                return None;
-            }
+        if self.level == 0 {
+            return None;
+        }
 
+        unsafe {
             Some(PageTable::new(
                 self.entry_base(i)?,
                 self.entry(i)?.address().ok()?,
                 self.level - 1,
             ))
+        }
+    }
+
+    pub fn debug_entries(&self, f: impl Fn(fmt::Arguments<'_>)) {
+        for i in 0..A::PAGE_ENTRIES {
+            if let Some(entry) = unsafe { self.entry(i) }
+                && entry.present()
+            {
+                f(format_args!("{}: {:X}", i, entry.data()));
+            }
         }
     }
 }

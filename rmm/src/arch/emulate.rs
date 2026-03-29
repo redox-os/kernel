@@ -53,6 +53,8 @@ impl EmulateArch {
 }
 
 impl Arch for EmulateArch {
+    const KERNEL_SEPARATE_TABLE: bool = false;
+
     const PAGE_SHIFT: usize = X8664Arch::PAGE_SHIFT;
     const PAGE_ENTRY_SHIFT: usize = X8664Arch::PAGE_ENTRY_SHIFT;
     const PAGE_LEVELS: usize = X8664Arch::PAGE_LEVELS;

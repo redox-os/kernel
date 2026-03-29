@@ -5,16 +5,9 @@ use core::{
 
 use crate::syscall::FloatRegisters;
 
-use crate::{
-    arch::{
-        interrupt::InterruptStack,
-        paging::{PageMapper, ENTRY_COUNT},
-    },
-    context::{context::Kstack, memory::Table},
-    memory::RmmA,
-};
+use crate::{arch::interrupt::InterruptStack, context::context::Kstack, memory::RmmA};
 use core::mem::offset_of;
-use rmm::{Arch, TableKind, VirtualAddress};
+use rmm::{Arch, VirtualAddress};
 use spin::Once;
 use syscall::{error::*, EnvRegisters};
 use x86::msr;
@@ -393,25 +386,4 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 
         switch_hook = sym crate::context::switch_finish_hook,
     );
-}
-
-/// Allocates a new identically mapped ktable and empty utable (same memory on x86_64).
-pub fn setup_new_utable() -> Result<Table> {
-    use crate::memory::{KernelMapper, TheFrameAllocator};
-
-    let utable = unsafe {
-        PageMapper::create(TableKind::User, TheFrameAllocator).ok_or(Error::new(ENOMEM))?
-    };
-
-    // Copy higher half (kernel) mappings
-    unsafe {
-        let active_ktable = KernelMapper::lock_ro();
-        for pde_no in ENTRY_COUNT / 2..ENTRY_COUNT {
-            if let Some(entry) = active_ktable.table().entry(pde_no) {
-                utable.table().set_entry(pde_no, entry);
-            }
-        }
-    }
-
-    Ok(Table { utable })
 }

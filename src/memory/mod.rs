@@ -537,10 +537,10 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
         let section_array_page_count =
             (max_section_count * mem::size_of::<Section>()).div_ceil(PAGE_SIZE);
 
+        let base = allocator
+            .allocate(FrameCount::new(section_array_page_count))
+            .expect("failed to allocate sections array");
         unsafe {
-            let base = allocator
-                .allocate(FrameCount::new(section_array_page_count))
-                .expect("failed to allocate sections array");
             core::slice::from_raw_parts_mut(
                 RmmA::phys_to_virt(base).data() as *mut Section,
                 max_section_count,
@@ -1077,8 +1077,8 @@ pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
 #[derive(Debug)]
 pub struct TheFrameAllocator;
 
-impl FrameAllocator for TheFrameAllocator {
-    unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+unsafe impl FrameAllocator for TheFrameAllocator {
+    fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let order = count.data().next_power_of_two().trailing_zeros();
         allocate_p2frame(order).map(|f| f.base())
     }
@@ -1088,7 +1088,7 @@ impl FrameAllocator for TheFrameAllocator {
             deallocate_p2frame(Frame::containing(address), order)
         }
     }
-    unsafe fn usage(&self) -> FrameUsage {
+    fn usage(&self) -> FrameUsage {
         FrameUsage::new(
             FrameCount::new(used_frames()),
             FrameCount::new(total_frames()),
