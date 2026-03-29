@@ -35,17 +35,17 @@ impl Arch for RiscV64Sv39Arch {
     const PHYS_OFFSET: usize = 0xFFFF_FFC0_0000_0000;
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
+    fn invalidate(address: VirtualAddress) {
         unsafe { asm!("sfence.vma {}", in(reg) address.data()) };
     }
 
     #[inline(always)]
-    unsafe fn invalidate_all() {
+    fn invalidate_all() {
         unsafe { asm!("sfence.vma") };
     }
 
     #[inline(always)]
-    unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
+    fn table(_table_kind: TableKind) -> PhysicalAddress {
         let satp: usize;
         unsafe { asm!("csrr {0}, satp", out(reg) satp) };
         PhysicalAddress::new(

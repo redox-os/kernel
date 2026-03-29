@@ -30,7 +30,7 @@ impl<A: Arch, F> PageMapper<A, F> {
     }
 
     pub fn is_current(&self) -> bool {
-        unsafe { self.table().phys() == A::table(self.table_kind) }
+        self.table().phys() == A::table(self.table_kind)
     }
 
     pub unsafe fn make_current(&self) {

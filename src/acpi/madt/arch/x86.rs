@@ -134,9 +134,7 @@ pub(super) fn init(madt: Madt) {
                     hint::spin_loop();
                 }
 
-                unsafe {
-                    RmmA::invalidate_all();
-                }
+                RmmA::invalidate_all();
             }
         }
     }

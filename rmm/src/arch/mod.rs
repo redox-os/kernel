@@ -83,10 +83,10 @@ pub trait Arch: Clone + Copy {
         unsafe { ptr::write_bytes(address.data() as *mut u8, value, count) }
     }
 
-    unsafe fn invalidate(address: VirtualAddress);
-    unsafe fn invalidate_all();
+    fn invalidate(address: VirtualAddress);
+    fn invalidate_all();
 
-    unsafe fn table(table_kind: TableKind) -> PhysicalAddress;
+    fn table(table_kind: TableKind) -> PhysicalAddress;
     unsafe fn set_table(table_kind: TableKind, address: PhysicalAddress);
 
     #[inline(always)]

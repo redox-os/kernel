@@ -21,9 +21,7 @@ impl<A: Arch> PageFlush<A> {
     }
 
     pub fn flush(self) {
-        unsafe {
-            A::invalidate(self.virt);
-        }
+        A::invalidate(self.virt);
     }
 
     pub unsafe fn ignore(self) {
@@ -52,9 +50,7 @@ impl<A: Arch> PageFlushAll<A> {
 }
 impl<A: Arch> Drop for PageFlushAll<A> {
     fn drop(&mut self) {
-        unsafe {
-            A::invalidate_all();
-        }
+        A::invalidate_all();
     }
 }
 impl<A: Arch> Flusher<A> for PageFlushAll<A> {

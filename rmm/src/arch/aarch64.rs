@@ -39,7 +39,7 @@ impl Arch for AArch64Arch {
     const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
+    fn invalidate(address: VirtualAddress) {
         unsafe {
             asm!("
             dsb ishst
@@ -51,7 +51,7 @@ impl Arch for AArch64Arch {
     }
 
     #[inline(always)]
-    unsafe fn invalidate_all() {
+    fn invalidate_all() {
         unsafe {
             asm!(
                 "
@@ -65,7 +65,7 @@ impl Arch for AArch64Arch {
     }
 
     #[inline(always)]
-    unsafe fn table(table_kind: TableKind) -> PhysicalAddress {
+    fn table(table_kind: TableKind) -> PhysicalAddress {
         let address: usize;
         match table_kind {
             TableKind::User => {

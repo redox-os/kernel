@@ -30,17 +30,17 @@ impl Arch for X86Arch {
     const PHYS_OFFSET: usize = 0x8000_0000;
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
+    fn invalidate(address: VirtualAddress) {
         unsafe { asm!("invlpg [{0}]", in(reg) address.data()) };
     }
 
     #[inline(always)]
-    unsafe fn invalidate_all() {
+    fn invalidate_all() {
         unsafe { Self::set_table(TableKind::User, Self::table(TableKind::User)) };
     }
 
     #[inline(always)]
-    unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
+    fn table(_table_kind: TableKind) -> PhysicalAddress {
         let address: usize;
         unsafe { asm!("mov {0}, cr3", out(reg) address) };
         PhysicalAddress::new(address)
