@@ -1,7 +1,6 @@
 use core::fmt::{Result, Write};
 
-use crate::device::cpu::registers::control_regs;
-use crate::device::cpu::registers::id_regs;
+use crate::device::cpu::registers::{control_regs, id_regs};
 
 pub mod registers;
 
