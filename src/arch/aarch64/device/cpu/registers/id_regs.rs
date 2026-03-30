@@ -1,6 +1,6 @@
 //! Functions and bitfield definitions for `ID_AA64*` system registers. (e.g. `ID_AA64ISAR0_EL1`)
 
-use core::{arch::asm, iter};
+use core::arch::asm;
 
 bitfield::bitfield! {
     pub struct AA64Isar0(u64);

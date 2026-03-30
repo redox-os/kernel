@@ -6,7 +6,6 @@ use crate::{
     arch::{device::irqchip, start::BOOT_HART_ID},
     context::signal::excp_handler,
     memory::GenericPfFlags,
-    panic::stack_trace,
     ptrace,
     sync::CleanLockToken,
     syscall::{self, flag::*},

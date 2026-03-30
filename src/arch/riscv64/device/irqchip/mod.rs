@@ -35,7 +35,7 @@ pub unsafe fn init_clint(fdt: &Fdt) {
         .compatible()
         .unwrap()
         .all()
-        .find(|x| ((*x).eq("riscv,clint0")))
+        .find(|x| (*x).eq("riscv,clint0"))
         .is_some());
 
     let clint = Clint::new(clock_freq, &clint_node);
