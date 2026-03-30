@@ -1,8 +1,5 @@
 use crate::{
-    arch::interrupt::InterruptStack,
-    context::context::Kstack,
-    memory::{KernelMapper, RmmA},
-    percpu::PercpuBlock,
+    arch::interrupt::InterruptStack, context::context::Kstack, memory::RmmA, percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
 use core::{mem::offset_of, sync::atomic::AtomicBool};

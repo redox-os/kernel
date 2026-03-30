@@ -6,12 +6,7 @@ use core::{
 
 use crate::{
     allocator,
-    memory::Frame,
-    paging::{PhysicalAddress, PAGE_SIZE},
-};
-
-use crate::{
-    arch::{device::serial::init_early, interrupt, paging},
+    arch::{device::serial::init_early, paging},
     device,
     devices::graphical_debug,
     interrupt::exception_handler,

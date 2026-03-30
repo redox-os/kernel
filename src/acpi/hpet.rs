@@ -2,10 +2,7 @@ use core::{mem, ptr};
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::{
-    find_one_sdt,
-    memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
-};
+use crate::{find_one_sdt, memory::PhysicalAddress};
 
 use super::{sdt::Sdt, GenericAddressStructure, ACPI_TABLE};
 
@@ -98,9 +95,9 @@ impl Hpet {
 impl Hpet {
     pub unsafe fn map(&self) {
         unsafe {
-            map_device_memory(
+            crate::memory::map_device_memory(
                 PhysicalAddress::new(self.base_address.address as usize),
-                PAGE_SIZE,
+                crate::memory::PAGE_SIZE,
             );
         }
     }

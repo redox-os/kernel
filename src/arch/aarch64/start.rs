@@ -11,9 +11,7 @@ use core::{
 
 use fdt::Fdt;
 
-use crate::{
-    allocator, arch::interrupt, device, devices::graphical_debug, dtb, paging, startup::KernelArgs,
-};
+use crate::{allocator, device, devices::graphical_debug, dtb, paging, startup::KernelArgs};
 
 /// Test of zero values in BSS.
 static mut BSS_TEST_ZERO: usize = 0;
