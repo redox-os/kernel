@@ -4,8 +4,6 @@ use core::ptr;
 #[cfg(feature = "pti")]
 use crate::memory::Frame;
 #[cfg(feature = "pti")]
-use crate::paging::entry::EntryFlags;
-#[cfg(feature = "pti")]
 use crate::paging::ActivePageTable;
 
 #[cfg(feature = "pti")]

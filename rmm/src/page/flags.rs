@@ -58,6 +58,18 @@ impl<A: Arch> PageFlags<A> {
 
     #[must_use]
     #[inline(always)]
+    pub fn device_memory(self, value: bool) -> Self {
+        self.custom_flag(A::ENTRY_FLAG_DEVICE_MEMORY, value)
+    }
+
+    #[must_use]
+    #[inline(always)]
+    pub fn uncacheable(self, value: bool) -> Self {
+        self.custom_flag(A::ENTRY_FLAG_UNCACHEABLE, value)
+    }
+
+    #[must_use]
+    #[inline(always)]
     pub fn write_combining(self, value: bool) -> Self {
         self.custom_flag(A::ENTRY_FLAG_WRITE_COMBINING, value)
     }

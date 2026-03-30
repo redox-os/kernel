@@ -1,5 +1,5 @@
 use crate::{
-    arch::{consts::KERNEL_OFFSET, paging::entry::EntryFlags, rmm::page_flags, CurrentRmmArch},
+    arch::{consts::KERNEL_OFFSET, rmm::page_flags, CurrentRmmArch},
     memory::PAGE_SIZE,
     startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };
@@ -349,10 +349,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             for i in 0..size / PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
-                // use the same mair_el1 value with bootloader,
-                // mair_el1 == 0x00000000000044FF
-                // set mem_attr == device memory
-                let flags = page_flags::<A>(virt).custom_flag(EntryFlags::DEV_MEM.bits(), true);
+                let flags = page_flags::<A>(virt).device_memory(true);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");

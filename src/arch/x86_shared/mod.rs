@@ -36,7 +36,7 @@ pub mod stop;
 pub mod time;
 
 #[cfg(target_arch = "x86")]
-pub use ::rmm::X86Arch as CurrentRmmArch;
+pub use ::rmm::x86::X86Arch as CurrentRmmArch;
 
 #[cfg(target_arch = "x86_64")]
-pub use ::rmm::X8664Arch as CurrentRmmArch;
+pub use ::rmm::x86_64::X8664Arch as CurrentRmmArch;

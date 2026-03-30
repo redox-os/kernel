@@ -11,16 +11,12 @@ use crate::{
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
     paging::VirtualAddress,
     sync::CleanLockToken,
-    syscall::usercopy::UserSliceRw,
-};
-
-use crate::paging::entry::EntryFlags;
-
-use crate::syscall::{
-    data::{Map, StatVfs},
-    error::*,
-    flag::MapFlags,
-    usercopy::UserSliceWo,
+    syscall::{
+        data::{Map, StatVfs},
+        error::*,
+        flag::MapFlags,
+        usercopy::{UserSliceRw, UserSliceWo},
+    },
 };
 
 use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
@@ -153,23 +149,9 @@ impl MemoryScheme {
                     // Default
                     MemoryType::Writeback => (),
 
-                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
-                    MemoryType::WriteCombining => {
-                        page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true)
-                    }
-
-                    MemoryType::Uncacheable => {
-                        page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true)
-                    }
-
-                    // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
-                    // uncacheable, write-combining, write-through, write-protect, and write-back.
-                    #[cfg(target_arch = "aarch64")]
-                    MemoryType::DeviceMemory => {
-                        page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true)
-                    }
-
-                    _ => (),
+                    MemoryType::WriteCombining => page_flags = page_flags.write_combining(true),
+                    MemoryType::Uncacheable => page_flags = page_flags.uncacheable(true),
+                    MemoryType::DeviceMemory => page_flags = page_flags.device_memory(true),
                 }
 
                 Grant::physmap(

@@ -25,7 +25,9 @@ impl Arch for X86Arch {
     const ENTRY_FLAG_NO_GLOBAL: usize = 0;
     const ENTRY_FLAG_NO_EXEC: usize = 0; // NOT AVAILABLE UNLESS PAE IS USED!
     const ENTRY_FLAG_EXEC: usize = 0;
-    const ENTRY_FLAG_WRITE_COMBINING: usize = 1 << 7;
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = PAT_UC_;
+    const ENTRY_FLAG_UNCACHEABLE: usize = PAT_UC_;
+    const ENTRY_FLAG_WRITE_COMBINING: usize = PAT_WC;
 
     const PHYS_OFFSET: usize = 0x8000_0000;
 
@@ -56,6 +58,8 @@ impl Arch for X86Arch {
         true
     }
 }
+
+pub use super::x86_shared::*;
 
 const _: () = {
     assert!(X86Arch::PAGE_SIZE == 4096);

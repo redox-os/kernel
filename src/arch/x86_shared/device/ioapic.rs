@@ -9,7 +9,7 @@ use crate::acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic};
 use crate::{
     arch::interrupt::irq,
     memory::{Frame, KernelMapper},
-    paging::{entry::EntryFlags, Page, PageFlags, PhysicalAddress},
+    paging::{Page, PageFlags, PhysicalAddress},
 };
 
 use super::{local_apic::ApicId, pic};
@@ -253,9 +253,7 @@ pub unsafe fn handle_ioapic(mapper: &mut KernelMapper<true>, madt_ioapic: &'stat
             .map_phys(
                 page.start_address(),
                 frame.base(),
-                PageFlags::new()
-                    .write(true)
-                    .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                PageFlags::new().write(true).device_memory(true),
             )
             .expect("failed to map I/O APIC")
             .flush();

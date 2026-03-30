@@ -6,7 +6,6 @@ pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAdd
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 pub use crate::rmm::KernelMapper;
 
-pub mod entry;
 pub mod mapper;
 
 /// Size of pages

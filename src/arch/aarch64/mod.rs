@@ -32,7 +32,7 @@ pub mod vectors;
 
 pub mod time;
 
-pub use ::rmm::AArch64Arch as CurrentRmmArch;
+pub use ::rmm::aarch64::AArch64Arch as CurrentRmmArch;
 
 pub use arch_copy_to_user as arch_copy_from_user;
 

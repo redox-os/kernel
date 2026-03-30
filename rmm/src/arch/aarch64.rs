@@ -34,7 +34,9 @@ impl Arch for AArch64Arch {
     const ENTRY_FLAG_EXEC: usize = 0;
     const ENTRY_FLAG_GLOBAL: usize = 0;
     const ENTRY_FLAG_NO_GLOBAL: usize = 1 << 11;
-    const ENTRY_FLAG_WRITE_COMBINING: usize = 0;
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = MEM_ATTR_DEVICE_nGnRnE << 2;
+    const ENTRY_FLAG_UNCACHEABLE: usize = MEM_ATTR_NC << 2;
+    const ENTRY_FLAG_WRITE_COMBINING: usize = MEM_ATTR_NC << 2;
 
     const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 
@@ -96,6 +98,39 @@ impl Arch for AArch64Arch {
     fn virt_is_valid(_address: VirtualAddress) -> bool {
         //TODO: what makes an address valid on aarch64?
         true
+    }
+}
+
+#[cfg_attr(not(target_arch = "aarch64"), allow(unused))]
+const MEM_ATTR_WB: usize = 0;
+const MEM_ATTR_NC: usize = 1;
+#[allow(non_upper_case_globals)]
+const MEM_ATTR_DEVICE_nGnRnE: usize = 2;
+
+/// Setup Memory Access Indirection Register
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub unsafe fn init_mair() {
+    // https://github.com/freebsd/freebsd-src/blob/d15733065c4221dcd5bb3622d225760f271f6fc9/sys/arm64/include/armreg.h#L1986-L1991
+    const fn mair_attr(attr: u64, idx: usize) -> u64 {
+        attr << (idx * 8)
+    }
+    #[allow(non_upper_case_globals)]
+    const MAIR_DEVICE_nGnRnE: u64 = 0x00;
+    #[allow(non_upper_case_globals)]
+    const _MAIR_DEVICE_nGnRE: u64 = 0x04;
+    const MAIR_NORMAL_NC: u64 = 0x44;
+    const _MAIR_NORMAL_WT: u64 = 0xbb;
+    const MAIR_NORMAL_WB: u64 = 0xff;
+
+    unsafe {
+        let val: u64 = const {
+            mair_attr(MAIR_DEVICE_nGnRnE, MEM_ATTR_DEVICE_nGnRnE)
+                | mair_attr(MAIR_NORMAL_NC, MEM_ATTR_NC)
+                | mair_attr(MAIR_NORMAL_WB, MEM_ATTR_WB)
+        };
+
+        asm!("msr mair_el1, {}", in(reg) val);
     }
 }
 

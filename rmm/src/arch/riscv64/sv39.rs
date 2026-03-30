@@ -30,7 +30,9 @@ impl Arch for RiscV64Sv39Arch {
     const ENTRY_FLAG_EXEC: usize = 1 << 3;
     const ENTRY_FLAG_GLOBAL: usize = 1 << 5;
     const ENTRY_FLAG_NO_GLOBAL: usize = 0;
-    const ENTRY_FLAG_WRITE_COMBINING: usize = 0;
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = 0; // FIXME use Svpbmt
+    const ENTRY_FLAG_UNCACHEABLE: usize = 0; // FIXME use Svpbmt
+    const ENTRY_FLAG_WRITE_COMBINING: usize = 0; // FIXME use Svpbmt
 
     const PHYS_OFFSET: usize = 0xFFFF_FFC0_0000_0000;
 
