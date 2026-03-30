@@ -1,5 +1,5 @@
 use crate::{
-    arch::{consts::KERNEL_OFFSET, paging::entry::EntryFlags, rmm::page_flags, CurrentRmmArch},
+    arch::{consts::KERNEL_OFFSET, paging::EntryFlags, rmm::page_flags, CurrentRmmArch},
     memory::PAGE_SIZE,
     startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };

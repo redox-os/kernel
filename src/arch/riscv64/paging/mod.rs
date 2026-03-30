@@ -1,12 +1,13 @@
 #![allow(unused)]
 
 pub use super::CurrentRmmArch as RmmA;
-pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+pub use rmm::{
+    aarch64::EntryFlags, Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress,
+};
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 pub use crate::rmm::KernelMapper;
 
-pub mod entry;
 pub mod mapper;
 
 /// Size of pages

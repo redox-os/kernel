@@ -3,27 +3,16 @@ use core::ptr;
 use crate::{PhysicalAddress, TableKind, VirtualAddress};
 
 //TODO: Support having all page tables compile on all architectures
+#[cfg(target_pointer_width = "64")]
+pub mod aarch64;
 #[cfg(all(feature = "std", target_pointer_width = "64"))]
-pub use self::emulate::EmulateArch;
+pub mod emulate;
+#[cfg(target_pointer_width = "64")]
+pub mod riscv64;
 #[cfg(target_pointer_width = "32")]
-pub use self::x86::X86Arch;
+pub mod x86;
 #[cfg(target_pointer_width = "64")]
-pub use self::{
-    aarch64::AArch64Arch,
-    riscv64::{RiscV64Sv39Arch, RiscV64Sv48Arch},
-    x86_64::X8664Arch,
-};
-
-#[cfg(target_pointer_width = "64")]
-mod aarch64;
-#[cfg(all(feature = "std", target_pointer_width = "64"))]
-mod emulate;
-#[cfg(target_pointer_width = "64")]
-mod riscv64;
-#[cfg(target_pointer_width = "32")]
-mod x86;
-#[cfg(target_pointer_width = "64")]
-mod x86_64;
+pub mod x86_64;
 
 pub trait Arch: Clone + Copy {
     /// Does the architecture use a separate page table for the kernel.

@@ -99,6 +99,13 @@ impl Arch for AArch64Arch {
     }
 }
 
+bitflags::bitflags! {
+    pub struct EntryFlags: usize {
+        const NO_CACHE = 1 << 2;
+        const DEV_MEM = 2 << 2;
+    }
+}
+
 const _: () = {
     assert!(AArch64Arch::PAGE_SIZE == 4096);
     assert!(AArch64Arch::PAGE_OFFSET_MASK == 0xFFF);

@@ -60,7 +60,7 @@ impl Hpet {
         unsafe {
             use crate::{
                 memory::{Frame, KernelMapper},
-                paging::{entry::EntryFlags, Page, VirtualAddress},
+                paging::{EntryFlags, Page, VirtualAddress},
             };
             use rmm::PageFlags;
 

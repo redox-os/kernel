@@ -1,7 +1,7 @@
 #![cfg(target_pointer_width = "64")]
 
 use rmm::{
-    Arch, BuddyAllocator, BumpAllocator, EmulateArch, Flusher, FrameAllocator, FrameCount,
+    emulate::EmulateArch, Arch, BuddyAllocator, BumpAllocator, Flusher, FrameAllocator, FrameCount,
     MemoryArea, PageFlags, PageFlushAll, PageMapper, PageTable, PhysicalAddress, TableKind,
     VirtualAddress, GIGABYTE, KILOBYTE, MEGABYTE, TERABYTE,
 };

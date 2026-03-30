@@ -10,16 +10,10 @@ pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAdd
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 
-pub mod entry {
-    bitflags! {
-        pub struct EntryFlags: usize {
-            const NO_CACHE =        1 << 4;
-            const HUGE_PAGE =       1 << 7;
-            const GLOBAL =          1 << 8;
-            const DEV_MEM =         0;
-        }
-    }
-}
+#[cfg(target_arch = "x86")]
+pub use rmm::x86::EntryFlags;
+#[cfg(target_arch = "x86_64")]
+pub use rmm::x86_64::EntryFlags;
 
 pub mod mapper;
 

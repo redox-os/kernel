@@ -20,7 +20,7 @@ use crate::{
         memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    paging::{entry::EntryFlags, Page, PageFlags},
+    paging::{EntryFlags, Page, PageFlags},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };

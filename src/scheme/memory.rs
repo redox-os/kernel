@@ -9,18 +9,14 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
     },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
-    paging::VirtualAddress,
+    paging::{EntryFlags, VirtualAddress},
     sync::CleanLockToken,
-    syscall::usercopy::UserSliceRw,
-};
-
-use crate::paging::entry::EntryFlags;
-
-use crate::syscall::{
-    data::{Map, StatVfs},
-    error::*,
-    flag::MapFlags,
-    usercopy::UserSliceWo,
+    syscall::{
+        data::{Map, StatVfs},
+        error::*,
+        flag::MapFlags,
+        usercopy::{UserSliceRw, UserSliceWo},
+    },
 };
 
 use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};

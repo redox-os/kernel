@@ -57,6 +57,15 @@ impl Arch for X86Arch {
     }
 }
 
+bitflags::bitflags! {
+    pub struct EntryFlags: usize {
+        const NO_CACHE =        1 << 4;
+        const HUGE_PAGE =       1 << 7;
+        const GLOBAL =          1 << 8;
+        const DEV_MEM =         0;
+    }
+}
+
 const _: () = {
     assert!(X86Arch::PAGE_SIZE == 4096);
     assert!(X86Arch::PAGE_OFFSET_MASK == 0xFFF);
