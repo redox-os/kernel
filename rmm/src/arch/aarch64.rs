@@ -106,6 +106,20 @@ bitflags::bitflags! {
     }
 }
 
+/// Setup Memory Access Indirection Register
+#[cfg(target_arch = "aarch64")]
+#[inline(always)]
+pub unsafe fn init_mair() {
+    unsafe {
+        let val: u64 = 0
+            | 0x00 << 16 // DEVICE_MEMORY;
+            | 0x44 << 8 // NORMAL_UNCACHED_MEMORY;
+            | 0xff; // NORMAL_WRITEBACK_MEMORY
+
+        asm!("msr mair_el1, {}", in(reg) val);
+    }
+}
+
 const _: () = {
     assert!(AArch64Arch::PAGE_SIZE == 4096);
     assert!(AArch64Arch::PAGE_OFFSET_MASK == 0xFFF);

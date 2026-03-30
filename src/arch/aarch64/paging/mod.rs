@@ -1,8 +1,6 @@
 //! # Paging
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
-use crate::device::cpu::registers::control_regs;
-
 pub use super::CurrentRmmArch as RmmA;
 pub use rmm::{
     aarch64::EntryFlags, Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress,
@@ -16,25 +14,11 @@ pub mod mapper;
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
 pub const PAGE_MASK: usize = RmmA::PAGE_OFFSET_MASK;
 
-/// Setup Memory Access Indirection Register
-#[cold]
-unsafe fn init_mair() {
-    unsafe {
-        let mut val: control_regs::MairEl1 = control_regs::mair_el1();
-
-        val.insert(control_regs::MairEl1::DEVICE_MEMORY);
-        val.insert(control_regs::MairEl1::NORMAL_UNCACHED_MEMORY);
-        val.insert(control_regs::MairEl1::NORMAL_WRITEBACK_MEMORY);
-
-        control_regs::mair_el1_write(val);
-    }
-}
-
 /// Initialize MAIR
 #[cold]
 pub unsafe fn init() {
     unsafe {
-        init_mair();
+        rmm::aarch64::init_mair();
     }
 }
 

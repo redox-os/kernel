@@ -4,14 +4,6 @@
 
 use core::arch::asm;
 
-bitflags! {
-    pub struct MairEl1: u64 {
-        const DEVICE_MEMORY = 0x00 << 16;
-        const NORMAL_UNCACHED_MEMORY = 0x44 << 8;
-        const NORMAL_WRITEBACK_MEMORY = 0xff;
-    }
-}
-
 pub unsafe fn ttbr0_el1() -> u64 {
     unsafe {
         let ret: u64;
@@ -37,20 +29,6 @@ pub unsafe fn ttbr1_el1() -> u64 {
 pub unsafe fn ttbr1_el1_write(val: u64) {
     unsafe {
         asm!("msr ttbr1_el1, {}", in(reg) val);
-    }
-}
-
-pub unsafe fn mair_el1() -> MairEl1 {
-    unsafe {
-        let ret: u64;
-        asm!("mrs {}, mair_el1", out(reg) ret);
-        MairEl1::from_bits_truncate(ret)
-    }
-}
-
-pub unsafe fn mair_el1_write(val: MairEl1) {
-    unsafe {
-        asm!("msr mair_el1, {}", in(reg) val.bits());
     }
 }
 
