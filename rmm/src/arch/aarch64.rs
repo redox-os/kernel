@@ -34,7 +34,9 @@ impl Arch for AArch64Arch {
     const ENTRY_FLAG_EXEC: usize = 0;
     const ENTRY_FLAG_GLOBAL: usize = 0;
     const ENTRY_FLAG_NO_GLOBAL: usize = 1 << 11;
-    const ENTRY_FLAG_WRITE_COMBINING: usize = 0;
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = MEM_ATTR_DEVICE_nGnRnE << 2;
+    const ENTRY_FLAG_UNCACHEABLE: usize = MEM_ATTR_NC << 2;
+    const ENTRY_FLAG_WRITE_COMBINING: usize = MEM_ATTR_NC << 2;
 
     const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 
@@ -96,13 +98,6 @@ impl Arch for AArch64Arch {
     fn virt_is_valid(_address: VirtualAddress) -> bool {
         //TODO: what makes an address valid on aarch64?
         true
-    }
-}
-
-bitflags::bitflags! {
-    pub struct EntryFlags: usize {
-        const NO_CACHE = MEM_ATTR_NC << 2;
-        const DEV_MEM = MEM_ATTR_DEVICE_nGnRnE << 2;
     }
 }
 

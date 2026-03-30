@@ -2,9 +2,7 @@
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
 pub use super::CurrentRmmArch as RmmA;
-pub use rmm::{
-    aarch64::EntryFlags, Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress,
-};
+pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 

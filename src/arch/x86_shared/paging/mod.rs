@@ -8,11 +8,6 @@ pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAdd
 
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 
-#[cfg(target_arch = "x86")]
-pub use rmm::x86::EntryFlags;
-#[cfg(target_arch = "x86_64")]
-pub use rmm::x86_64::EntryFlags;
-
 pub mod mapper;
 
 /// Size of pages

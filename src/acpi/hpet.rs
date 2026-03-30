@@ -60,7 +60,7 @@ impl Hpet {
         unsafe {
             use crate::{
                 memory::{Frame, KernelMapper},
-                paging::{EntryFlags, Page, VirtualAddress},
+                paging::{Page, VirtualAddress},
             };
             use rmm::PageFlags;
 
@@ -71,9 +71,7 @@ impl Hpet {
                 .map_phys(
                     page.start_address(),
                     frame.base(),
-                    PageFlags::new()
-                        .write(true)
-                        .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                    PageFlags::new().write(true).device_memory(true),
                 )
                 .expect("failed to map memory for GenericAddressStructure")
                 .flush();

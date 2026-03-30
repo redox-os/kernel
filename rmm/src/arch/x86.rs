@@ -25,6 +25,8 @@ impl Arch for X86Arch {
     const ENTRY_FLAG_NO_GLOBAL: usize = 0;
     const ENTRY_FLAG_NO_EXEC: usize = 0; // NOT AVAILABLE UNLESS PAE IS USED!
     const ENTRY_FLAG_EXEC: usize = 0;
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = 1 << 4;
+    const ENTRY_FLAG_UNCACHEABLE: usize = 1 << 4;
     const ENTRY_FLAG_WRITE_COMBINING: usize = 1 << 7;
 
     const PHYS_OFFSET: usize = 0x8000_0000;

@@ -9,7 +9,7 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
     },
     memory::{free_frames, used_frames, Frame, PAGE_SIZE},
-    paging::{EntryFlags, VirtualAddress},
+    paging::VirtualAddress,
     sync::CleanLockToken,
     syscall::{
         data::{Map, StatVfs},
@@ -150,19 +150,8 @@ impl MemoryScheme {
                     MemoryType::Writeback => (),
 
                     MemoryType::WriteCombining => page_flags = page_flags.write_combining(true),
-
-                    MemoryType::Uncacheable => {
-                        page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true)
-                    }
-
-                    MemoryType::DeviceMemory => {
-                        // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
-                        // uncacheable, write-combining, write-through, write-protect, and write-back.
-                        #[cfg(target_arch = "aarch64")]
-                        {
-                            page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true);
-                        }
-                    }
+                    MemoryType::Uncacheable => page_flags = page_flags.uncacheable(true),
+                    MemoryType::DeviceMemory => page_flags = page_flags.device_memory(true),
                 }
 
                 Grant::physmap(

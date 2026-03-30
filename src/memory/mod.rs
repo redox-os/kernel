@@ -20,7 +20,7 @@ use crate::{
         memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    paging::{EntryFlags, Page, PageFlags},
+    paging::{Page, PageFlags},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
@@ -246,9 +246,7 @@ pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAdd
             let (_, flush) = mapper
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
-                    PageFlags::new()
-                        .write(true)
-                        .custom_flag(EntryFlags::NO_CACHE.bits(), true),
+                    PageFlags::new().write(true).device_memory(true),
                 )
                 .expect("failed to linearly map SDT");
             flush.flush();

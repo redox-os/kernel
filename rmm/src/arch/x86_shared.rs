@@ -1,10 +1,3 @@
-bitflags::bitflags! {
-    pub struct EntryFlags: usize {
-        const NO_CACHE =        1 << 4;
-        const DEV_MEM =         0;
-    }
-}
-
 /// Setup page attribute table
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 #[inline(always)]
