@@ -149,23 +149,20 @@ impl MemoryScheme {
                     // Default
                     MemoryType::Writeback => (),
 
-                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] // TODO: AARCH64
-                    MemoryType::WriteCombining => {
-                        page_flags = page_flags.custom_flag(EntryFlags::HUGE_PAGE.bits(), true)
-                    }
+                    MemoryType::WriteCombining => page_flags = page_flags.write_combining(true),
 
                     MemoryType::Uncacheable => {
                         page_flags = page_flags.custom_flag(EntryFlags::NO_CACHE.bits(), true)
                     }
 
-                    // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
-                    // uncacheable, write-combining, write-through, write-protect, and write-back.
-                    #[cfg(target_arch = "aarch64")]
                     MemoryType::DeviceMemory => {
-                        page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true)
+                        // MemoryType::DeviceMemory doesn't exist on x86 && x86_64, which instead support
+                        // uncacheable, write-combining, write-through, write-protect, and write-back.
+                        #[cfg(target_arch = "aarch64")]
+                        {
+                            page_flags = page_flags.custom_flag(EntryFlags::DEV_MEM.bits(), true);
+                        }
                     }
-
-                    _ => (),
                 }
 
                 Grant::physmap(
