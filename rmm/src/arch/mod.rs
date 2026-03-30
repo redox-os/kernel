@@ -13,6 +13,7 @@ pub mod riscv64;
 pub mod x86;
 #[cfg(target_pointer_width = "64")]
 pub mod x86_64;
+mod x86_shared;
 
 pub trait Arch: Clone + Copy {
     /// Does the architecture use a separate page table for the kernel.
