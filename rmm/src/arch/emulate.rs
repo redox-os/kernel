@@ -104,7 +104,7 @@ impl Arch for EmulateArch {
     }
 
     #[inline(always)]
-    unsafe fn invalidate(address: VirtualAddress) {
+    fn invalidate(address: VirtualAddress) {
         MACHINE
             .lock()
             .unwrap()
@@ -114,12 +114,12 @@ impl Arch for EmulateArch {
     }
 
     #[inline(always)]
-    unsafe fn invalidate_all() {
+    fn invalidate_all() {
         MACHINE.lock().unwrap().as_mut().unwrap().invalidate_all();
     }
 
     #[inline(always)]
-    unsafe fn table(_table_kind: TableKind) -> PhysicalAddress {
+    fn table(_table_kind: TableKind) -> PhysicalAddress {
         MACHINE.lock().unwrap().as_mut().unwrap().get_table()
     }
 
