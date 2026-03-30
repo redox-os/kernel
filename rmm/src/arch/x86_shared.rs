@@ -12,12 +12,12 @@ bitflags::bitflags! {
 #[inline(always)]
 pub unsafe fn init_pat() {
     unsafe {
-        let uncacheable = 0;
-        let write_combining = 1;
-        let write_through = 4;
-        //let write_protected = 5;
-        let write_back = 6;
-        let uncached = 7;
+        let uncacheable = 0; // UC
+        let write_combining = 1; // WC
+        let write_through = 4; // WT
+        let _write_protected = 5; // WP
+        let write_back = 6; // WB
+        let uncached = 7; // UC- (overridable by WC MTRR)
 
         let pat0 = write_back;
         let pat1 = write_through;
