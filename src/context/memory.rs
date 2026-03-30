@@ -98,10 +98,19 @@ impl AddrSpaceWrapper {
     pub fn acquire_read(&self) -> RwLockReadGuard<'_, AddrSpace> {
         let my_percpu = PercpuBlock::current();
 
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
         loop {
             match self.inner.try_read() {
                 Some(g) => return g,
                 None => {
+                    #[cfg(feature = "busy_panic")]
+                    {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock at read may have triggered")
+                        }
+                    }
                     my_percpu.maybe_handle_tlb_shootdown();
                     core::hint::spin_loop();
                 }
@@ -111,10 +120,19 @@ impl AddrSpaceWrapper {
     pub fn acquire_upgradeable_read(&self) -> RwLockUpgradableGuard<'_, AddrSpace> {
         let my_percpu = PercpuBlock::current();
 
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
         loop {
             match self.inner.try_upgradeable_read() {
                 Some(g) => return g,
                 None => {
+                    #[cfg(feature = "busy_panic")]
+                    {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock at upgradeable_read may have triggered")
+                        }
+                    }
                     my_percpu.maybe_handle_tlb_shootdown();
                     core::hint::spin_loop();
                 }
@@ -124,10 +142,19 @@ impl AddrSpaceWrapper {
     pub fn acquire_write(&self) -> RwLockWriteGuard<'_, AddrSpace> {
         let my_percpu = PercpuBlock::current();
 
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
         loop {
             match self.inner.try_write() {
                 Some(g) => return g,
                 None => {
+                    #[cfg(feature = "busy_panic")]
+                    {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock at acquire_write may have triggered")
+                        }
+                    }
                     my_percpu.maybe_handle_tlb_shootdown();
                     core::hint::spin_loop();
                 }
