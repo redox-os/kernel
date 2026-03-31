@@ -12,7 +12,10 @@ use alloc::sync::Arc;
 use syscall::PtraceFlags;
 
 use crate::{
-    context::{arch, contexts, ArcContextLockWriteGuard, Context, ContextLock},
+    context::{
+        arch, contexts, contexts_mut, free_contexts_try, ArcContextLockWriteGuard,
+        Context, ContextLock,
+    },
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
@@ -159,29 +162,22 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     let cpu_id = crate::cpu_id();
 
+    // Lock the previous context.
+    let prev_context_lock = crate::context::current();
+    // We are careful not to lock this context twice
+    let mut prev_context_guard = unsafe { prev_context_lock.write_arc() };
+
+    if !prev_context_guard.is_preemptable() {
+        // Unset global lock
+        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+
+        // Pretend to have finished switching, so CPU is not idled
+        return SwitchResult::Switched;
+    }
+
     let mut switch_context_opt = None;
     {
         let contexts = contexts(token.token());
-
-        // Lock the previous context.
-        let prev_context_lock = crate::context::current();
-        // We are careful not to lock this context twice
-        let prev_context_guard = unsafe { prev_context_lock.write_arc() };
-
-        if !prev_context_guard.is_preemptable() {
-            // Unset global lock
-            arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-
-            // Pretend to have finished switching, so CPU is not idled
-            return SwitchResult::Switched;
-        }
-
-        let idle_context = percpu.switch_internals.idle_context();
-
-        // Stateful flag used to skip the idle process the first time it shows up.
-        // After that, this flag is set to `false` so the idle process can be
-        // picked up.
-        let mut skip_idle = true;
 
         // Attempt to locate the next context to switch to.
         for next_context_lock in contexts
@@ -196,18 +192,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
             )))
             .filter_map(ContextRef::upgrade)
-            // ... and the idle context...
-            .chain(Some(Arc::clone(&idle_context)))
         // ... but not the current context (note the `Bound::Excluded`),
         // which is already locked.
         {
-            if Arc::ptr_eq(&next_context_lock, &idle_context) && skip_idle {
-                // Skip idle process the first time it shows up, but allow it
-                // to be picked up again the next time.
-                skip_idle = false;
-                continue;
-            }
-
             {
                 // Lock next context
                 // We are careful not to lock this context twice
@@ -219,12 +206,31 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 {
                     // Store locks for previous and next context and break out from loop
                     // for the switch
-                    switch_context_opt = Some((prev_context_guard, next_context_guard));
+                    switch_context_opt = Some(next_context_guard);
                     break;
                 }
             }
         }
     };
+
+    if switch_context_opt.is_none() {
+        let mut this_contexts = contexts_mut(token.token());
+        let (this_contexts, mut token) = this_contexts.token_split();
+        if let Some(mut free_contexts) = free_contexts_try(token.token()) {
+            if let Some(context) = free_contexts.pop_last() {
+                // Check if we can run this free context immediately
+                if let Some(next_context) = context.upgrade() {
+                    let mut next_context_guard = unsafe { next_context.write_arc() };
+                    if let UpdateResult::CanSwitch =
+                        unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
+                    {
+                        switch_context_opt = Some(next_context_guard);
+                    }
+                }
+                this_contexts.insert(context);
+            }
+        }
+    }
 
     // Update per-cpu times
     let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
@@ -234,7 +240,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     // Switch process states, TSS stack pointer, and store new context ID
     match switch_context_opt {
-        Some((mut prev_context_guard, mut next_context_guard)) => {
+        Some(mut next_context_guard) => {
             // Update context states and prepare for the switch.
             let prev_context = &mut *prev_context_guard;
             let next_context = &mut *next_context_guard;
@@ -339,9 +345,6 @@ pub struct ContextSwitchPercpu {
 
     current_ctxt: RefCell<Option<Arc<ContextLock>>>,
 
-    /// The idle process.
-    idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
-
     pub(crate) being_sigkilled: Cell<bool>,
 }
 
@@ -352,7 +355,6 @@ impl ContextSwitchPercpu {
             switch_time: Cell::new(0),
             pit_ticks: Cell::new(0),
             current_ctxt: RefCell::new(None),
-            idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
         }
     }
@@ -392,29 +394,5 @@ impl ContextSwitchPercpu {
     /// - `new`: The new context to be set as the current context.
     pub unsafe fn set_current_context(&self, new: Arc<ContextLock>) {
         *self.current_ctxt.borrow_mut() = Some(new);
-    }
-
-    /// Sets the idle context to a new value.
-    ///
-    /// # Safety
-    /// This function is unsafe as it modifies the idle context state directly.
-    ///
-    /// # Parameters
-    /// - `new`: The new context to be set as the idle context.
-    pub unsafe fn set_idle_context(&self, new: Arc<ContextLock>) {
-        *self.idle_ctxt.borrow_mut() = Some(new);
-    }
-
-    /// Retrieves the current idle context.
-    ///
-    /// # Returns
-    /// A reference to the idle context.
-    pub fn idle_context(&self) -> Arc<ContextLock> {
-        Arc::clone(
-            self.idle_ctxt
-                .borrow()
-                .as_ref()
-                .expect("no idle context present"),
-        )
     }
 }

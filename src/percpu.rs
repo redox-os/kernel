@@ -1,4 +1,5 @@
 use alloc::{
+    collections::BTreeSet,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -12,10 +13,11 @@ use syscall::PtraceFlags;
 
 use crate::{
     arch::device::ArchPercpuMisc,
-    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
+    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu, ContextRef},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
+    sync::{RwLock, L1},
     syscall::debug::SyscallDebugInfo,
 };
 
@@ -44,6 +46,7 @@ pub struct PercpuBlock {
     pub misc_arch_info: crate::device::ArchPercpuMisc,
 
     pub stats: CpuStats,
+    pub contexts: RwLock<L1, BTreeSet<ContextRef>>,
 }
 
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
@@ -193,6 +196,7 @@ impl PercpuBlock {
             misc_arch_info: ArchPercpuMisc::default(),
 
             stats: CpuStats::default(),
+            contexts: RwLock::new(BTreeSet::new()),
         }
     }
 }

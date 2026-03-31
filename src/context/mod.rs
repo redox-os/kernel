@@ -11,8 +11,8 @@ use crate::{
     paging::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        L0, L1, L2, L4,
+        ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
+        RwLockWriteGuard, L0, L1, L2, L4,
     },
     syscall::error::Result,
 };
@@ -69,16 +69,30 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: RwLock<L1, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
+static CONTEXTS: Mutex<L2, BTreeSet<ContextRef>> = Mutex::new(BTreeSet::new());
 
-/// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
-    CONTEXTS.read(token)
+/// Try to get the global free contexts
+pub fn free_contexts_try(
+    token: LockToken<'_, L1>,
+) -> Option<MutexGuard<'_, L2, BTreeSet<ContextRef>>> {
+    CONTEXTS.try_lock(token)
 }
 
-/// Get the global schemes list, mutable
+/// Get the global free contexts
+pub fn free_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, BTreeSet<ContextRef>> {
+    CONTEXTS.lock(token)
+}
+
+/// Get per cpu contexts, const
+pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
+    let percpu = PercpuBlock::current();
+    percpu.contexts.read(token)
+}
+
+/// Get per cpu contexts, mutable
 pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
-    CONTEXTS.write(token)
+    let percpu = PercpuBlock::current();
+    percpu.contexts.write(token)
 }
 
 pub fn init(token: &mut CleanLockToken) {
@@ -106,7 +120,6 @@ pub fn init(token: &mut CleanLockToken) {
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
-        percpu.switch_internals.set_idle_context(context_lock);
     }
 }
 
@@ -172,7 +185,7 @@ pub fn spawn(
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
-    contexts_mut(token.token()).insert(context_ref);
+    free_contexts(token.token().downgrade()).insert(context_ref);
 
     Ok(context_lock)
 }
