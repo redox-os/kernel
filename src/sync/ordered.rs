@@ -412,6 +412,34 @@ impl<L: Level, T> RwLock<L, T> {
         }
     }
 
+    pub fn try_read<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Option<RwLockReadGuard<'a, L, T>> {
+        let inner = match self.inner.try_read() {
+            Some(inner) => inner,
+            None => return None,
+        };
+        Some(RwLockReadGuard {
+            inner,
+            lock_token: LockToken::downgraded(lock_token),
+        })
+    }
+
+    pub fn try_write<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Option<RwLockWriteGuard<'a, L, T>> {
+        let inner = match self.inner.try_write() {
+            Some(inner) => inner,
+            None => return None,
+        };
+        Some(RwLockWriteGuard {
+            inner,
+            lock_token: LockToken::downgraded(lock_token),
+        })
+    }
+
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
         core::mem::forget(self.inner.write());

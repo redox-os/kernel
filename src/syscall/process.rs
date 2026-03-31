@@ -65,7 +65,12 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         );
     }
     {
-        let _ = context::contexts_mut(token.token()).remove(&ContextRef(context_lock));
+        if !context::contexts_mut(token.token()).remove(&ContextRef(context_lock)) {
+            #[cfg(feature = "drop_panic")]
+            {
+                panic!("This context is not in the cpu")
+            }
+        }
     }
     context::switch(token);
     unreachable!();
