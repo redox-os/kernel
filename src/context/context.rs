@@ -21,7 +21,7 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
+    sync::{CleanLockToken, LockToken, RwLock, L1, L2, L3, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -379,7 +379,7 @@ impl Context {
     pub fn set_addr_space(
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
-        token: LockToken<L4>,
+        token: LockToken<L2>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
         if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)

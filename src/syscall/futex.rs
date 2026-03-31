@@ -96,6 +96,8 @@ pub fn futex(
             let context_lock = context::current();
 
             {
+                // TODO: Lock ordering violation
+                let mut token = unsafe { CleanLockToken::new() };
                 let mut futexes = FUTEXES.lock(token.token());
                 let (futexes, mut token) = futexes.token_split();
 

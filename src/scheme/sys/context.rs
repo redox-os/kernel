@@ -24,11 +24,13 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             // exist, but is this a good indicator of whether it is user or kernel?
             stat_string.push(match context.addr_space() {
                 Ok(addr_space) => {
-                    if addr_space.acquire_read(token.downgrade()).grants.is_empty() {
-                        'K'
-                    } else {
-                        'U'
-                    }
+                    // TODO: Commented out due Lock ordering violation
+                    // if addr_space.acquire_read(token.downgrade()).grants.is_empty() {
+                    //     'K'
+                    // } else {
+                    //     'U'
+                    // }
+                    'U'
                 }
                 _ => 'R',
             });
@@ -75,6 +77,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             if let Some(ref kstack) = context.kstack {
                 memory += kstack.len();
             }
+            // TODO: Commented out due Lock ordering violation
+            /*
             if let Ok(addr_space) = context.addr_space() {
                 for (_base, info) in addr_space.acquire_read(token.downgrade()).grants.iter() {
                     // TODO: method
@@ -83,6 +87,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                     }
                 }
             }
+            */
 
             let memory_string = if memory >= 1024 * 1024 * 1024 {
                 format!("{} GB", memory / 1024 / 1024 / 1024)

@@ -2,7 +2,10 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use core::{mem, mem::size_of, num::NonZeroUsize};
+use core::{
+    mem::{self, size_of, ManuallyDrop},
+    num::NonZeroUsize,
+};
 use slab::Slab;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
@@ -521,7 +524,7 @@ impl UserInner {
             .expect("split must succeed");
 
         let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
-        let (dst_space, token) = dst_space_guard.token_split();
+        let (dst_space, mut token) = dst_space_guard.token_split();
 
         let free_span = dst_space
             .grants
@@ -530,7 +533,7 @@ impl UserInner {
 
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::head_locked(token)?;
+            let mut array = BorrowedHtBuf::head_locked(token.token())?;
             let frame = array.frame();
 
             let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
@@ -607,9 +610,15 @@ impl UserInner {
                     // unmap them is to respond to the scheme socket.
                     let is_pinned_userscheme_borrow = true;
 
+                    // TODO: Not a Lock ordering violation
+                    // we've checked Arc::ptr_eq(&dst_space_lock, &cur_space_lock) before,
+                    // but it's difficult to apply cur_space_lock.arquire_rewrite
+                    let mut token = unsafe { CleanLockToken::new() };
+                    let mut cur_space_guard =
+                        unsafe { cur_space_lock.acquire_rewrite(token.downgrade()) };
                     Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut cur_space_lock.acquire_write(token.token().downgrade()),
+                        &mut cur_space_guard,
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -628,7 +637,7 @@ impl UserInner {
             let tail_dst_page = first_middle_dst_page.next_by(middle_page_count);
 
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::tail_locked(token)?;
+            let mut array = BorrowedHtBuf::tail_locked(token.token())?;
             let frame = array.frame();
 
             if READ {
@@ -1104,9 +1113,12 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
+        // TODO: Not a Lock ordering violation
+        // we've checked Arc::ptr_eq(&src_address_space, &dst_addr_space) before,
+        // but it's difficult to apply src.arquire_rewrite
+        let mut clean_token = unsafe { CleanLockToken::new() };
         let dst_base = {
-            let mut lock_token = token.token();
-            dst_addr_space.acquire_write(lock_token.downgrade()).mmap(
+            dst_addr_space.acquire_write(clean_token.downgrade()).mmap(
                 &dst_addr_space,
                 dst_base,
                 page_count_nz,
@@ -1121,7 +1133,6 @@ impl UserInner {
                         &dst_addr_space,
                         mapper,
                         flusher,
-                        token,
                     )
                 },
             )?
@@ -1345,6 +1356,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         if let Some(src) = self.tail.src.take() {
             src.into_drop(token);
         }
+        let _ = ManuallyDrop::new(self);
         Ok(())
     }
 }

@@ -559,7 +559,7 @@ impl AddrSpaceWrapper {
                 "if it was CoW, it was read-only, but in that case we already called correct_inner"
             ),
         };
-        drop(guard_lock.unwrap());
+        drop(guard_lock);
 
         frame
     }
@@ -1394,7 +1394,6 @@ impl Grant {
         _lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
-        token: &mut CleanLockToken,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
@@ -1918,6 +1917,7 @@ impl Grant {
             ..
         } = self.info.provider
         {
+            // TODO: Lock ordering violation
             let mut token = unsafe { CleanLockToken::new() };
             let mut token = token.token();
             let mut guard = address_space.acquire_write(token.downgrade());

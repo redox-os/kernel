@@ -437,7 +437,7 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let old_ctx = try_stop_context(context, token, |context, token| {
+                let old_ctx = try_stop_context(context, token, |context, _| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -448,7 +448,9 @@ impl KernelScheme for ProcScheme {
                     ))]
                     regs.set_arg1(arg1);
 
-                    Ok(context.set_addr_space(Some(new), token))
+                    // TODO: Lock ordering violation
+                    let mut token = unsafe { CleanLockToken::new() };
+                    Ok(context.set_addr_space(Some(new), token.downgrade()))
                 })?;
                 if let Some(old_ctx) = old_ctx
                     && let Some(addrspace) = Arc::into_inner(old_ctx)
@@ -512,8 +514,8 @@ impl KernelScheme for ProcScheme {
                     || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
                 let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
-                let mut src_addr_space = addrspace.acquire_write(token.downgrade());
-                let (src_addr_space, token) = src_addr_space.token_split();
+                let mut src_addr_space_guard = addrspace.acquire_write(token.downgrade());
+                let (mut src_addr_space, lock_token) = src_addr_space_guard.token_split();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -528,11 +530,12 @@ impl KernelScheme for ProcScheme {
                         src_page_count.get(),
                         map.flags,
                         Some(&mut notify_files),
-                        token,
+                        lock_token,
                     )?
                 } else {
-                    let mut lock_token = token.token();
-                    let mut dst_addrsp_guard = dst_addr_space.acquire_write(lock_token.downgrade());
+                    // SAFETY: We've compared  Arc::ptr_eq(addrspace, dst_addr_space) before
+                    let mut dst_addrsp_guard =
+                        unsafe { dst_addr_space.acquire_rewrite(lock_token) };
                     dst_addrsp_guard.mmap(
                         dst_addr_space,
                         requested_dst_base,
@@ -557,12 +560,15 @@ impl KernelScheme for ProcScheme {
                     )?
                 };
 
+                drop(src_addr_space_guard);
+
                 handle_notify_files(notify_files, token);
 
                 Ok(result_base.start_address().data())
             }
             ContextHandle::Sighandler => {
-                let context = context.read(token.token());
+                let mut context = context.read(token.token());
+                // let (context, token) = context.token_split();
                 let sig = context.sig.as_ref().ok_or(Error::new(EBADF))?;
                 let frame = match map.offset {
                     // tctl
@@ -573,8 +579,9 @@ impl KernelScheme for ProcScheme {
                 };
                 // TODO: Allocated or AllocatedShared?
                 let addrsp = AddrSpace::current()?;
-                let mut lock_token = token.token();
-                let page = addrsp.acquire_read(lock_token.downgrade()).mmap(
+                // TODO: Lock ordering violation
+                let mut token = unsafe { CleanLockToken::new() };
+                let page = addrsp.acquire_write(token.downgrade()).mmap(
                     &addrsp,
                     None,
                     NonZeroUsize::new(1).unwrap(),
@@ -949,7 +956,7 @@ impl ContextHandle {
                 RegsKind::Float => {
                     let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
 
-                    try_stop_context(context, token, |context, token| {
+                    try_stop_context(context, token, |context, _| {
                         // NOTE: The kernel will never touch floats
 
                         // Ignore the rare case of floating point
@@ -962,7 +969,7 @@ impl ContextHandle {
                 RegsKind::Int => {
                     let regs = unsafe { buf.read_exact::<IntRegisters>()? };
 
-                    try_stop_context(context, token, |context, token| match context.regs_mut() {
+                    try_stop_context(context, token, |context, _| match context.regs_mut() {
                         None => {
                             println!(
                                 "{}:{}: Couldn't read registers from stopped process",
@@ -1333,7 +1340,7 @@ impl ContextHandle {
                         )
                     }
                     RegsKind::Int => {
-                        try_stop_context(context, token, |context, token| match context.regs() {
+                        try_stop_context(context, token, |context, _| match context.regs() {
                             None => {
                                 assert!(!context.running, "try_stop_context is broken, clearly");
                                 println!(
@@ -1492,9 +1499,7 @@ fn write_env_regs(
             .write(token.token())
             .write_current_env_regs(regs)
     } else {
-        try_stop_context(context, token, |context, token| {
-            context.write_env_regs(regs)
-        })
+        try_stop_context(context, token, |context, _| context.write_env_regs(regs))
     }
 }
 
@@ -1504,6 +1509,6 @@ fn read_env_regs(context: Arc<ContextLock>, token: &mut CleanLockToken) -> Resul
             .read(token.token())
             .read_current_env_regs()
     } else {
-        try_stop_context(context, token, |context, token| context.read_env_regs())
+        try_stop_context(context, token, |context, _| context.read_env_regs())
     }
 }
