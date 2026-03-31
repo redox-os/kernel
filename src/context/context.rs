@@ -21,7 +21,7 @@ use crate::{
     paging::{RmmA, RmmArch},
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L4, L5},
+    sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -379,7 +379,7 @@ impl Context {
     pub fn set_addr_space(
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
-        token: &mut CleanLockToken,
+        token: LockToken<L4>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
         if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
@@ -412,8 +412,7 @@ impl Context {
             match addr_space {
                 Some(ref new) => {
                     new.used_by.atomic_set(this_percpu.cpu_id);
-                    let mut token = token.token();
-                    let new_addrsp = new.acquire_read(token.downgrade());
+                    let new_addrsp = new.acquire_read(token);
                     unsafe {
                         new_addrsp.table.utable.make_current();
                     }
@@ -488,8 +487,11 @@ pub struct BorrowedHtBuf {
 }
 impl BorrowedHtBuf {
     pub fn head(token: &mut CleanLockToken) -> Result<Self> {
+        Self::head_locked(token.downgrade())
+    }
+    pub fn head_locked(token: LockToken<L3>) -> Result<Self> {
         let current = context::current();
-        let frame = &mut current.write(token.token()).syscall_head;
+        let frame = &mut current.write(token).syscall_head;
         match mem::replace(frame, SyscallFrame::Dummy) {
             SyscallFrame::Free(free_frame) => {
                 *frame = SyscallFrame::Used {
@@ -504,8 +506,11 @@ impl BorrowedHtBuf {
         }
     }
     pub fn tail(token: &mut CleanLockToken) -> Result<Self> {
+        Self::tail_locked(token.downgrade())
+    }
+    pub fn tail_locked(token: LockToken<L3>) -> Result<Self> {
         let current = context::current();
-        let frame = &mut current.write(token.token()).syscall_tail;
+        let frame = &mut current.write(token).syscall_tail;
         match mem::replace(frame, SyscallFrame::Dummy) {
             SyscallFrame::Free(free_frame) => {
                 *frame = SyscallFrame::Used {

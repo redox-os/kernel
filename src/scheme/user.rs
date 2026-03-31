@@ -520,8 +520,8 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut lock_token = token.token();
-        let mut dst_space = dst_space_lock.acquire_read(lock_token.downgrade());
+        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
+        let (dst_space, token) = dst_space_guard.token_split();
 
         let free_span = dst_space
             .grants
@@ -530,7 +530,7 @@ impl UserInner {
 
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::head(token)?;
+            let mut array = BorrowedHtBuf::head_locked(token)?;
             let frame = array.frame();
 
             let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
@@ -628,7 +628,7 @@ impl UserInner {
             let tail_dst_page = first_middle_dst_page.next_by(middle_page_count);
 
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::tail(token)?;
+            let mut array = BorrowedHtBuf::tail_locked(token)?;
             let frame = array.frame();
 
             if READ {
@@ -669,7 +669,7 @@ impl UserInner {
             }
         };
 
-        drop(dst_space);
+        drop(dst_space_guard);
 
         let base = free_span.base.start_address().data() + offset;
         Ok(CaptureGuard {

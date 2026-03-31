@@ -79,7 +79,6 @@ pub fn futex(
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
     // before context switching.
-    let mut lock_token = token.token();
     let addr_space_guard = current_addrsp.acquire_read(token.downgrade());
 
     let target_virtaddr = VirtualAddress::new(addr);
@@ -97,7 +96,7 @@ pub fn futex(
             let context_lock = context::current();
 
             {
-                let mut futexes = FUTEXES.lock(lock_token.token());
+                let mut futexes = FUTEXES.lock(token.token());
                 let (futexes, mut token) = futexes.token_split();
 
                 let (fetched, expected) = if op == FUTEX_WAIT {
@@ -183,6 +182,7 @@ pub fn futex(
             let mut woken = 0;
 
             {
+                drop(addr_space_guard);
                 let mut futexes_map = FUTEXES.lock(token.token());
                 let (futexes_map, mut token) = futexes_map.token_split();
 

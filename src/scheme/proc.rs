@@ -10,7 +10,7 @@ use crate::{
     memory::PAGE_SIZE,
     ptrace,
     scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme},
-    sync::{CleanLockToken, RwLock, L1},
+    sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
         data::{GrantDesc, Map, SetSighandlerData, Stat},
         error::*,
@@ -51,10 +51,12 @@ fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
 fn try_stop_context<T>(
     context_ref: Arc<ContextLock>,
     token: &mut CleanLockToken,
-    callback: impl FnOnce(&mut Context) -> Result<T>,
+    callback: impl FnOnce(&mut Context, LockToken<'_, L4>) -> Result<T>,
 ) -> Result<T> {
     if context::is_current(&context_ref) {
-        return callback(&mut context_ref.write(token.token()));
+        let context = &mut context_ref.write(token.token());
+        let (context, token) = context.token_split();
+        return callback(context, token);
     }
     // Stop process
     let (prev_status, mut running) = {
@@ -84,7 +86,8 @@ fn try_stop_context<T>(
         "process can't have been restarted, we stopped it!"
     );
 
-    let ret = callback(&mut context);
+    let (mut context, token) = context.token_split();
+    let ret = callback(&mut context, token);
 
     context.status = prev_status;
 
@@ -434,7 +437,7 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let old_ctx = try_stop_context(context, token, |context: &mut Context| {
+                let old_ctx = try_stop_context(context, token, |context, token| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -509,8 +512,8 @@ impl KernelScheme for ProcScheme {
                     || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
                 let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
-                let mut lock_token = token.token();
-                let mut src_addr_space = addrspace.acquire_read(lock_token.downgrade());
+                let mut src_addr_space = addrspace.acquire_write(token.downgrade());
+                let (src_addr_space, token) = src_addr_space.token_split();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -529,7 +532,7 @@ impl KernelScheme for ProcScheme {
                     )?
                 } else {
                     let mut lock_token = token.token();
-                    let mut dst_addrsp_guard = dst_addr_space.acquire_read(lock_token.downgrade());
+                    let mut dst_addrsp_guard = dst_addr_space.acquire_write(lock_token.downgrade());
                     dst_addrsp_guard.mmap(
                         dst_addr_space,
                         requested_dst_base,
@@ -946,7 +949,7 @@ impl ContextHandle {
                 RegsKind::Float => {
                     let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
 
-                    try_stop_context(context, token, |context| {
+                    try_stop_context(context, token, |context, token| {
                         // NOTE: The kernel will never touch floats
 
                         // Ignore the rare case of floating point
@@ -959,7 +962,7 @@ impl ContextHandle {
                 RegsKind::Int => {
                     let regs = unsafe { buf.read_exact::<IntRegisters>()? };
 
-                    try_stop_context(context, token, |context| match context.regs_mut() {
+                    try_stop_context(context, token, |context, token| match context.regs_mut() {
                         None => {
                             println!(
                                 "{}:{}: Couldn't read registers from stopped process",
@@ -1330,7 +1333,7 @@ impl ContextHandle {
                         )
                     }
                     RegsKind::Int => {
-                        try_stop_context(context, token, |context| match context.regs() {
+                        try_stop_context(context, token, |context, token| match context.regs() {
                             None => {
                                 assert!(!context.running, "try_stop_context is broken, clearly");
                                 println!(
@@ -1489,7 +1492,9 @@ fn write_env_regs(
             .write(token.token())
             .write_current_env_regs(regs)
     } else {
-        try_stop_context(context, token, |context| context.write_env_regs(regs))
+        try_stop_context(context, token, |context, token| {
+            context.write_env_regs(regs)
+        })
     }
 }
 
@@ -1499,6 +1504,6 @@ fn read_env_regs(context: Arc<ContextLock>, token: &mut CleanLockToken) -> Resul
             .read(token.token())
             .read_current_env_regs()
     } else {
-        try_stop_context(context, token, |context| context.read_env_regs())
+        try_stop_context(context, token, |context, token| context.read_env_regs())
     }
 }

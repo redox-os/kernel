@@ -335,11 +335,11 @@ impl AddrSpaceWrapper {
         new_page_count: usize,
         new_flags: MapFlags,
         mut notify_files_out: Option<&mut Vec<UnmapResult>>,
-        token: &mut CleanLockToken,
+        token: LockToken<L3>,
     ) -> Result<Page> {
         let dst_lock = self;
-        let mut token = token.token();
-        let mut dst = dst_lock.acquire_write(token.downgrade());
+        // SAFETY: This is moving data between two AddrSpace. Caller ensures the two is a different AddrSpace
+        let mut dst = unsafe { dst_lock.acquire_rewrite(token) };
         let dst = &mut *dst;
 
         let mut src_flusher;

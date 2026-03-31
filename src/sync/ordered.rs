@@ -500,6 +500,7 @@ impl<L: Level, T> RwLock<L, T> {
 
     /// Arcquires the lock_token to replace older LockWriteGuard.
     /// SAFETY: Caller must guarantee lock_token is coming from RwLockWriteGuard::into_token() from the same lock.
+    ///         OR Caller must guarantee lock_token is coming from different lock, which can happen when two lock need to copy data each other.
     pub unsafe fn rewrite<'a>(
         &'a self,
         lock_token: LockToken<'a, L>,
@@ -579,7 +580,7 @@ pub struct RwLockWriteGuard<'a, L: Level, T> {
     lock_token: LockToken<'a, L>,
 }
 
-impl<'a, L: Level, T> RwLockWriteGuard<'_, L, T> {
+impl<'a, L: Level, T> RwLockWriteGuard<'a, L, T> {
     /// Split the guard into two parts, the first a mutable reference to the held content
     /// the second a [`LockToken`] that can be used for further locking
     pub fn token_split(&mut self) -> (&mut T, LockToken<'_, L>) {
