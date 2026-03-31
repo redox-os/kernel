@@ -76,12 +76,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             // Get hardware descriptor data
             //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
             let hwdesc_data = if args.hwdesc_base != 0 {
-                Some(unsafe {
-                    slice::from_raw_parts(
-                        (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8,
-                        args.hwdesc_size as usize,
-                    )
-                })
+                Some(slice::from_raw_parts(
+                    (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8,
+                    args.hwdesc_size as usize,
+                ))
             } else {
                 None
             };

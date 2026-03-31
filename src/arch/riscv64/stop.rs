@@ -9,7 +9,7 @@ pub unsafe fn emergency_reset() -> ! {
     unimplemented!()
 }
 
-pub unsafe fn kstop(token: &mut CleanLockToken) -> ! {
+pub unsafe fn kstop(_token: &mut CleanLockToken) -> ! {
     println!("kstop");
     unimplemented!()
 }

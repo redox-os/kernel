@@ -16,12 +16,6 @@ pub unsafe fn disable() {
     unsafe { asm!("csrci sstatus, 1 << 1") }
 }
 
-/// Set interrupts
-#[inline(always)]
-pub unsafe fn enable() {
-    unsafe { asm!("csrsi sstatus, 1 << 1") }
-}
-
 /// Set interrupts and halt
 /// This will atomically wait for the next interrupt
 /// Performing enable followed by halt is not guaranteed to be atomic, use this instead!
