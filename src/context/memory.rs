@@ -101,76 +101,19 @@ impl AddrSpaceWrapper {
         &'a self,
         mut lock_token: LockToken<'a, L2>,
     ) -> RwLockReadGuard<'a, L3, AddrSpace> {
-        let my_percpu = PercpuBlock::current();
-
-        #[cfg(feature = "busy_panic")]
-        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
-        loop {
-            match self.inner.try_read(lock_token.token()) {
-                Some(g) => return g,
-                None => {
-                    #[cfg(feature = "busy_panic")]
-                    {
-                        i -= 1;
-                        if i == 0 {
-                            panic!("Deadlock at read may have triggered")
-                        }
-                    }
-                    my_percpu.maybe_handle_tlb_shootdown();
-                    core::hint::spin_loop();
-                }
-            }
-        }
+        self.inner.read(lock_token)
     }
     pub fn acquire_upgradeable_read<'a>(
         &'a self,
         mut lock_token: LockToken<'a, L2>,
     ) -> RwLockUpgradableGuard<'a, L3, AddrSpace> {
-        let my_percpu = PercpuBlock::current();
-
-        #[cfg(feature = "busy_panic")]
-        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
-        loop {
-            match self.inner.try_upgradeable_read(lock_token.token()) {
-                Some(g) => return g,
-                None => {
-                    #[cfg(feature = "busy_panic")]
-                    {
-                        i -= 1;
-                        if i == 0 {
-                            panic!("Deadlock at upgradeable_read may have triggered")
-                        }
-                    }
-                    my_percpu.maybe_handle_tlb_shootdown();
-                    core::hint::spin_loop();
-                }
-            }
-        }
+        self.inner.upgradeable_read(lock_token)
     }
     pub fn acquire_write<'a>(
         &'a self,
         mut lock_token: LockToken<'a, L2>,
     ) -> RwLockWriteGuard<'a, L3, AddrSpace> {
-        let my_percpu = PercpuBlock::current();
-
-        #[cfg(feature = "busy_panic")]
-        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
-        loop {
-            match self.inner.try_write(lock_token.token()) {
-                Some(g) => return g,
-                None => {
-                    #[cfg(feature = "busy_panic")]
-                    {
-                        i -= 1;
-                        if i == 0 {
-                            panic!("Deadlock at acquire_write may have triggered")
-                        }
-                    }
-                    my_percpu.maybe_handle_tlb_shootdown();
-                    core::hint::spin_loop();
-                }
-            }
-        }
+        self.inner.write(lock_token)
     }
     pub fn into_drop(self, token: &mut CleanLockToken) {
         self.inner.into_inner().into_drop(token);
