@@ -124,7 +124,6 @@ impl AddrSpaceWrapper {
 pub struct AddrSpace {
     pub table: Table,
     pub grants: UserGrants,
-    pub used_by: LogicalCpuSet,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
     /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
     /// the exception that we have a memory safe kernel which doesn't have to protect itself
@@ -572,7 +571,6 @@ impl AddrSpace {
             grants: UserGrants::new(),
             table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
-            used_by: LogicalCpuSet::empty(),
         })
     }
     fn munmap_inner(
@@ -699,7 +697,7 @@ impl AddrSpace {
                     let mut notify_files = Self::munmap_inner(
                         &mut self.grants,
                         &mut self.table.utable,
-                        &mut Flusher::with_cpu_set(&mut self.used_by, &dst_lock.tlb_ack),
+                        &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
                         requested_span,
                         unpin,
                     )?;
@@ -1474,7 +1472,7 @@ impl Grant {
                             //flush.ignore();
 
                             let mut src_flusher = Flusher {
-                                active_cpus: &mut src_addrspace.used_by,
+                                active_cpus: &src.addr_space_lock.used_by,
                                 state: src_flusher_state,
                             };
                             src_flusher.queue(
@@ -2608,7 +2606,7 @@ fn correct_inner<'l>(
                                 addr_space_lock.acquire_write(lock_token.downgrade());
                             addr_space = &mut *addr_space_guard;
                             flusher = Flusher::with_cpu_set(
-                                &mut addr_space.used_by,
+                                &addr_space_lock.used_by,
                                 &addr_space_lock.tlb_ack,
                             );
                             guard = foreign_address_space
