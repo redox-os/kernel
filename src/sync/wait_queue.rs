@@ -38,6 +38,8 @@ impl<T> WaitQueue<T> {
 
             if inner.is_empty() {
                 if block {
+                    // SAFETY: Uses wait_inner because this inner is L2. It's guaranteed there's no other
+                    // lock held at this point because clean token is provided from caller.
                     if !self.condition.wait_inner(inner, reason, &mut token) {
                         return Err(Error::new(EINTR));
                     }

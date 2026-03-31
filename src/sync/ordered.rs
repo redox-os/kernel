@@ -498,6 +498,72 @@ impl<L: Level, T> RwLock<L, T> {
         })
     }
 
+    /// Arcquires the lock_token to replace older LockWriteGuard.
+    /// SAFETY: Caller must guarantee lock_token is coming from RwLockWriteGuard::into_token() from the same lock.
+    pub unsafe fn rewrite<'a>(
+        &'a self,
+        lock_token: LockToken<'a, L>,
+    ) -> RwLockWriteGuard<'a, L, T> {
+        let inner = {
+            #[cfg(feature = "busy_panic")]
+            let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
+            loop {
+                match self.inner.try_write() {
+                    Some(inner) => break inner,
+                    None => {
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at write may have triggered")
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        RwLockWriteGuard {
+            inner,
+            lock_token: lock_token,
+        }
+    }
+
+    /// Arcquires the lock_token to replace older LockUpgradableGuard.
+    /// SAFETY: Caller must guarantee lock_token is coming from RwLockUpgradableGuard::into_token() from the same lock.
+    pub unsafe fn reupgradeable_read<'a>(
+        &'a self,
+        lock_token: LockToken<'a, L>,
+    ) -> RwLockUpgradableGuard<'a, L, T> {
+        let inner = {
+            #[cfg(feature = "busy_panic")]
+            let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
+            loop {
+                match self.inner.try_upgradeable_read() {
+                    Some(inner) => break inner,
+                    None => {
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at reupgradeable_read may have triggered")
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        RwLockUpgradableGuard {
+            inner,
+            lock_token: lock_token,
+        }
+    }
+
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
         core::mem::forget(self.inner.write());
@@ -513,11 +579,17 @@ pub struct RwLockWriteGuard<'a, L: Level, T> {
     lock_token: LockToken<'a, L>,
 }
 
-impl<L: Level, T> RwLockWriteGuard<'_, L, T> {
+impl<'a, L: Level, T> RwLockWriteGuard<'_, L, T> {
     /// Split the guard into two parts, the first a mutable reference to the held content
     /// the second a [`LockToken`] that can be used for further locking
     pub fn token_split(&mut self) -> (&mut T, LockToken<'_, L>) {
         (&mut self.inner, self.lock_token.token())
+    }
+
+    /// Drop this Guard and extract the token to be reused for another write lock with rewrite()
+    pub fn into_token(self) -> LockToken<'a, L> {
+        drop(self.inner);
+        self.lock_token
     }
 }
 
@@ -576,6 +648,12 @@ impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
             inner: spin::RwLockUpgradableGuard::upgrade(self.inner),
             lock_token: self.lock_token,
         }
+    }
+
+    /// Drop this Guard and extract the token to be reused for another write lock with reupgradeable_read()
+    pub fn into_token(self) -> LockToken<'a, L> {
+        drop(self.inner);
+        self.lock_token
     }
 }
 

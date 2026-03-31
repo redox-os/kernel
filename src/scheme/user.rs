@@ -905,8 +905,8 @@ impl UserInner {
         let to_close: Vec<FileDescription>;
 
         {
-            let mut states = self.states.lock(token.token());
-            let (states, mut token) = states.token_split();
+            let mut states_lock = self.states.lock(token.token());
+            let (states, mut lock_token) = states_lock.token_split();
             match states.get_mut(tag as usize) {
                 Some(o) => match mem::replace(o, State::Placeholder) {
                     // invalid state
@@ -957,12 +957,14 @@ impl UserInner {
                         match context.upgrade() {
                             Some(context) => {
                                 *o = State::Responded(response);
-                                context.write(token.token()).unblock();
+                                context.write(lock_token.token()).unblock();
                             }
                             _ => {
                                 states.remove(tag as usize);
                             }
                         }
+
+                        drop(states_lock);
 
                         let unpin = true;
                         AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
