@@ -1,4 +1,3 @@
-#![allow(unused)]
 // Because the memory map is so important to not be aliased, it is defined here, in one place
 // The lower 256 PML4 entries are reserved for userspace
 // Each PML4 entry references up to 512 GB of memory
@@ -18,12 +17,6 @@ pub const HPET_OFFSET: usize = IOAPIC_OFFSET + 4096;
 pub const KERNEL_HEAP_OFFSET: usize = 0xE000_0000;
 /// Size of kernel heap
 pub const KERNEL_HEAP_SIZE: usize = rmm::MEGABYTE;
-
-/// Offset to kernel percpu variables (256 MiB max)
-pub const KERNEL_PERCPU_OFFSET: usize = 0xF000_0000;
-/// Size of kernel percpu variables
-pub const KERNEL_PERCPU_SHIFT: u8 = 16; // 2^16 = 64 KiB
-pub const KERNEL_PERCPU_SIZE: usize = 1_usize << KERNEL_PERCPU_SHIFT;
 
 /// Offset of physmap (1 GiB max)
 // This needs to match RMM's PHYS_OFFSET
