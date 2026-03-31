@@ -89,7 +89,8 @@ impl MemoryScheme {
         let fixed = map.flags.contains(MapFlags::MAP_FIXED)
             || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
 
-        let page = addr_space.acquire_write().mmap(
+        let mut lock_token = token.token();
+        let page = addr_space.acquire_write(lock_token.downgrade()).mmap(
             addr_space,
             (map.address != 0 || fixed).then_some(span.base),
             page_count,
@@ -120,6 +121,7 @@ impl MemoryScheme {
         size: usize,
         flags: MapFlags,
         memory_type: MemoryType,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         // TODO: Check physical_address against the real MAXPHYADDR.
         let end = 1 << 52;
@@ -140,29 +142,32 @@ impl MemoryScheme {
 
         let current_addrsp = AddrSpace::current()?;
 
-        let base_page = current_addrsp.acquire_write().mmap_anywhere(
-            &current_addrsp,
-            page_count,
-            flags,
-            |dst_page, mut page_flags, dst_mapper, dst_flusher| {
-                match memory_type {
-                    // Default
-                    MemoryType::Writeback => (),
+        let mut lock_token = token.token();
+        let base_page = current_addrsp
+            .acquire_write(lock_token.downgrade())
+            .mmap_anywhere(
+                &current_addrsp,
+                page_count,
+                flags,
+                |dst_page, mut page_flags, dst_mapper, dst_flusher| {
+                    match memory_type {
+                        // Default
+                        MemoryType::Writeback => (),
 
-                    MemoryType::WriteCombining => page_flags = page_flags.write_combining(true),
-                    MemoryType::Uncacheable => page_flags = page_flags.uncacheable(true),
-                    MemoryType::DeviceMemory => page_flags = page_flags.device_memory(true),
-                }
+                        MemoryType::WriteCombining => page_flags = page_flags.write_combining(true),
+                        MemoryType::Uncacheable => page_flags = page_flags.uncacheable(true),
+                        MemoryType::DeviceMemory => page_flags = page_flags.device_memory(true),
+                    }
 
-                Grant::physmap(
-                    Frame::containing(PhysicalAddress::new(physical_address)),
-                    PageSpan::new(dst_page, page_count.get()),
-                    page_flags,
-                    dst_mapper,
-                    dst_flusher,
-                )
-            },
-        )?;
+                    Grant::physmap(
+                        Frame::containing(PhysicalAddress::new(physical_address)),
+                        PageSpan::new(dst_page, page_count.get()),
+                        page_flags,
+                        dst_mapper,
+                        dst_flusher,
+                    )
+                },
+            )?;
         Ok(base_page.start_address().data())
     }
 }
@@ -249,7 +254,7 @@ impl KernelScheme for MemoryScheme {
         payload: UserSliceRw,
         _flags: syscall::CallFlags,
         _metadata: &[u64],
-        _token: &mut CleanLockToken,
+        token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (handle_ty, _, _) = u32::try_from(id)
             .ok()
@@ -259,8 +264,10 @@ impl KernelScheme for MemoryScheme {
         match handle_ty {
             HandleTy::Translation => {
                 let virt = VirtualAddress::new(payload.read_usize()?);
-                let (phys, _) = AddrSpace::current()?
-                    .acquire_read()
+                let mut token = token.token();
+                let addr = AddrSpace::current()?;
+                let addr = addr.acquire_read(token.downgrade());
+                let (phys, _) = addr
                     .table
                     .utable
                     .translate(virt)
@@ -295,7 +302,7 @@ impl KernelScheme for MemoryScheme {
                 flags.contains(HandleFlags::PHYS_CONTIGUOUS),
                 token,
             ),
-            HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty),
+            HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty, token),
             HandleTy::Translation => Err(Error::new(EOPNOTSUPP)),
         }
     }

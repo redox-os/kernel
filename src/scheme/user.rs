@@ -404,16 +404,20 @@ impl UserInner {
 
         let is_pinned = true;
         let dst_page = {
-            dst_addr_space.acquire_write().mmap_anywhere(
-                &dst_addr_space,
-                ONE,
-                PROT_READ,
-                |dst_page, flags, mapper, flusher| {
-                    Grant::allocated_shared_one_page(
-                        tail_frame, dst_page, flags, mapper, flusher, is_pinned,
-                    )
-                },
-            )?
+            let mut lock_token = token.token();
+
+            dst_addr_space
+                .acquire_write(lock_token.downgrade())
+                .mmap_anywhere(
+                    &dst_addr_space,
+                    ONE,
+                    PROT_READ,
+                    |dst_page, flags, mapper, flusher| {
+                        Grant::allocated_shared_one_page(
+                            tail_frame, dst_page, flags, mapper, flusher, is_pinned,
+                        )
+                    },
+                )?
         };
 
         let base = dst_page.start_address().data();
@@ -516,7 +520,8 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut dst_space = dst_space_lock.acquire_write();
+        let mut lock_token = token.token();
+        let mut dst_space = dst_space_lock.acquire_read(lock_token.downgrade());
 
         let free_span = dst_space
             .grants
@@ -604,7 +609,7 @@ impl UserInner {
 
                     Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut cur_space_lock.acquire_write(),
+                        &mut cur_space_lock.acquire_write(token.token().downgrade()),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -871,8 +876,9 @@ impl UserInner {
 
                 let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
+                let mut lock_token = token.token();
                 let (frame, _) = AddrSpace::current()?
-                    .acquire_read()
+                    .acquire_read(lock_token.downgrade())
                     .table
                     .utable
                     .translate(base_addr)
@@ -959,7 +965,7 @@ impl UserInner {
                         }
 
                         let unpin = true;
-                        AddrSpace::current()?.munmap(callee_responsible, unpin)?;
+                        AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
                     }
                 },
                 // invalid state
@@ -1073,6 +1079,7 @@ impl UserInner {
             base_offset: map.offset,
         };
 
+        let mut lock_token = token.token();
         let src = match base_page_opt {
             Some(base_addr) => Some({
                 if base_addr % PAGE_SIZE != 0 {
@@ -1082,7 +1089,7 @@ impl UserInner {
                 BorrowedFmapSource {
                     src_base: Page::containing_address(VirtualAddress::new(base_addr)),
                     addr_space_lock,
-                    addr_space_guard: addr_space_lock.acquire_write(),
+                    addr_space_guard: addr_space_lock.acquire_write(lock_token.downgrade()),
                     mode: if map.flags.contains(MapFlags::MAP_SHARED) {
                         MmapMode::Shared
                     } else {
@@ -1096,7 +1103,8 @@ impl UserInner {
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
         let dst_base = {
-            dst_addr_space.acquire_write().mmap(
+            let mut lock_token = token.token();
+            dst_addr_space.acquire_write(lock_token.downgrade()).mmap(
                 &dst_addr_space,
                 dst_base,
                 page_count_nz,
@@ -1288,7 +1296,7 @@ struct CopyInfo<const READ: bool, const WRITE: bool> {
     dst: Option<UserSlice<true, true>>,
 }
 impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
-    fn release_inner(&mut self) -> Result<()> {
+    fn release_inner(&mut self, token: &mut CleanLockToken) -> Result<()> {
         if self.destroyed {
             return Ok(());
         }
@@ -1317,13 +1325,13 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         if let Some(ref addrsp) = self.addrsp
             && !self.span.is_empty()
         {
-            addrsp.munmap(self.span, unpin)?;
+            addrsp.munmap(self.span, unpin, token)?;
         }
 
         Ok(())
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
-        self.release_inner()?;
+        self.release_inner(token)?;
         if let Some(addrsp) = self.addrsp.take()
             && let Some(addrsp) = Arc::into_inner(addrsp)
         {
@@ -1340,7 +1348,12 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
 }
 impl<const READ: bool, const WRITE: bool> Drop for CaptureGuard<READ, WRITE> {
     fn drop(&mut self) {
-        let _ = self.release_inner();
+        let mut token = unsafe { CleanLockToken::new() };
+        let _ = self.release_inner(&mut token);
+        #[cfg(feature = "drop_panic")]
+        {
+            panic!("CaptureGuard dropped");
+        }
     }
 }
 /// base..base+size => page..page+page_count*PAGE_SIZE, offset

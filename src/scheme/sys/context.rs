@@ -24,7 +24,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             // exist, but is this a good indicator of whether it is user or kernel?
             stat_string.push(match context.addr_space() {
                 Ok(addr_space) => {
-                    if addr_space.acquire_read().grants.is_empty() {
+                    if addr_space.acquire_read(token.downgrade()).grants.is_empty() {
                         'K'
                     } else {
                         'U'
@@ -76,7 +76,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 memory += kstack.len();
             }
             if let Ok(addr_space) = context.addr_space() {
-                for (_base, info) in addr_space.acquire_read().grants.iter() {
+                for (_base, info) in addr_space.acquire_read(token.downgrade()).grants.iter() {
                     // TODO: method
                     if matches!(info.provider, context::memory::Provider::Allocated { .. }) {
                         memory += info.page_count() * PAGE_SIZE;

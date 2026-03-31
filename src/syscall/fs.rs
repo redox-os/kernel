@@ -613,7 +613,7 @@ pub fn funmap(virtual_address: usize, length: usize, token: &mut CleanLockToken)
     let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned)
         .ok_or(Error::new(EINVAL))?;
     let unpin = false;
-    let notify = addr_space.munmap(span, unpin)?;
+    let notify = addr_space.munmap(span, unpin, token)?;
 
     for map in notify {
         let _ = map.unmap(token);
@@ -672,7 +672,8 @@ pub fn mremap(
 
         let raii_frame = addr_space.borrow_frame_enforce_rw_allocated(src_span.base, token)?;
 
-        let base = addr_space.acquire_write().mmap(
+        let mut token = token.token();
+        let base = addr_space.acquire_read(token.downgrade()).mmap(
             &addr_space,
             requested_dst_base,
             NonZeroUsize::new(1).expect("value specified is not zero"),
@@ -704,6 +705,7 @@ pub fn mremap(
             new_page_count,
             map_flags,
             None,
+            token,
         )?;
 
         Ok(base.start_address().data())

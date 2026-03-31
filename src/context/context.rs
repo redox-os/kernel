@@ -379,6 +379,7 @@ impl Context {
     pub fn set_addr_space(
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
+        token: &mut CleanLockToken,
     ) -> Option<Arc<AddrSpaceWrapper>> {
         if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
@@ -411,7 +412,8 @@ impl Context {
             match addr_space {
                 Some(ref new) => {
                     new.used_by.atomic_set(this_percpu.cpu_id);
-                    let new_addrsp = new.acquire_read();
+                    let mut token = token.token();
+                    let new_addrsp = new.acquire_read(token.downgrade());
                     unsafe {
                         new_addrsp.table.utable.make_current();
                     }

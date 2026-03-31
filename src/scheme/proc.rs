@@ -445,7 +445,7 @@ impl KernelScheme for ProcScheme {
                     ))]
                     regs.set_arg1(arg1);
 
-                    Ok(context.set_addr_space(Some(new)))
+                    Ok(context.set_addr_space(Some(new), token))
                 })?;
                 if let Some(old_ctx) = old_ctx
                     && let Some(addrspace) = Arc::into_inner(old_ctx)
@@ -509,7 +509,8 @@ impl KernelScheme for ProcScheme {
                     || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
                 let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
-                let mut src_addr_space = addrspace.acquire_write();
+                let mut lock_token = token.token();
+                let mut src_addr_space = addrspace.acquire_read(lock_token.downgrade());
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -524,9 +525,11 @@ impl KernelScheme for ProcScheme {
                         src_page_count.get(),
                         map.flags,
                         Some(&mut notify_files),
+                        token,
                     )?
                 } else {
-                    let mut dst_addrsp_guard = dst_addr_space.acquire_write();
+                    let mut lock_token = token.token();
+                    let mut dst_addrsp_guard = dst_addr_space.acquire_read(lock_token.downgrade());
                     dst_addrsp_guard.mmap(
                         dst_addr_space,
                         requested_dst_base,
@@ -567,7 +570,8 @@ impl KernelScheme for ProcScheme {
                 };
                 // TODO: Allocated or AllocatedShared?
                 let addrsp = AddrSpace::current()?;
-                let page = addrsp.acquire_write().mmap(
+                let mut lock_token = token.token();
+                let page = addrsp.acquire_read(lock_token.downgrade()).mmap(
                     &addrsp,
                     None,
                     NonZeroUsize::new(1).unwrap(),
@@ -793,7 +797,7 @@ impl KernelScheme for ProcScheme {
                             addrspace: AddrSpaceWrapper::new()?,
                         },
                         b"exclusive" => ContextHandle::AddrSpace {
-                            addrspace: addrspace.try_clone()?,
+                            addrspace: addrspace.try_clone(token)?,
                         },
                         b"mmap-min-addr" => ContextHandle::MmapMinAddr(Arc::clone(addrspace)),
 
@@ -809,7 +813,8 @@ impl KernelScheme for ProcScheme {
 
                             let page = Page::containing_address(VirtualAddress::new(page_addr));
 
-                            let read_lock = addrspace.acquire_read();
+                            let mut token = token.token();
+                            let read_lock = addrspace.acquire_read(token.downgrade());
                             let (_, info) =
                                 read_lock.grants.contains(page).ok_or(Error::new(EINVAL))?;
                             return Ok(OpenResult::External(
@@ -925,13 +930,13 @@ impl ContextHandle {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
 
                         let unpin = false;
-                        addrspace.munmap(page_span, unpin)?;
+                        addrspace.munmap(page_span, unpin, token)?;
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
                         let flags = MapFlags::from_bits(next()??).ok_or(Error::new(EINVAL))?;
 
-                        addrspace.mprotect(page_span, flags)?;
+                        addrspace.mprotect(page_span, flags, token)?;
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
@@ -1131,7 +1136,8 @@ impl ContextHandle {
                 if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
                     return Err(Error::new(EINVAL));
                 }
-                addrspace.acquire_write().mmap_min = val;
+                let mut lock_token = token.token();
+                addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
                 Ok(mem::size_of::<usize>())
             }
             Self::SchedAffinity => {
@@ -1208,6 +1214,7 @@ impl ContextHandle {
                                         )
                                         .ok_or(Error::new(EINVAL))?,
                                         false,
+                                        token,
                                     )?;
                                     for r in res {
                                         let _ = r.unmap(token);
@@ -1276,6 +1283,7 @@ impl ContextHandle {
                                         )
                                         .ok_or(Error::new(EINVAL))?,
                                         false,
+                                        token,
                                     )?;
                                     for r in res {
                                         let _ = r.unmap(token);
@@ -1364,9 +1372,11 @@ impl ContextHandle {
 
                 let mut dst = [GrantDesc::default(); 16];
 
+                let mut token = token.token();
+                let addr_space = addrspace.acquire_read(token.downgrade());
                 for (dst, (grant_base, grant_info)) in dst
                     .iter_mut()
-                    .zip(addrspace.acquire_read().grants.iter().skip(grants_to_skip))
+                    .zip(addr_space.grants.iter().skip(grants_to_skip))
                 {
                     *dst = GrantDesc {
                         base: grant_base.start_address().data(),
@@ -1391,7 +1401,9 @@ impl ContextHandle {
 
             ContextHandle::Filetable { data, .. } => read_from(buf, &data, offset),
             ContextHandle::MmapMinAddr(addrspace) => {
-                buf.write_usize(addrspace.acquire_read().mmap_min)?;
+                let mut token = token.token();
+                let addr = addrspace.acquire_read(token.downgrade());
+                buf.write_usize(addr.mmap_min)?;
                 Ok(mem::size_of::<usize>())
             }
             ContextHandle::SchedAffinity => {

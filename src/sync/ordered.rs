@@ -204,7 +204,7 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
 }
 
 #[cfg(feature = "busy_panic")]
-const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
+pub const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
 
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
@@ -341,6 +341,18 @@ impl<L: Level, T> RwLock<L, T> {
         }
     }
 
+    /// Returns a mutable reference to the underlying data without locking.
+    /// The mutable borrow statically guarantees no locks exist thus safe to use.
+    pub fn get_mut(&mut self) -> &mut T {
+        self.inner.get_mut()
+    }
+
+    /// Returns a mutable pointer to the underying data.
+    /// Writing to the data is undefined behavior unless locking is guaranteed by caller.
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.inner.as_mut_ptr()
+    }
+
     /// Consumes this RwLock, returning the underlying data.
     pub fn into_inner(self) -> T {
         self.inner.into_inner()
@@ -426,6 +438,20 @@ impl<L: Level, T> RwLock<L, T> {
         })
     }
 
+    pub fn try_upgradeable_read<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Option<RwLockUpgradableGuard<'a, L, T>> {
+        let inner = match self.inner.try_upgradeable_read() {
+            Some(inner) => inner,
+            None => return None,
+        };
+        Some(RwLockUpgradableGuard {
+            inner,
+            lock_token: LockToken::downgraded(lock_token),
+        })
+    }
+
     pub fn try_write<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -492,6 +518,36 @@ impl<L: Level, T> RwLockReadGuard<'_, L, T> {
 }
 
 impl<L: Level, T> core::ops::Deref for RwLockReadGuard<'_, L, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref()
+    }
+}
+
+/// RAII structure used to release the shared read access of a lock when dropped. Allows upgrade to RW lock
+pub struct RwLockUpgradableGuard<'a, L: Level, T> {
+    inner: spin::RwLockUpgradableGuard<'a, T>,
+    lock_token: LockToken<'a, L>,
+}
+
+impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
+    /// Split the guard into two parts, the first a reference to the held content
+    /// the second a [`LockToken`] that can be used for further locking
+    pub fn token_split(&mut self) -> (&T, LockToken<'_, L>) {
+        (&self.inner, self.lock_token.token())
+    }
+
+    /// Upgrade to RW lock
+    pub fn upgrade(mut self) -> RwLockWriteGuard<'a, L, T> {
+        RwLockWriteGuard {
+            inner: spin::RwLockUpgradableGuard::upgrade(self.inner),
+            lock_token: self.lock_token,
+        }
+    }
+}
+
+impl<L: Level, T> core::ops::Deref for RwLockUpgradableGuard<'_, L, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

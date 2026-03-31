@@ -13,8 +13,8 @@ use syscall::PtraceFlags;
 
 use crate::{
     context::{
-        arch, contexts, contexts_mut, free_contexts_try, ArcContextLockWriteGuard,
-        Context, ContextLock,
+        arch, contexts, contexts_mut, free_contexts_try, ArcContextLockWriteGuard, Context,
+        ContextLock,
     },
     cpu_set::LogicalCpuId,
     cpu_stats,

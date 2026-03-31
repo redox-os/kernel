@@ -95,7 +95,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let page_count = NonZeroUsize::new(1).unwrap();
     let fpath_page = {
         let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
-        addr_space.acquire_write().mmap(
+        addr_space.acquire_write(token.token().downgrade()).mmap(
             &addr_space,
             None,
             page_count,
@@ -119,7 +119,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     {
         let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
-        addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false)?;
+        addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false, token)?;
     }
 
     res
