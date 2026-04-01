@@ -145,7 +145,6 @@ pub enum SwitchResult {
 /// - `SwitchResult::AllContextsIdle`: Indicates all contexts are idle, and the CPU will switch
 ///   to an idle context.
 pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
-    //info!("SWITCH STARTS!!");
     let switch_time = crate::time::monotonic(token);
 
     let percpu = PercpuBlock::current();
@@ -180,7 +179,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         return SwitchResult::Switched;
     }
 
-    //info!("SWITCH 0!!");
     // Alarm (previously in update_runnable)
     // TODO: Optimise this somehow
     let mut wakeups = Vec::new();
@@ -208,8 +206,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             }
         }
     }
-
-    //info!("SWITCH 1!!");
     for context_lock in wakeups {
         context::wakeup_context(&context_lock, token.token());
     }
@@ -241,7 +237,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         }
     }
 
-    //info!("SWITCH 2!!");
     // Update per-cpu times
     let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
     let percpu_ms = percpu_nanos / 1_000_000;
@@ -322,7 +317,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 .being_sigkilled
                 .set(next_context.being_sigkilled);
 
-            //info!("SWITCH 3!!");
             unsafe {
                 arch::switch_to(prev_context, next_context);
             }
@@ -335,7 +329,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             SwitchResult::Switched
         }
         _ => {
-            //info!("SWITCH 3!!");
             // No target was found, unset global lock and return
             arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
