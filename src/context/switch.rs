@@ -1,16 +1,8 @@
 //! This module provides a context-switching mechanism that utilizes a simple round-robin scheduler.
 //! The scheduler iterates over available contexts, selecting the next context to run, while
 //! handling process states and synchronization.
-use core::{
-    cell::{Cell, RefCell},
-    hint, mem,
-    ops::Bound,
-    sync::atomic::Ordering,
-};
-
-use alloc::{sync::Arc, vec::Vec};
-use syscall::PtraceFlags;
-
+use crate::sync::ArcRwLockWriteGuard;
+use crate::sync::L4;
 use crate::{
     context::{
         self, arch, contexts, contexts_mut, free_contexts_try, run_contexts_mut,
@@ -21,6 +13,14 @@ use crate::{
     percpu::PercpuBlock,
     sync::CleanLockToken,
 };
+use alloc::{sync::Arc, vec::Vec};
+use core::{
+    cell::{Cell, RefCell},
+    hint, mem,
+    ops::Bound,
+    sync::atomic::Ordering,
+};
+use syscall::PtraceFlags;
 
 use super::ContextRef;
 
@@ -145,6 +145,7 @@ pub enum SwitchResult {
 /// - `SwitchResult::AllContextsIdle`: Indicates all contexts are idle, and the CPU will switch
 ///   to an idle context.
 pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
+    //info!("SWITCH STARTS!!");
     let switch_time = crate::time::monotonic(token);
 
     let percpu = PercpuBlock::current();
@@ -179,6 +180,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         return SwitchResult::Switched;
     }
 
+    //info!("SWITCH 0!!");
     // Alarm (previously in update_runnable)
     // TODO: Optimise this somehow
     let mut wakeups = Vec::new();
@@ -207,13 +209,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         }
     }
 
+    //info!("SWITCH 1!!");
     for context_lock in wakeups {
         context::wakeup_context(&context_lock, token.token());
     }
 
     let cpu_id = crate::cpu_id();
 
-    let switch_context_opt =
+    let mut switch_context_opt =
         match select_next_context(token, percpu, cpu_id, switch_time, &mut prev_context_guard) {
             Ok(opt) => opt,
             Err(early_ret) => return early_ret,
@@ -238,6 +241,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         }
     }
 
+    //info!("SWITCH 2!!");
     // Update per-cpu times
     let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
     let percpu_ms = percpu_nanos / 1_000_000;
@@ -318,6 +322,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 .being_sigkilled
                 .set(next_context.being_sigkilled);
 
+            //info!("SWITCH 3!!");
             unsafe {
                 arch::switch_to(prev_context, next_context);
             }
@@ -330,6 +335,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             SwitchResult::Switched
         }
         _ => {
+            //info!("SWITCH 3!!");
             // No target was found, unset global lock and return
             arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
 
@@ -346,32 +352,44 @@ fn select_next_context(
     percpu: &PercpuBlock,
     cpu_id: LogicalCpuId,
     switch_time: u128,
-) -> Result<Option<(ArcContextLockWriteGuard, ArcContextLockWriteGuard)>, SwitchResult> {
+    prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
+) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
+    //info!("SELECT!!");
     let mut contexts_data = run_contexts_mut(token.token());
+    //info!("SELECT 0");
     let mut contexts_list = &mut contexts_data.set;
+    //info!("SELECT 1");
     let mut balance = percpu.balance.get();
+    //info!("SELECT 2");
     let mut i = percpu.last_queue.get() % 40;
+    //info!("SELECT 3");
 
     // Lock the previous context.
     let prev_context_lock = crate::context::current();
+    //info!("SELECT 4");
     // We are careful not to lock this context twice
-    let mut prev_context_guard = unsafe { prev_context_lock.write_arc() };
+    // let mut prev_context_guard = unsafe { prev_context_lock.write_arc() };
+    //info!("SELECT 5");
 
     // If we cannot even preempt the prev context, no need to go any further
-    if !prev_context_guard.is_preemptable() {
-        // Unset global lock
-        arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+    // if !prev_context_guard.is_preemptable() {
+    //    info!("SELECT 6");
+    // Unset global lock
+    //    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
+    //     info!("SELECT 7");
 
-        // Pretend to have finished switching, so CPU is not idled
-        return Err(SwitchResult::Switched);
-    }
+    // Pretend to have finished switching, so CPU is not idled
+    //      return Err(SwitchResult::Switched);
+    //   }
+    //info!("SELECT 8");
 
-    let idle_context = percpu.switch_internals.idle_context();
+    //info!("SELECT 9");
 
     let mut empty_queues = 0;
     let mut total_iters = 0;
     let mut next_context_guard_opt = None;
 
+    //info!("SELECT LOOP START");
     'priority: loop {
         i = (i + 1) % 40;
         total_iters += 1;
@@ -435,34 +453,27 @@ fn select_next_context(
             }
         }
     }
+    //info!("SELECT LOOP END");
     percpu.balance.set(balance);
     percpu.last_queue.set(i);
 
+    //info!("SELECT 9.5");
+    //info!("SELECT 10");
     if let Some(next_context_guard) = next_context_guard_opt {
         // We found a new process!
         // Send the old process to the back of the line (if it is still runnable)
-        if prev_context_guard.status.is_runnable()
-            && !Arc::ptr_eq(&prev_context_lock, &idle_context)
-        {
+        if prev_context_guard.status.is_runnable() {
             let prio = prev_context_guard.prio;
             contexts_list[prio].push_back(ContextRef(Arc::clone(&prev_context_lock)));
             prev_context_guard.enqueued = true;
         }
 
-        return Ok(Some((prev_context_guard, next_context_guard)));
+        //info!("SELECT RETURN 0");
+        return Ok(Some(next_context_guard));
     } else {
         // We found no other process to run.
-        if prev_context_guard.status.is_runnable()
-            && !Arc::ptr_eq(&prev_context_lock, &idle_context)
-        {
-            arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-            return Err(SwitchResult::Switched);
-        } else if Arc::ptr_eq(&prev_context_lock, &idle_context) {
-            return Ok(None);
-        } else {
-            let idle_guard = unsafe { idle_context.write_arc() };
-            return Ok(Some((prev_context_guard, idle_guard)));
-        }
+        //info!("SELECT RETURN 1");
+        Ok(None)
     }
 }
 

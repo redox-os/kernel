@@ -238,8 +238,8 @@ pub fn spawn(
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
     run_contexts_mut(token.token()).set[20].push_back(run_ref);
-
-    free_contexts(token.token().downgrade()).insert(context_ref);
+    contexts_mut(token.token()).insert(context_ref);
+    // free_contexts(token.token().downgrade()).insert(context_ref);
     Ok(context_lock)
 }
 
