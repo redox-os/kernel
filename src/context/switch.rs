@@ -354,42 +354,18 @@ fn select_next_context(
     switch_time: u128,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
-    //info!("SELECT!!");
     let mut contexts_data = run_contexts_mut(token.token());
-    //info!("SELECT 0");
     let mut contexts_list = &mut contexts_data.set;
-    //info!("SELECT 1");
     let mut balance = percpu.balance.get();
-    //info!("SELECT 2");
     let mut i = percpu.last_queue.get() % 40;
-    //info!("SELECT 3");
 
     // Lock the previous context.
     let prev_context_lock = crate::context::current();
-    //info!("SELECT 4");
-    // We are careful not to lock this context twice
-    // let mut prev_context_guard = unsafe { prev_context_lock.write_arc() };
-    //info!("SELECT 5");
-
-    // If we cannot even preempt the prev context, no need to go any further
-    // if !prev_context_guard.is_preemptable() {
-    //    info!("SELECT 6");
-    // Unset global lock
-    //    arch::CONTEXT_SWITCH_LOCK.store(false, Ordering::SeqCst);
-    //     info!("SELECT 7");
-
-    // Pretend to have finished switching, so CPU is not idled
-    //      return Err(SwitchResult::Switched);
-    //   }
-    //info!("SELECT 8");
-
-    //info!("SELECT 9");
 
     let mut empty_queues = 0;
     let mut total_iters = 0;
     let mut next_context_guard_opt = None;
 
-    //info!("SELECT LOOP START");
     'priority: loop {
         i = (i + 1) % 40;
         total_iters += 1;
@@ -453,12 +429,9 @@ fn select_next_context(
             }
         }
     }
-    //info!("SELECT LOOP END");
     percpu.balance.set(balance);
     percpu.last_queue.set(i);
 
-    //info!("SELECT 9.5");
-    //info!("SELECT 10");
     if let Some(next_context_guard) = next_context_guard_opt {
         // We found a new process!
         // Send the old process to the back of the line (if it is still runnable)
@@ -468,11 +441,9 @@ fn select_next_context(
             prev_context_guard.enqueued = true;
         }
 
-        //info!("SELECT RETURN 0");
         return Ok(Some(next_context_guard));
     } else {
         // We found no other process to run.
-        //info!("SELECT RETURN 1");
         Ok(None)
     }
 }
