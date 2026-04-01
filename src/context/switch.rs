@@ -184,13 +184,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let mut wakeups = Vec::new();
     {
         let current_context = context::current();
-        let contexts_guard = contexts(token.token());
-        for context_ref in contexts_guard.iter().filter_map(|r| r.upgrade()) {
+
+        let mut contexts_guard = contexts(token.token());
+        let (context, mut token) = contexts_guard.token_split();
+        for context_ref in context.iter().filter_map(|r| r.upgrade()) {
             if Arc::ptr_eq(&context_ref, &current_context) {
                 continue;
             }
-            let mut local_token = unsafe { CleanLockToken::new() };
-            let guard = context_ref.read(local_token.token());
+            let guard = context_ref.read(token.token());
             if guard.status.is_soft_blocked() {
                 if let Some(wake) = guard.wake {
                     if switch_time >= wake {

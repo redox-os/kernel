@@ -13,7 +13,10 @@ use syscall::PtraceFlags;
 
 use crate::{
     arch::device::ArchPercpuMisc,
-    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu, ContextRef},
+    context::{
+        empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu, ContextRef,
+        RunContextData,
+    },
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
@@ -49,6 +52,8 @@ pub struct PercpuBlock {
 
     pub stats: CpuStats,
     pub contexts: RwLock<L1, BTreeSet<ContextRef>>,
+    /// Actual context store for the scheduler
+    pub run_contexts: RwLock<L1, RunContextData>,
 }
 
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
@@ -203,6 +208,7 @@ impl PercpuBlock {
 
             stats: CpuStats::default(),
             contexts: RwLock::new(BTreeSet::new()),
+            run_contexts: RwLock::new(RunContextData::new()),
         }
     }
 }

@@ -85,9 +85,6 @@ pub fn free_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, BTreeSet<Co
     CONTEXTS.lock(token)
 }
 
-// Actual context store for the scheduler
-static RUN_CONTEXTS: RwLock<L1, RunContextData> = RwLock::new(RunContextData::new());
-
 pub struct RunContextData {
     set: [VecDeque<ContextRef>; 40],
 }
@@ -114,11 +111,13 @@ pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeS
 }
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.read(token)
+    let percpu = PercpuBlock::current();
+    percpu.run_contexts.read(token)
 }
 
 pub fn run_contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.write(token)
+    let percpu = PercpuBlock::current();
+    percpu.run_contexts.write(token)
 }
 
 pub fn init(token: &mut CleanLockToken) {
@@ -232,16 +231,15 @@ pub fn spawn(
 
     context.kstack = Some(stack);
     context.userspace = userspace_allowed;
+    context.enqueued = true;
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
-    free_contexts(token.token().downgrade()).insert(context_ref);
-
     let run_ref = ContextRef(Arc::clone(&context_lock));
     run_contexts_mut(token.token()).set[20].push_back(run_ref);
-    context_lock.write(token.token()).enqueued = true;
 
+    free_contexts(token.token().downgrade()).insert(context_ref);
     Ok(context_lock)
 }
 
