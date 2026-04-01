@@ -36,10 +36,13 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     let context_lock = context::current();
     {
         let mut context = context_lock.write(token.token());
+        // let (context, mut token) = context.token_split();
         close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
+        // TODO: Lock ordering violation
+        let mut token = unsafe { CleanLockToken::new() };
         addrspace_opt = context
-            .set_addr_space(None)
+            .set_addr_space(None, token.downgrade())
             .and_then(|a| Arc::try_unwrap(a).ok());
         drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
         drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
@@ -76,13 +79,18 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     unreachable!();
 }
 
-pub fn mprotect(address: usize, size: usize, flags: MapFlags) -> Result<()> {
+pub fn mprotect(
+    address: usize,
+    size: usize,
+    flags: MapFlags,
+    token: &mut CleanLockToken,
+) -> Result<()> {
     // println!("mprotect {:#X}, {}, {:#X}", address, size, flags);
 
     let span = PageSpan::validate_nonempty(VirtualAddress::new(address), size)
         .ok_or(Error::new(EINVAL))?;
 
-    AddrSpace::current()?.mprotect(span, flags)
+    AddrSpace::current()?.mprotect(span, flags, token)
 }
 
 const KERNEL_METADATA_BASE: usize = crate::USER_END_OFFSET - syscall::KERNEL_METADATA_SIZE;
@@ -114,26 +122,29 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let page_count =
             NonZeroUsize::new(bootstrap.page_count).expect("bootstrap contained no pages!");
 
-        let _base_page = addr_space
-            .acquire_write()
-            .mmap(
-                &addr_space,
-                Some(base),
-                page_count,
-                flags,
-                None,
-                |page, flags, mapper, flusher| {
-                    let shared = false;
-                    Ok(Grant::zeroed(
-                        PageSpan::new(page, bootstrap.page_count),
-                        flags,
-                        mapper,
-                        flusher,
-                        shared,
-                    )?)
-                },
-            )
-            .expect("Failed to allocate bootstrap pages");
+        let _base_page = {
+            let mut lock_token = token.token();
+            let mut addr_space_lock = addr_space.acquire_write(lock_token.downgrade());
+            addr_space_lock
+                .mmap(
+                    &addr_space,
+                    Some(base),
+                    page_count,
+                    flags,
+                    None,
+                    |page, flags, mapper, flusher| {
+                        let shared = false;
+                        Ok(Grant::zeroed(
+                            PageSpan::new(page, bootstrap.page_count),
+                            flags,
+                            mapper,
+                            flusher,
+                            shared,
+                        )?)
+                    },
+                )
+                .expect("Failed to allocate bootstrap pages")
+        };
 
         // Insert kernel schemes root capabilities.
         let mut kernel_schemes_infos =
@@ -168,8 +179,9 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             insert_fd(*scheme_id, cap_fd, false, token)
         };
 
+        let mut lock_token = token.token();
         let kernel_schemes_info_page = addr_space
-            .acquire_write()
+            .acquire_write(lock_token.downgrade())
             .mmap(
                 &addr_space,
                 Some(Page::containing_address(VirtualAddress::new(
@@ -221,6 +233,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             KERNEL_METADATA_BASE,
             KERNEL_METADATA_PAGE_COUNT * PAGE_SIZE,
             MapFlags::PROT_READ,
+            token,
         )
         .expect("failed to mprotect kernel schemes info page");
     }

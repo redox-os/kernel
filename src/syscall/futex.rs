@@ -79,7 +79,7 @@ pub fn futex(
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
     // before context switching.
-    let addr_space_guard = current_addrsp.acquire_read();
+    let addr_space_guard = current_addrsp.acquire_read(token.downgrade());
 
     let target_virtaddr = VirtualAddress::new(addr);
     let target_physaddr = validate_and_translate_virt(&addr_space_guard, target_virtaddr)
@@ -96,6 +96,8 @@ pub fn futex(
             let context_lock = context::current();
 
             {
+                // TODO: Lock ordering violation
+                let mut token = unsafe { CleanLockToken::new() };
                 let mut futexes = FUTEXES.lock(token.token());
                 let (futexes, mut token) = futexes.token_split();
 
@@ -182,6 +184,7 @@ pub fn futex(
             let mut woken = 0;
 
             {
+                drop(addr_space_guard);
                 let mut futexes_map = FUTEXES.lock(token.token());
                 let (futexes_map, mut token) = futexes_map.token_split();
 

@@ -236,7 +236,7 @@ pub fn syscall(
             .map(|()| 0),
             SYS_FUTEX => futex(b, c, d, e, f, token),
 
-            SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d)).map(|()| 0),
+            SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d), token).map(|()| 0),
             SYS_MREMAP => mremap(b, c, d, e, f, token),
 
             _ => Err(Error::new(ENOSYS)),

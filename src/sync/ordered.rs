@@ -54,6 +54,8 @@
 use alloc::sync::Arc;
 use core::marker::PhantomData;
 
+use crate::percpu::PercpuBlock;
+
 /// Lock level of a mutex
 ///
 /// While a mutex of L1 is locked on a thread, only mutexes of L2 or higher may be locked.
@@ -204,7 +206,7 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
 }
 
 #[cfg(feature = "busy_panic")]
-const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
+pub const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
 
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
@@ -224,23 +226,28 @@ impl<L: Level, T> Mutex<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> MutexGuard<'a, L, T> {
-        #[cfg(feature = "busy_panic")]
         let inner = {
+            #[cfg(feature = "busy_panic")]
             let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
+
             loop {
                 match self.inner.try_lock() {
                     Some(inner) => break inner,
                     None => {
-                        i -= 1;
-                        if i == 0 {
-                            panic!("Deadlock at mutex may have triggered")
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at mutex may have triggered")
+                            }
                         }
                     }
                 }
             }
         };
-        #[cfg(not(feature = "busy_panic"))]
-        let inner = self.inner.lock();
         MutexGuard {
             inner,
             lock_token: LockToken::downgraded(lock_token),
@@ -341,6 +348,18 @@ impl<L: Level, T> RwLock<L, T> {
         }
     }
 
+    /// Returns a mutable reference to the underlying data without locking.
+    /// The mutable borrow statically guarantees no locks exist thus safe to use.
+    pub fn get_mut(&mut self) -> &mut T {
+        self.inner.get_mut()
+    }
+
+    /// Returns a mutable pointer to the underying data.
+    /// Writing to the data is undefined behavior unless locking is guaranteed by caller.
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.inner.as_mut_ptr()
+    }
+
     /// Consumes this RwLock, returning the underlying data.
     pub fn into_inner(self) -> T {
         self.inner.into_inner()
@@ -353,23 +372,27 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> RwLockWriteGuard<'a, L, T> {
-        #[cfg(feature = "busy_panic")]
         let inner = {
+            #[cfg(feature = "busy_panic")]
             let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
             loop {
                 match self.inner.try_write() {
                     Some(inner) => break inner,
                     None => {
-                        i -= 1;
-                        if i == 0 {
-                            panic!("Deadlock at write may have triggered")
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at write may have triggered")
+                            }
                         }
                     }
                 }
             }
         };
-        #[cfg(not(feature = "busy_panic"))]
-        let inner = self.inner.write();
         RwLockWriteGuard {
             inner,
             lock_token: LockToken::downgraded(lock_token),
@@ -389,24 +412,59 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> RwLockReadGuard<'a, L, T> {
-        #[cfg(feature = "busy_panic")]
         let inner = {
+            #[cfg(feature = "busy_panic")]
             let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
             loop {
                 match self.inner.try_read() {
                     Some(inner) => break inner,
                     None => {
-                        i -= 1;
-                        if i == 0 {
-                            panic!("Deadlock at read may have triggered")
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at read may have triggered")
+                            }
                         }
                     }
                 }
             }
         };
-        #[cfg(not(feature = "busy_panic"))]
-        let inner = self.inner.read();
         RwLockReadGuard {
+            inner,
+            lock_token: LockToken::downgraded(lock_token),
+        }
+    }
+
+    pub fn upgradeable_read<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> RwLockUpgradableGuard<'a, L, T> {
+        let inner = {
+            #[cfg(feature = "busy_panic")]
+            let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
+            loop {
+                match self.inner.try_upgradeable_read() {
+                    Some(inner) => break inner,
+                    None => {
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at upgradeable_read may have triggered")
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        RwLockUpgradableGuard {
             inner,
             lock_token: LockToken::downgraded(lock_token),
         }
@@ -440,6 +498,73 @@ impl<L: Level, T> RwLock<L, T> {
         })
     }
 
+    /// Arcquires the lock_token to replace older LockWriteGuard.
+    /// SAFETY: Caller must guarantee lock_token is coming from RwLockWriteGuard::into_token() from the same lock.
+    ///         OR Caller must guarantee lock_token is coming from different lock, which can happen when two lock need to copy data each other.
+    pub unsafe fn rewrite<'a>(
+        &'a self,
+        lock_token: LockToken<'a, L>,
+    ) -> RwLockWriteGuard<'a, L, T> {
+        let inner = {
+            #[cfg(feature = "busy_panic")]
+            let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
+            loop {
+                match self.inner.try_write() {
+                    Some(inner) => break inner,
+                    None => {
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at write may have triggered")
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        RwLockWriteGuard {
+            inner,
+            lock_token: lock_token,
+        }
+    }
+
+    /// Arcquires the lock_token to replace older LockUpgradableGuard.
+    /// SAFETY: Caller must guarantee lock_token is coming from RwLockUpgradableGuard::into_token() from the same lock.
+    pub unsafe fn reupgradeable_read<'a>(
+        &'a self,
+        lock_token: LockToken<'a, L>,
+    ) -> RwLockUpgradableGuard<'a, L, T> {
+        let inner = {
+            #[cfg(feature = "busy_panic")]
+            let mut i = DEADLOCK_SPIN_CAP;
+            let my_percpu = PercpuBlock::current();
+            loop {
+                match self.inner.try_upgradeable_read() {
+                    Some(inner) => break inner,
+                    None => {
+                        my_percpu.maybe_handle_tlb_shootdown();
+                        core::hint::spin_loop();
+                        #[cfg(feature = "busy_panic")]
+                        {
+                            i -= 1;
+                            if i == 0 {
+                                panic!("Deadlock at reupgradeable_read may have triggered")
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        RwLockUpgradableGuard {
+            inner,
+            lock_token: lock_token,
+        }
+    }
+
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
         core::mem::forget(self.inner.write());
@@ -455,11 +580,17 @@ pub struct RwLockWriteGuard<'a, L: Level, T> {
     lock_token: LockToken<'a, L>,
 }
 
-impl<L: Level, T> RwLockWriteGuard<'_, L, T> {
+impl<'a, L: Level, T> RwLockWriteGuard<'a, L, T> {
     /// Split the guard into two parts, the first a mutable reference to the held content
     /// the second a [`LockToken`] that can be used for further locking
     pub fn token_split(&mut self) -> (&mut T, LockToken<'_, L>) {
         (&mut self.inner, self.lock_token.token())
+    }
+
+    /// Drop this Guard and extract the token to be reused for another write lock with rewrite()
+    pub fn into_token(self) -> LockToken<'a, L> {
+        drop(self.inner);
+        self.lock_token
     }
 }
 
@@ -492,6 +623,42 @@ impl<L: Level, T> RwLockReadGuard<'_, L, T> {
 }
 
 impl<L: Level, T> core::ops::Deref for RwLockReadGuard<'_, L, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref()
+    }
+}
+
+/// RAII structure used to release the shared read access of a lock when dropped. Allows upgrade to RW lock
+pub struct RwLockUpgradableGuard<'a, L: Level, T> {
+    inner: spin::RwLockUpgradableGuard<'a, T>,
+    lock_token: LockToken<'a, L>,
+}
+
+impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
+    /// Split the guard into two parts, the first a reference to the held content
+    /// the second a [`LockToken`] that can be used for further locking
+    pub fn token_split(&mut self) -> (&T, LockToken<'_, L>) {
+        (&self.inner, self.lock_token.token())
+    }
+
+    /// Upgrade to RW lock
+    pub fn upgrade(mut self) -> RwLockWriteGuard<'a, L, T> {
+        RwLockWriteGuard {
+            inner: spin::RwLockUpgradableGuard::upgrade(self.inner),
+            lock_token: self.lock_token,
+        }
+    }
+
+    /// Drop this Guard and extract the token to be reused for another write lock with reupgradeable_read()
+    pub fn into_token(self) -> LockToken<'a, L> {
+        drop(self.inner);
+        self.lock_token
+    }
+}
+
+impl<L: Level, T> core::ops::Deref for RwLockUpgradableGuard<'_, L, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {

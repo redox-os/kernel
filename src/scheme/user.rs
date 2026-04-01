@@ -2,7 +2,10 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use core::{mem, mem::size_of, num::NonZeroUsize};
+use core::{
+    mem::{self, size_of, ManuallyDrop},
+    num::NonZeroUsize,
+};
 use slab::Slab;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
@@ -404,16 +407,20 @@ impl UserInner {
 
         let is_pinned = true;
         let dst_page = {
-            dst_addr_space.acquire_write().mmap_anywhere(
-                &dst_addr_space,
-                ONE,
-                PROT_READ,
-                |dst_page, flags, mapper, flusher| {
-                    Grant::allocated_shared_one_page(
-                        tail_frame, dst_page, flags, mapper, flusher, is_pinned,
-                    )
-                },
-            )?
+            let mut lock_token = token.token();
+
+            dst_addr_space
+                .acquire_write(lock_token.downgrade())
+                .mmap_anywhere(
+                    &dst_addr_space,
+                    ONE,
+                    PROT_READ,
+                    |dst_page, flags, mapper, flusher| {
+                        Grant::allocated_shared_one_page(
+                            tail_frame, dst_page, flags, mapper, flusher, is_pinned,
+                        )
+                    },
+                )?
         };
 
         let base = dst_page.start_address().data();
@@ -516,7 +523,8 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut dst_space = dst_space_lock.acquire_write();
+        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
+        let (dst_space, mut token) = dst_space_guard.token_split();
 
         let free_span = dst_space
             .grants
@@ -525,7 +533,7 @@ impl UserInner {
 
         let head = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::head(token)?;
+            let mut array = BorrowedHtBuf::head_locked(token.token())?;
             let frame = array.frame();
 
             let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
@@ -602,9 +610,15 @@ impl UserInner {
                     // unmap them is to respond to the scheme socket.
                     let is_pinned_userscheme_borrow = true;
 
+                    // TODO: Not a Lock ordering violation
+                    // we've checked Arc::ptr_eq(&dst_space_lock, &cur_space_lock) before,
+                    // but it's difficult to apply cur_space_lock.arquire_rewrite
+                    let mut token = unsafe { CleanLockToken::new() };
+                    let mut cur_space_guard =
+                        unsafe { cur_space_lock.acquire_rewrite(token.downgrade()) };
                     Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut cur_space_lock.acquire_write(),
+                        &mut cur_space_guard,
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -623,7 +637,7 @@ impl UserInner {
             let tail_dst_page = first_middle_dst_page.next_by(middle_page_count);
 
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::tail(token)?;
+            let mut array = BorrowedHtBuf::tail_locked(token.token())?;
             let frame = array.frame();
 
             if READ {
@@ -664,7 +678,7 @@ impl UserInner {
             }
         };
 
-        drop(dst_space);
+        drop(dst_space_guard);
 
         let base = free_span.base.start_address().data() + offset;
         Ok(CaptureGuard {
@@ -871,8 +885,9 @@ impl UserInner {
 
                 let context = context.upgrade().ok_or(Error::new(ESRCH))?;
 
+                let mut lock_token = token.token();
                 let (frame, _) = AddrSpace::current()?
-                    .acquire_read()
+                    .acquire_read(lock_token.downgrade())
                     .table
                     .utable
                     .translate(base_addr)
@@ -899,8 +914,8 @@ impl UserInner {
         let to_close: Vec<FileDescription>;
 
         {
-            let mut states = self.states.lock(token.token());
-            let (states, mut token) = states.token_split();
+            let mut states_lock = self.states.lock(token.token());
+            let (states, mut lock_token) = states_lock.token_split();
             match states.get_mut(tag as usize) {
                 Some(o) => match mem::replace(o, State::Placeholder) {
                     // invalid state
@@ -951,15 +966,17 @@ impl UserInner {
                         match context.upgrade() {
                             Some(context) => {
                                 *o = State::Responded(response);
-                                context.write(token.token()).unblock();
+                                context.write(lock_token.token()).unblock();
                             }
                             _ => {
                                 states.remove(tag as usize);
                             }
                         }
 
+                        drop(states_lock);
+
                         let unpin = true;
-                        AddrSpace::current()?.munmap(callee_responsible, unpin)?;
+                        AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
                     }
                 },
                 // invalid state
@@ -1073,6 +1090,7 @@ impl UserInner {
             base_offset: map.offset,
         };
 
+        let mut lock_token = token.token();
         let src = match base_page_opt {
             Some(base_addr) => Some({
                 if base_addr % PAGE_SIZE != 0 {
@@ -1082,7 +1100,7 @@ impl UserInner {
                 BorrowedFmapSource {
                     src_base: Page::containing_address(VirtualAddress::new(base_addr)),
                     addr_space_lock,
-                    addr_space_guard: addr_space_lock.acquire_write(),
+                    addr_space_guard: addr_space_lock.acquire_write(lock_token.downgrade()),
                     mode: if map.flags.contains(MapFlags::MAP_SHARED) {
                         MmapMode::Shared
                     } else {
@@ -1095,8 +1113,12 @@ impl UserInner {
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
         let mut notify_files = Vec::new();
+        // TODO: Not a Lock ordering violation
+        // we've checked Arc::ptr_eq(&src_address_space, &dst_addr_space) before,
+        // but it's difficult to apply src.arquire_rewrite
+        let mut clean_token = unsafe { CleanLockToken::new() };
         let dst_base = {
-            dst_addr_space.acquire_write().mmap(
+            dst_addr_space.acquire_write(clean_token.downgrade()).mmap(
                 &dst_addr_space,
                 dst_base,
                 page_count_nz,
@@ -1111,7 +1133,6 @@ impl UserInner {
                         &dst_addr_space,
                         mapper,
                         flusher,
-                        token,
                     )
                 },
             )?
@@ -1288,7 +1309,7 @@ struct CopyInfo<const READ: bool, const WRITE: bool> {
     dst: Option<UserSlice<true, true>>,
 }
 impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
-    fn release_inner(&mut self) -> Result<()> {
+    fn release_inner(&mut self, token: &mut CleanLockToken) -> Result<()> {
         if self.destroyed {
             return Ok(());
         }
@@ -1317,13 +1338,13 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         if let Some(ref addrsp) = self.addrsp
             && !self.span.is_empty()
         {
-            addrsp.munmap(self.span, unpin)?;
+            addrsp.munmap(self.span, unpin, token)?;
         }
 
         Ok(())
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
-        self.release_inner()?;
+        self.release_inner(token)?;
         if let Some(addrsp) = self.addrsp.take()
             && let Some(addrsp) = Arc::into_inner(addrsp)
         {
@@ -1335,12 +1356,18 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         if let Some(src) = self.tail.src.take() {
             src.into_drop(token);
         }
+        let _ = ManuallyDrop::new(self);
         Ok(())
     }
 }
 impl<const READ: bool, const WRITE: bool> Drop for CaptureGuard<READ, WRITE> {
     fn drop(&mut self) {
-        let _ = self.release_inner();
+        let mut token = unsafe { CleanLockToken::new() };
+        let _ = self.release_inner(&mut token);
+        #[cfg(feature = "drop_panic")]
+        {
+            panic!("CaptureGuard dropped");
+        }
     }
 }
 /// base..base+size => page..page+page_count*PAGE_SIZE, offset

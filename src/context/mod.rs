@@ -174,7 +174,7 @@ pub fn spawn(
 
     let mut context = Context::new(owner_proc_id)?;
 
-    let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?));
+    let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?), token.downgrade());
     context
         .arch
         .setup_initial_call(&stack, func, userspace_allowed);

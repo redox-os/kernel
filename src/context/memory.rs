@@ -9,7 +9,6 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use rmm::{Arch as _, PageFlush};
-use spin::{RwLock, RwLockReadGuard, RwLockUpgradableGuard, RwLockWriteGuard};
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
@@ -23,7 +22,10 @@ use crate::{
     paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
-    sync::CleanLockToken,
+    sync::{
+        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard,
+        RwLockUpgradableGuard, RwLockWriteGuard, L0, L2, L3,
+    },
 };
 
 use super::context::HardBlockedReason;
@@ -83,7 +85,7 @@ impl UnmapResult {
 
 #[derive(Debug)]
 pub struct AddrSpaceWrapper {
-    pub inner: RwLock<AddrSpace>,
+    pub inner: RwLock<L3, AddrSpace>,
     pub tlb_ack: AtomicU32,
     pub used_by: LogicalCpuSet,
 }
@@ -95,44 +97,35 @@ impl AddrSpaceWrapper {
             used_by: LogicalCpuSet::empty(),
         }))
     }
-    pub fn acquire_read(&self) -> RwLockReadGuard<'_, AddrSpace> {
-        let my_percpu = PercpuBlock::current();
-
-        loop {
-            match self.inner.try_read() {
-                Some(g) => return g,
-                None => {
-                    my_percpu.maybe_handle_tlb_shootdown();
-                    core::hint::spin_loop();
-                }
-            }
-        }
+    pub fn acquire_read<'a>(
+        &'a self,
+        mut lock_token: LockToken<'a, L2>,
+    ) -> RwLockReadGuard<'a, L3, AddrSpace> {
+        self.inner.read(lock_token)
     }
-    pub fn acquire_upgradeable_read(&self) -> RwLockUpgradableGuard<'_, AddrSpace> {
-        let my_percpu = PercpuBlock::current();
-
-        loop {
-            match self.inner.try_upgradeable_read() {
-                Some(g) => return g,
-                None => {
-                    my_percpu.maybe_handle_tlb_shootdown();
-                    core::hint::spin_loop();
-                }
-            }
-        }
+    pub fn acquire_upgradeable_read<'a>(
+        &'a self,
+        mut lock_token: LockToken<'a, L2>,
+    ) -> RwLockUpgradableGuard<'a, L3, AddrSpace> {
+        self.inner.upgradeable_read(lock_token)
     }
-    pub fn acquire_write(&self) -> RwLockWriteGuard<'_, AddrSpace> {
-        let my_percpu = PercpuBlock::current();
-
-        loop {
-            match self.inner.try_write() {
-                Some(g) => return g,
-                None => {
-                    my_percpu.maybe_handle_tlb_shootdown();
-                    core::hint::spin_loop();
-                }
-            }
-        }
+    pub fn acquire_write<'a>(
+        &'a self,
+        mut lock_token: LockToken<'a, L2>,
+    ) -> RwLockWriteGuard<'a, L3, AddrSpace> {
+        self.inner.write(lock_token)
+    }
+    pub unsafe fn acquire_reupgradeable_read<'a>(
+        &'a self,
+        mut lock_token: LockToken<'a, L3>,
+    ) -> RwLockUpgradableGuard<'a, L3, AddrSpace> {
+        unsafe { self.inner.reupgradeable_read(lock_token) }
+    }
+    pub unsafe fn acquire_rewrite<'a>(
+        &'a self,
+        mut lock_token: LockToken<'a, L3>,
+    ) -> RwLockWriteGuard<'a, L3, AddrSpace> {
+        unsafe { self.inner.rewrite(lock_token) }
     }
     pub fn into_drop(self, token: &mut CleanLockToken) {
         self.inner.into_inner().into_drop(token);
@@ -143,7 +136,6 @@ impl AddrSpaceWrapper {
 pub struct AddrSpace {
     pub table: Table,
     pub grants: UserGrants,
-    pub used_by: LogicalCpuSet,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
     /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
     /// the exception that we have a memory safe kernel which doesn't have to protect itself
@@ -152,8 +144,9 @@ pub struct AddrSpace {
 }
 impl AddrSpaceWrapper {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&self) -> Result<Arc<AddrSpaceWrapper>> {
-        let mut guard = self.acquire_write();
+    pub fn try_clone(&self, token: &mut CleanLockToken) -> Result<Arc<AddrSpaceWrapper>> {
+        let mut token = token.token();
+        let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
 
         let mut new_arc = AddrSpaceWrapper::new()?;
@@ -243,8 +236,14 @@ impl AddrSpaceWrapper {
         }
         Ok(new_arc)
     }
-    pub fn mprotect(&self, requested_span: PageSpan, flags: MapFlags) -> Result<()> {
-        let mut guard = self.acquire_write();
+    pub fn mprotect(
+        &self,
+        requested_span: PageSpan,
+        flags: MapFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
+        let mut token = token.token();
+        let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
 
         let mapper = &mut guard.table.utable;
@@ -309,8 +308,14 @@ impl AddrSpaceWrapper {
         Ok(())
     }
     #[must_use = "needs to notify files"]
-    pub fn munmap(&self, requested_span: PageSpan, unpin: bool) -> Result<Vec<UnmapResult>> {
-        let mut guard = self.acquire_write();
+    pub fn munmap(
+        &self,
+        requested_span: PageSpan,
+        unpin: bool,
+        token: &mut CleanLockToken,
+    ) -> Result<Vec<UnmapResult>> {
+        let mut token = token.token();
+        let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
 
         let mut flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
@@ -330,9 +335,11 @@ impl AddrSpaceWrapper {
         new_page_count: usize,
         new_flags: MapFlags,
         mut notify_files_out: Option<&mut Vec<UnmapResult>>,
+        token: LockToken<L3>,
     ) -> Result<Page> {
         let dst_lock = self;
-        let mut dst = dst_lock.acquire_write();
+        // SAFETY: This is moving data between two AddrSpace. Caller ensures the two is a different AddrSpace
+        let mut dst = unsafe { dst_lock.acquire_rewrite(token) };
         let dst = &mut *dst;
 
         let mut src_flusher;
@@ -515,7 +522,8 @@ impl AddrSpaceWrapper {
         page: Page,
         token: &mut CleanLockToken,
     ) -> Result<RaiiFrame> {
-        let mut guard = self.acquire_write();
+        let mut lock_token = token.token();
+        let mut guard = self.acquire_write(lock_token.downgrade());
 
         let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
 
@@ -526,16 +534,16 @@ impl AddrSpaceWrapper {
             return Err(Error::new(EPERM));
         }
 
+        let mut guard_lock = None;
         let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address())
             && fl.has_write()
         {
             Frame::containing(f)
         } else {
-            let (frame, flush, new_guard) =
-                correct_inner(self, guard, page, AccessMode::Write, 0, token)
-                    .map_err(|_| Error::new(ENOMEM))?;
+            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
+                .map_err(|_| Error::new(ENOMEM))?;
             flush.flush();
-            guard = new_guard;
+            guard_lock = Some(new_guard);
 
             frame
         };
@@ -551,7 +559,7 @@ impl AddrSpaceWrapper {
                 "if it was CoW, it was read-only, but in that case we already called correct_inner"
             ),
         };
-        drop(guard);
+        drop(guard_lock);
 
         frame
     }
@@ -575,7 +583,6 @@ impl AddrSpace {
             grants: UserGrants::new(),
             table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
-            used_by: LogicalCpuSet::empty(),
         })
     }
     fn munmap_inner(
@@ -684,7 +691,7 @@ impl AddrSpace {
         notify_files_out: Option<&mut Vec<UnmapResult>>,
         map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut Flusher) -> Result<Grant>,
     ) -> Result<Page> {
-        debug_assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
+        assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
 
         let selected_span = match requested_base_opt {
             // TODO: Rename MAP_FIXED+MAP_FIXED_NOREPLACE to MAP_FIXED and
@@ -702,7 +709,7 @@ impl AddrSpace {
                     let mut notify_files = Self::munmap_inner(
                         &mut self.grants,
                         &mut self.table.utable,
-                        &mut Flusher::with_cpu_set(&mut self.used_by, &dst_lock.tlb_ack),
+                        &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
                         requested_span,
                         unpin,
                     )?;
@@ -755,7 +762,7 @@ impl AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = grant.unmap(&mut self.table.utable, &mut NopFlusher);
+            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher) };
 
             let _ = res.unmap(token);
         }
@@ -1387,7 +1394,6 @@ impl Grant {
         _lock: &AddrSpaceWrapper,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
-        token: &mut CleanLockToken,
     ) -> Result<Self> {
         if let Some(src) = src {
             let mut guard = src.addr_space_guard;
@@ -1409,13 +1415,13 @@ impl Grant {
                             Some((phys, _)) => Frame::containing(phys),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
+                                let (_, token) = guard.token_split();
                                 let (frame, _, new_guard) = correct_inner(
                                     src.addr_space_lock,
                                     guard,
                                     src_page,
                                     AccessMode::Read,
                                     0,
-                                    token,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
@@ -1440,7 +1446,6 @@ impl Grant {
                                     src_page,
                                     AccessMode::Read,
                                     0,
-                                    token,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 guard = new_guard;
@@ -1477,7 +1482,7 @@ impl Grant {
                             //flush.ignore();
 
                             let mut src_flusher = Flusher {
-                                active_cpus: &mut src_addrspace.used_by,
+                                active_cpus: &src.addr_space_lock.used_by,
                                 state: src_flusher_state,
                             };
                             src_flusher.queue(
@@ -1912,7 +1917,10 @@ impl Grant {
             ..
         } = self.info.provider
         {
-            let mut guard = address_space.acquire_write();
+            // TODO: Lock ordering violation
+            let mut token = unsafe { CleanLockToken::new() };
+            let mut token = token.token();
+            let mut guard = address_space.acquire_write(token.downgrade());
 
             for (_, grant) in guard
                 .grants
@@ -2429,28 +2437,34 @@ pub fn try_correcting_page_tables(
     access: AccessMode,
     token: &mut CleanLockToken,
 ) -> Result<(), PfError> {
-    let Ok(addr_space_lock) = AddrSpace::current() else {
+    let Ok(addr_space) = AddrSpace::current() else {
         debug!("User page fault without address space being set.");
         return Err(PfError::Segv);
     };
 
-    let lock = &addr_space_lock;
-    let (_, flush, _) = correct_inner(lock, lock.acquire_write(), faulting_page, access, 0, token)?;
+    let lock = &addr_space;
+    let mut lock_token = token.token();
+    let mut addr_space_lock = addr_space.acquire_write(lock_token.downgrade());
+
+    let (_, flush, _) = correct_inner(&addr_space, addr_space_lock, faulting_page, access, 0)?;
 
     flush.flush();
 
     Ok(())
 }
+
+/// XXX: This require passing L3 addr_space_guard.
+/// Caller must ensure there's no other lock being held at this point.
+/// Caller also need to provide clean token for the new AddrSpace.
 fn correct_inner<'l>(
     addr_space_lock: &'l Arc<AddrSpaceWrapper>,
-    mut addr_space_guard: RwLockWriteGuard<'l, AddrSpace>,
+    mut addr_space_guard: RwLockWriteGuard<'l, L3, AddrSpace>,
     faulting_page: Page,
     access: AccessMode,
     recursion_level: u32,
-    token: &mut CleanLockToken,
-) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, AddrSpace>), PfError> {
-    let mut addr_space = &mut *addr_space_guard;
+) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, L3, AddrSpace>), PfError> {
     let mut flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
+    let (mut addr_space, mut lock_token) = addr_space_guard.token_split();
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
         debug!("Lacks grant");
@@ -2559,7 +2573,9 @@ fn correct_inner<'l>(
                 return Err(PfError::NonfatalInternalError);
             }
 
-            let mut guard = foreign_address_space.acquire_upgradeable_read();
+            /// XXX: This is cheating, but guaranteed from Arc::ptr_eq above we won't deadlock
+            let mut free_token = unsafe { CleanLockToken::new() };
+            let mut guard = foreign_address_space.acquire_upgradeable_read(free_token.downgrade());
             let src_page = src_base.next_by(pages_from_grant_start);
 
             match guard.grants.contains(src_page) {
@@ -2576,31 +2592,37 @@ fn correct_inner<'l>(
                                 .filter(|new_lvl| *new_lvl < 16)
                                 .ok_or(PfError::RecursionLimitExceeded)?;
 
-                            drop(guard);
+                            let guard_token = guard.into_token();
+                            let addr_space_guard_token = addr_space_guard.into_token();
                             drop(flusher);
-                            drop(addr_space_guard);
 
                             // FIXME: Can this result in invalid address space state?
                             let ext_addrspace = &foreign_address_space;
+                            let mut free_token = unsafe { CleanLockToken::new() };
                             let (frame, _, _) = {
-                                let g = ext_addrspace.acquire_write();
+                                let g = ext_addrspace.acquire_write(free_token.downgrade());
                                 correct_inner(
                                     ext_addrspace,
                                     g,
                                     src_page,
                                     AccessMode::Read,
                                     new_recursion_level,
-                                    token,
                                 )?
                             };
 
-                            addr_space_guard = addr_space_lock.acquire_write();
+                            // SAFETY: Caller guarantees addr_space_guard is coming from this addr_space_lock
+                            addr_space_guard =
+                                unsafe { addr_space_lock.acquire_rewrite(addr_space_guard_token) };
                             addr_space = &mut *addr_space_guard;
                             flusher = Flusher::with_cpu_set(
-                                &mut addr_space.used_by,
+                                &addr_space_lock.used_by,
                                 &addr_space_lock.tlb_ack,
                             );
-                            guard = foreign_address_space.acquire_upgradeable_read();
+
+                            // SAFETY: We guarantee that guard is coming from foreign_address_space
+                            guard = unsafe {
+                                foreign_address_space.acquire_reupgradeable_read(guard_token)
+                            };
 
                             frame
                         }
@@ -2663,7 +2685,10 @@ fn correct_inner<'l>(
             let file_ref = file_ref.clone();
             let flags = map_flags(grant_info.flags());
             drop(flusher);
-            drop(addr_space_guard);
+            let addr_space_guard_token = addr_space_guard.into_token();
+
+            /// XXX: This is cheating, but guaranteed we won't deadlock because we've dropped addr_space_guard
+            let mut token = unsafe { CleanLockToken::new() };
 
             let (scheme_id, scheme_number) = {
                 let desc = &file_ref.description.read(token.token());
@@ -2682,7 +2707,7 @@ fn correct_inner<'l>(
 
             let offset = file_ref.base_offset as u64 + (pages_from_grant_start * PAGE_SIZE) as u64;
             user_inner
-                .request_fmap(scheme_number, offset, 1, flags, token)
+                .request_fmap(scheme_number, offset, 1, flags, &mut token)
                 .unwrap();
 
             let context_lock = crate::context::current();
@@ -2690,7 +2715,7 @@ fn correct_inner<'l>(
                 .write(token.token())
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
-            super::switch(token);
+            super::switch(&mut token);
 
             let frame = context_lock
                 .write(token.token())
@@ -2698,7 +2723,8 @@ fn correct_inner<'l>(
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;
 
-            addr_space_guard = addr_space_lock.acquire_write();
+            // SAFETY: Caller guarantees addr_space_guard is coming from this addr_space_lock
+            addr_space_guard = unsafe { addr_space_lock.acquire_rewrite(addr_space_guard_token) };
             addr_space = &mut *addr_space_guard;
             flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
 
@@ -2734,7 +2760,7 @@ pub struct BorrowedFmapSource<'a> {
     pub mode: MmapMode,
     // TODO: There should be a method that obtains the lock from the guard.
     pub addr_space_lock: &'a Arc<AddrSpaceWrapper>,
-    pub addr_space_guard: RwLockWriteGuard<'a, AddrSpace>,
+    pub addr_space_guard: RwLockWriteGuard<'a, L3, AddrSpace>,
 }
 
 pub fn handle_notify_files(notify_files: Vec<UnmapResult>, token: &mut CleanLockToken) {

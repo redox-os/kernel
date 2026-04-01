@@ -17,7 +17,7 @@ use crate::{
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
-    sync::{RwLock, L1},
+    sync::{CleanLockToken, RwLock, L1},
     syscall::debug::SyscallDebugInfo,
 };
 
@@ -167,7 +167,9 @@ pub unsafe fn switch_arch_hook() {
         match &*percpu.current_addrsp.borrow() {
             Some(next_addrsp) => {
                 next_addrsp.used_by.atomic_set(percpu.cpu_id);
-                let next = next_addrsp.acquire_read();
+                let mut token = unsafe { CleanLockToken::new() };
+                let mut token = token.token();
+                let next = next_addrsp.acquire_read(token.downgrade());
 
                 next.table.utable.make_current();
             }
