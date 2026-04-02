@@ -1,5 +1,5 @@
 use crate::{
-    arch::{consts::KERNEL_OFFSET, rmm::page_flags, CurrentRmmArch},
+    arch::{consts::KERNEL_OFFSET, CurrentRmmArch},
     memory::PAGE_SIZE,
     startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };
@@ -290,6 +290,23 @@ unsafe fn add_memory(areas: &mut [MemoryArea], area_i: &mut usize, mut area: Mem
     }
 }
 
+fn kernel_page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
+    use crate::kernel_executable_offsets::*;
+    let virt_addr = virt.data();
+
+    (if virt_addr >= __text_start() && virt_addr < __text_end() {
+        // Remap text read-only, execute
+        PageFlags::new().execute(true)
+    } else if virt_addr >= __rodata_start() && virt_addr < __rodata_end() {
+        // Remap rodata read-only, no execute
+        PageFlags::new()
+    } else {
+        // Remap everything else read-write, no execute
+        PageFlags::new().write(true)
+    })
+    .global(cfg!(all(target_arch = "x86_64", not(feature = "pti"))))
+}
+
 unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut BumpAllocator<A>) {
     unsafe {
         let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
@@ -300,7 +317,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             for i in 0..area.size / PAGE_SIZE {
                 let phys = area.base.add(i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
-                let flags = page_flags::<A>(virt);
+                let flags = kernel_page_flags::<A>(virt);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
@@ -315,7 +332,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         for i in 0..kernel_size / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * PAGE_SIZE);
             let virt = VirtualAddress::new(KERNEL_OFFSET + i * PAGE_SIZE);
-            let flags = page_flags::<A>(virt);
+            let flags = kernel_page_flags::<A>(virt);
             let flush = mapper
                 .map_phys(virt, phys, flags)
                 .expect("failed to map frame");
@@ -334,7 +351,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             for i in 0..size / PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
-                let flags = page_flags::<A>(virt);
+                let flags = kernel_page_flags::<A>(virt);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");
@@ -349,7 +366,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             for i in 0..size / PAGE_SIZE {
                 let phys = PhysicalAddress::new(base + i * PAGE_SIZE);
                 let virt = A::phys_to_virt(phys);
-                let flags = page_flags::<A>(virt).device_memory(true);
+                let flags = kernel_page_flags::<A>(virt).device_memory(true);
                 let flush = mapper
                     .map_phys(virt, phys, flags)
                     .expect("failed to map frame");

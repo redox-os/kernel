@@ -19,8 +19,6 @@ pub mod misc;
 /// Paging
 pub mod paging;
 
-pub mod rmm;
-
 /// Initialization and start function
 pub mod start;
 
