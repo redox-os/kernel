@@ -12,17 +12,10 @@
 pub const PML4_SIZE: usize = 0x0000_0080_0000_0000;
 
 /// Offset of kernel
-pub const KERNEL_MAX_SIZE: usize = 1_usize << 31;
-pub const KERNEL_OFFSET: usize = KERNEL_MAX_SIZE.wrapping_neg();
+pub const KERNEL_OFFSET: usize = (1_usize << 31).wrapping_neg();
 
 /// Offset to kernel heap
 pub const KERNEL_HEAP_OFFSET: usize = KERNEL_OFFSET - PML4_SIZE;
-/// Size of kernel heap
-pub const KERNEL_HEAP_SIZE: usize = 1 * 1024 * 1024; // 1 MB
-
-/// Offset of physmap
-// This needs to match RMM's PHYS_OFFSET
-pub const PHYS_OFFSET: usize = 0xFFFF_8000_0000_0000;
 
 /// End offset of the user image, i.e. kernel start
 // TODO: Make this offset at least PAGE_SIZE less? There are known hardware bugs on some arches,

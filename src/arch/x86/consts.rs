@@ -15,12 +15,6 @@ pub const HPET_OFFSET: usize = IOAPIC_OFFSET + 4096;
 
 /// Offset to kernel heap (256 MiB max)
 pub const KERNEL_HEAP_OFFSET: usize = 0xE000_0000;
-/// Size of kernel heap
-pub const KERNEL_HEAP_SIZE: usize = rmm::MEGABYTE;
-
-/// Offset of physmap (1 GiB max)
-// This needs to match RMM's PHYS_OFFSET
-pub const PHYS_OFFSET: usize = 0x8000_0000;
 
 /// End offset of the user image, i.e. kernel start
 pub const USER_END_OFFSET: usize = 0x8000_0000;

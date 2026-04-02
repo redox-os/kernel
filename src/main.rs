@@ -36,6 +36,8 @@ mod macros;
 #[allow(dead_code)] // TODO
 mod arch;
 use crate::arch::*;
+/// Offset of physmap
+const PHYS_OFFSET: usize = <arch::CurrentRmmArch as ::rmm::Arch>::PHYS_OFFSET;
 
 /// Heap allocators
 mod allocator;

@@ -29,9 +29,9 @@ unsafe impl GlobalAlloc for Allocator {
                         super::map_heap(
                             &mut KernelMapper::lock_rw(),
                             crate::KERNEL_HEAP_OFFSET + size,
-                            crate::KERNEL_HEAP_SIZE,
+                            super::KERNEL_HEAP_SIZE,
                         );
-                        heap.extend(crate::KERNEL_HEAP_SIZE);
+                        heap.extend(super::KERNEL_HEAP_SIZE);
                     }
                 }
             }
