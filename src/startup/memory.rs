@@ -328,19 +328,13 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         let kernel_area = (*MEMORY_MAP.get()).kernel().unwrap();
         let kernel_base = kernel_area.start;
         let kernel_size = kernel_area.end.saturating_sub(kernel_area.start);
-        // Map kernel at KERNEL_OFFSET and identity map too
+        // Map kernel at KERNEL_OFFSET
         for i in 0..kernel_size / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * PAGE_SIZE);
             let virt = VirtualAddress::new(
                 crate::kernel_executable_offsets::KERNEL_OFFSET() + i * PAGE_SIZE,
             );
             let flags = kernel_page_flags::<A>(virt);
-            let flush = mapper
-                .map_phys(virt, phys, flags)
-                .expect("failed to map frame");
-            flush.ignore(); // Not the active table
-
-            let virt = A::phys_to_virt(phys);
             let flush = mapper
                 .map_phys(virt, phys, flags)
                 .expect("failed to map frame");
