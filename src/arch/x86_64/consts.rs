@@ -12,10 +12,13 @@
 pub const PML4_SIZE: usize = 0x0000_0080_0000_0000;
 
 /// Offset of kernel
-pub const KERNEL_OFFSET: usize = (1_usize << 31).wrapping_neg();
+const KERNEL_OFFSET: usize = (1_usize << 31).wrapping_neg();
 
 /// Offset to kernel heap
-pub const KERNEL_HEAP_OFFSET: usize = KERNEL_OFFSET - PML4_SIZE;
+#[inline(always)]
+pub fn kernel_heap_offset() -> usize {
+    crate::kernel_executable_offsets::KERNEL_OFFSET() - PML4_SIZE
+}
 
 /// End offset of the user image, i.e. kernel start
 // TODO: Make this offset at least PAGE_SIZE less? There are known hardware bugs on some arches,

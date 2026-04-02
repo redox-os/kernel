@@ -1,5 +1,5 @@
 use crate::{
-    arch::{consts::KERNEL_OFFSET, CurrentRmmArch},
+    arch::CurrentRmmArch,
     memory::PAGE_SIZE,
     startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };
@@ -331,7 +331,9 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
         // Map kernel at KERNEL_OFFSET and identity map too
         for i in 0..kernel_size / A::PAGE_SIZE {
             let phys = PhysicalAddress::new(kernel_base + i * PAGE_SIZE);
-            let virt = VirtualAddress::new(KERNEL_OFFSET + i * PAGE_SIZE);
+            let virt = VirtualAddress::new(
+                crate::kernel_executable_offsets::KERNEL_OFFSET() + i * PAGE_SIZE,
+            );
             let flags = kernel_page_flags::<A>(virt);
             let flush = mapper
                 .map_phys(virt, phys, flags)

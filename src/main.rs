@@ -223,7 +223,8 @@ fn run_userspace(token: &mut CleanLockToken) -> ! {
 macro_rules! linker_offsets(
     ($($name:ident),*) => {
         $(
-        #[inline]
+        #[inline(always)]
+        #[allow(non_snake_case)]
         pub fn $name() -> usize {
             unsafe extern "C" {
                 // TODO: UnsafeCell?
@@ -236,6 +237,7 @@ macro_rules! linker_offsets(
 );
 mod kernel_executable_offsets {
     linker_offsets!(
+        KERNEL_OFFSET,
         __text_start,
         __text_end,
         __rodata_start,

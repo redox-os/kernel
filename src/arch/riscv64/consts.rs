@@ -6,11 +6,11 @@ const PML4_SHIFT: usize = (CurrentRmmArch::PAGE_LEVELS - 1) * CurrentRmmArch::PA
 /// The size of a single PML4
 pub const PML4_SIZE: usize = 1_usize << PML4_SHIFT;
 
-/// Offset of kernel
-pub const KERNEL_OFFSET: usize = (2 * PML4_SIZE).wrapping_neg();
-
 /// Offset to kernel heap
-pub const KERNEL_HEAP_OFFSET: usize = KERNEL_OFFSET - PML4_SIZE;
+#[inline(always)]
+pub fn kernel_heap_offset() -> usize {
+    crate::kernel_executable_offsets::KERNEL_OFFSET() - PML4_SIZE
+}
 
 /// End offset of the user image, i.e. kernel start
 pub const USER_END_OFFSET: usize = 1_usize << (CurrentRmmArch::PAGE_ADDRESS_SHIFT - 1);

@@ -3,9 +3,6 @@
 // Each PML4 entry references up to 512 GB of memory
 // The second from the top (510) PML4 is reserved for the kernel
 
-/// Offset of kernel (256 MiB max)
-pub const KERNEL_OFFSET: usize = 0xC000_0000;
-
 // Framebuffer mapped by bootloader to 0xD000_0000 (128 MiB max)
 
 // Offset to APIC mappings (optional)
@@ -14,7 +11,10 @@ pub const IOAPIC_OFFSET: usize = LAPIC_OFFSET + 4096;
 pub const HPET_OFFSET: usize = IOAPIC_OFFSET + 4096;
 
 /// Offset to kernel heap (256 MiB max)
-pub const KERNEL_HEAP_OFFSET: usize = 0xE000_0000;
+#[inline(always)]
+pub fn kernel_heap_offset() -> usize {
+    0xE000_0000
+}
 
 /// End offset of the user image, i.e. kernel start
 pub const USER_END_OFFSET: usize = 0x8000_0000;

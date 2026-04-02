@@ -39,7 +39,7 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
 
 pub unsafe fn init() {
     unsafe {
-        let offset = crate::KERNEL_HEAP_OFFSET;
+        let offset = crate::kernel_heap_offset();
         let size = KERNEL_HEAP_SIZE;
 
         // Map heap pages
