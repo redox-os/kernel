@@ -2,13 +2,7 @@
 //! It is incredibly unsafe, and should be minimal in nature
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
-use core::{
-    arch::naked_asm,
-    cell::SyncUnsafeCell,
-    hint,
-    mem::offset_of,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{arch::naked_asm, cell::SyncUnsafeCell, mem::offset_of};
 
 #[cfg(feature = "acpi")]
 use crate::acpi;
@@ -22,9 +16,6 @@ use crate::{
 static BSS_TEST_ZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
 /// Test of non-zero values in data.
 static DATA_TEST_NONZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::MAX);
-
-pub static AP_READY: AtomicBool = AtomicBool::new(false);
-static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 #[repr(C, align(16))]
 struct StackAlign<T>(T);
@@ -124,10 +115,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Set up syscall instruction
             interrupt::syscall::init();
 
-            // Reset AP variables
-            AP_READY.store(false, Ordering::SeqCst);
-            BSP_READY.store(false, Ordering::SeqCst);
-
             // Setup kernel heap
             allocator::init();
 
@@ -152,8 +139,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization
             device::init_noncore();
-
-            BSP_READY.store(true, Ordering::SeqCst);
 
             args.bootstrap()
         };
@@ -230,14 +215,8 @@ unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {
             // Initialize devices (for AP)
             device::init_ap();
 
-            AP_READY.store(true, Ordering::SeqCst);
-
             args.cpu_id
         };
-
-        while !BSP_READY.load(Ordering::SeqCst) {
-            hint::spin_loop();
-        }
 
         crate::kmain_ap(cpu_id);
     }
