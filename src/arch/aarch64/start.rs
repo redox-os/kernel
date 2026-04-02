@@ -18,9 +18,6 @@ static mut BSS_TEST_ZERO: usize = 0;
 /// Test of non-zero values in data.
 static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
-pub static AP_READY: AtomicBool = AtomicBool::new(false);
-static BSP_READY: AtomicBool = AtomicBool::new(false);
-
 #[repr(C, align(16))]
 struct StackAlign<T>(T);
 
@@ -76,12 +73,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             // Get hardware descriptor data
             //TODO: use env {DTB,RSDT}_{BASE,SIZE}?
             let hwdesc_data = if args.hwdesc_base != 0 {
-                Some(unsafe {
-                    slice::from_raw_parts(
-                        (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8,
-                        args.hwdesc_size as usize,
-                    )
-                })
+                Some(slice::from_raw_parts(
+                    (crate::PHYS_OFFSET + args.hwdesc_base as usize) as *const u8,
+                    args.hwdesc_size as usize,
+                ))
             } else {
                 None
             };
@@ -106,10 +101,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
-            // Reset AP variables
-            AP_READY.store(false, Ordering::SeqCst);
-            BSP_READY.store(false, Ordering::SeqCst);
-
             // Setup kernel heap
             allocator::init();
 
@@ -132,8 +123,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
                     }
                 }
             }
-
-            BSP_READY.store(true, Ordering::SeqCst);
 
             args.bootstrap()
         };

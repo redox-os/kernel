@@ -147,21 +147,23 @@ unsafe fn instr_trapped_msr_mrs_inner(
 }
 
 exception_stack!(synchronous_exception_at_el1_with_spx, |stack| {
-    if !pf_inner(
-        stack,
-        exception_code(stack.iret.esr_el1),
-        "sync_exc_el1_spx",
-    ) {
-        println!("Synchronous exception at EL1 with SPx");
-        if exception_code(stack.iret.esr_el1) == 0b100101 {
-            let far_el1 = far_el1();
-            println!("FAR_EL1 = 0x{:08x}", far_el1);
-        } else if exception_code(stack.iret.esr_el1) == 0b100100 {
-            let far_el1 = far_el1();
-            println!("USER FAR_EL1 = 0x{:08x}", far_el1);
+    unsafe {
+        if !pf_inner(
+            stack,
+            exception_code(stack.iret.esr_el1),
+            "sync_exc_el1_spx",
+        ) {
+            println!("Synchronous exception at EL1 with SPx");
+            if exception_code(stack.iret.esr_el1) == 0b100101 {
+                let far_el1 = far_el1();
+                println!("FAR_EL1 = 0x{:08x}", far_el1);
+            } else if exception_code(stack.iret.esr_el1) == 0b100100 {
+                let far_el1 = far_el1();
+                println!("USER FAR_EL1 = 0x{:08x}", far_el1);
+            }
+            stack.trace();
+            loop {}
         }
-        stack.trace();
-        loop {}
     }
 });
 unsafe fn pf_inner(stack: &mut InterruptStack, ty: u8, from: &str) -> bool {
@@ -184,29 +186,31 @@ unsafe fn pf_inner(stack: &mut InterruptStack, ty: u8, from: &str) -> bool {
 }
 
 exception_stack!(synchronous_exception_at_el0, |stack| {
-    match exception_code(stack.iret.esr_el1) {
-        0b010101 => {
-            let scratch = &stack.scratch;
-            let mut token = unsafe { CleanLockToken::new() };
-            let ret = syscall::syscall(
-                scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4, scratch.x5,
-                &mut token,
-            );
-            stack.scratch.x0 = ret;
-        }
-
-        ty => {
-            if !pf_inner(stack, ty as u8, "sync_exc_el0") {
-                error!(
-                    "FATAL: Not an SVC induced synchronous exception (ty={:b})",
-                    ty
+    unsafe {
+        match exception_code(stack.iret.esr_el1) {
+            0b010101 => {
+                let scratch = &stack.scratch;
+                let mut token = CleanLockToken::new();
+                let ret = syscall::syscall(
+                    scratch.x8, scratch.x0, scratch.x1, scratch.x2, scratch.x3, scratch.x4,
+                    scratch.x5, &mut token,
                 );
-                println!("FAR_EL1: {:#0x}", far_el1());
-                //crate::debugger::debugger(None);
-                stack.trace();
-                excp_handler(Exception {
-                    kind: 0, // TODO
-                });
+                stack.scratch.x0 = ret;
+            }
+
+            ty => {
+                if !pf_inner(stack, ty as u8, "sync_exc_el0") {
+                    error!(
+                        "FATAL: Not an SVC induced synchronous exception (ty={:b})",
+                        ty
+                    );
+                    println!("FAR_EL1: {:#0x}", far_el1());
+                    //crate::debugger::debugger(None);
+                    stack.trace();
+                    excp_handler(Exception {
+                        kind: 0, // TODO
+                    });
+                }
             }
         }
     }

@@ -7,6 +7,9 @@ use rmm::{Flusher, FrameAllocator};
 pub use self::linked_list::Allocator;
 mod linked_list;
 
+/// Size of kernel heap
+const KERNEL_HEAP_SIZE: usize = ::rmm::MEGABYTE;
+
 unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) {
     let mut flush_all = PageFlushAll::new();
 
@@ -36,8 +39,8 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
 
 pub unsafe fn init() {
     unsafe {
-        let offset = crate::KERNEL_HEAP_OFFSET;
-        let size = crate::KERNEL_HEAP_SIZE;
+        let offset = crate::kernel_heap_offset();
+        let size = KERNEL_HEAP_SIZE;
 
         // Map heap pages
         map_heap(&mut KernelMapper::lock_rw(), offset, size);

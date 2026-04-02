@@ -21,7 +21,7 @@ pub unsafe fn emergency_reset() -> ! {
     }
 }
 
-pub unsafe fn kstop(token: &mut CleanLockToken) -> ! {
+pub unsafe fn kstop(_token: &mut CleanLockToken) -> ! {
     unsafe {
         println!("kstop");
 

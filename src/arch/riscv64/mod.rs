@@ -5,7 +5,6 @@ pub mod interrupt;
 pub mod ipi;
 pub mod misc;
 pub mod paging;
-pub mod rmm;
 pub mod start;
 pub mod stop;
 pub mod time;

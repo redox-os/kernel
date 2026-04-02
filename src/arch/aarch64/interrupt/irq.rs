@@ -15,26 +15,30 @@ unsafe fn irq_ack() -> (u32, Option<usize>) {
 }
 
 exception_stack!(irq_at_el0, |_stack| {
-    let mut token = unsafe { CleanLockToken::new() };
-    let (irq, virq) = irq_ack();
-    if let Some(virq) = virq
-        && virq < 1024
-    {
-        IRQ_CHIP.trigger_virq(virq as u32, &mut token);
-    } else {
-        println!("unexpected irq num {}", irq);
+    unsafe {
+        let mut token = CleanLockToken::new();
+        let (irq, virq) = irq_ack();
+        if let Some(virq) = virq
+            && virq < 1024
+        {
+            IRQ_CHIP.trigger_virq(virq as u32, &mut token);
+        } else {
+            println!("unexpected irq num {}", irq);
+        }
     }
 });
 
 exception_stack!(irq_at_el1, |_stack| {
-    let mut token = unsafe { CleanLockToken::new() };
-    let (irq, virq) = irq_ack();
-    if let Some(virq) = virq
-        && virq < 1024
-    {
-        IRQ_CHIP.trigger_virq(virq as u32, &mut token);
-    } else {
-        println!("unexpected irq num {}", irq);
+    unsafe {
+        let mut token = CleanLockToken::new();
+        let (irq, virq) = irq_ack();
+        if let Some(virq) = virq
+            && virq < 1024
+        {
+            IRQ_CHIP.trigger_virq(virq as u32, &mut token);
+        } else {
+            println!("unexpected irq num {}", irq);
+        }
     }
 });
 

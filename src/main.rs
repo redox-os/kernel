@@ -18,7 +18,10 @@ extern crate alloc;
 #[macro_use]
 extern crate bitflags;
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::{
+    hint,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+};
 
 use crate::context::switch::SwitchResult;
 
@@ -36,6 +39,8 @@ mod macros;
 #[allow(dead_code)] // TODO
 mod arch;
 use crate::arch::*;
+/// Offset of physmap
+const PHYS_OFFSET: usize = <arch::CurrentRmmArch as ::rmm::Arch>::PHYS_OFFSET;
 
 /// Heap allocators
 mod allocator;
@@ -134,10 +139,14 @@ struct Bootstrap {
     env: &'static [u8],
 }
 static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
+static AP_READY: AtomicBool = AtomicBool::new(false);
+static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
 fn kmain(bootstrap: Bootstrap) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
+
+    BSP_READY.store(true, Ordering::SeqCst);
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init(&mut token);
@@ -176,6 +185,11 @@ fn kmain(bootstrap: Bootstrap) -> ! {
 #[allow(unreachable_code, unused_variables, dead_code)]
 fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
+
+    AP_READY.store(true, Ordering::SeqCst);
+    while !BSP_READY.load(Ordering::SeqCst) {
+        hint::spin_loop();
+    }
 
     #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
@@ -221,7 +235,8 @@ fn run_userspace(token: &mut CleanLockToken) -> ! {
 macro_rules! linker_offsets(
     ($($name:ident),*) => {
         $(
-        #[inline]
+        #[inline(always)]
+        #[allow(non_snake_case)]
         pub fn $name() -> usize {
             unsafe extern "C" {
                 // TODO: UnsafeCell?
@@ -234,6 +249,7 @@ macro_rules! linker_offsets(
 );
 mod kernel_executable_offsets {
     linker_offsets!(
+        KERNEL_OFFSET,
         __text_start,
         __text_end,
         __rodata_start,
