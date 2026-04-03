@@ -644,7 +644,7 @@ impl<'a, L: Level, T> RwLockUpgradableGuard<'a, L, T> {
     }
 
     /// Upgrade to RW lock
-    pub fn upgrade(mut self) -> RwLockWriteGuard<'a, L, T> {
+    pub fn upgrade(self) -> RwLockWriteGuard<'a, L, T> {
         RwLockWriteGuard {
             inner: spin::RwLockUpgradableGuard::upgrade(self.inner),
             lock_token: self.lock_token,

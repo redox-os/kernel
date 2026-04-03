@@ -167,7 +167,7 @@ pub unsafe fn switch_arch_hook() {
         match &*percpu.current_addrsp.borrow() {
             Some(next_addrsp) => {
                 next_addrsp.used_by.atomic_set(percpu.cpu_id);
-                let mut token = unsafe { CleanLockToken::new() };
+                let mut token = CleanLockToken::new();
                 let mut token = token.token();
                 let next = next_addrsp.acquire_read(token.downgrade());
 

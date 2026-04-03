@@ -567,7 +567,7 @@ impl KernelScheme for ProcScheme {
                 Ok(result_base.start_address().data())
             }
             ContextHandle::Sighandler => {
-                let mut context = context.read(token.token());
+                let context = context.read(token.token());
                 // let (context, token) = context.token_split();
                 let sig = context.sig.as_ref().ok_or(Error::new(EBADF))?;
                 let frame = match map.offset {

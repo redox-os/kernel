@@ -486,9 +486,6 @@ pub struct BorrowedHtBuf {
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
-    pub fn head(token: &mut CleanLockToken) -> Result<Self> {
-        Self::head_locked(token.downgrade())
-    }
     pub fn head_locked(token: LockToken<L3>) -> Result<Self> {
         let current = context::current();
         let frame = &mut current.write(token).syscall_head;
