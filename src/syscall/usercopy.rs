@@ -2,8 +2,7 @@ use syscall::dirent::Buffer;
 
 use crate::{
     context::memory::PageSpan,
-    memory::PAGE_SIZE,
-    paging::{Page, VirtualAddress},
+    memory::{Page, VirtualAddress, PAGE_SIZE},
 };
 
 use crate::arch::{arch_copy_from_user, arch_copy_to_user};

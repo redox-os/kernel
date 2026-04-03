@@ -19,7 +19,7 @@ use crate::{
 use crate::{
     context,
     context::context::FdTbl,
-    paging::{Page, VirtualAddress, PAGE_SIZE},
+    memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
         KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
     },

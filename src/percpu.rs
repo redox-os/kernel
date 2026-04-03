@@ -119,7 +119,7 @@ impl PercpuBlock {
         }
 
         // TODO: Finer-grained flush
-        crate::paging::RmmA::invalidate_all();
+        crate::memory::RmmA::invalidate_all();
 
         if let Some(addrsp) = &*self.current_addrsp.borrow() {
             addrsp.tlb_ack.fetch_add(1, Ordering::Release);
@@ -167,14 +167,14 @@ pub unsafe fn switch_arch_hook() {
         match &*percpu.current_addrsp.borrow() {
             Some(next_addrsp) => {
                 next_addrsp.used_by.atomic_set(percpu.cpu_id);
-                let mut token = unsafe { CleanLockToken::new() };
+                let mut token = CleanLockToken::new();
                 let mut token = token.token();
                 let next = next_addrsp.acquire_read(token.downgrade());
 
                 next.table.utable.make_current();
             }
             _ => {
-                crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                crate::memory::RmmA::set_table(rmm::TableKind::User, empty_cr3());
             }
         }
     }

@@ -2,12 +2,7 @@
 //! It is incredibly unsafe, and should be minimal in nature
 //! It must create the IDT with the correct entries, those entries are
 //! defined in other files inside of the `arch` module
-use core::{
-    arch::naked_asm,
-    cell::SyncUnsafeCell,
-    slice,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use core::{arch::naked_asm, cell::SyncUnsafeCell, slice};
 
 use fdt::Fdt;
 

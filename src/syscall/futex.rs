@@ -17,8 +17,7 @@ use crate::{
         memory::{AddrSpace, AddrSpaceWrapper},
         ContextLock,
     },
-    memory::PhysicalAddress,
-    paging::{Page, VirtualAddress},
+    memory::{Page, PhysicalAddress, VirtualAddress},
     sync::{CleanLockToken, Mutex, L1},
     time,
 };
@@ -110,7 +109,7 @@ pub fn futex(
 
                     // On systems where virtual memory is not abundant, we might instead add an
                     // atomic usercopy function.
-                    let accessible_addr = crate::paging::RmmA::phys_to_virt(target_physaddr).data();
+                    let accessible_addr = crate::memory::RmmA::phys_to_virt(target_physaddr).data();
 
                     (
                         u64::from(unsafe {

@@ -1,6 +1,6 @@
 use crate::{
     cpu_set::LogicalCpuId,
-    paging::{RmmA, RmmArch},
+    memory::{RmmA, RmmArch},
     percpu::PercpuBlock,
 };
 

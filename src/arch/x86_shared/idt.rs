@@ -158,7 +158,7 @@ pub fn allocate_and_init_idt(cpu_id: LogicalCpuId) -> *mut Idt {
         .entry(cpu_id)
         .or_insert_with(|| Box::leak(Box::new(Idt::new())));
 
-    use crate::paging::{RmmA, RmmArch};
+    use crate::memory::{RmmA, RmmArch};
     let frames = crate::memory::allocate_p2frame(4)
         .expect("failed to allocate pages for backup interrupt stack");
 

@@ -8,8 +8,7 @@ use crate::{
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
     },
-    memory::{free_frames, used_frames, Frame, PAGE_SIZE},
-    paging::VirtualAddress,
+    memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
     sync::CleanLockToken,
     syscall::{
         data::{Map, StatVfs},

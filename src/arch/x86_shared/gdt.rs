@@ -14,7 +14,7 @@ use x86::{
 
 use crate::{
     cpu_set::LogicalCpuId,
-    paging::{RmmA, RmmArch, PAGE_SIZE},
+    memory::{RmmA, RmmArch, PAGE_SIZE},
     percpu::PercpuBlock,
 };
 

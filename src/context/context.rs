@@ -8,7 +8,7 @@ use core::{
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
-    arch::{interrupt::InterruptStack, paging::PAGE_SIZE},
+    arch::interrupt::InterruptStack,
     common::aligned_box::AlignedBox,
     context::{
         self, arch,
@@ -17,8 +17,9 @@ use crate::{
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
     ipi::{ipi, IpiKind, IpiTarget},
-    memory::{allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame},
-    paging::{RmmA, RmmArch},
+    memory::{
+        allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame, RmmA, RmmArch, PAGE_SIZE,
+    },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
     sync::{CleanLockToken, LockToken, RwLock, L1, L2, L3, L4, L5},
@@ -418,7 +419,7 @@ impl Context {
                     }
                 }
                 _ => unsafe {
-                    crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                    crate::memory::RmmA::set_table(rmm::TableKind::User, empty_cr3());
                 },
             }
         } else {
@@ -486,9 +487,6 @@ pub struct BorrowedHtBuf {
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
-    pub fn head(token: &mut CleanLockToken) -> Result<Self> {
-        Self::head_locked(token.downgrade())
-    }
     pub fn head_locked(token: LockToken<L3>) -> Result<Self> {
         let current = context::current();
         let frame = &mut current.write(token).syscall_head;

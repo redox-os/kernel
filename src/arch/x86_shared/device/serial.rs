@@ -36,12 +36,7 @@ pub unsafe fn init() {
     let address = crate::PHYS_OFFSET + 0xFE032000;
 
     {
-        use rmm::PageFlags;
-
-        use crate::{
-            memory::{KernelMapper, PhysicalAddress},
-            paging::VirtualAddress,
-        };
+        use crate::memory::{KernelMapper, PageFlags, PhysicalAddress, VirtualAddress};
 
         let mut mapper = KernelMapper::lock_rw();
         let virt = VirtualAddress::new(address);

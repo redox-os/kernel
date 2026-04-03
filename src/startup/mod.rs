@@ -64,7 +64,7 @@ impl KernelArgs {
 
     pub(crate) fn bootstrap(&self) -> crate::Bootstrap {
         crate::Bootstrap {
-            base: crate::memory::Frame::containing(crate::paging::PhysicalAddress::new(
+            base: crate::memory::Frame::containing(crate::memory::PhysicalAddress::new(
                 self.bootstrap_base as usize,
             )),
             page_count: (self.bootstrap_size as usize) / crate::memory::PAGE_SIZE,

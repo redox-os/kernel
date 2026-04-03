@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::fmt::Write;
 
-use crate::{context, paging::PAGE_SIZE, sync::CleanLockToken, syscall::error::Result};
+use crate::{context, sync::CleanLockToken, syscall::error::Result};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(

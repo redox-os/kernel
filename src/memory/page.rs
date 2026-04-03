@@ -1,29 +1,13 @@
-//! # Paging
-//! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
+// Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/modifying-page-tables.html)
 
 use core::fmt::Debug;
+use rmm::{Arch, VirtualAddress};
 
-pub use super::CurrentRmmArch as RmmA;
-pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
-
-pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
-
-pub mod mapper;
+use crate::memory::RmmA;
 
 /// Size of pages
 pub const PAGE_SIZE: usize = RmmA::PAGE_SIZE;
 pub const PAGE_MASK: usize = RmmA::PAGE_OFFSET_MASK;
-
-/// Initialize PAT
-#[cold]
-pub unsafe fn init() {
-    unsafe {
-        #[cfg(target_arch = "x86")]
-        rmm::x86::init_pat();
-        #[cfg(target_arch = "x86_64")]
-        rmm::x86_64::init_pat();
-    }
-}
 
 /// Page
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

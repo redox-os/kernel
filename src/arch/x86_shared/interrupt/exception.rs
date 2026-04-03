@@ -2,8 +2,12 @@ use syscall::Exception;
 use x86::irq::PageFaultError;
 
 use crate::{
-    arch::x86_shared::interrupt, context::signal::excp_handler, memory::GenericPfFlags,
-    paging::VirtualAddress, ptrace, sync::CleanLockToken, syscall::flag::*,
+    arch::x86_shared::interrupt,
+    context::signal::excp_handler,
+    memory::{GenericPfFlags, VirtualAddress},
+    ptrace,
+    sync::CleanLockToken,
+    syscall::flag::*,
 };
 
 interrupt_stack!(divide_by_zero, |stack| {

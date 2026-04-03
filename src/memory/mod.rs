@@ -1,8 +1,6 @@
 //! # Memory management
 //! Some code was borrowed from [Phil Opp's Blog](http://os.phil-opp.com/allocating-frames.html)
 
-mod kernel_mapper;
-
 use core::{
     cell::SyncUnsafeCell,
     mem,
@@ -13,18 +11,24 @@ use core::{
 pub use kernel_mapper::KernelMapper;
 use spin::Mutex;
 
-pub use crate::paging::{PhysicalAddress, RmmA, RmmArch, PAGE_MASK, PAGE_SIZE};
+pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
     context::{
         self,
         memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    paging::{Page, PageFlags},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
-use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, TableKind, VirtualAddress};
+pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
+use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage};
+
+mod kernel_mapper;
+pub mod page;
+pub use page::*;
+
+pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 
 /// Available physical memory areas
 pub(crate) static AREAS: SyncUnsafeCell<[rmm::MemoryArea; 512]> = SyncUnsafeCell::new(
@@ -240,8 +244,8 @@ pub unsafe fn deallocate_frame(frame: Frame) {
 pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAddress {
     unsafe {
         let mut mapper = KernelMapper::lock_rw();
-        let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
-        let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
+        let base = PhysicalAddress::new(round_down_pages(addr.data()));
+        let aligned_len = round_up_pages(len + (addr.data() - base.data()));
         for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
             let (_, flush) = mapper
                 .map_linearly(

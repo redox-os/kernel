@@ -58,11 +58,7 @@ impl Hpet {
 impl Hpet {
     pub unsafe fn map(&self) {
         unsafe {
-            use crate::{
-                memory::{Frame, KernelMapper},
-                paging::{Page, VirtualAddress},
-            };
-            use rmm::PageFlags;
+            use crate::memory::{Frame, KernelMapper, Page, PageFlags, VirtualAddress};
 
             let frame = Frame::containing(PhysicalAddress::new(self.base_address.address as usize));
             let page = Page::containing_address(VirtualAddress::new(crate::HPET_OFFSET));

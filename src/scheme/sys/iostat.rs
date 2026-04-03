@@ -3,7 +3,7 @@ use crate::{
         self,
         memory::{Grant, PageSpan},
     },
-    paging::PAGE_SIZE,
+    memory::PAGE_SIZE,
     scheme,
     sync::CleanLockToken,
     syscall::{
