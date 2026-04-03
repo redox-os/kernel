@@ -18,7 +18,7 @@ static LOCK_COUNT: AtomicUsize = AtomicUsize::new(0);
 // TODO: Make the lock finer-grained so that e.g. the heap part can be independent from e.g.
 // PHYS_PML4?
 pub struct KernelMapper<const RW: bool> {
-    mapper: crate::paging::PageMapper,
+    mapper: crate::memory::PageMapper,
 }
 
 impl KernelMapper<false> {
@@ -68,7 +68,7 @@ impl<const RW: bool> KernelMapper<RW> {
 }
 
 impl<const RW: bool> core::ops::Deref for KernelMapper<RW> {
-    type Target = crate::paging::PageMapper;
+    type Target = crate::memory::PageMapper;
 
     fn deref(&self) -> &Self::Target {
         &self.mapper

@@ -12,14 +12,13 @@ use rmm::{Arch as _, PageFlush};
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
-    arch::paging::PAGE_SIZE,
     context::file::LockedFileDescription,
     cpu_set::LogicalCpuSet,
     memory::{
         deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
-        PageInfo, RaiiFrame, RefCount, RefKind,
+        Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
+        VirtualAddress, PAGE_SIZE,
     },
-    paging::{Page, PageFlags, PageMapper, RmmA, TableKind, VirtualAddress},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
     sync::{

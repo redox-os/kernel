@@ -1,7 +1,4 @@
-use crate::{
-    memory::{Frame, KernelMapper},
-    paging::{Page, PageFlags, PhysicalAddress, VirtualAddress},
-};
+use crate::memory::{Frame, KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress};
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]

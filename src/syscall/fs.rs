@@ -11,7 +11,7 @@ use crate::{
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
     },
-    paging::{Page, VirtualAddress, PAGE_SIZE},
+    memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     sync::{CleanLockToken, RwLock},
     syscall::{data::Stat, error::*, flag::*},

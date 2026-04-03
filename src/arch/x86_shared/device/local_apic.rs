@@ -6,7 +6,7 @@ use x86::msr::*;
 
 use crate::{
     ipi::IpiKind,
-    paging::{PageFlags, PhysicalAddress},
+    memory::{PageFlags, PhysicalAddress},
     percpu::PercpuBlock,
 };
 

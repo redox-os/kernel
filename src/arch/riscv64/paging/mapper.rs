@@ -1,6 +1,7 @@
-use crate::ipi::{ipi, IpiKind, IpiTarget};
-
-use super::RmmA;
+use crate::{
+    ipi::{ipi, IpiKind, IpiTarget},
+    memory::RmmA,
+};
 
 pub use rmm::{Flusher, PageFlush, PageFlushAll};
 

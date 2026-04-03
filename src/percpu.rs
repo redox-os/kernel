@@ -119,7 +119,7 @@ impl PercpuBlock {
         }
 
         // TODO: Finer-grained flush
-        crate::paging::RmmA::invalidate_all();
+        crate::memory::RmmA::invalidate_all();
 
         if let Some(addrsp) = &*self.current_addrsp.borrow() {
             addrsp.tlb_ack.fetch_add(1, Ordering::Release);
@@ -174,7 +174,7 @@ pub unsafe fn switch_arch_hook() {
                 next.table.utable.make_current();
             }
             _ => {
-                crate::paging::RmmA::set_table(rmm::TableKind::User, empty_cr3());
+                crate::memory::RmmA::set_table(rmm::TableKind::User, empty_cr3());
             }
         }
     }

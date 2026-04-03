@@ -8,7 +8,7 @@ use core::num::NonZeroUsize;
 use crate::{
     context::memory::AddrSpaceWrapper,
     cpu_set::LogicalCpuSet,
-    paging::{RmmA, RmmArch, TableKind},
+    memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,

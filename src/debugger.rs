@@ -1,7 +1,8 @@
 use crate::{
     context::{context::SyscallFrame, Context, ContextLock},
-    memory::{get_page_info, the_zeroed_frame, Frame, RefCount},
-    paging::{RmmA, RmmArch, TableKind, PAGE_SIZE},
+    memory::{
+        get_page_info, the_zeroed_frame, Frame, RefCount, RmmA, RmmArch, TableKind, PAGE_SIZE,
+    },
     sync::CleanLockToken,
 };
 use alloc::sync::Arc;

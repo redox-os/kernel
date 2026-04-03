@@ -1,8 +1,5 @@
-use crate::{
-    memory::KernelMapper,
-    paging::{mapper::PageFlushAll, Page, PageFlags, VirtualAddress},
-};
-use rmm::{Flusher, FrameAllocator};
+use crate::memory::{KernelMapper, Page, PageFlags, VirtualAddress};
+use rmm::{Flusher, FrameAllocator, PageFlushAll};
 
 pub use self::linked_list::Allocator;
 mod linked_list;

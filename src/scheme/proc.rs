@@ -1,5 +1,4 @@
 use crate::{
-    arch::paging::{Page, VirtualAddress},
     context::{
         self,
         context::{HardBlockedReason, LockedFdTbl, SignalState},
@@ -7,7 +6,7 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
         Context, ContextLock, Status,
     },
-    memory::PAGE_SIZE,
+    memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
     scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme},
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},

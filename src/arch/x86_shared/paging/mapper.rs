@@ -1,8 +1,9 @@
-use crate::ipi::{ipi, IpiKind, IpiTarget};
+use crate::{
+    ipi::{ipi, IpiKind, IpiTarget},
+    memory::RmmA,
+};
 
-use super::RmmA;
-
-pub use rmm::{Flusher, PageFlush, PageFlushAll};
+pub use rmm::{Flusher, PageFlush};
 
 pub struct InactiveFlusher {
     _inner: (),

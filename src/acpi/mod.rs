@@ -6,10 +6,7 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use hashbrown::HashMap;
 use spin::{Once, RwLock};
 
-use crate::{
-    memory::KernelMapper,
-    paging::{PageFlags, PhysicalAddress, RmmA, RmmArch},
-};
+use crate::memory::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
 
 use self::{hpet::Hpet, madt::Madt, rsdp::Rsdp, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
 
@@ -25,10 +22,10 @@ pub mod sdt;
 mod spcr;
 mod xsdt;
 
-unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::paging::PageMapper) {
+unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::memory::PageMapper) {
     unsafe {
-        let base = PhysicalAddress::new(crate::paging::round_down_pages(addr.data()));
-        let aligned_len = crate::paging::round_up_pages(len + (addr.data() - base.data()));
+        let base = PhysicalAddress::new(crate::memory::round_down_pages(addr.data()));
+        let aligned_len = crate::memory::round_up_pages(len + (addr.data() - base.data()));
 
         for page_idx in 0..aligned_len / crate::memory::PAGE_SIZE {
             let (_, flush) = mapper

@@ -25,8 +25,7 @@ use crate::{
         BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },
     event,
-    memory::Frame,
-    paging::{Page, VirtualAddress, PAGE_SIZE},
+    memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{

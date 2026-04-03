@@ -8,8 +8,7 @@ use x86::controlregs::{Cr4, Xcr0};
 use crate::{
     context::memory::PageSpan,
     cpuid::{cpuid, feature_info, has_ext_feat},
-    memory::KernelMapper,
-    paging::{Page, PageFlags, VirtualAddress, PAGE_SIZE},
+    memory::{KernelMapper, Page, PageFlags, VirtualAddress, PAGE_SIZE},
 };
 
 #[cfg(all(cpu_feature_never = "xsave", not(cpu_feature_never = "xsaveopt")))]

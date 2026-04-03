@@ -7,8 +7,10 @@ use crate::{
     arch::start::KernelArgsAp,
     cpu_set::LogicalCpuId,
     device::local_apic::the_local_apic,
-    memory::{allocate_p2frame, Frame, KernelMapper},
-    paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
+    memory::{
+        allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
+        VirtualAddress, PAGE_SIZE,
+    },
     start::kstart_ap,
     AP_READY,
 };
