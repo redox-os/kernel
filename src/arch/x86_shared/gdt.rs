@@ -259,7 +259,6 @@ fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
     pcr.self_ref = pcr as *mut _;
 
     // Setup the GDT.
-    pcr.gdt = BASE_GDT;
     #[cfg(target_arch = "x86")]
     pcr.gdt[GDT_KERNEL_PERCPU].set_offset(pcr as *const _ as u32);
 

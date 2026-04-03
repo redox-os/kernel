@@ -26,12 +26,6 @@ pub struct ScratchRegisters {
 }
 
 impl ScratchRegisters {
-    pub fn a(&self) -> usize {
-        self.x0
-    }
-    pub fn b(&self) -> usize {
-        self.x1
-    }
     pub fn dump(&self) {
         println!("X0:    {:>016X}", { self.x0 });
         println!("X1:    {:>016X}", { self.x1 });
@@ -387,9 +381,9 @@ macro_rules! exception_stack {
         #[unsafe(naked)]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn $name(stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
-            unsafe extern "C" fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) { unsafe {
+            unsafe extern "C" fn inner($stack: &mut $crate::arch::aarch64::interrupt::InterruptStack) {
                 $code
-            }}
+            }
             core::arch::naked_asm!(
                 // Backup all userspace registers to stack
                 push_preserved!(),

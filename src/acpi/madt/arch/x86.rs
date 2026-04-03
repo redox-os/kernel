@@ -9,7 +9,8 @@ use crate::{
     device::local_apic::the_local_apic,
     memory::{allocate_p2frame, Frame, KernelMapper},
     paging::{Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress, PAGE_SIZE},
-    start::{kstart_ap, AP_READY},
+    start::kstart_ap,
+    AP_READY,
 };
 
 use super::{Madt, MadtEntry};

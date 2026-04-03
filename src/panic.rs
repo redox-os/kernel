@@ -79,7 +79,7 @@ pub unsafe fn stack_trace() {
     unsafe {
         let mapper = KernelMapper::lock_ro();
 
-        let kernel_ptr = crate::KERNEL_OFFSET as *const u8;
+        let kernel_ptr = crate::kernel_executable_offsets::KERNEL_OFFSET() as *const u8;
         let elf_header: &FileHeader<NativeEndian> = object::pod::from_bytes(slice::from_raw_parts(
             kernel_ptr,
             size_of::<FileHeader<NativeEndian>>(),
