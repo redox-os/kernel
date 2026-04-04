@@ -1,5 +1,6 @@
 #[cfg(dtb)]
 pub mod irqchip;
+pub mod serial;
 
 #[cfg(dtb)]
 use crate::dtb::irqchip::IrqCell;
@@ -205,7 +206,6 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     }
 }
 
-#[cfg_attr(not(dtb), expect(dead_code))]
 pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();

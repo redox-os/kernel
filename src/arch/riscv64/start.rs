@@ -5,12 +5,8 @@ use core::{
 };
 
 use crate::{
-    allocator,
-    arch::{device::serial::init_early, paging},
-    device,
-    devices::graphical_debug,
-    interrupt::exception_handler,
-    startup::KernelArgs,
+    allocator, arch::paging, device, devices::graphical_debug, dtb::serial::init_early,
+    interrupt::exception_handler, startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
