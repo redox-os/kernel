@@ -93,7 +93,6 @@ bitflags! {
     }
 }
 
-#[allow(dead_code)]
 pub struct SerialPort {
     base: usize,
     data_reg: u8,

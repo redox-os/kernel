@@ -11,6 +11,7 @@ use fdt::{
     standard_nodes::MemoryRegion,
     Fdt,
 };
+use rmm::PhysicalAddress;
 use spin::once::Once;
 
 /// Represents the in-memory DTB (DeviceTree) binary.
@@ -146,6 +147,7 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
     }
 }
 
+// FIXME return PhysicalAddress
 pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> Option<usize> {
     /* DT spec 2.3.8 "ranges":
      * The ranges property provides a means of defining a mapping or translation between
@@ -206,7 +208,7 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     }
 }
 
-pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {
+pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();
     let skip_init = uart_node.property("skip-init").is_some();
@@ -220,7 +222,7 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'
     let address = get_mmio_address(dtb, &uart_node, &memory)?;
 
     Some((
-        address,
+        PhysicalAddress::new(address),
         memory.size?,
         skip_init,
         cts_event_walkaround,

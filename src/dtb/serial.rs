@@ -5,6 +5,7 @@ use syscall::Mmio;
 use crate::{
     devices::{serial::SerialKind, uart_16550, uart_pl011},
     dtb::diag_uart_range,
+    memory::{RmmA, RmmArch},
 };
 
 pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
@@ -18,7 +19,7 @@ pub unsafe fn init_early(dtb: &Fdt) {
         }
 
         if let Some((phys, size, skip_init, cts, compatible)) = diag_uart_range(dtb) {
-            let virt = crate::PHYS_OFFSET + phys;
+            let virt = RmmA::phys_to_virt(phys).data();
             let serial_opt = if compatible.contains("arm,pl011") {
                 let mut serial_port = uart_pl011::SerialPort::new(virt, cts);
                 if !skip_init {
