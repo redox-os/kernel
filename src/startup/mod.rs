@@ -103,7 +103,6 @@ impl KernelArgs {
         }
     }
 
-    #[cfg(dtb)]
     pub(crate) fn dtb(&self) -> Option<fdt::Fdt<'static>> {
         if self.hwdesc_base != 0 {
             let data = unsafe {

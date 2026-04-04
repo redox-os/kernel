@@ -35,9 +35,7 @@ use crate::{
     syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
 };
 
-use self::acpi::AcpiScheme;
-#[cfg(dtb)]
-use self::dtb::DtbScheme;
+use self::{acpi::AcpiScheme, dtb::DtbScheme};
 
 use self::{
     debug::DebugScheme,
@@ -54,7 +52,7 @@ use self::{
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
 pub mod acpi;
-#[cfg(dtb)]
+
 pub mod dtb;
 
 /// `debug:` - provides access to serial console
@@ -158,8 +156,9 @@ fn init_schemes() -> RwLock<L1, HashMap<SchemeId, Handle>> {
             insert_globals(&[Acpi]);
         }
 
-        #[cfg(dtb)]
-        insert_globals(&[Dtb]);
+        if cfg!(dtb) {
+            insert_globals(&[Dtb]);
+        }
     }
     let next_id = SCHEME_LIST_NEXT_ID.fetch_add(1, Ordering::Relaxed);
     handles.insert(SchemeId(next_id), Handle::Scheme(KernelSchemes::SchemeMgr));
@@ -418,7 +417,6 @@ pub const ALL_KERNEL_SCHEMES: &[GlobalSchemes] = &[
     GlobalSchemes::Sys,
     GlobalSchemes::Proc,
     GlobalSchemes::Acpi,
-    #[cfg(dtb)]
     GlobalSchemes::Dtb,
 ];
 
@@ -445,10 +443,7 @@ impl SchemeExt for GlobalSchemes {
             Self::Sys => &SysScheme,
             Self::Proc => &ProcScheme,
             Self::Acpi => &AcpiScheme,
-            #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
-            #[cfg(not(dtb))]
-            Self::Dtb => panic!("Unknown global scheme"),
         }
     }
     fn scheme_id(self) -> SchemeId {
@@ -461,10 +456,7 @@ pub fn init_globals() {
     if cfg!(feature = "acpi") {
         AcpiScheme::init();
     }
-    #[cfg(dtb)]
-    {
-        DtbScheme::init();
-    }
+    DtbScheme::init();
     IrqScheme::init();
 }
 

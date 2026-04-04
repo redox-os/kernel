@@ -48,7 +48,6 @@ mod allocator;
 /// ACPI table parsing
 mod acpi;
 
-#[cfg(dtb)]
 mod dtb;
 
 /// Logical CPU ID and bitset types
