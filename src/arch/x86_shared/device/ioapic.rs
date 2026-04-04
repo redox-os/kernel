@@ -3,15 +3,12 @@ use core::{cell::SyncUnsafeCell, fmt, ptr};
 use alloc::vec::Vec;
 use spin::Mutex;
 
-#[cfg(feature = "acpi")]
+use super::{local_apic::ApicId, pic};
 use crate::{
     acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic},
+    arch::{cpuid::cpuid, interrupt::irq},
     memory::{map_device_memory, PhysicalAddress},
 };
-
-use crate::arch::{cpuid::cpuid, interrupt::irq};
-
-use super::{local_apic::ApicId, pic};
 
 pub struct IoApicRegs {
     pointer: *const u32,
@@ -232,7 +229,6 @@ pub fn src_overrides() -> &'static [Override] {
         .map_or(&[], |vector| &vector[..])
 }
 
-#[cfg(feature = "acpi")]
 pub unsafe fn handle_ioapic(madt_ioapic: &'static MadtIoApic) {
     unsafe {
         // map the I/O APIC registers
@@ -250,7 +246,6 @@ pub unsafe fn handle_ioapic(madt_ioapic: &'static MadtIoApic) {
         (*IOAPICS.get()).get_or_insert_with(Vec::new).push(ioapic);
     }
 }
-#[cfg(feature = "acpi")]
 pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
     unsafe {
         let flags = src_override.flags;
@@ -295,8 +290,7 @@ pub unsafe fn init() {
         )); // TODO: remove unwraps
 
         // search the madt for all IOAPICs.
-        #[cfg(feature = "acpi")]
-        {
+        if cfg!(feature = "acpi") {
             let madt: &'static Madt = match madt::madt() {
                 Some(m) => m,
                 // TODO: Parse MP tables too.

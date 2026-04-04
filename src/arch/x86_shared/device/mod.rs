@@ -1,7 +1,6 @@
 use core::cell::Cell;
 
 pub mod cpu;
-#[cfg(feature = "acpi")]
 pub mod hpet;
 pub mod ioapic;
 pub mod local_apic;
@@ -28,8 +27,11 @@ pub unsafe fn init_after_acpi() {
     //ioapic::init(mapper);
 }
 
-#[cfg(feature = "acpi")]
 unsafe fn init_hpet() -> bool {
+    if cfg!(not(feature = "acpi")) {
+        return false;
+    }
+
     unsafe {
         use crate::acpi::ACPI_TABLE;
         match *ACPI_TABLE.hpet.write() {
@@ -44,11 +46,6 @@ unsafe fn init_hpet() -> bool {
             _ => false,
         }
     }
-}
-
-#[cfg(not(feature = "acpi"))]
-unsafe fn init_hpet() -> bool {
-    false
 }
 
 pub unsafe fn init_noncore() {

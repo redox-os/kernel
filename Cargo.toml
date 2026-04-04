@@ -15,6 +15,7 @@ toml = "0.8"
 arrayvec = { version = "0.7.4", default-features = false }
 bitfield = "0.13.2"
 bitflags = "2"
+fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa36b6a7c5351004be54" }
 hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "inline-more"] }
 linked_list_allocator = "0.9.0"
 redox-path = "0.2.0"
@@ -23,8 +24,6 @@ rmm = { path = "rmm", default-features = false }
 slab = { version = "0.4", default-features = false }
 smallvec = { version = "1.15.1", default-features = false }
 spin = { version = "0.9.8" }
-# TODO: Remove
-indexmap = { version = "2.5.0", default-features = false }
 
 [dependencies.object]
 version = "0.37.1"
@@ -68,9 +67,6 @@ static_mut_refs = "warn" # FIXME deny once all occurrences are fixed
 # as a catch-all variable in a match, for example
 unreachable_patterns = "deny"
 unused_must_use = "deny" # Ensure that all must_use results are used
-
-[target.'cfg(any(target_arch = "aarch64", target_arch = "riscv64"))'.dependencies]
-fdt = { git = "https://github.com/repnop/fdt.git", rev = "2fb1409edd1877c714a0aa36b6a7c5351004be54" }
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
 raw-cpuid = "10.2.0"

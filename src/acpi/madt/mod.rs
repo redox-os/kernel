@@ -148,6 +148,7 @@ pub struct MadtGicd {
 
 /// MADT Entries
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum MadtEntry {
     LocalApic(&'static MadtLocalApic),
     InvalidLocalApic(usize),

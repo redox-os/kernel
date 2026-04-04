@@ -40,17 +40,15 @@ mod macros;
 mod arch;
 use crate::arch::*;
 /// Offset of physmap
+#[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), expect(dead_code))]
 const PHYS_OFFSET: usize = <arch::CurrentRmmArch as ::rmm::Arch>::PHYS_OFFSET;
 
 /// Heap allocators
 mod allocator;
 
 /// ACPI table parsing
-#[cfg(feature = "acpi")]
-#[allow(dead_code)] // TODO
 mod acpi;
 
-#[cfg(dtb)]
 mod dtb;
 
 /// Logical CPU ID and bitset types

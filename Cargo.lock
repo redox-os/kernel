@@ -112,7 +112,6 @@ dependencies = [
  "cc",
  "fdt",
  "hashbrown 0.14.5",
- "indexmap",
  "linked_list_allocator",
  "object",
  "raw-cpuid",

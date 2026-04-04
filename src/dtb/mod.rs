@@ -1,15 +1,17 @@
+#[cfg(dtb)]
 pub mod irqchip;
+pub mod serial;
 
-use crate::{
-    dtb::irqchip::IrqCell,
-    startup::memory::{register_memory_region, BootloaderMemoryKind},
-};
+#[cfg(dtb)]
+use crate::dtb::irqchip::IrqCell;
+use crate::startup::memory::{register_memory_region, BootloaderMemoryKind};
 use core::slice;
 use fdt::{
     node::{FdtNode, NodeProperty},
     standard_nodes::MemoryRegion,
     Fdt,
 };
+use rmm::PhysicalAddress;
 use spin::once::Once;
 
 /// Represents the in-memory DTB (DeviceTree) binary.
@@ -24,6 +26,7 @@ pub static DTB_BINARY: Once<&'static [u8]> = Once::new();
 /// The referenced memory must contain a valid DTB for the underlying system.
 ///
 /// The referenced memory must **not** be mutated for the duration of kernel run-time.
+#[cfg_attr(not(dtb), expect(dead_code))]
 pub unsafe fn init(dtb: Option<(usize, usize)>) {
     let mut initialized = false;
     DTB_BINARY.call_once(|| {
@@ -41,6 +44,7 @@ pub unsafe fn init(dtb: Option<(usize, usize)>) {
     }
 }
 
+#[cfg_attr(not(dtb), expect(dead_code))]
 pub fn travel_interrupt_ctrl(fdt: &Fdt) {
     if let Some(root_intr_parent) = fdt
         .root()
@@ -80,19 +84,6 @@ pub fn travel_interrupt_ctrl(fdt: &Fdt) {
                     debug!("interrupts end");
                 }
             }
-        }
-    }
-}
-
-#[allow(unused)]
-pub fn register_memory_ranges(dt: &Fdt) {
-    for chunk in dt.memory().regions() {
-        if let Some(size) = chunk.size {
-            register_memory_region(
-                chunk.starting_address as usize,
-                size,
-                BootloaderMemoryKind::Free,
-            );
         }
     }
 }
@@ -156,6 +147,7 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
     }
 }
 
+// FIXME return PhysicalAddress
 pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> Option<usize> {
     /* DT spec 2.3.8 "ranges":
      * The ranges property provides a means of defining a mapping or translation between
@@ -186,6 +178,7 @@ pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> 
     Some(mapped_addr)
 }
 
+#[cfg_attr(not(dtb), expect(dead_code))]
 pub fn interrupt_parent<'a>(fdt: &'a Fdt, node: &'a FdtNode) -> Option<FdtNode<'a, 'a>> {
     // FIXME traverse device tree up
     node.interrupt_parent()
@@ -193,6 +186,7 @@ pub fn interrupt_parent<'a>(fdt: &'a Fdt, node: &'a FdtNode) -> Option<FdtNode<'
         .or_else(|| fdt.find_node("/").and_then(|node| node.interrupt_parent()))
 }
 
+#[cfg(dtb)]
 pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     let interrupts = node.property("interrupts").unwrap();
     let parent_interrupt_cells = interrupt_parent(fdt, node)
@@ -214,7 +208,7 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     }
 }
 
-pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'a str)> {
+pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();
     let skip_init = uart_node.property("skip-init").is_some();
@@ -228,7 +222,7 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(usize, usize, bool, bool, &'
     let address = get_mmio_address(dtb, &uart_node, &memory)?;
 
     Some((
-        address,
+        PhysicalAddress::new(address),
         memory.size?,
         skip_init,
         cts_event_walkaround,

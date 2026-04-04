@@ -205,10 +205,8 @@ pub fn get_sdt_signature(sdt: &'static Sdt) -> SdtSignature {
 
 pub struct Acpi {
     pub hpet: RwLock<Option<Hpet>>,
-    pub next_ctx: RwLock<u64>,
 }
 
 pub static ACPI_TABLE: Acpi = Acpi {
     hpet: RwLock::new(None),
-    next_ctx: RwLock::new(0),
 };

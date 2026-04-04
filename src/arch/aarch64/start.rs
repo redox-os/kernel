@@ -82,7 +82,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             // Try to find serial port prior to logging
             if let Ok(dtb) = &dtb_res {
-                device::serial::init_early(dtb);
+                dtb::serial::init_early(dtb);
             }
 
             info!("Redox OS starting...");

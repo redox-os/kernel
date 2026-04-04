@@ -1,7 +1,4 @@
-use crate::{
-    arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP, scheme::irq::irq_trigger,
-    sync::CleanLockToken,
-};
+use crate::{arch::device::ROOT_IC_IDX, dtb::irqchip::IRQ_CHIP, sync::CleanLockToken};
 use core::sync::atomic::Ordering;
 
 // use crate::percpu::PercpuBlock;
@@ -41,17 +38,6 @@ exception_stack!(irq_at_el1, |_stack| {
         }
     }
 });
-
-//TODO
-pub unsafe fn trigger(irq: u32, token: &mut CleanLockToken) {
-    unsafe {
-        // FIXME add_irq accepts a u8 as irq number
-        // PercpuBlock::current().stats.add_irq(irq);
-
-        irq_trigger(irq.try_into().unwrap(), token);
-        IRQ_CHIP.irq_eoi(irq);
-    }
-}
 
 /*
 pub unsafe fn irq_handler_gentimer(irq: u32) {

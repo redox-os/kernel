@@ -9,7 +9,7 @@ use crate::{
         get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
-    interrupt::irq::trigger,
+    scheme::irq::irq_trigger,
     sync::CleanLockToken,
     time,
 };
@@ -135,7 +135,11 @@ impl InterruptHandler for GenericTimer {
         context::switch::tick(token);
 
         unsafe {
-            trigger(irq, token);
+            // FIXME add_irq accepts a u8 as irq number
+            // PercpuBlock::current().stats.add_irq(irq);
+
+            irq_trigger(irq.try_into().unwrap(), token);
+            IRQ_CHIP.irq_eoi(irq);
         }
         self.reload_count();
     }
