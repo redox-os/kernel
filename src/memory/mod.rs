@@ -252,7 +252,7 @@ pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAdd
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new().write(true).device_memory(true),
                 )
-                .expect("failed to linearly map SDT");
+                .expect("failed to linearly map device memory");
             flush.flush();
         }
         RmmA::phys_to_virt(addr)
