@@ -4,9 +4,6 @@
 //! defined in other files inside of the `arch` module
 use core::{arch::naked_asm, cell::SyncUnsafeCell, mem::offset_of};
 
-#[cfg(feature = "acpi")]
-use crate::acpi;
-
 use crate::{
     allocator, cpu_set::LogicalCpuId, device, devices::graphical_debug, gdt, idt, interrupt,
     paging, startup::KernelArgs,
@@ -131,9 +128,8 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             device::init();
 
             // Read ACPI tables, starts APs
-            #[cfg(feature = "acpi")]
-            {
-                acpi::init(args.acpi_rsdp());
+            if cfg!(feature = "acpi") {
+                crate::acpi::init(args.acpi_rsdp());
                 device::init_after_acpi();
             }
 

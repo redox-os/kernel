@@ -35,7 +35,6 @@ use crate::{
     syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
 };
 
-#[cfg(feature = "acpi")]
 use self::acpi::AcpiScheme;
 #[cfg(dtb)]
 use self::dtb::DtbScheme;
@@ -54,7 +53,6 @@ use self::{
 };
 
 /// When compiled with the "acpi" feature - `acpi:` - allows drivers to read a limited set of ACPI tables.
-#[cfg(feature = "acpi")]
 pub mod acpi;
 #[cfg(dtb)]
 pub mod dtb;
@@ -156,8 +154,9 @@ fn init_schemes() -> RwLock<L1, HashMap<SchemeId, Handle>> {
         use GlobalSchemes::*;
         insert_globals(&[Debug, Event, Memory, Pipe, Serio, Irq, Time, Sys, Proc]);
 
-        #[cfg(feature = "acpi")]
-        insert_globals(&[Acpi]);
+        if cfg!(feature = "acpi") {
+            insert_globals(&[Acpi]);
+        }
 
         #[cfg(dtb)]
         insert_globals(&[Dtb]);
@@ -418,7 +417,6 @@ pub const ALL_KERNEL_SCHEMES: &[GlobalSchemes] = &[
     GlobalSchemes::Time,
     GlobalSchemes::Sys,
     GlobalSchemes::Proc,
-    #[cfg(feature = "acpi")]
     GlobalSchemes::Acpi,
     #[cfg(dtb)]
     GlobalSchemes::Dtb,
@@ -446,12 +444,11 @@ impl SchemeExt for GlobalSchemes {
             Self::Time => &TimeScheme,
             Self::Sys => &SysScheme,
             Self::Proc => &ProcScheme,
-            #[cfg(feature = "acpi")]
             Self::Acpi => &AcpiScheme,
             #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
-            #[cfg(not(all(feature = "acpi", dtb)))]
-            _ => panic!("Unknown global scheme"),
+            #[cfg(not(dtb))]
+            Self::Dtb => panic!("Unknown global scheme"),
         }
     }
     fn scheme_id(self) -> SchemeId {
@@ -461,8 +458,7 @@ impl SchemeExt for GlobalSchemes {
 
 #[cold]
 pub fn init_globals() {
-    #[cfg(feature = "acpi")]
-    {
+    if cfg!(feature = "acpi") {
         AcpiScheme::init();
     }
     #[cfg(dtb)]

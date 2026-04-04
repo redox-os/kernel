@@ -1,9 +1,9 @@
-#[cfg(feature = "acpi")]
-use crate::{context, scheme::acpi, time};
-
 use crate::{
+    context,
+    scheme::acpi,
     sync::CleanLockToken,
     syscall::io::{Io, Pio},
+    time,
 };
 
 pub unsafe fn kreset() -> ! {
@@ -58,8 +58,11 @@ pub unsafe fn emergency_reset() -> ! {
     }
 }
 
-#[cfg(feature = "acpi")]
 fn userspace_acpi_shutdown(token: &mut CleanLockToken) {
+    if cfg!(not(feature = "acpi")) {
+        return;
+    }
+
     info!("Notifying any potential ACPI driver");
     // Tell whatever driver that handles ACPI, that it should enter the S5 state (i.e.
     // shutdown).
@@ -93,7 +96,6 @@ pub unsafe fn kstop(token: &mut CleanLockToken) -> ! {
     unsafe {
         info!("Running kstop()");
 
-        #[cfg(feature = "acpi")]
         userspace_acpi_shutdown(token);
 
         // Magic shutdown code for bochs and qemu (older versions).

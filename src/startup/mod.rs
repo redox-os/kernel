@@ -84,7 +84,6 @@ impl KernelArgs {
         }
     }
 
-    #[cfg(feature = "acpi")]
     pub(crate) fn acpi_rsdp(&self) -> Option<*const u8> {
         if self.hwdesc_base != 0 {
             let data = unsafe {

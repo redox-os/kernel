@@ -1,8 +1,5 @@
+use super::device::{hpet, pit};
 use crate::sync::CleanLockToken;
-
-#[cfg(feature = "acpi")]
-use super::device::hpet;
-use super::device::pit;
 
 pub fn monotonic_absolute(token: &mut CleanLockToken) -> u128 {
     // The paravirtualized TSC is already guaranteed to be monotonic, and thus doesn't need to be
@@ -16,8 +13,9 @@ pub fn monotonic_absolute(token: &mut CleanLockToken) -> u128 {
     offset + hpet_or_pit()
 }
 fn hpet_or_pit() -> u128 {
-    #[cfg(feature = "acpi")]
-    if let Some(ref hpet) = *crate::acpi::ACPI_TABLE.hpet.read() {
+    if cfg!(feature = "acpi")
+        && let Some(ref hpet) = *crate::acpi::ACPI_TABLE.hpet.read()
+    {
         //TODO: handle rollover?
         //TODO: improve performance
 

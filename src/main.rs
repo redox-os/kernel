@@ -46,7 +46,6 @@ const PHYS_OFFSET: usize = <arch::CurrentRmmArch as ::rmm::Arch>::PHYS_OFFSET;
 mod allocator;
 
 /// ACPI table parsing
-#[cfg(feature = "acpi")]
 #[allow(dead_code)] // TODO
 mod acpi;
 

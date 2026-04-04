@@ -102,8 +102,10 @@ pub struct IrqScheme;
 
 impl IrqScheme {
     pub fn init() {
-        #[cfg(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64")))]
-        let cpus = {
+        let cpus = if cfg!(all(
+            feature = "acpi",
+            any(target_arch = "x86", target_arch = "x86_64")
+        )) {
             use crate::acpi::madt::*;
 
             match madt() {
@@ -119,9 +121,9 @@ impl IrqScheme {
                     vec![0]
                 }
             }
+        } else {
+            vec![0]
         };
-        #[cfg(not(all(feature = "acpi", any(target_arch = "x86", target_arch = "x86_64"))))]
-        let cpus = vec![0];
 
         CPUS.call_once(|| cpus);
     }
