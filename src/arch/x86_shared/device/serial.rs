@@ -32,25 +32,24 @@ pub unsafe fn init() {
         return;
     }
 
-    // TODO: Make this configurable
-    let address = crate::PHYS_OFFSET + 0xFE032000;
+    let virt = {
+        use crate::memory::{KernelMapper, PageFlags, PhysicalAddress};
 
-    {
-        use crate::memory::{KernelMapper, PageFlags, PhysicalAddress, VirtualAddress};
+        // TODO: Make this configurable
+        let phys = PhysicalAddress::new(0xFE032000);
 
         let mut mapper = KernelMapper::lock_rw();
-        let virt = VirtualAddress::new(address);
-        let phys = PhysicalAddress::new(address - crate::PHYS_OFFSET);
         let flags = PageFlags::new().write(true).execute(false);
-        unsafe {
+        let (virt, flush) = unsafe {
             mapper
-                .map_phys(virt, phys, flags)
+                .map_linearly(phys, flags)
                 .expect("failed to map frame")
-                .flush();
-        }
-    }
+        };
+        flush.flush();
+        virt
+    };
 
-    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(address) };
+    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(virt.data()) };
     if lpss.init().is_ok() {
         *LPSS.lock() = SerialKind::Ns16550u32(lpss);
     }
