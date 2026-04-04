@@ -189,9 +189,8 @@ unsafe fn new_tables<A: Arch>(areas: &'static [MemoryArea]) {
             for area in areas.iter() {
                 for i in 0..area.size / A::PAGE_SIZE {
                     let phys = area.base.add(i * A::PAGE_SIZE);
-                    let virt = A::phys_to_virt(phys);
-                    let flush = mapper
-                        .map_phys(virt, phys, PageFlags::<A>::new().write(true))
+                    let (_, flush) = mapper
+                        .map_linearly(phys, PageFlags::<A>::new().write(true))
                         .expect("failed to map page to frame");
                     flush.ignore(); // Not the active table
                 }

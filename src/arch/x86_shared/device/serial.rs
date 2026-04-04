@@ -1,5 +1,6 @@
 use crate::{
     devices::{serial::SerialKind, uart_16550::SerialPort},
+    memory::map_device_memory,
     syscall::io::{Mmio, Pio},
 };
 use spin::Mutex;
@@ -32,25 +33,15 @@ pub unsafe fn init() {
         return;
     }
 
-    // TODO: Make this configurable
-    let address = crate::PHYS_OFFSET + 0xFE032000;
+    let virt = unsafe {
+        map_device_memory(
+            // TODO: Make this configurable
+            crate::memory::PhysicalAddress::new(0xFE032000),
+            4,
+        )
+    };
 
-    {
-        use crate::memory::{KernelMapper, PageFlags, PhysicalAddress, VirtualAddress};
-
-        let mut mapper = KernelMapper::lock_rw();
-        let virt = VirtualAddress::new(address);
-        let phys = PhysicalAddress::new(address - crate::PHYS_OFFSET);
-        let flags = PageFlags::new().write(true).execute(false);
-        unsafe {
-            mapper
-                .map_phys(virt, phys, flags)
-                .expect("failed to map frame")
-                .flush();
-        }
-    }
-
-    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(address) };
+    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(virt.data()) };
     if lpss.init().is_ok() {
         *LPSS.lock() = SerialKind::Ns16550u32(lpss);
     }

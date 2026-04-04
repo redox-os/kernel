@@ -76,6 +76,8 @@ impl Arch for EmulateArch {
 
     const ENTRY_ADDRESS_WIDTH: usize = X8664Arch::ENTRY_ADDRESS_WIDTH;
 
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = X8664Arch::ENTRY_FLAG_DEVICE_MEMORY;
+    const ENTRY_FLAG_UNCACHEABLE: usize = X8664Arch::ENTRY_FLAG_UNCACHEABLE;
     const ENTRY_FLAG_WRITE_COMBINING: usize = X8664Arch::ENTRY_FLAG_WRITE_COMBINING;
 
     #[inline(always)]

@@ -69,11 +69,11 @@ pub(super) fn init(madt: Madt) {
                 let cpu_id = LogicalCpuId::next();
 
                 // Allocate a stack
-                let stack_start = allocate_p2frame(4)
-                    .expect("no more frames in acpi stack_start")
-                    .base()
-                    .data()
-                    + crate::PHYS_OFFSET;
+                let stack_start = RmmA::phys_to_virt(
+                    allocate_p2frame(4)
+                        .expect("no more frames in acpi stack_start")
+                        .base(),
+                ).data();
                 let stack_end = stack_start + (PAGE_SIZE << 4);
 
                 let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);

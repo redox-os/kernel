@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use core::{convert::TryFrom, mem};
+use rmm::PhysicalAddress;
 
 use super::{rxsdt::Rxsdt, sdt::Sdt};
 
@@ -23,7 +24,7 @@ impl Rsdt {
 }
 
 impl Rxsdt for Rsdt {
-    fn iter(&self) -> Box<dyn Iterator<Item = usize>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = PhysicalAddress>> {
         Box::new(RsdtIter { sdt: self.0, i: 0 })
     }
 }
@@ -34,7 +35,7 @@ pub struct RsdtIter {
 }
 
 impl Iterator for RsdtIter {
-    type Item = usize;
+    type Item = PhysicalAddress;
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < self.sdt.data_len() / mem::size_of::<u32>() {
             let item = unsafe {
@@ -43,7 +44,7 @@ impl Iterator for RsdtIter {
                     .read_unaligned()
             };
             self.i += 1;
-            Some(item as usize)
+            Some(PhysicalAddress::new(item as usize))
         } else {
             None
         }

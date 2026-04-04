@@ -1,4 +1,4 @@
-use crate::memory::{Frame, KernelMapper, Page, PageFlags, PhysicalAddress, VirtualAddress};
+use rmm::PhysicalAddress;
 
 /// RSDP
 #[derive(Copy, Clone, Debug)]
@@ -16,59 +16,21 @@ pub struct Rsdp {
 }
 
 impl Rsdp {
-    fn get_already_supplied_rsdp(rsdp_ptr: *const u8) -> Rsdp {
-        // TODO: Validate
-        unsafe { *(rsdp_ptr as *const Rsdp) }
-    }
-    pub fn get_rsdp(
-        mapper: &mut KernelMapper<true>,
-        already_supplied_rsdp: Option<*const u8>,
-    ) -> Option<Rsdp> {
+    pub unsafe fn get_rsdp(already_supplied_rsdp: Option<*const u8>) -> Option<Rsdp> {
         if let Some(rsdp_ptr) = already_supplied_rsdp {
-            Some(Self::get_already_supplied_rsdp(rsdp_ptr))
+            // TODO: Validate
+            Some(unsafe { *(rsdp_ptr as *const Rsdp) })
         } else {
-            Self::get_rsdp_by_searching(mapper)
+            None
         }
-    }
-    /// Search for the RSDP
-    pub fn get_rsdp_by_searching(mapper: &mut KernelMapper<true>) -> Option<Rsdp> {
-        let start_addr = 0xE_0000;
-        let end_addr = 0xF_FFFF;
-
-        // Map all of the ACPI RSDP space
-        {
-            let start_frame = Frame::containing(PhysicalAddress::new(start_addr));
-            let end_frame = Frame::containing(PhysicalAddress::new(end_addr));
-            for frame in Frame::range_inclusive(start_frame, end_frame) {
-                let page = Page::containing_address(VirtualAddress::new(frame.base().data()));
-                let result = unsafe {
-                    mapper
-                        .map_phys(page.start_address(), frame.base(), PageFlags::new())
-                        .expect("failed to map page while searching for RSDP")
-                };
-                result.flush();
-            }
-        }
-
-        Rsdp::search(start_addr, end_addr)
-    }
-
-    fn search(start_addr: usize, end_addr: usize) -> Option<Rsdp> {
-        for i in 0..(end_addr + 1 - start_addr) / 16 {
-            let rsdp = unsafe { &*((start_addr + i * 16) as *const Rsdp) };
-            if &rsdp.signature == b"RSD PTR " {
-                return Some(*rsdp);
-            }
-        }
-        None
     }
 
     /// Get the RSDT or XSDT address
-    pub fn sdt_address(&self) -> usize {
-        if self.revision >= 2 {
+    pub fn sdt_address(&self) -> PhysicalAddress {
+        PhysicalAddress::new(if self.revision >= 2 {
             self.xsdt_address as usize
         } else {
             self.rsdt_address as usize
-        }
+        })
     }
 }

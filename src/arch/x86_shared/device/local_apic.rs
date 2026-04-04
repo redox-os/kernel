@@ -5,12 +5,11 @@ use core::{
 use x86::msr::*;
 
 use crate::{
+    arch::cpuid::cpuid,
     ipi::IpiKind,
-    memory::{PageFlags, PhysicalAddress},
+    memory::{map_device_memory, PhysicalAddress},
     percpu::PercpuBlock,
 };
-
-use crate::{arch::cpuid::cpuid, memory::KernelMapper};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ApicId(u32);
@@ -33,9 +32,9 @@ pub unsafe fn the_local_apic() -> &'static mut LocalApic {
     unsafe { &mut *LOCAL_APIC.get() }
 }
 
-pub unsafe fn init(active_table: &mut KernelMapper<true>) {
+pub unsafe fn init() {
     unsafe {
-        the_local_apic().init(active_table);
+        the_local_apic().init();
     }
 }
 
@@ -52,32 +51,17 @@ pub struct LocalApic {
 }
 
 impl LocalApic {
-    unsafe fn init(&mut self, mapper: &mut KernelMapper<true>) {
+    unsafe fn init(&mut self) {
         unsafe {
             let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
-            #[cfg(target_arch = "x86")]
-            let virtaddr = rmm::VirtualAddress::new(crate::LAPIC_OFFSET);
-            #[cfg(target_arch = "x86_64")]
-            let virtaddr = {
-                use rmm::Arch;
-                crate::memory::RmmA::phys_to_virt(physaddr)
-            };
 
-            self.address = virtaddr.data();
             self.x2 = cpuid()
                 .get_feature_info()
                 .is_some_and(|feature_info| feature_info.has_x2apic());
 
             if !self.x2 {
                 debug!("Detected xAPIC at {:#x}", physaddr.data());
-                if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr) {
-                    // Unmap xAPIC page if already mapped
-                    flush.flush();
-                }
-                mapper
-                    .map_phys(virtaddr, physaddr, PageFlags::new().write(true))
-                    .expect("failed to map local APIC memory")
-                    .flush();
+                self.address = map_device_memory(physaddr, 4096).data();
             } else {
                 debug!("Detected x2APIC");
             }
@@ -105,10 +89,12 @@ impl LocalApic {
     }
 
     unsafe fn read(&self, reg: u32) -> u32 {
+        debug_assert!(!self.x2);
         unsafe { read_volatile((self.address + reg as usize) as *const u32) }
     }
 
     unsafe fn write(&mut self, reg: u32, value: u32) {
+        debug_assert!(!self.x2);
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }

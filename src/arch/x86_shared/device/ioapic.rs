@@ -4,17 +4,14 @@ use alloc::vec::Vec;
 use spin::Mutex;
 
 #[cfg(feature = "acpi")]
-use crate::acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic};
-
 use crate::{
-    arch::interrupt::irq,
-    memory::{Frame, KernelMapper, Page, PageFlags, PhysicalAddress},
+    acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic},
+    memory::{map_device_memory, PhysicalAddress},
 };
 
+use crate::arch::{cpuid::cpuid, interrupt::irq};
+
 use super::{local_apic::ApicId, pic};
-use crate::arch::cpuid::cpuid;
-#[cfg(target_arch = "x86_64")]
-use {crate::memory::RmmA, rmm::Arch};
 
 pub struct IoApicRegs {
     pointer: *const u32,
@@ -236,28 +233,12 @@ pub fn src_overrides() -> &'static [Override] {
 }
 
 #[cfg(feature = "acpi")]
-pub unsafe fn handle_ioapic(mapper: &mut KernelMapper<true>, madt_ioapic: &'static MadtIoApic) {
+pub unsafe fn handle_ioapic(madt_ioapic: &'static MadtIoApic) {
     unsafe {
         // map the I/O APIC registers
+        let virt = map_device_memory(PhysicalAddress::new(madt_ioapic.address as usize), 4096);
 
-        let frame = Frame::containing(PhysicalAddress::new(madt_ioapic.address as usize));
-        #[cfg(target_arch = "x86")]
-        let page = Page::containing_address(rmm::VirtualAddress::new(crate::IOAPIC_OFFSET));
-        #[cfg(target_arch = "x86_64")]
-        let page = Page::containing_address(RmmA::phys_to_virt(frame.base()));
-
-        assert!(mapper.translate(page.start_address()).is_none());
-
-        mapper
-            .map_phys(
-                page.start_address(),
-                frame.base(),
-                PageFlags::new().write(true).device_memory(true),
-            )
-            .expect("failed to map I/O APIC")
-            .flush();
-
-        let ioapic_registers = page.start_address().data() as *const u32;
+        let ioapic_registers = virt.data() as *const u32;
         let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
 
         assert_eq!(
@@ -307,7 +288,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 }
 
 #[allow(dead_code)]
-pub unsafe fn init(active_table: &mut KernelMapper<true>) {
+pub unsafe fn init() {
     unsafe {
         let bsp_apic_id = ApicId::new(u32::from(
             cpuid().get_feature_info().unwrap().initial_local_apic_id(),
@@ -329,7 +310,7 @@ pub unsafe fn init(active_table: &mut KernelMapper<true>) {
 
             for entry in madt.iter() {
                 match entry {
-                    MadtEntry::IoApic(ioapic) => handle_ioapic(active_table, ioapic),
+                    MadtEntry::IoApic(ioapic) => handle_ioapic(ioapic),
                     MadtEntry::IntSrcOverride(src_override) => handle_src_override(src_override),
                     _ => (),
                 }

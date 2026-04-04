@@ -252,7 +252,7 @@ pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAdd
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new().write(true).device_memory(true),
                 )
-                .expect("failed to linearly map SDT");
+                .expect("failed to linearly map device memory");
             flush.flush();
         }
         RmmA::phys_to_virt(addr)
@@ -318,14 +318,6 @@ impl Frame {
         PhysicalAddress::new(self.physaddr.get())
     }
 
-    //TODO: Set private
-    pub fn range_inclusive(start: Frame, end: Frame) -> impl Iterator<Item = Frame> {
-        (start.physaddr.get()..=end.physaddr.get())
-            .step_by(PAGE_SIZE)
-            .map(|number| Frame {
-                physaddr: NonZeroUsize::new(number).unwrap(),
-            })
-    }
     #[track_caller]
     pub fn next_by(self, n: usize) -> Self {
         Self {
