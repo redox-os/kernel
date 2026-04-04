@@ -39,19 +39,17 @@ unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::me
     }
 }
 
-pub fn get_sdt(sdt_address: usize, mapper: &mut KernelMapper<true>) -> &'static Sdt {
-    let physaddr = PhysicalAddress::new(sdt_address);
-
+pub fn get_sdt(sdt_address: PhysicalAddress, mapper: &mut KernelMapper<true>) -> &'static Sdt {
     let sdt;
 
     unsafe {
         const SDT_SIZE: usize = core::mem::size_of::<Sdt>();
-        map_linearly(physaddr, SDT_SIZE, mapper);
+        map_linearly(sdt_address, SDT_SIZE, mapper);
 
-        sdt = &*(RmmA::phys_to_virt(physaddr).data() as *const Sdt);
+        sdt = &*(RmmA::phys_to_virt(sdt_address).data() as *const Sdt);
 
         map_linearly(
-            physaddr.add(SDT_SIZE),
+            sdt_address.add(SDT_SIZE),
             sdt.length as usize - SDT_SIZE,
             mapper,
         );
@@ -74,7 +72,7 @@ pub enum RxsdtEnum {
     Xsdt(Xsdt),
 }
 impl Rxsdt for RxsdtEnum {
-    fn iter(&self) -> Box<dyn Iterator<Item = usize>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = PhysicalAddress>> {
         match self {
             Self::Rsdt(rsdt) => <Rsdt as Rxsdt>::iter(rsdt),
             Self::Xsdt(xsdt) => <Xsdt as Rxsdt>::iter(xsdt),
@@ -96,7 +94,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
         let rsdp_opt = Rsdp::get_rsdp(already_supplied_rsdp);
 
         if let Some(rsdp) = rsdp_opt {
-            debug!("SDT address: {:#x}", rsdp.sdt_address());
+            debug!("SDT address: {:#x}", rsdp.sdt_address().data());
             let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock_rw());
 
             let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
@@ -138,7 +136,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
             }
 
             for sdt_address in rxsdt.iter() {
-                let sdt = &*((sdt_address + crate::PHYS_OFFSET) as *const Sdt);
+                let sdt = &*(RmmA::phys_to_virt(sdt_address).data() as *const Sdt);
 
                 let signature = get_sdt_signature(sdt);
                 if let Some(ref mut ptrs) = *(SDT_POINTERS.write()) {

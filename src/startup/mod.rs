@@ -1,5 +1,7 @@
 use core::slice;
 
+use crate::memory::{PhysicalAddress, RmmA, RmmArch};
+
 pub mod memory;
 
 #[repr(C, packed(8))]
@@ -75,7 +77,8 @@ impl KernelArgs {
     pub(crate) fn env(&self) -> &'static [u8] {
         unsafe {
             slice::from_raw_parts(
-                (crate::PHYS_OFFSET + self.env_base as usize) as *const u8,
+                RmmA::phys_to_virt(PhysicalAddress::new(self.env_base as usize)).data()
+                    as *const u8,
                 self.env_size as usize,
             )
         }
@@ -86,7 +89,8 @@ impl KernelArgs {
         if self.hwdesc_base != 0 {
             let data = unsafe {
                 slice::from_raw_parts(
-                    (crate::PHYS_OFFSET + self.hwdesc_base as usize) as *const u8,
+                    RmmA::phys_to_virt(PhysicalAddress::new(self.hwdesc_base as usize)).data()
+                        as *const u8,
                     self.hwdesc_size as usize,
                 )
             };
@@ -105,7 +109,8 @@ impl KernelArgs {
         if self.hwdesc_base != 0 {
             let data = unsafe {
                 slice::from_raw_parts(
-                    (crate::PHYS_OFFSET + self.hwdesc_base as usize) as *const u8,
+                    RmmA::phys_to_virt(PhysicalAddress::new(self.hwdesc_base as usize)).data()
+                        as *const u8,
                     self.hwdesc_size as usize,
                 )
             };
