@@ -23,8 +23,6 @@ rmm = { path = "rmm", default-features = false }
 slab = { version = "0.4", default-features = false }
 smallvec = { version = "1.15.1", default-features = false }
 spin = { version = "0.9.8" }
-# TODO: Remove
-indexmap = { version = "2.5.0", default-features = false }
 
 [dependencies.object]
 version = "0.37.1"
