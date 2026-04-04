@@ -93,7 +93,7 @@ pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
         }
 
         // Search for RSDP
-        let rsdp_opt = Rsdp::get_rsdp(&mut KernelMapper::lock_rw(), already_supplied_rsdp);
+        let rsdp_opt = Rsdp::get_rsdp(already_supplied_rsdp);
 
         if let Some(rsdp) = rsdp_opt {
             debug!("SDT address: {:#x}", rsdp.sdt_address());
