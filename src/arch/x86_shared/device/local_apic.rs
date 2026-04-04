@@ -5,12 +5,11 @@ use core::{
 use x86::msr::*;
 
 use crate::{
+    arch::cpuid::cpuid,
     ipi::IpiKind,
-    memory::{PageFlags, PhysicalAddress},
+    memory::{map_device_memory, PhysicalAddress},
     percpu::PercpuBlock,
 };
-
-use crate::{arch::cpuid::cpuid, memory::KernelMapper};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ApicId(u32);
@@ -33,9 +32,9 @@ pub unsafe fn the_local_apic() -> &'static mut LocalApic {
     unsafe { &mut *LOCAL_APIC.get() }
 }
 
-pub unsafe fn init(active_table: &mut KernelMapper<true>) {
+pub unsafe fn init() {
     unsafe {
-        the_local_apic().init(active_table);
+        the_local_apic().init();
     }
 }
 
@@ -52,7 +51,7 @@ pub struct LocalApic {
 }
 
 impl LocalApic {
-    unsafe fn init(&mut self, mapper: &mut KernelMapper<true>) {
+    unsafe fn init(&mut self) {
         unsafe {
             let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
 
@@ -62,11 +61,7 @@ impl LocalApic {
 
             if !self.x2 {
                 debug!("Detected xAPIC at {:#x}", physaddr.data());
-                let (virt, flush) = mapper
-                    .map_linearly(physaddr, PageFlags::new().write(true))
-                    .expect("failed to map local APIC memory");
-                flush.flush();
-                self.address = virt.data();
+                self.address = map_device_memory(physaddr, 4096).data();
             } else {
                 debug!("Detected x2APIC");
             }

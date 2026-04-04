@@ -6,13 +6,10 @@ use spin::Mutex;
 #[cfg(feature = "acpi")]
 use crate::{
     acpi::madt::{self, Madt, MadtEntry, MadtIntSrcOverride, MadtIoApic},
-    memory::{Frame, PageFlags, PhysicalAddress, RmmA, RmmArch},
+    memory::{map_device_memory, PhysicalAddress},
 };
 
-use crate::{
-    arch::{cpuid::cpuid, interrupt::irq},
-    memory::KernelMapper,
-};
+use crate::arch::{cpuid::cpuid, interrupt::irq};
 
 use super::{local_apic::ApicId, pic};
 
@@ -236,21 +233,10 @@ pub fn src_overrides() -> &'static [Override] {
 }
 
 #[cfg(feature = "acpi")]
-pub unsafe fn handle_ioapic(mapper: &mut KernelMapper<true>, madt_ioapic: &'static MadtIoApic) {
+pub unsafe fn handle_ioapic(madt_ioapic: &'static MadtIoApic) {
     unsafe {
         // map the I/O APIC registers
-
-        let frame = Frame::containing(PhysicalAddress::new(madt_ioapic.address as usize));
-
-        assert!(mapper.translate(RmmA::phys_to_virt(frame.base())).is_none());
-
-        let (virt, flush) = mapper
-            .map_linearly(
-                frame.base(),
-                PageFlags::new().write(true).device_memory(true),
-            )
-            .expect("failed to map I/O APIC");
-        flush.flush();
+        let virt = map_device_memory(PhysicalAddress::new(madt_ioapic.address as usize), 4096);
 
         let ioapic_registers = virt.data() as *const u32;
         let ioapic = IoApic::new(ioapic_registers, madt_ioapic.gsi_base);
@@ -302,7 +288,7 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
 }
 
 #[allow(dead_code)]
-pub unsafe fn init(active_table: &mut KernelMapper<true>) {
+pub unsafe fn init() {
     unsafe {
         let bsp_apic_id = ApicId::new(u32::from(
             cpuid().get_feature_info().unwrap().initial_local_apic_id(),
@@ -324,7 +310,7 @@ pub unsafe fn init(active_table: &mut KernelMapper<true>) {
 
             for entry in madt.iter() {
                 match entry {
-                    MadtEntry::IoApic(ioapic) => handle_ioapic(active_table, ioapic),
+                    MadtEntry::IoApic(ioapic) => handle_ioapic(ioapic),
                     MadtEntry::IntSrcOverride(src_override) => handle_src_override(src_override),
                     _ => (),
                 }

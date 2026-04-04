@@ -1,4 +1,3 @@
-use crate::memory::KernelMapper;
 use core::cell::Cell;
 
 pub mod cpu;
@@ -18,7 +17,7 @@ pub mod tsc;
 pub unsafe fn init() {
     unsafe {
         pic::init();
-        local_apic::init(&mut KernelMapper::lock_rw());
+        local_apic::init();
 
         // Run here for the side effect of printing if KVM was used to avoid interleaved logs.
         tsc::get_kvm_support();
