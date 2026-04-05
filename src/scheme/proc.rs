@@ -1262,6 +1262,7 @@ impl ContextHandle {
                 guard.pid = info.pid as usize;
                 guard.euid = info.euid;
                 guard.egid = info.egid;
+                guard.prio = (info.prio as usize).min(39);
                 Ok(size_of::<ProcSchemeAttrs>())
             }
             ContextHandle::OpenViaDup => {
@@ -1456,14 +1457,15 @@ impl ContextHandle {
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
                 let c = &context.read(token.token());
-                let (euid, egid, pid, name) = (c.euid, c.egid, c.pid as u32, c.name);
+                let (euid, egid, pid, name, prio) =
+                    (c.euid, c.egid, c.pid as u32, c.name, c.prio as u32);
                 let min = name.len().min(debug_name.len());
                 debug_name[..min].copy_from_slice(&name.as_bytes()[..min]);
                 buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {
                     pid,
                     euid,
                     egid,
-                    ens: 0,
+                    prio,
                     debug_name,
                 })
             }

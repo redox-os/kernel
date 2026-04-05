@@ -1,26 +1,26 @@
 //! This module provides a context-switching mechanism that utilizes a simple round-robin scheduler.
 //! The scheduler iterates over available contexts, selecting the next context to run, while
 //! handling process states and synchronization.
-use core::{
-    cell::{Cell, RefCell},
-    hint, mem,
-    ops::Bound,
-    sync::atomic::Ordering,
-};
-
-use alloc::sync::Arc;
-use syscall::PtraceFlags;
-
+use crate::sync::ArcRwLockWriteGuard;
+use crate::sync::L4;
 use crate::{
     context::{
-        arch, contexts, contexts_mut, free_contexts_try, ArcContextLockWriteGuard, Context,
-        ContextLock,
+        self, arch, contexts, contexts_mut, free_contexts_try, run_contexts_mut,
+        ArcContextLockWriteGuard, Context, ContextLock,
     },
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
     sync::CleanLockToken,
 };
+use alloc::{sync::Arc, vec::Vec};
+use core::{
+    cell::{Cell, RefCell},
+    hint, mem,
+    ops::Bound,
+    sync::atomic::Ordering,
+};
+use syscall::PtraceFlags;
 
 use super::ContextRef;
 
@@ -28,6 +28,13 @@ enum UpdateResult {
     CanSwitch,
     Skip,
 }
+
+// A simple geometric series where value[i] ~= value[i - 1] * 1.25
+const sched_prio_to_weight: [usize; 40] = [
+    88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
+    3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
+    70, 56, 45, 36, 29, 23, 18, 15,
+];
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
@@ -127,11 +134,8 @@ pub enum SwitchResult {
     AllContextsIdle,
 }
 
-/// Selects and switches to the next context using a round-robin scheduler.
-///
-/// This function performs the context switch, checking each context in a loop for eligibility
-/// until it finds a context ready to run. If no other context is runnable, it returns to the
-/// idle context.
+/// This function performs the context switch, using select_next_context to
+/// actually select the next context to switch to.
 ///
 /// # Warning
 /// This is not memory-unsafe to call. But do NOT call this while holding locks!
@@ -175,43 +179,44 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         return SwitchResult::Switched;
     }
 
-    let mut switch_context_opt = None;
+    // Alarm (previously in update_runnable)
+    // TODO: Optimise this somehow
+    let mut wakeups = Vec::new();
     {
-        let contexts = contexts(token.token());
+        let current_context = context::current();
 
-        // Attempt to locate the next context to switch to.
-        for next_context_lock in contexts
-            // Include all contexts with IDs greater than the current...
-            .range((
-                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
-                Bound::Unbounded,
-            ))
-            // ... and all contexts with IDs less than the current...
-            .chain(contexts.range((
-                Bound::Unbounded,
-                Bound::Excluded(ContextRef(Arc::clone(&prev_context_lock))),
-            )))
-            .filter_map(ContextRef::upgrade)
-        // ... but not the current context (note the `Bound::Excluded`),
-        // which is already locked.
-        {
-            {
-                // Lock next context
-                // We are careful not to lock this context twice
-                let mut next_context_guard = unsafe { next_context_lock.write_arc() };
-
-                // Check if the context is runnable and can be switched to.
-                if let UpdateResult::CanSwitch =
-                    unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
-                {
-                    // Store locks for previous and next context and break out from loop
-                    // for the switch
-                    switch_context_opt = Some(next_context_guard);
-                    break;
+        let mut contexts_guard = contexts(token.token());
+        let (context, mut token) = contexts_guard.token_split();
+        for context_ref in context.iter().filter_map(|r| r.upgrade()) {
+            if Arc::ptr_eq(&context_ref, &current_context) {
+                continue;
+            }
+            let guard = context_ref.read(token.token());
+            if guard.status.is_soft_blocked() {
+                if let Some(wake) = guard.wake {
+                    if switch_time >= wake {
+                        wakeups.push(Arc::clone(&context_ref));
+                        continue;
+                    }
                 }
             }
+
+            if guard.status.is_runnable() && !guard.enqueued && !guard.running {
+                wakeups.push(Arc::clone(&context_ref));
+            }
         }
-    };
+    }
+    for context_lock in wakeups {
+        context::wakeup_context(&context_lock, token.token());
+    }
+
+    let cpu_id = crate::cpu_id();
+
+    let mut switch_context_opt =
+        match select_next_context(token, percpu, cpu_id, switch_time, &mut prev_context_guard) {
+            Ok(opt) => opt,
+            Err(early_ret) => return early_ret,
+        };
 
     if switch_context_opt.is_none() {
         let mut this_contexts = contexts_mut(token.token());
@@ -331,6 +336,108 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
             SwitchResult::AllContextsIdle
         }
+    }
+}
+
+/// This is the scheduler function which currently utilises Deficit Weighted Round Robin Scheduler
+fn select_next_context(
+    token: &mut CleanLockToken,
+    percpu: &PercpuBlock,
+    cpu_id: LogicalCpuId,
+    switch_time: u128,
+    prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
+) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
+    let mut contexts_data = run_contexts_mut(token.token());
+    let mut contexts_list = &mut contexts_data.set;
+    let mut balance = percpu.balance.get();
+    let mut i = percpu.last_queue.get() % 40;
+
+    // Lock the previous context.
+    let prev_context_lock = crate::context::current();
+
+    let mut empty_queues = 0;
+    let mut total_iters = 0;
+    let mut next_context_guard_opt = None;
+
+    'priority: loop {
+        i = (i + 1) % 40;
+        total_iters += 1;
+
+        // The least prioritised queue takes <5000 iters to build up
+        // balance = sched_prio_to_weight[20], if we have already spent
+        // that many iters and not found any context, it is better to just
+        // skip for now
+        if total_iters >= 5000 {
+            break 'priority;
+        }
+        let contexts = contexts_list
+            .get_mut(i)
+            .expect("i should be between [0, 39]!");
+
+        if contexts.is_empty() {
+            empty_queues += 1;
+            if empty_queues >= 40 {
+                // If all queues are empty, just break out
+                break 'priority;
+            }
+            continue;
+        } else {
+            empty_queues = 0;
+        }
+
+        if balance[i] < sched_prio_to_weight[20] {
+            // This queue does not have enough balance to run,
+            // increment the balance!
+            balance[i] += sched_prio_to_weight[i];
+            continue;
+        }
+
+        let len = contexts.len();
+        for _ in 0..len {
+            let next_context_lock = match contexts.pop_front() {
+                Some(lock) => match lock.upgrade() {
+                    Some(new_lock) => new_lock,
+                    None => continue, // Ghost Process, just continue
+                },
+                None => break, // Empty Queue
+            };
+
+            let mut next_context_guard = unsafe { next_context_lock.write_arc() };
+            next_context_guard.enqueued = false;
+
+            if !next_context_guard.status.is_runnable() {
+                continue; // Lazy removal of blocked contexts
+            }
+
+            // Is this context runnable on this CPU?
+            if let UpdateResult::CanSwitch =
+                unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
+            {
+                next_context_guard_opt = Some(next_context_guard);
+                balance[i] -= sched_prio_to_weight[20];
+                break 'priority;
+            } else {
+                contexts.push_back(ContextRef(Arc::clone(&next_context_lock)));
+                next_context_guard.enqueued = true;
+            }
+        }
+    }
+    percpu.balance.set(balance);
+    percpu.last_queue.set(i);
+
+    if let Some(next_context_guard) = next_context_guard_opt {
+        // We found a new process!
+        // Send the old process to the back of the line (if it is still runnable)
+        if prev_context_guard.status.is_runnable() {
+            let prio = prev_context_guard.prio;
+            contexts_list[prio].push_back(ContextRef(Arc::clone(&prev_context_lock)));
+            prev_context_guard.enqueued = true;
+        }
+
+        return Ok(Some(next_context_guard));
+    } else {
+        // We found no other process to run.
+        Ok(None)
     }
 }
 
