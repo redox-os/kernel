@@ -93,23 +93,23 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let page_count = NonZeroUsize::new(1).unwrap();
     let fpath_page = {
         let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
-        addr_space.acquire_write(token.token().downgrade()).mmap(
-            &addr_space,
-            None,
-            page_count,
-            MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-            None,
-            |page, flags, mapper, flusher| {
-                let shared = false;
-                Ok(Grant::zeroed(
-                    PageSpan::new(page, page_count.get()),
-                    flags,
-                    mapper,
-                    flusher,
-                    shared,
-                )?)
-            },
-        )?
+        addr_space
+            .acquire_write(token.token().downgrade())
+            .mmap_anywhere(
+                &addr_space,
+                page_count,
+                MapFlags::PROT_READ | MapFlags::PROT_WRITE,
+                |page, flags, mapper, flusher| {
+                    let shared = false;
+                    Ok(Grant::zeroed(
+                        PageSpan::new(page, page_count.get()),
+                        flags,
+                        mapper,
+                        flusher,
+                        shared,
+                    )?)
+                },
+            )?
     };
 
     let res = UserSlice::rw(fpath_page.start_address().data(), PAGE_SIZE)

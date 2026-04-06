@@ -585,12 +585,10 @@ impl KernelScheme for ProcScheme {
                 let addrsp = AddrSpace::current()?;
                 // TODO: Lock ordering violation
                 let mut token = unsafe { CleanLockToken::new() };
-                let page = addrsp.acquire_write(token.downgrade()).mmap(
+                let page = addrsp.acquire_write(token.downgrade()).mmap_anywhere(
                     &addrsp,
-                    None,
                     NonZeroUsize::new(1).unwrap(),
                     MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-                    None,
                     |page, flags, mapper, flusher| {
                         Grant::allocated_shared_one_page(
                             frame.get(),
