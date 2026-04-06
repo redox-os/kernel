@@ -397,7 +397,7 @@ impl UserInner {
             )
         };
 
-        let mut tail = BorrowedHtBuf::tail(token)?;
+        let mut tail = BorrowedHtBuf::tail_locked(token.downgrade())?;
         let tail_frame = tail.frame();
         if buf.len() > tail.buf().len() {
             return Err(Error::new(EINVAL));

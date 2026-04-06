@@ -503,9 +503,6 @@ impl BorrowedHtBuf {
             SyscallFrame::Used { .. } | SyscallFrame::Dummy => Err(Error::new(EAGAIN)),
         }
     }
-    pub fn tail(token: &mut CleanLockToken) -> Result<Self> {
-        Self::tail_locked(token.downgrade())
-    }
     pub fn tail_locked(token: LockToken<L3>) -> Result<Self> {
         let current = context::current();
         let frame = &mut current.write(token).syscall_tail;
