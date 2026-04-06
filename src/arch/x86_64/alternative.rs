@@ -284,7 +284,7 @@ pub fn features() -> KcpuFeatures {
 
 #[cfg(not(cpu_feature_never = "xsave"))]
 mod xsave {
-    use super::*;
+    use spin::Once;
 
     #[derive(Debug)]
     pub struct XsaveInfo {

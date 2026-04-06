@@ -59,6 +59,7 @@ enum Kind {
     Rd(fn(&mut CleanLockToken) -> Result<Vec<u8>>),
     Wr(fn(&[u8], &mut CleanLockToken) -> Result<usize>),
 }
+use Kind::{Rd, Wr};
 impl Kind {
     fn generate_data(&self, token: &mut CleanLockToken) -> Result<Vec<u8>> {
         match self {
@@ -67,7 +68,6 @@ impl Kind {
         }
     }
 }
-use Kind::*;
 
 /// System information scheme
 pub struct SysScheme;

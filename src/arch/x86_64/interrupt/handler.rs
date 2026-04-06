@@ -1,6 +1,4 @@
-use crate::{memory::ArchIntCtx, panic, syscall::IntRegisters};
-
-use super::super::flags::*;
+use crate::{arch::flags::FLAG_SINGLESTEP, memory::ArchIntCtx, panic, syscall::IntRegisters};
 
 #[derive(Default)]
 #[repr(C)]

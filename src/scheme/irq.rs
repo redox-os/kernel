@@ -106,7 +106,7 @@ impl IrqScheme {
             feature = "acpi",
             any(target_arch = "x86", target_arch = "x86_64")
         )) {
-            use crate::acpi::madt::*;
+            use crate::acpi::madt::{madt, MadtEntry};
 
             match madt() {
                 Some(madt) => madt

@@ -1,8 +1,4 @@
-use core::mem;
-
-use crate::{memory::ArchIntCtx, panic, syscall::IntRegisters};
-
-use super::super::flags::*;
+use crate::{arch::flags::FLAG_SINGLESTEP, memory::ArchIntCtx, panic, syscall::IntRegisters};
 
 #[derive(Default)]
 #[repr(C, packed)]
@@ -121,8 +117,8 @@ impl InterruptStack {
         if self.iret.cs & CPL_MASK == cs & CPL_MASK {
             // Privilege ring didn't change, so neither did the stack
             all.esp = self as *const Self as usize // esp after Self was pushed to the stack
-                + mem::size_of::<Self>() // disregard Self
-                - mem::size_of::<usize>() * 2; // well, almost: esp and ss need to be excluded as they aren't present
+                + size_of::<Self>() // disregard Self
+                - size_of::<usize>() * 2; // well, almost: esp and ss need to be excluded as they aren't present
             unsafe {
                 core::arch::asm!("mov {}, ss", out(reg) all.ss);
             }
