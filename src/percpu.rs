@@ -79,6 +79,7 @@ pub fn get_all_contexts(mut token: LockToken<'_, L1>) -> Vec<Arc<ContextLock>> {
         .iter()
         .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
     {
+        // TODO: When load balancer implemented, contexts need to be locked altogether
         // TODO: Lock token violation, downgrade this to L2 later
         let contexts = unsafe { &block.contexts.reupgradeable_read(token.token()) };
         all_contexts.extend(contexts.iter().filter_map(|x| x.upgrade()));

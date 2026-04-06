@@ -15,7 +15,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let mut contexts = percpu::get_all_contexts(token.downgrade());
+        let contexts = percpu::get_all_contexts(token.downgrade());
         for context_ref in contexts {
             let context = context_ref.read(token.token());
             let addr_space = context.addr_space().map(|a| a.clone());
@@ -53,7 +53,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
             let mut stat_string = String::new();
             stat_string.push(match heap {
-                Some((pages, is_kernel)) => {
+                Some((_, is_kernel)) => {
                     if is_kernel {
                         'K'
                     } else {
@@ -99,15 +99,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 memory += heap;
             }
 
-            let memory_string = if memory >= 1024 * 1024 * 1024 {
-                format!("{} GB", memory / 1024 / 1024 / 1024)
-            } else if memory >= 1024 * 1024 {
-                format!("{} MB", memory / 1024 / 1024)
-            } else if memory >= 1024 {
-                format!("{} KB", memory / 1024)
-            } else {
-                format!("{} B", memory)
-            };
+            let memory_string = format_bytes(memory);
 
             rows.push((
                 pid,
@@ -152,4 +144,32 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     }
 
     Ok(string.into_bytes())
+}
+
+fn format_bytes(memory: usize) -> String {
+    const GB: usize = 1024 * 1024 * 1024;
+    const MB: usize = 1024 * 1024;
+    const KB: usize = 1024;
+
+    if memory > GB {
+        format_bytes_inner(memory, GB, "GB")
+    } else if memory > MB {
+        format_bytes_inner(memory, MB, "MB")
+    } else if memory > KB {
+        format_bytes_inner(memory, KB, "KB")
+    } else {
+        format!("{memory} B")
+    }
+}
+
+fn format_bytes_inner(memory: usize, divisor: usize, suffix: &'static str) -> String {
+    let mut s = format!("{}", memory / divisor);
+    if s.len() == 1 {
+        let _ = write!(s, ".{:02}", (memory % divisor) / (divisor / 100));
+    } else if s.len() == 2 {
+        let _ = write!(s, ".{:01}", (memory % divisor) / (divisor / 10));
+    }
+
+    let _ = write!(s, " {suffix}");
+    s
 }

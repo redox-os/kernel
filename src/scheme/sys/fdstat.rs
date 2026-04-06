@@ -41,7 +41,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     'contexts: for context in percpu::get_all_contexts(token.token()) {
         let mut context_guard = context.read(token.token());
-        let (context, mut token) = context_guard.token_split();
+        let (context, token) = context_guard.token_split();
         let mut files_guard = context.files.read(token);
         let (files, mut token) = files_guard.token_split();
         writeln!(report, "'{}' {{", context.name).unwrap();
@@ -70,7 +70,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 .map(|k| match k {
                     scheme::Handle::SchemeCreationCapability => "SchemeCreationCapability",
                     scheme::Handle::Scheme(KernelSchemes::Global(g)) => g.as_str(),
-                    scheme::Handle::Scheme(KernelSchemes::User(g)) => "[user]",
+                    scheme::Handle::Scheme(KernelSchemes::User(_)) => "[user]",
                     scheme::Handle::Scheme(KernelSchemes::SchemeMgr) => "SchemeMgr",
                 })
                 .unwrap_or("[unknown]");
