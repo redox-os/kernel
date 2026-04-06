@@ -37,7 +37,7 @@ struct PlicRegs {
 const _: () = assert!(0x1000 == mem::offset_of!(PlicRegs, pending));
 const _: () = assert!(0x2000 == mem::offset_of!(PlicRegs, enable));
 const _: () = assert!(0x20_0000 == mem::offset_of!(PlicRegs, thresholds));
-const _: () = assert!(0x1000 == mem::size_of::<InterruptThresholdRegs>());
+const _: () = assert!(0x1000 == size_of::<InterruptThresholdRegs>());
 
 impl PlicRegs {
     pub fn set_priority(self: &mut Self, irq: usize, priority: usize) {

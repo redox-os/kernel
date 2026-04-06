@@ -1,5 +1,3 @@
-use core::mem;
-
 use super::{find_sdt, sdt::Sdt, GenericAddressStructure};
 use crate::{
     device::serial::COM1,
@@ -133,7 +131,7 @@ impl Spcr {
     }
 
     pub fn new(sdt: &'static Sdt) -> Option<&'static Spcr> {
-        if &sdt.signature == b"SPCR" && sdt.length as usize >= mem::size_of::<Spcr>() {
+        if &sdt.signature == b"SPCR" && sdt.length as usize >= size_of::<Spcr>() {
             Some(unsafe { &*((sdt as *const Sdt) as *const Spcr) })
         } else {
             None

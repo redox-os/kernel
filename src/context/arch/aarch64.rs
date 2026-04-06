@@ -4,7 +4,7 @@ use crate::{
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
-use core::{mem, mem::offset_of, ptr, sync::atomic::AtomicBool};
+use core::{mem::offset_of, ptr, sync::atomic::AtomicBool};
 use spin::Once;
 use syscall::{EnvRegisters, Result};
 
@@ -92,7 +92,7 @@ impl Context {
     ) {
         let mut stack_top = stack.initial_top();
 
-        const INT_REGS_SIZE: usize = core::mem::size_of::<InterruptStack>();
+        const INT_REGS_SIZE: usize = size_of::<InterruptStack>();
 
         if userspace_allowed {
             unsafe {
@@ -230,9 +230,9 @@ unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
         "str x9, [{3}]",
         "mrs x9, fpsr",
         "str x9, [{3}, {2} - {1}]",
-        const mem::offset_of!(FloatRegisters, fp_simd_regs),
-        const mem::offset_of!(FloatRegisters, fpcr),
-        const mem::offset_of!(FloatRegisters, fpsr),
+        const offset_of!(FloatRegisters, fp_simd_regs),
+        const offset_of!(FloatRegisters, fpcr),
+        const offset_of!(FloatRegisters, fpsr),
         inout(reg) float_regs => _,
         );
     }
@@ -263,9 +263,9 @@ unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
         "msr fpcr, x9",
         "ldr x9, [{3}, {2} - {1}]",
         "msr fpsr, x9",
-        const mem::offset_of!(FloatRegisters, fp_simd_regs),
-        const mem::offset_of!(FloatRegisters, fpcr),
-        const mem::offset_of!(FloatRegisters, fpsr),
+        const offset_of!(FloatRegisters, fp_simd_regs),
+        const offset_of!(FloatRegisters, fpcr),
+        const offset_of!(FloatRegisters, fpsr),
         inout(reg) float_regs => _,
         );
     }

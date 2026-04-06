@@ -405,7 +405,7 @@ impl Context {
                 this_percpu.maybe_handle_tlb_shootdown();
             }
 
-            let _old_addrsp = core::mem::replace(
+            let _old_addrsp = mem::replace(
                 &mut *this_percpu.current_addrsp.borrow_mut(),
                 addr_space.clone(),
             );
@@ -454,8 +454,8 @@ impl Context {
         sig: &mut SignalState,
     ) -> (&Sigcontrol, &SigProcControl, &mut SignalState) {
         let check = |off| {
-            assert_eq!(usize::from(off) % mem::align_of::<usize>(), 0);
-            assert!(usize::from(off).saturating_add(mem::size_of::<Sigcontrol>()) < PAGE_SIZE);
+            assert_eq!(usize::from(off) % align_of::<usize>(), 0);
+            assert!(usize::from(off).saturating_add(size_of::<Sigcontrol>()) < PAGE_SIZE);
         };
         check(sig.procctl_off);
         check(sig.threadctl_off);
@@ -547,7 +547,7 @@ impl BorrowedHtBuf {
         core::str::from_utf8(slice).map_err(|_| Error::new(EINVAL))
     }
     pub unsafe fn use_for_struct<T>(&mut self) -> Result<&mut T> {
-        if mem::size_of::<T>() > PAGE_SIZE || mem::align_of::<T>() > PAGE_SIZE {
+        if size_of::<T>() > PAGE_SIZE || align_of::<T>() > PAGE_SIZE {
             return Err(Error::new(EINVAL));
         }
         self.buf_mut().fill(0_u8);

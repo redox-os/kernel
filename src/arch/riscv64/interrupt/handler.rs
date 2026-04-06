@@ -1,5 +1,4 @@
 use crate::{memory::ArchIntCtx, panic, syscall::IntRegisters};
-use core::mem::size_of;
 
 #[derive(Default)]
 #[repr(C)]

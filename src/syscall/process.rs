@@ -204,7 +204,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             .expect("Failed to allocate kernel scheme info page");
 
         let mut cursor = kernel_schemes_info_page.start_address().data();
-        const HEADER_SIZE: usize = mem::size_of::<usize>();
+        const HEADER_SIZE: usize = size_of::<usize>();
         UserSliceWo::new(cursor, HEADER_SIZE)
             .expect("failed to create kernel schemes header user slice")
             .copy_common_bytes_from_slice(&KERNEL_SCHEMES_COUNT.to_ne_bytes())
@@ -213,18 +213,18 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
         let info_bytes = unsafe {
             core::slice::from_raw_parts(
                 kernel_schemes_infos.as_ptr() as *const u8,
-                KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+                KERNEL_SCHEMES_COUNT * size_of::<syscall::data::KernelSchemeInfo>(),
             )
         };
         UserSliceWo::new(
             cursor,
-            KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>(),
+            KERNEL_SCHEMES_COUNT * size_of::<syscall::data::KernelSchemeInfo>(),
         )
         .expect("failed to create kernel schemes info user slice")
         .copy_common_bytes_from_slice(info_bytes)
         .expect("failed to copy kernel schemes info");
-        cursor += KERNEL_SCHEMES_COUNT * mem::size_of::<syscall::data::KernelSchemeInfo>();
-        UserSliceWo::new(cursor, mem::size_of::<usize>())
+        cursor += KERNEL_SCHEMES_COUNT * size_of::<syscall::data::KernelSchemeInfo>();
+        UserSliceWo::new(cursor, size_of::<usize>())
             .expect("failed to create scheme creation cap user slice")
             .copy_common_bytes_from_slice(&scheme_creation_cap.to_ne_bytes())
             .expect("failed to copy scheme creation cap");

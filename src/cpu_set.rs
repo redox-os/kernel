@@ -128,5 +128,5 @@ impl Display for LogicalCpuSet {
 pub type RawMask = [usize; SET_WORDS];
 
 pub fn mask_as_bytes(mask: &RawMask) -> &[u8] {
-    unsafe { core::slice::from_raw_parts(mask.as_ptr().cast(), core::mem::size_of::<RawMask>()) }
+    unsafe { core::slice::from_raw_parts(mask.as_ptr().cast(), size_of::<RawMask>()) }
 }

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use core::{
-    fmt, mem, str,
+    fmt, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
@@ -165,7 +165,7 @@ impl KernelScheme for TimeScheme {
 
         let mut bytes_read = 0;
 
-        for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
+        for current_chunk in buf.in_exact_chunks(size_of::<TimeSpec>()) {
             let arch_time = match (handle.clock, handle.kind.clone()) {
                 (CLOCK_REALTIME, TimeSchemeKind::Default | TimeSchemeKind::ClockGettime) => {
                     time::realtime(token)
@@ -183,7 +183,7 @@ impl KernelScheme for TimeScheme {
             };
             current_chunk.copy_exactly(&time)?;
 
-            bytes_read += mem::size_of::<TimeSpec>();
+            bytes_read += size_of::<TimeSpec>();
         }
 
         Ok(bytes_read)
@@ -208,7 +208,7 @@ impl KernelScheme for TimeScheme {
 
         let mut bytes_written = 0;
 
-        for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
+        for current_chunk in buf.in_exact_chunks(size_of::<TimeSpec>()) {
             let time = unsafe { current_chunk.read_exact::<TimeSpec>()? };
 
             match (handle.clock, handle.kind.clone()) {
@@ -224,7 +224,7 @@ impl KernelScheme for TimeScheme {
                 _ => return Err(Error::new(EINVAL)),
             };
 
-            bytes_written += mem::size_of::<TimeSpec>();
+            bytes_written += size_of::<TimeSpec>();
         }
 
         Ok(bytes_written)

@@ -273,7 +273,7 @@ pub unsafe fn install_idt(idt_ptr: *mut Idt) {
         }
 
         let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
-            limit: (idt.entries.len() * mem::size_of::<IdtEntry>() - 1) as u16,
+            limit: (idt.entries.len() * size_of::<IdtEntry>() - 1) as u16,
             base: idt.entries.as_ptr() as *const X86IdtEntry,
         };
 

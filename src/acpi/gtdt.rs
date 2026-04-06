@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use core::mem;
 
 use super::{find_sdt, sdt::Sdt};
 use crate::{
@@ -56,7 +55,7 @@ impl Gtdt {
     }
 
     pub fn new(sdt: &'static Sdt) -> Option<&'static Gtdt> {
-        if &sdt.signature == b"GTDT" && sdt.length as usize >= mem::size_of::<Gtdt>() {
+        if &sdt.signature == b"GTDT" && sdt.length as usize >= size_of::<Gtdt>() {
             Some(unsafe { &*((sdt as *const Sdt) as *const Gtdt) })
         } else {
             None

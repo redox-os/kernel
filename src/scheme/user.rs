@@ -252,7 +252,7 @@ impl UserInner {
                             // for TLB, but we don't really have any other choice. The scheme must be able
                             // to access the borrowed memory until it has responded to the request.
                             *callee_responsible =
-                                core::mem::replace(caller_responsible, PageSpan::empty());
+                                mem::replace(caller_responsible, PageSpan::empty());
 
                             Err(Error::new(EINTR))
                         } else {
@@ -2043,7 +2043,7 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
-        if !payload.len().is_multiple_of(mem::size_of::<usize>()) {
+        if !payload.len().is_multiple_of(size_of::<usize>()) {
             return Err(Error::new(EINVAL));
         }
 
@@ -2056,7 +2056,7 @@ impl KernelScheme for UserScheme {
         }
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        let len = payload.len() / mem::size_of::<usize>();
+        let len = payload.len() / size_of::<usize>();
         let res = inner.call(
             ctx,
             Vec::new(),

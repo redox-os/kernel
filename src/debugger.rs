@@ -227,7 +227,7 @@ fn dump_stack(context: &Context, mut sp: usize) {
         }) {
             let value = unsafe { *(sp as *const usize) };
             println!("    {:>0width$x}: {:>0width$x}", sp, value, width = width);
-            if let Some(next_sp) = sp.checked_add(core::mem::size_of::<usize>()) {
+            if let Some(next_sp) = sp.checked_add(size_of::<usize>()) {
                 sp = next_sp;
             } else {
                 println!("    {:>0width$x}: OVERFLOW", sp, width = width);

@@ -4,8 +4,6 @@
 
 extern crate syscall;
 
-use core::mem::size_of;
-
 use syscall::{dirent::DirentHeader, CallFlags, RwFlags, EINVAL};
 
 pub use self::syscall::{
@@ -223,17 +221,14 @@ pub fn syscall(
             }
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
-                UserSlice::ro(b, core::mem::size_of::<TimeSpec>())?,
-                UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?.none_if_null(),
+                UserSlice::ro(b, size_of::<TimeSpec>())?,
+                UserSlice::wo(c, size_of::<TimeSpec>())?.none_if_null(),
                 token,
             )
             .map(|()| 0),
-            SYS_CLOCK_GETTIME => clock_gettime(
-                b,
-                UserSlice::wo(c, core::mem::size_of::<TimeSpec>())?,
-                token,
-            )
-            .map(|()| 0),
+            SYS_CLOCK_GETTIME => {
+                clock_gettime(b, UserSlice::wo(c, size_of::<TimeSpec>())?, token).map(|()| 0)
+            }
             SYS_FUTEX => futex(b, c, d, e, f, token),
 
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d), token).map(|()| 0),

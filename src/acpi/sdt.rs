@@ -1,5 +1,3 @@
-use core::mem;
-
 #[derive(Copy, Clone, Debug)]
 #[repr(C, packed)]
 pub struct Sdt {
@@ -17,13 +15,13 @@ pub struct Sdt {
 impl Sdt {
     /// Get the address of this tables data
     pub fn data_address(&self) -> usize {
-        self as *const _ as usize + mem::size_of::<Sdt>()
+        self as *const _ as usize + size_of::<Sdt>()
     }
 
     /// Get the length of this tables data
     pub fn data_len(&self) -> usize {
         let total_size = self.length as usize;
-        let header_size = mem::size_of::<Sdt>();
+        let header_size = size_of::<Sdt>();
         total_size.saturating_sub(header_size)
     }
 }

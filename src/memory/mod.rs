@@ -3,7 +3,6 @@
 
 use core::{
     cell::SyncUnsafeCell,
-    mem,
     num::NonZeroUsize,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -495,7 +494,7 @@ pub const MAX_SECTION_SIZE: usize = 1 << MAX_SECTION_SIZE_BITS;
 pub const MAX_SECTION_PAGE_COUNT: usize = MAX_SECTION_SIZE / PAGE_SIZE;
 
 const _: () = {
-    assert!(mem::size_of::<PageInfo>().is_power_of_two());
+    assert!(size_of::<PageInfo>().is_power_of_two());
 };
 
 #[cold]
@@ -529,7 +528,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             })
             .sum();
         let section_array_page_count =
-            (max_section_count * mem::size_of::<Section>()).div_ceil(PAGE_SIZE);
+            (max_section_count * size_of::<Section>()).div_ceil(PAGE_SIZE);
 
         let base = allocator
             .allocate(FrameCount::new(section_array_page_count))
@@ -589,7 +588,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
             let page_info_count = core::cmp::min(page_info_max_count, pages_to_next_section);
 
             let page_info_array_size_pages =
-                (page_info_count * mem::size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
+                (page_info_count * size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
             let page_info_array = unsafe {
                 let base = allocator
                     .allocate(FrameCount::new(page_info_array_size_pages))

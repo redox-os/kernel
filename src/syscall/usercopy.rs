@@ -109,13 +109,10 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
     pub unsafe fn read_exact<T>(self) -> Result<T> {
         let mut t: T = unsafe { core::mem::zeroed() };
         let slice = unsafe {
-            core::slice::from_raw_parts_mut(
-                (&mut t as *mut T).cast::<u8>(),
-                core::mem::size_of::<T>(),
-            )
+            core::slice::from_raw_parts_mut((&mut t as *mut T).cast::<u8>(), size_of::<T>())
         };
 
-        self.limit(core::mem::size_of::<T>())
+        self.limit(size_of::<T>())
             .ok_or(Error::new(EINVAL))?
             .copy_to_slice(slice)?;
 
@@ -131,7 +128,7 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
     // TODO: Merge int IO functions?
     pub fn read_usize(self) -> Result<usize> {
         let mut ret = 0_usize.to_ne_bytes();
-        self.limit(core::mem::size_of::<usize>())
+        self.limit(size_of::<usize>())
             .ok_or(Error::new(EINVAL))?
             .copy_to_slice(&mut ret)?;
         Ok(usize::from_ne_bytes(ret))
@@ -144,7 +141,7 @@ impl<const WRITE: bool> UserSlice<true, WRITE> {
         Ok(u32::from_ne_bytes(ret))
     }
     pub fn usizes(self) -> impl Iterator<Item = Result<usize>> {
-        self.in_exact_chunks(core::mem::size_of::<usize>())
+        self.in_exact_chunks(size_of::<usize>())
             .map(Self::read_usize)
     }
 }
@@ -177,13 +174,13 @@ impl<const READ: bool> UserSlice<READ, true> {
         Ok(())
     }
     pub fn write_usize(self, word: usize) -> Result<()> {
-        self.limit(core::mem::size_of::<usize>())
+        self.limit(size_of::<usize>())
             .ok_or(Error::new(EINVAL))?
             .copy_from_slice(&word.to_ne_bytes())?;
         Ok(())
     }
     pub fn write_u32(self, int: u32) -> Result<()> {
-        self.limit(core::mem::size_of::<u32>())
+        self.limit(size_of::<u32>())
             .ok_or(Error::new(EINVAL))?
             .copy_from_slice(&int.to_ne_bytes())?;
         Ok(())

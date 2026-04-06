@@ -2,7 +2,6 @@
 use core::sync::atomic::AtomicU32;
 use core::{
     cell::UnsafeCell,
-    mem::size_of,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
 };
 
