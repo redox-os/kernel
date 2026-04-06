@@ -25,6 +25,57 @@ impl InterruptHandler for Com1Irq {
     }
 }
 
+pub unsafe fn init_early(dtb: &Fdt) {
+    unsafe {
+        if !matches!(*COM1.lock(), SerialKind::NotPresent) {
+            // Hardcoded UART
+            return;
+        }
+
+        if let Some((phys, size, reg_bits, skip_init, _cts, compatible)) = diag_uart_range(dtb) {
+            let virt = crate::PHYS_OFFSET + phys;
+            let serial_opt = if compatible.contains("ns16550a") {
+                match reg_bits {
+                    32 => {
+                        let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
+                        if !skip_init {
+                            let _ = serial_port.init();
+                        }
+                        Some(SerialKind::Ns16550u32(serial_port))
+                    }
+                    8 => {
+                        let serial_port = uart_16550::SerialPort::<Mmio<u8>>::new(virt);
+                        if !skip_init {
+                            let _ = serial_port.init();
+                        }
+                        Some(SerialKind::Ns16550u8(serial_port))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            match serial_opt {
+                Some(serial) => {
+                    *COM1.lock() = serial;
+                    info!(
+                        "UART {:?} at {:#X} size {:#X} with reg bits {}",
+                        compatible, virt, size, reg_bits
+                    );
+                }
+                None => {
+                    warn!(
+                        "UART {:?} at {:#X} size {:#X} with reg bits {}: no driver found",
+                        compatible, virt, size, reg_bits
+                    );
+                }
+            }
+        } else {
+            info!("No diagnostic UARTs found");
+        }
+    }
+}
+
 pub unsafe fn init(fdt: &Fdt) -> Option<()> {
     unsafe {
         if let Some(node) = fdt.find_compatible(&["ns16550a", "snps,dw-apb-uart"]) {

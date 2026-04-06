@@ -11,7 +11,7 @@ pub trait InterruptHandler {
     fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken);
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum IrqCell {
     L1(u32),
