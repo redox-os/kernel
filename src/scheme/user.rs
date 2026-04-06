@@ -1044,33 +1044,26 @@ impl UserInner {
             return Err(Error::new(EBUSY));
         }
 
-        let (pid, desc) = {
+        let (ctx, desc) = {
             let current_lock = context::current();
             let mut current = current_lock.read(token.token());
             let (context, mut token) = current.token_split();
             let mut files = context.files.read(token.token());
             let (files, mut token) = files.token_split();
             let desc = files.find_by_scheme(self.scheme_id, file, &mut token)?;
-            (context.pid, desc.description)
+            (context.caller_ctx(), desc.description)
         };
 
-        let response = self.call_inner(
+        let response = self.call(
+            ctx,
             Vec::new(),
-            Sqe {
-                opcode: Opcode::MmapPrep as u8,
-                sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag: self.next_id(token)?,
-                args: [
-                    file as u64,
-                    unaligned_size as u64,
-                    map.flags.bits() as u64,
-                    map.offset as u64,
-                    0,
-                    uid_gid_hack_merge(current_uid_gid(token)),
-                ],
-                caller: pid as u64,
-            },
+            Opcode::MmapPrep,
+            [
+                file as u64,
+                unaligned_size as u64,
+                map.flags.bits() as u64,
+                map.offset as u64,
+            ],
             &mut PageSpan::empty(),
             token,
         )?;
