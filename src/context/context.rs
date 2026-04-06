@@ -22,7 +22,7 @@ use crate::{
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L2, L3, L4, L5},
+    sync::{CleanLockToken, LockToken, RwLock, L1, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -383,7 +383,7 @@ impl Context {
     pub fn set_addr_space(
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
-        token: LockToken<L2>,
+        token: LockToken<L4>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
         if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
@@ -490,7 +490,7 @@ pub struct BorrowedHtBuf {
     head_and_not_tail: bool,
 }
 impl BorrowedHtBuf {
-    pub fn head_locked(token: LockToken<L3>) -> Result<Self> {
+    pub fn head_locked(token: LockToken<L5>) -> Result<Self> {
         let current = context::current();
         let frame = &mut current.write(token).syscall_head;
         match mem::replace(frame, SyscallFrame::Dummy) {
@@ -506,7 +506,10 @@ impl BorrowedHtBuf {
             SyscallFrame::Used { .. } | SyscallFrame::Dummy => Err(Error::new(EAGAIN)),
         }
     }
-    pub fn tail_locked(token: LockToken<L3>) -> Result<Self> {
+    pub fn tail(token: &mut CleanLockToken) -> Result<Self> {
+        Self::tail_locked(token.downgrade())
+    }
+    pub fn tail_locked(token: LockToken<L5>) -> Result<Self> {
         let current = context::current();
         let frame = &mut current.write(token).syscall_tail;
         match mem::replace(frame, SyscallFrame::Dummy) {
