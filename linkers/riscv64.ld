@@ -1,7 +1,7 @@
 ENTRY(kstart)
 OUTPUT_FORMAT("elf64-littleriscv", "elf64-littleriscv", "elf64-littleriscv" )
 
-KERNEL_OFFSET = 0xFFFFFF0000000000;
+KERNEL_OFFSET = 0xFFFFFFFF80000000;
 
 SECTIONS {
     . = KERNEL_OFFSET;

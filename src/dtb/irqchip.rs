@@ -86,11 +86,15 @@ impl IrqChipList {
                     "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
                     node.name, compatible, intr_cells, phandle
                 );
+                let Some(ic) = new_irqchip(compatible) else {
+                    warn!("No drivers found, skipping");
+                    continue;
+                };
                 let mut item = IrqChipItem {
                     phandle,
                     parents: Vec::new(),
                     children: Vec::new(),
-                    ic: new_irqchip(compatible).unwrap(),
+                    ic,
                 };
 
                 fn interrupt_address(
