@@ -13,12 +13,14 @@ use x86::{
 };
 
 use crate::{
-    cpu_set::LogicalCpuId,
-    interrupt::{
-        irq::{__generic_interrupts_end, __generic_interrupts_start},
-        *,
+    arch::{
+        interrupt::{
+            irq::{__generic_interrupts_end, __generic_interrupts_start},
+            *,
+        },
+        ipi::IpiKind,
     },
-    ipi::IpiKind,
+    cpu_set::LogicalCpuId,
     memory::PAGE_SIZE,
 };
 
@@ -269,7 +271,8 @@ pub unsafe fn install_idt(idt_ptr: *mut Idt) {
 
         #[cfg(target_arch = "x86_64")] // TODO: x86
         {
-            (*crate::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] = idt.backup_stack_end as u64;
+            (*crate::arch::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] =
+                idt.backup_stack_end as u64;
         }
 
         let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
@@ -350,6 +353,9 @@ impl IdtEntry {
     // A function to set the offset more easily
     pub fn set_func(&mut self, func: unsafe extern "C" fn()) {
         self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
-        self.set_offset((crate::gdt::GDT_KERNEL_CODE as u16) << 3, func as usize);
+        self.set_offset(
+            (crate::arch::gdt::GDT_KERNEL_CODE as u16) << 3,
+            func as usize,
+        );
     }
 }

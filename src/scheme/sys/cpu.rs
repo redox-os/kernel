@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 use crate::{
-    device::cpu::cpu_info,
+    arch::device::cpu::cpu_info,
     sync::CleanLockToken,
     syscall::error::{Error, Result, EIO},
 };

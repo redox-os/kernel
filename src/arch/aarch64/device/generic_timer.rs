@@ -2,9 +2,8 @@ use alloc::boxed::Box;
 
 use super::ic_for_chip;
 use crate::{
-    context,
-    context::timeout,
-    device::cpu::registers::control_regs,
+    arch::device::cpu::registers::control_regs,
+    context::{self, timeout},
     dtb::{
         get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},

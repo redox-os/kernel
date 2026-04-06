@@ -4,8 +4,8 @@ use spin::Once;
 use x86::controlregs::{Cr4, Xcr0};
 
 use crate::{
+    arch::cpuid::{cpuid, feature_info, has_ext_feat},
     context::memory::PageSpan,
-    cpuid::{cpuid, feature_info, has_ext_feat},
     memory::{KernelMapper, Page, PageFlags, VirtualAddress, PAGE_SIZE},
 };
 

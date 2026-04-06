@@ -3,12 +3,14 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use alloc::vec::Vec;
 
 use crate::{
-    context::{self, timeout},
-    device::{
-        ioapic, local_apic, pic, pit,
-        serial::{COM1, COM2},
+    arch::{
+        device::{
+            ioapic, local_apic, pic, pit,
+            serial::{COM1, COM2},
+        },
+        ipi::{ipi, IpiKind, IpiTarget},
     },
-    ipi::{ipi, IpiKind, IpiTarget},
+    context::{self, timeout},
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},
     sync::CleanLockToken,

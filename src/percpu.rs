@@ -45,7 +45,7 @@ pub struct PercpuBlock {
 
     pub syscall_debug_info: Cell<SyscallDebugInfo>,
 
-    pub misc_arch_info: crate::device::ArchPercpuMisc,
+    pub misc_arch_info: crate::arch::device::ArchPercpuMisc,
 
     pub stats: CpuStats,
     pub contexts: RwLock<L1, BTreeSet<ContextRef>>,

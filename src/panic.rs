@@ -15,9 +15,11 @@ use rmm::VirtualAddress;
 use rustc_demangle::demangle;
 
 use crate::{
-    arch::{consts::USER_END_OFFSET, interrupt::trace::StackTrace},
+    arch::{
+        consts::USER_END_OFFSET,
+        interrupt::{self, trace::StackTrace, InterruptStack},
+    },
     context, cpu_id,
-    interrupt::{self, InterruptStack},
     memory::KernelMapper,
     sync::CleanLockToken,
     syscall::{self, usercopy::UserSliceRo},

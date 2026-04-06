@@ -2,7 +2,7 @@ use alloc::{boxed::Box, vec::Vec};
 
 use super::{Madt, MadtEntry};
 use crate::{
-    device::irqchip::{
+    arch::device::irqchip::{
         gic::{GenericInterruptController, GicCpuIf, GicDistIf},
         gicv3::{GicV3, GicV3CpuIf},
     },

@@ -5,8 +5,7 @@ use core::{
 use x86::msr::*;
 
 use crate::{
-    arch::cpuid::cpuid,
-    ipi::IpiKind,
+    arch::{cpuid::cpuid, ipi::IpiKind},
     memory::{map_device_memory, PhysicalAddress},
     percpu::PercpuBlock,
 };

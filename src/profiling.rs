@@ -7,15 +7,15 @@ use core::{
 
 use alloc::boxed::Box;
 
+#[cfg(feature = "profiling")]
+use crate::{
+    arch::idt::Idt,
+    interrupt::{self, irq::aux_timer, InterruptStack},
+};
 use crate::{
     cpu_set::LogicalCpuId,
     percpu::PercpuBlock,
     syscall::{error::*, usercopy::UserSliceWo},
-};
-#[cfg(feature = "profiling")]
-use crate::{
-    idt::Idt,
-    interrupt::{self, irq::aux_timer, InterruptStack},
 };
 
 const N: usize = 16 * 1024 * 1024;
@@ -237,11 +237,15 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
     }
     unsafe {
         for i in 33..255 {
-            crate::idt::IDTS.write().get_mut(&cpu_id).unwrap().entries[i]
+            crate::arch::idt::IDTS
+                .write()
+                .get_mut(&cpu_id)
+                .unwrap()
+                .entries[i]
                 .set_func(crate::interrupt::ipi::wakeup);
         }
 
-        let apic = &mut crate::device::local_apic::the_local_apic();
+        let apic = &mut crate::arch::device::local_apic::the_local_apic();
         apic.set_lvt_timer((0b01 << 17) | 32);
         apic.set_div_conf(0b1011);
         apic.set_init_count(0xffff_f);

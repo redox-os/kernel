@@ -26,8 +26,6 @@ use core::{
 
 use crate::context::switch::SwitchResult;
 
-use crate::consts::*;
-
 #[macro_use]
 /// Shared data structures
 mod common;
@@ -39,7 +37,7 @@ mod macros;
 #[macro_use]
 #[allow(dead_code)] // TODO
 mod arch;
-use crate::arch::*;
+use crate::arch::{consts::*, interrupt, ipi, stop, CurrentRmmArch};
 /// Offset of physmap
 #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), expect(dead_code))]
 const PHYS_OFFSET: usize = <arch::CurrentRmmArch as ::rmm::Arch>::PHYS_OFFSET;

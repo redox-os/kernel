@@ -1,7 +1,7 @@
 use core::sync::atomic::AtomicBool;
 
 use crate::{
-    gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
+    arch::gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
@@ -137,7 +137,7 @@ impl super::Context {
 
         if self.is_current_context() {
             unsafe {
-                crate::gdt::set_userspace_io_allowed(crate::gdt::pcr(), allowed);
+                crate::arch::gdt::set_userspace_io_allowed(crate::arch::gdt::pcr(), allowed);
             }
         }
     }
@@ -215,12 +215,12 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     unsafe {
-        let pcr = crate::gdt::pcr();
+        let pcr = crate::arch::gdt::pcr();
 
         if let Some(ref stack) = next.kstack {
-            crate::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
+            crate::arch::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
         }
-        crate::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
+        crate::arch::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
         core::arch::asm!("
         fxsave [{prev_fx}]

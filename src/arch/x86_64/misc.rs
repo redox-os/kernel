@@ -1,8 +1,8 @@
 use x86::controlregs::Cr4;
 
 use crate::{
+    arch::cpuid::{cpuid, has_ext_feat},
     cpu_set::LogicalCpuId,
-    cpuid::{cpuid, has_ext_feat},
 };
 
 pub unsafe fn init(cpu_id: LogicalCpuId) {

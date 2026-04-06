@@ -6,7 +6,7 @@ use crate::{
 
 impl PercpuBlock {
     pub fn current() -> &'static Self {
-        unsafe { &*(crate::device::cpu::registers::control_regs::tpidr_el1() as *const Self) }
+        unsafe { &*(crate::arch::device::cpu::registers::control_regs::tpidr_el1() as *const Self) }
     }
 }
 
@@ -18,6 +18,6 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
 
         virt.write(PercpuBlock::init(cpu_id));
 
-        crate::device::cpu::registers::control_regs::tpidr_el1_write(virt as u64);
+        crate::arch::device::cpu::registers::control_regs::tpidr_el1_write(virt as u64);
     }
 }

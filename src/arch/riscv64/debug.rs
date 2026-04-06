@@ -1,6 +1,6 @@
 use spin::MutexGuard;
 
-use crate::{device::serial::COM1, devices::serial::SerialKind};
+use crate::{arch::device::serial::COM1, devices::serial::SerialKind};
 
 pub struct Writer<'a> {
     serial: MutexGuard<'a, SerialKind>,

@@ -1,6 +1,6 @@
 use super::{find_sdt, sdt::Sdt, GenericAddressStructure};
 use crate::{
-    device::serial::COM1,
+    arch::device::serial::COM1,
     devices::{serial::SerialKind, uart_pl011},
     log::LOG,
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
@@ -87,7 +87,7 @@ impl Spcr {
                         if (spcr.interrupt_type & INTERRUPT_TYPE_GIC) == INTERRUPT_TYPE_GIC {
                             #[cfg(target_arch = "aarch64")]
                             unsafe {
-                                crate::device::serial::init_acpi(spcr.gsiv);
+                                crate::arch::device::serial::init_acpi(spcr.gsiv);
                             }
                         }
                     } else {

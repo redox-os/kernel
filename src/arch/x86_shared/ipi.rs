@@ -20,7 +20,7 @@ pub enum IpiTarget {
 
 #[inline(always)]
 pub fn ipi(kind: IpiKind, target: IpiTarget) {
-    use crate::device::local_apic::the_local_apic;
+    use crate::arch::device::local_apic::the_local_apic;
 
     if cfg!(not(feature = "multi_core")) {
         return;
@@ -39,7 +39,7 @@ pub fn ipi(kind: IpiKind, target: IpiTarget) {
 
 #[inline(always)]
 pub fn ipi_single(kind: IpiKind, target: &crate::percpu::PercpuBlock) {
-    use crate::device::local_apic::the_local_apic;
+    use crate::arch::device::local_apic::the_local_apic;
 
     if cfg!(not(feature = "multi_core")) {
         return;
