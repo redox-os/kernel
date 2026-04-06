@@ -20,14 +20,13 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
     let old_table = unsafe { RmmA::table(TableKind::User) };
 
-    let mut contexts_guard = crate::context::contexts(token.token());
-    let (contexts, mut context_token) = contexts_guard.token_split();
-    for context_lock in contexts.iter() {
-        if target_id.map_or(false, |target_id| Arc::as_ptr(&context_lock.0) != target_id) {
+    let mut contexts = crate::percpu::get_all_contexts(token.downgrade());
+    for context_arc in contexts.iter() {
+        if target_id.map_or(false, |target_id| Arc::as_ptr(&context_arc) != target_id) {
             continue;
         }
-        let context = context_lock.0.read(context_token.token());
-        println!("{:p}: {}", Arc::as_ptr(&context_lock.0), context.name);
+        let context = context_arc.read(token.token());
+        println!("{:p}: {}", Arc::as_ptr(&context_arc), context.name);
 
         let mut mark_frame_use = |frame| {
             tree.entry(frame).or_insert((0, false)).0 += 1;
@@ -49,16 +48,36 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             mark_frame_use(sig.thread_control.get());
         }
 
+        // TODO: Lock ordering violation
+        let mut token = unsafe { CleanLockToken::new() };
+
         // Switch to context page table to ensure syscall debug and stack dump will work
         if let Some(ref space) = context.addr_space {
-            let was_new = spaces.insert(space.acquire_read().table.utable.table().phys().data());
+            let was_new = spaces.insert(
+                space
+                    .acquire_read(token.downgrade())
+                    .table
+                    .utable
+                    .table()
+                    .phys()
+                    .data(),
+            );
             unsafe {
                 RmmA::set_table(
                     TableKind::User,
-                    space.acquire_read().table.utable.table().phys(),
+                    space
+                        .acquire_read(token.downgrade())
+                        .table
+                        .utable
+                        .table()
+                        .phys(),
                 );
                 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-                check_page_table_consistency(&mut space.acquire_write(), was_new, &mut tree);
+                check_page_table_consistency(
+                    &mut space.acquire_write(token.downgrade()),
+                    was_new,
+                    &mut tree,
+                );
             }
         }
 
@@ -73,7 +92,7 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             );
         }
         if let Some(ref addr_space) = context.addr_space {
-            let addr_space = addr_space.acquire_read();
+            let addr_space = addr_space.acquire_read(token.downgrade());
             if !addr_space.grants.is_empty() {
                 println!("grants:");
                 for (base, info) in addr_space.grants.iter() {
@@ -150,11 +169,24 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
         println!();
     }
-    drop(contexts_guard);
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-    crate::scheme::proc::foreach_addrsp(token, |addrsp| {
-        let was_new = spaces.insert(addrsp.acquire_read().table.utable.table().phys().data());
-        unsafe { check_page_table_consistency(&mut *addrsp.acquire_write(), was_new, &mut tree) };
+    crate::scheme::proc::foreach_addrsp(token, |addrsp, mut token| {
+        let was_new = spaces.insert(
+            addrsp
+                .acquire_read(token.downgrade())
+                .table
+                .utable
+                .table()
+                .phys()
+                .data(),
+        );
+        unsafe {
+            check_page_table_consistency(
+                &mut *addrsp.acquire_write(token.downgrade()),
+                was_new,
+                &mut tree,
+            )
+        };
     });
     for (frame, (count, p)) in tree {
         let Some(info) = get_page_info(frame) else {
@@ -182,15 +214,15 @@ fn dump_stack(context: &Context, mut sp: usize) {
     let width = size_of::<usize>();
 
     println!("stack: {:>0width$x}", sp, width = width);
-
+    let mut token = unsafe { CleanLockToken::new() };
     //Maximum 64 usizes
     for _ in 0..64 {
         if context.addr_space.as_ref().map_or(false, |space| {
             space
-                .acquire_read()
+                .acquire_read(token.downgrade())
                 .table
                 .utable
-                .translate(crate::paging::VirtualAddress::new(sp))
+                .translate(crate::memory::VirtualAddress::new(sp))
                 .is_some()
         }) {
             let value = unsafe { *(sp as *const usize) };
@@ -241,6 +273,9 @@ unsafe fn check_page_table_consistency(
                 };
 
                 for p1i in 0..512 {
+                    use crate::memory::Page;
+                    use rmm::VirtualAddress;
+
                     let (physaddr, flags) = match unsafe { p1.entry(p1i) } {
                         Some(e) => {
                             if let Ok(address) = e.address() {

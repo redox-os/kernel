@@ -161,8 +161,13 @@ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
 
 #[cfg(feature = "debugger")]
 #[allow(dead_code)]
-pub fn foreach_addrsp(token: &mut CleanLockToken, mut f: impl FnMut(&Arc<AddrSpaceWrapper>)) {
-    for (_, handle) in HANDLES.read(token.token()).iter() {
+pub fn foreach_addrsp(
+    token: &mut CleanLockToken,
+    mut f: impl FnMut(&Arc<AddrSpaceWrapper>, LockToken<L1>),
+) {
+    let mut handles_guard = HANDLES.read(token.token());
+    let (handles, mut token) = handles_guard.token_split();
+    for (_, handle) in handles.iter() {
         let Handle {
             kind:
                 ContextHandle::AddrSpace { addrspace, .. }
@@ -173,7 +178,7 @@ pub fn foreach_addrsp(token: &mut CleanLockToken, mut f: impl FnMut(&Arc<AddrSpa
         else {
             continue;
         };
-        f(&addrspace);
+        f(&addrspace, token.token());
     }
 }
 

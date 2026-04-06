@@ -1,7 +1,12 @@
 use crate::{
-    context,
-    context::{file::FileDescription, memory::AddrSpaceWrapper},
-    scheme,
+    alloc::string::ToString,
+    context::{
+        self,
+        file::{FileDescription, LockedFileDescription},
+        memory::AddrSpaceWrapper,
+    },
+    percpu,
+    scheme::{self, handles, KernelSchemes},
     sync::CleanLockToken,
     syscall::error::Result,
 };
@@ -27,17 +32,18 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     #[derive(Default)]
     struct Descr {
         owners: HashMap<Ref<AddrSpaceWrapper>, String>,
-        scheme: Box<str>,
+        scheme: &'static str,
     }
     let mut map = HashMap::<Ref<LockedFileDescription>, Descr>::new();
-
     let mut report = String::new();
-    'contexts: for context in context::contexts(token.token())
-        .iter()
-        .filter_map(|c| c.upgrade())
-    {
-        let context = context.read();
-        let files = context.files.read();
+    let mut schemes_guard = handles().read(token.token());
+    let (schemes, mut token) = schemes_guard.token_split();
+
+    'contexts: for context in percpu::get_all_contexts(token.token()) {
+        let mut context_guard = context.read(token.token());
+        let (context, mut token) = context_guard.token_split();
+        let mut files_guard = context.files.read(token);
+        let (files, mut token) = files_guard.token_split();
         writeln!(report, "'{}' {{", context.name).unwrap();
 
         for file in files.iter().filter_map(|f| f.clone()) {
@@ -54,23 +60,20 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             };
             let descr = map.entry(fr).or_default();
 
-            let scheme_id = file.description.read().scheme;
-            let scheme = scheme::schemes(token.token())
-                .names
-                .iter()
-                .flat_map(|(_, v)| v.iter())
-                .find_map(|(name, id)| {
-                    if *id == scheme_id {
-                        Some(name.clone())
-                    } else {
-                        None
-                    }
-                });
+            let scheme_id = file.description.read(token.token()).scheme;
+            let scheme = schemes.get(&scheme_id);
             descr
                 .owners
                 .entry(Ref(a))
-                .or_insert(context.name.clone().into_owned());
-            descr.scheme = scheme.unwrap_or(Box::from("[unknown]"));
+                .or_insert(context.name.clone().to_string());
+            descr.scheme = scheme
+                .map(|k| match k {
+                    scheme::Handle::SchemeCreationCapability => "SchemeCreationCapability",
+                    scheme::Handle::Scheme(KernelSchemes::Global(g)) => g.as_str(),
+                    scheme::Handle::Scheme(KernelSchemes::User(g)) => "[user]",
+                    scheme::Handle::Scheme(KernelSchemes::SchemeMgr) => "SchemeMgr",
+                })
+                .unwrap_or("[unknown]");
         }
         writeln!(report, "}}").unwrap();
     }
