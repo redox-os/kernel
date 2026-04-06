@@ -8,8 +8,8 @@ use core::{
 use alloc::boxed::Box;
 
 #[cfg(feature = "profiling")]
-use crate::{
-    arch::idt::Idt,
+use crate::arch::{
+    idt::Idt,
     interrupt::{self, irq::aux_timer, InterruptStack},
 };
 use crate::{
@@ -242,7 +242,7 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
                 .get_mut(&cpu_id)
                 .unwrap()
                 .entries[i]
-                .set_func(crate::interrupt::ipi::wakeup);
+                .set_func(crate::arch::interrupt::ipi::wakeup);
         }
 
         let apic = &mut crate::arch::device::local_apic::the_local_apic();

@@ -6,10 +6,9 @@ use core::{
 
 use crate::{
     allocator,
-    arch::{device, paging},
+    arch::{device, interrupt::exception_handler, paging},
     devices::graphical_debug,
     dtb::serial::init_early,
-    interrupt::exception_handler,
     startup::KernelArgs,
 };
 
@@ -136,6 +135,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap()
         };
 
-        crate::kmain(bootstrap);
+        crate::startup::kmain(bootstrap);
     }
 }

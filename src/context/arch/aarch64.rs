@@ -103,7 +103,7 @@ impl Context {
             }
         }
 
-        self.set_lr(crate::interrupt::syscall::enter_usermode as usize);
+        self.set_lr(crate::arch::interrupt::syscall::enter_usermode as usize);
         self.set_x28(func as usize);
         self.set_context_handle();
 

@@ -19,12 +19,7 @@ extern crate alloc;
 #[macro_use]
 extern crate bitflags;
 
-use core::{
-    hint,
-    sync::atomic::{AtomicBool, AtomicU32, Ordering},
-};
-
-use crate::context::switch::SwitchResult;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 #[macro_use]
 /// Shared data structures
@@ -37,7 +32,7 @@ mod macros;
 #[macro_use]
 #[allow(dead_code)] // TODO
 mod arch;
-use crate::arch::{consts::*, interrupt, ipi, stop, CurrentRmmArch};
+use crate::arch::{consts::*, ipi, stop, CurrentRmmArch};
 /// Offset of physmap
 #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), expect(dead_code))]
 const PHYS_OFFSET: usize = <arch::CurrentRmmArch as ::rmm::Arch>::PHYS_OFFSET;
@@ -93,7 +88,6 @@ mod scheme;
 mod startup;
 
 /// Synchronization primitives
-use sync::CleanLockToken;
 mod sync;
 
 /// Syscall handlers
@@ -119,115 +113,6 @@ static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 fn cpu_count() -> u32 {
     CPU_COUNT.load(Ordering::Relaxed)
 }
-
-fn init_env() -> &'static [u8] {
-    crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set").env
-}
-
-extern "C" fn userspace_init() {
-    let mut token = unsafe { CleanLockToken::new() };
-    let bootstrap = crate::BOOTSTRAP.get().expect("BOOTSTRAP was not set");
-    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
-}
-
-struct Bootstrap {
-    base: crate::memory::Frame,
-    page_count: usize,
-    env: &'static [u8],
-}
-static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
-static AP_READY: AtomicBool = AtomicBool::new(false);
-static BSP_READY: AtomicBool = AtomicBool::new(false);
-
-/// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-fn kmain(bootstrap: Bootstrap) -> ! {
-    let mut token = unsafe { CleanLockToken::new() };
-
-    BSP_READY.store(true, Ordering::SeqCst);
-
-    //Initialize the first context, stored in kernel/src/context/mod.rs
-    context::init(&mut token);
-
-    //Initialize global schemes, such as `acpi:`.
-    scheme::init_globals();
-
-    debug!("BSP: {} CPUs", cpu_count());
-    debug!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
-
-    BOOTSTRAP.call_once(|| bootstrap);
-
-    profiling::ready_for_profiling();
-
-    let owner = None; // kmain not owned by any fd
-    match context::spawn(true, owner, userspace_init, &mut token) {
-        Ok(context_lock) => {
-            let mut context = context_lock.write(token.token());
-            context.status = context::Status::Runnable;
-            context.name.clear();
-            context.name.push_str("[bootstrap]");
-
-            // TODO: Remove these from kernel
-            context.euid = 0;
-            context.egid = 0;
-        }
-        Err(err) => {
-            panic!("failed to spawn userspace_init: {:?}", err);
-        }
-    }
-
-    run_userspace(&mut token)
-}
-
-/// This is the main kernel entry point for secondary CPUs
-#[allow(unreachable_code, unused_variables, dead_code)]
-fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
-    let mut token = unsafe { CleanLockToken::new() };
-
-    AP_READY.store(true, Ordering::SeqCst);
-    while !BSP_READY.load(Ordering::SeqCst) {
-        hint::spin_loop();
-    }
-
-    #[cfg(feature = "profiling")]
-    profiling::maybe_run_profiling_helper_forever(cpu_id);
-
-    if !cfg!(feature = "multi_core") {
-        debug!("AP {}: Disabled", cpu_id);
-
-        loop {
-            unsafe {
-                interrupt::disable();
-                interrupt::halt();
-            }
-        }
-    }
-
-    context::init(&mut token);
-
-    debug!("AP {}", cpu_id);
-
-    profiling::ready_for_profiling();
-
-    run_userspace(&mut token);
-}
-fn run_userspace(token: &mut CleanLockToken) -> ! {
-    loop {
-        unsafe {
-            interrupt::disable();
-            match context::switch(token) {
-                SwitchResult::Switched => {
-                    interrupt::enable_and_nop();
-                }
-                SwitchResult::AllContextsIdle => {
-                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
-                    interrupt::enable_and_halt();
-                }
-            }
-        }
-    }
-}
-
-// TODO: Use this macro on aarch64 too.
 
 macro_rules! linker_offsets(
     ($($name:ident),*) => {

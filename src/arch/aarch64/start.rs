@@ -128,7 +128,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap()
         };
 
-        crate::kmain(bootstrap);
+        crate::startup::kmain(bootstrap);
     }
 }
 

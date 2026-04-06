@@ -1,16 +1,18 @@
-use core::sync::atomic::AtomicBool;
-
-use crate::{
-    arch::gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
-    percpu::PercpuBlock,
-    syscall::FloatRegisters,
-};
-
-use crate::{arch::interrupt::InterruptStack, context::context::Kstack, memory::RmmA};
-use core::mem::offset_of;
+use core::{mem::offset_of, sync::atomic::AtomicBool};
 use rmm::{Arch, VirtualAddress};
 use spin::Once;
 use syscall::{error::*, EnvRegisters};
+
+use crate::{
+    arch::{
+        gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
+        interrupt::{self, InterruptStack},
+    },
+    context::context::Kstack,
+    memory::RmmA,
+    percpu::PercpuBlock,
+    syscall::FloatRegisters,
+};
 
 /// This must be used by the kernel to ensure that context switches are done atomically
 /// Compare and exchange this to true when beginning a context switch on any CPU
@@ -89,7 +91,7 @@ impl Context {
                 stack_top = stack_top.sub(size_of::<usize>());
                 stack_top
                     .cast::<usize>()
-                    .write(crate::interrupt::syscall::enter_usermode as usize);
+                    .write(interrupt::syscall::enter_usermode as usize);
             }
 
             stack_top = stack_top.sub(size_of::<usize>());

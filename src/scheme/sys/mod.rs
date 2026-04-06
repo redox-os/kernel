@@ -87,7 +87,7 @@ const FILES: &[(&str, Kind)] = &[
     ("log", Rd(log::resource)),
     ("syscall", Rd(syscall::resource)),
     ("uname", Rd(uname::resource)),
-    ("env", Rd(|_| Ok(Vec::from(crate::init_env())))),
+    ("env", Rd(|_| Ok(Vec::from(crate::startup::init_env())))),
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     ("spurious_irq", Rd(interrupt::irq::spurious_irq_resource)),
     ("stat", Rd(stat::resource)),

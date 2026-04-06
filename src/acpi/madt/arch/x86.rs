@@ -8,12 +8,12 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
+    startup::AP_READY,
     cpu_set::LogicalCpuId,
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,
     },
-    AP_READY,
 };
 
 use super::{Madt, MadtEntry};

@@ -142,7 +142,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             args.bootstrap()
         };
 
-        crate::kmain(bootstrap);
+        crate::startup::kmain(bootstrap);
     }
 }
 
@@ -217,6 +217,6 @@ unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {
             args.cpu_id
         };
 
-        crate::kmain_ap(cpu_id);
+        crate::startup::kmain_ap(cpu_id);
     }
 }
