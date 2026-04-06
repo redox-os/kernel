@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
-use spin::Once;
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -131,22 +130,8 @@ pub struct QueueKey {
 
 type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
 
-static REGISTRY: Once<RwLock<L2, Registry>> = Once::new();
-
-/// Initialize registry, called if needed
-fn init_registry() -> RwLock<L2, Registry> {
-    RwLock::new(Registry::new())
-}
-
-/// Get the global schemes list, const
-fn registry<'a>(token: &'a mut LockToken<'a, L1>) -> RwLockReadGuard<'a, L2, Registry> {
-    REGISTRY.call_once(init_registry).read(token.token())
-}
-
-/// Get the global schemes list, mutable
-pub fn registry_mut<'a>(token: &'a mut LockToken<'a, L1>) -> RwLockWriteGuard<'a, L2, Registry> {
-    REGISTRY.call_once(init_registry).write(token.token())
-}
+static REGISTRY: RwLock<L2, Registry> =
+    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 pub fn register(
     reg_key: RegKey,
@@ -154,8 +139,7 @@ pub fn register(
     flags: EventFlags,
     token: &mut CleanLockToken,
 ) {
-    let mut token = token.downgrade();
-    let mut registry = registry_mut(&mut token);
+    let mut registry = REGISTRY.write(token.token());
 
     let entry = registry.entry(reg_key).or_default();
 
@@ -170,9 +154,7 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
     let mut flags = EventFlags::empty();
 
     {
-        let mut token = token.downgrade();
-        let registry = registry(&mut token);
-
+        let registry = REGISTRY.read(token.token());
         if let Some(queue_list) = registry.get(&reg_key) {
             for (_queue_key, &queue_flags) in queue_list.iter() {
                 flags |= queue_flags;
@@ -186,9 +168,7 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
 }
 
 pub fn unregister_file(scheme: SchemeId, number: usize, token: &mut CleanLockToken) {
-    let mut token = token.downgrade();
-    let mut registry = registry_mut(&mut token);
-
+    let mut registry = REGISTRY.write(token.token());
     registry.remove(&RegKey { scheme, number });
 }
 
@@ -212,8 +192,7 @@ fn trigger_inner(
     let mut full = false;
 
     {
-        let mut token = token.token();
-        let registry = registry(&mut token);
+        let registry = REGISTRY.read(token.token());
         if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
             for (queue_key, &queue_flags) in queue_list.iter().skip(*offset) {
                 let common_flags = flags & queue_flags;
