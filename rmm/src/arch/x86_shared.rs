@@ -1,3 +1,5 @@
+#![expect(clippy::identity_op)]
+
 // Page attribute table is indexed by PAT(7) PCD(4) PWT(3)
 pub(crate) const _PAT_WB: usize = (0b0 << 7) + (0b00 << 3);
 pub(crate) const _PAT_WT: usize = (0b0 << 7) + (0b01 << 3);

@@ -91,6 +91,12 @@ impl Context {
 
         const INT_REGS_SIZE: usize = core::mem::size_of::<InterruptStack>();
 
+        // Kstack::initial_top() is always at least 8 byte aligned. assertion to be safe
+        debug_assert!(
+            (stack_top as usize).is_multiple_of(8),
+            "Kstack not 8 byte aligned"
+        );
+        #[expect(clippy::cast_ptr_alignment)]
         unsafe {
             if userspace_allowed {
                 // Zero-initialize InterruptStack registers.

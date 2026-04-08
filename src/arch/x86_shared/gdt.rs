@@ -282,6 +282,8 @@ fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
         pcr.gdt[GDT_TSS].set_offset(tss_lo);
         pcr.gdt[GDT_TSS].set_limit(size_of::<TaskStateSegment>() as u32 + IOBITMAP_SIZE);
 
+        // GDT is aligned to 8 bytes
+        #[expect(clippy::cast_ptr_alignment)]
         unsafe {
             (&mut pcr.gdt[GDT_TSS_HIGH] as *mut GdtEntry)
                 .cast::<u32>()

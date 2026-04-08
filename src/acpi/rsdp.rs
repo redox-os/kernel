@@ -17,12 +17,10 @@ pub struct Rsdp {
 
 impl Rsdp {
     pub unsafe fn get_rsdp(already_supplied_rsdp: Option<*const u8>) -> Option<Rsdp> {
-        if let Some(rsdp_ptr) = already_supplied_rsdp {
+        already_supplied_rsdp.map(|rsdp_ptr| {
             // TODO: Validate
-            Some(unsafe { *(rsdp_ptr as *const Rsdp) })
-        } else {
-            None
-        }
+            unsafe { *(rsdp_ptr as *const Rsdp) }
+        })
     }
 
     /// Get the RSDT or XSDT address

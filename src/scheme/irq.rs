@@ -7,7 +7,7 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use alloc::{string::String, vec::Vec};
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
@@ -428,10 +428,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
         if let &Handle::Irq {
             irq: handle_irq, ..
         } = handle
+            && handle_irq > BASE_IRQ_COUNT
         {
-            if handle_irq > BASE_IRQ_COUNT {
-                set_reserved(LogicalCpuId::BSP, irq_to_vector(handle_irq), false);
-            }
+            set_reserved(LogicalCpuId::BSP, irq_to_vector(handle_irq), false);
         }
         Ok(())
     }
@@ -527,10 +526,10 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
-            Handle::Bsp => format!("irq:bsp"),
+            Handle::Bsp => "irq:bsp".to_owned(),
             Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
             Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
-            Handle::TopLevel => format!("irq:"),
+            Handle::TopLevel => "irq:".to_owned(),
             _ => return Err(Error::new(EBADF)),
         }
         .into_bytes();

@@ -20,13 +20,7 @@ struct BuddyEntry<A> {
 
 impl<A> Clone for BuddyEntry<A> {
     fn clone(&self) -> Self {
-        Self {
-            base: self.base,
-            size: self.size,
-            skip: self.skip,
-            used: self.used,
-            phantom: PhantomData,
-        }
+        *self
     }
 }
 impl<A> Copy for BuddyEntry<A> {}
@@ -69,6 +63,7 @@ impl<A: Arch> BuddyEntry<A> {
         }
     }
 
+    #[expect(clippy::unit_arg)]
     unsafe fn set_usage(&self, page: usize, usage: BuddyUsage) -> Option<()> {
         unsafe {
             let addr = self.usage_addr(page)?;
@@ -104,7 +99,7 @@ impl<A: Arch> BuddyAllocator<A> {
             // by the bump allocator
             let mut offset = bump_allocator.offset();
             for old_area in bump_allocator.areas().iter() {
-                let mut area = old_area.clone();
+                let mut area = *old_area;
                 if offset >= area.size {
                     offset -= area.size;
                     continue;

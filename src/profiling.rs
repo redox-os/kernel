@@ -102,8 +102,7 @@ impl RingBuffer {
         }))
     }
 }
-const NULL: AtomicPtr<RingBuffer> = AtomicPtr::new(core::ptr::null_mut());
-pub static BUFS: [AtomicPtr<RingBuffer>; 4] = [NULL; 4];
+pub static BUFS: [AtomicPtr<RingBuffer>; 4] = [const { AtomicPtr::new(core::ptr::null_mut()) }; 4];
 
 pub const PROFILE_TOGGLEABLE: bool = true;
 pub static IS_PROFILING: AtomicBool = AtomicBool::new(false);
@@ -138,10 +137,7 @@ pub fn drain_buffer(cpu_num: LogicalCpuId, buf: UserSliceWo) -> Result<usize> {
             return Ok(0);
         };
         let byte_slices = src.peek().map(|words| {
-            core::slice::from_raw_parts(
-                words.as_ptr().cast::<u8>(),
-                words.len() * size_of::<usize>(),
-            )
+            core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words))
         });
 
         let copied_1 = buf.copy_common_bytes_from_slice(byte_slices[0])?;

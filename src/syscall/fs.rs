@@ -120,7 +120,7 @@ pub fn openat(
         .add_file(
             FileDescriptor {
                 description: new_description,
-                cloexec: flags as usize & O_CLOEXEC == O_CLOEXEC,
+                cloexec: flags & O_CLOEXEC == O_CLOEXEC,
             },
             &mut token,
         )

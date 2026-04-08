@@ -474,10 +474,7 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<RwLockReadGuard<'a, L, T>> {
-        let inner = match self.inner.try_read() {
-            Some(inner) => inner,
-            None => return None,
-        };
+        let inner = self.inner.try_read()?;
         Some(RwLockReadGuard {
             inner,
             lock_token: LockToken::downgraded(lock_token),
@@ -488,10 +485,7 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<RwLockWriteGuard<'a, L, T>> {
-        let inner = match self.inner.try_write() {
-            Some(inner) => inner,
-            None => return None,
-        };
+        let inner = self.inner.try_write()?;
         Some(RwLockWriteGuard {
             inner,
             lock_token: LockToken::downgraded(lock_token),
@@ -526,10 +520,7 @@ impl<L: Level, T> RwLock<L, T> {
                 }
             }
         };
-        RwLockWriteGuard {
-            inner,
-            lock_token: lock_token,
-        }
+        RwLockWriteGuard { inner, lock_token }
     }
 
     /// Arcquires the lock_token to replace older LockUpgradableGuard.
@@ -559,10 +550,7 @@ impl<L: Level, T> RwLock<L, T> {
                 }
             }
         };
-        RwLockUpgradableGuard {
-            inner,
-            lock_token: lock_token,
-        }
+        RwLockUpgradableGuard { inner, lock_token }
     }
 
     // Unsafe due to not using token, currently required by context::switch

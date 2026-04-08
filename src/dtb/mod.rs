@@ -218,7 +218,7 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool
         .and_then(NodeProperty::as_str)?;
 
     let mut reg = uart_node.reg()?;
-    let memory = reg.nth(0)?;
+    let memory = reg.next()?;
     let address = get_mmio_address(dtb, &uart_node, &memory)?;
 
     Some((

@@ -68,7 +68,7 @@ enum Response {
 }
 
 impl Response {
-    fn as_regular(self) -> Result<usize> {
+    fn into_regular(self) -> Result<usize> {
         match self {
             Response::Regular(res, _, _) => res,
             Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
@@ -1082,7 +1082,7 @@ impl UserInner {
         //let mapping_is_lazy = map.flags.contains(MapFlags::MAP_LAZY);
         let mapping_is_lazy = false;
 
-        let base_page_opt = (!mapping_is_lazy).then_some(response.as_regular()?);
+        let base_page_opt = (!mapping_is_lazy).then_some(response.into_regular()?);
 
         let file_ref = GrantFileRef {
             description: desc,
@@ -1443,7 +1443,7 @@ impl KernelScheme for UserScheme {
         ) {
             Ok(res) => {
                 address.release(token)?;
-                res.as_regular()
+                res.into_regular()
             }
             Err(e) => {
                 let _ = address.release(token);
@@ -1464,7 +1464,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()
+            .into_regular()
             .map(|o| o as u64)
     }
 
@@ -1479,7 +1479,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()?;
+            .into_regular()?;
         Ok(())
     }
 
@@ -1502,7 +1502,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()?;
+            .into_regular()?;
         Ok(())
     }
 
@@ -1523,7 +1523,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()
+            .into_regular()
     }
 
     fn fevent(
@@ -1542,7 +1542,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()
+            .into_regular()
             .map(EventFlags::from_bits_truncate)
     }
 
@@ -1564,7 +1564,7 @@ impl KernelScheme for UserScheme {
         ) {
             Ok(res) => {
                 address.release(token)?;
-                res.as_regular()
+                res.into_regular()
             }
             Err(err) => {
                 let _ = address.release(token);
@@ -1592,7 +1592,7 @@ impl KernelScheme for UserScheme {
         ) {
             Ok(res) => {
                 address.release(token)?;
-                res.as_regular()
+                res.into_regular()
             }
             Err(err) => {
                 let _ = address.release(token);
@@ -1613,7 +1613,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()?;
+            .into_regular()?;
         Ok(())
     }
 
@@ -1628,7 +1628,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()?;
+            .into_regular()?;
         Ok(())
     }
 
@@ -1722,7 +1722,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
         result
     }
@@ -1755,7 +1755,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
 
         result
@@ -1789,7 +1789,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
 
         result
@@ -1812,7 +1812,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
         result
     }
@@ -1846,7 +1846,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
         result
     }
@@ -1863,7 +1863,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
         result.map(|_| ())
     }
@@ -1880,7 +1880,7 @@ impl KernelScheme for UserScheme {
                 address.span(),
                 token,
             )?
-            .as_regular();
+            .into_regular();
         address.release(token)?;
         result.map(|_| ())
     }
@@ -1915,7 +1915,7 @@ impl KernelScheme for UserScheme {
             token,
         )?;
 
-        res.as_regular()?;
+        res.into_regular()?;
         Ok(())
     }
     fn kcall(
@@ -1954,7 +1954,7 @@ impl KernelScheme for UserScheme {
         match inner.call_inner(Vec::new(), sqe, address.span(), token) {
             Ok(res) => {
                 address.release(token)?;
-                res.as_regular()
+                res.into_regular()
             }
             Err(e) => {
                 let _ = address.release(token);
@@ -2039,7 +2039,7 @@ impl KernelScheme for UserScheme {
                 &mut PageSpan::empty(),
                 token,
             )?
-            .as_regular()
+            .into_regular()
     }
     fn kfdread(
         &self,

@@ -12,6 +12,8 @@
 #![feature(btree_cursors)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
+#![allow(clippy::new_without_default)]
+
 #[macro_use]
 extern crate alloc;
 
