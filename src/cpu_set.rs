@@ -109,7 +109,9 @@ impl Display for LogicalCpuSet {
         let cpu_count = crate::cpu_count();
 
         let raw = self.to_raw();
-        let words = raw.get(..(cpu_count / usize::BITS) as usize).unwrap_or(&[]);
+        let words = raw
+            .get(..((cpu_count + usize::BITS - 1) / usize::BITS) as usize)
+            .unwrap_or(&[]);
         for (i, word) in words.iter().enumerate() {
             if i != 0 {
                 write!(f, "_")?;
@@ -119,7 +121,7 @@ impl Display for LogicalCpuSet {
             } else {
                 *word
             };
-            write!(f, "{word:x}")?;
+            write!(f, "{word:X}")?;
         }
         Ok(())
     }
