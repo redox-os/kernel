@@ -85,8 +85,8 @@ fn try_stop_context<T>(
         "process can't have been restarted, we stopped it!"
     );
 
-    let (mut context, token) = context.token_split();
-    let ret = callback(&mut context, token);
+    let (context, token) = context.token_split();
+    let ret = callback(context, token);
 
     context.status = prev_status;
 
@@ -514,7 +514,7 @@ impl KernelScheme for ProcScheme {
                 let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
                 let mut src_addr_space_guard = addrspace.acquire_write(token.downgrade());
-                let (mut src_addr_space, lock_token) = src_addr_space_guard.token_split();
+                let (src_addr_space, lock_token) = src_addr_space_guard.token_split();
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
@@ -544,7 +544,7 @@ impl KernelScheme for ProcScheme {
                         |dst_page, _, dst_mapper, flusher| {
                             Grant::borrow(
                                 Arc::clone(addrspace),
-                                &mut src_addr_space,
+                                src_addr_space,
                                 src_span.base,
                                 dst_page,
                                 src_span.count,
@@ -1408,7 +1408,7 @@ impl ContextHandle {
                 Ok(grants_read * mem::size_of::<GrantDesc>())
             }
 
-            ContextHandle::Filetable { data, .. } => read_from(buf, &data, offset),
+            ContextHandle::Filetable { data, .. } => read_from(buf, data, offset),
             ContextHandle::MmapMinAddr(addrspace) => {
                 let mut token = token.token();
                 let addr = addrspace.acquire_read(token.downgrade());

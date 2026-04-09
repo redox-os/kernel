@@ -47,7 +47,7 @@ fn get_cpu_stats() -> String {
         total_kernel += stat.kernel;
         total_idle += stat.idle;
         total_irq += stat.irq;
-        let _ = write!(&mut cpu_data, "cpu{} {}\n", id.get(), stat);
+        let _ = writeln!(&mut cpu_data, "cpu{} {}", id.get(), stat);
     }
     format!(
         "cpu  {total_user} {total_nice} {total_kernel} {total_idle} {total_irq}\n\

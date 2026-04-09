@@ -24,6 +24,7 @@ impl<A: Arch> PageFlush<A> {
         A::invalidate(self.virt);
     }
 
+    #[expect(clippy::forget_non_drop)]
     pub unsafe fn ignore(self) {
         mem::forget(self);
     }

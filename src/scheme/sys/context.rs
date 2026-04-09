@@ -1,4 +1,5 @@
 use alloc::{
+    borrow::ToOwned,
     string::{String, ToString},
     vec::Vec,
 };
@@ -55,11 +56,9 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
             let cpu_string = match context.cpu_id {
                 Some(cpu_id) => {
-                    format!("{}", cpu_id)
+                    format!("{cpu_id}")
                 }
-                _ => {
-                    format!("?")
-                }
+                _ => "?".to_owned(),
             };
             let affinity = context.sched_affinity.to_string();
 

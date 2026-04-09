@@ -84,9 +84,7 @@ impl<A: Arch, F> PageMapper<A, F> {
                 let old_entry = p1.entry(i)?;
                 let old_phys = old_entry.address().ok()?;
                 let old_flags = old_entry.flags();
-                let Some((new_phys, new_flags)) = f(old_phys, old_flags) else {
-                    return None;
-                };
+                let (new_phys, new_flags) = f(old_phys, old_flags)?;
                 // TODO: Higher-level PageEntry::new interface?
                 let new_entry = PageEntry::new(new_phys.data(), new_flags.data());
                 p1.set_entry(i, new_entry);

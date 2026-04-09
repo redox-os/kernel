@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used)] // the build script can panic
+
 use std::{env, path::Path, process::Command};
 use toml::Table;
 
@@ -94,5 +96,5 @@ fn main() {
         _ => (),
     }
 
-    let _ = parse_kconfig(&*arch_str);
+    let _ = parse_kconfig(&arch_str);
 }

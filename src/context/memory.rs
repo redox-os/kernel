@@ -2450,6 +2450,8 @@ pub fn try_correcting_page_tables(
     Ok(())
 }
 
+// TODO: maybe refactor the return type into a struct/typedef?
+#[expect(clippy::type_complexity)]
 /// XXX: This require passing L3 addr_space_guard.
 /// Caller must ensure there's no other lock being held at this point.
 /// Caller also need to provide clean token for the new AddrSpace.

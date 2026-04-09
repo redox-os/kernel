@@ -73,7 +73,8 @@ pub(super) fn init(madt: Madt) {
                     allocate_p2frame(4)
                         .expect("no more frames in acpi stack_start")
                         .base(),
-                ).data();
+                )
+                .data();
                 let stack_end = stack_start + (PAGE_SIZE << 4);
 
                 let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
@@ -97,6 +98,7 @@ pub(super) fn init(madt: Madt) {
                     ap_ready.write(0);
                     ap_args_ptr.write(&args as *const _ as u64);
                     ap_page_table.write(page_table_physaddr as u64);
+                    #[expect(clippy::fn_to_numeric_cast)]
                     ap_code.write(kstart_ap as u64);
 
                     // TODO: Is this necessary (this fence)?

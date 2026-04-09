@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::new_without_default)]
 
 pub use crate::{allocator::*, arch::*, page::*};
 
@@ -38,6 +39,7 @@ impl PhysicalAddress {
         self.0
     }
 
+    #[expect(clippy::should_implement_trait)]
     #[inline(always)]
     pub fn add(self, offset: usize) -> Self {
         Self(self.0 + offset)
@@ -66,6 +68,7 @@ impl VirtualAddress {
         self.0
     }
 
+    #[expect(clippy::should_implement_trait)]
     #[inline(always)]
     pub fn add(self, offset: usize) -> Self {
         Self(self.0 + offset)

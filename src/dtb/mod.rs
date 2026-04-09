@@ -217,7 +217,7 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool
     let compatible = uart_node.property("compatible")?.as_str()?;
 
     let mut reg = uart_node.reg()?;
-    let memory = reg.nth(0)?;
+    let memory = reg.next()?;
     let address = get_mmio_address(dtb, &uart_node, &memory)?;
     let reg_width_bits = uart_node
         .property("reg-io-width")

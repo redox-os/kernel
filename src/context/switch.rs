@@ -216,19 +216,19 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     if switch_context_opt.is_none() {
         let mut this_contexts = contexts_mut(token.token());
         let (this_contexts, mut token) = this_contexts.token_split();
-        if let Some(mut free_contexts) = free_contexts_try(token.token()) {
-            if let Some(context) = free_contexts.pop_last() {
-                // Check if we can run this free context immediately
-                if let Some(next_context) = context.upgrade() {
-                    let mut next_context_guard = unsafe { next_context.write_arc() };
-                    if let UpdateResult::CanSwitch =
-                        unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
-                    {
-                        switch_context_opt = Some(next_context_guard);
-                    }
+        if let Some(mut free_contexts) = free_contexts_try(token.token())
+            && let Some(context) = free_contexts.pop_last()
+        {
+            // Check if we can run this free context immediately
+            if let Some(next_context) = context.upgrade() {
+                let mut next_context_guard = unsafe { next_context.write_arc() };
+                if let UpdateResult::CanSwitch =
+                    unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
+                {
+                    switch_context_opt = Some(next_context_guard);
                 }
-                this_contexts.insert(context);
             }
+            this_contexts.insert(context);
         }
     }
 

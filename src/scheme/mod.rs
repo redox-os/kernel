@@ -226,13 +226,10 @@ impl SchemeList {
         let scheme = handles().write(token.token()).remove(&SchemeId(id));
 
         assert!(scheme.is_some());
-        match scheme {
-            Some(Handle::Scheme(KernelSchemes::User(user))) => {
-                if let Some(user) = Arc::into_inner(user.inner) {
-                    user.into_drop(token);
-                }
-            }
-            _ => {}
+        if let Some(Handle::Scheme(KernelSchemes::User(user))) = scheme
+            && let Some(user) = Arc::into_inner(user.inner)
+        {
+            user.into_drop(token);
         }
     }
 }

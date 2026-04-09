@@ -133,7 +133,7 @@ impl InterruptStack {
     pub fn trace(&self) {
         self.dump();
         unsafe {
-            panic::user_stack_trace(&self);
+            panic::user_stack_trace(self);
             panic::stack_trace();
         }
     }

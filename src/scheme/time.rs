@@ -166,7 +166,7 @@ impl KernelScheme for TimeScheme {
         let mut bytes_read = 0;
 
         for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
-            let arch_time = match (handle.clock.clone(), handle.kind.clone()) {
+            let arch_time = match (handle.clock, handle.kind.clone()) {
                 (CLOCK_REALTIME, TimeSchemeKind::Default | TimeSchemeKind::ClockGettime) => {
                     time::realtime(token)
                 }
@@ -211,7 +211,7 @@ impl KernelScheme for TimeScheme {
         for current_chunk in buf.in_exact_chunks(mem::size_of::<TimeSpec>()) {
             let time = unsafe { current_chunk.read_exact::<TimeSpec>()? };
 
-            match (handle.clock.clone(), handle.kind.clone()) {
+            match (handle.clock, handle.kind.clone()) {
                 (_, TimeSchemeKind::Default | TimeSchemeKind::Timer) => {
                     timeout::register(
                         GlobalSchemes::Time.scheme_id(),

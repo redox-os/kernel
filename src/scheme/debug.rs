@@ -43,14 +43,14 @@ pub struct DebugScheme;
 
 #[repr(usize)]
 enum SpecialFds {
-    Default = !0,
-    NoPreserve = !0 - 1,
-    DisableGraphicalDebug = !0 - 2,
+    Default = -1isize as usize,
+    NoPreserve = -2isize as usize,
+    DisableGraphicalDebug = -3isize as usize,
 
     #[cfg(feature = "profiling")]
-    CtlProfiling = !0 - 3,
+    CtlProfiling = -4isize as usize,
 
-    SchemeRoot = !0 - 4,
+    SchemeRoot = -5isize as usize,
 }
 
 impl KernelScheme for DebugScheme {

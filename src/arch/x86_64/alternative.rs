@@ -39,9 +39,16 @@ pub struct AltReloc {
 pub unsafe fn early_init(bsp: bool) {
     unsafe {
         let relocs_offset = crate::kernel_executable_offsets::__altrelocs_start();
+        // __altrelocs_end > __altrelocs_start so this cannot overflow
+        #[expect(clippy::arithmetic_side_effects)]
         let relocs_size = crate::kernel_executable_offsets::__altrelocs_end() - relocs_offset;
 
-        assert_eq!(relocs_size % size_of::<AltReloc>(), 0);
+        // AltReloc is not a ZST so the modulo and division will never panic
+        #[expect(clippy::arithmetic_side_effects)]
+        {
+            assert_eq!(relocs_size % size_of::<AltReloc>(), 0)
+        }
+        #[expect(clippy::arithmetic_side_effects)]
         let relocs = core::slice::from_raw_parts(
             relocs_offset as *const AltReloc,
             relocs_size / size_of::<AltReloc>(),
@@ -106,6 +113,8 @@ pub unsafe fn early_init(bsp: bool) {
                         })
                         .expect("CPUID said AVX was supported but there's no state info");
 
+                    // 16 * size_of::<u128>() is well below usize::MAX
+                    #[expect(clippy::arithmetic_side_effects)]
                     if state.size() as usize != 16 * core::mem::size_of::<u128>() {
                         warn!("Unusual AVX state size {}", state.size());
                     }
@@ -218,6 +227,11 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
                 dst.copy_from_slice(altcode);
 
                 for chunk in dst_nops.chunks_mut(NOPS_TABLE.len()) {
+                    // `chunk.len() - 1` is always in bounds because we are chunking by
+                    // `NOPS_TABLE.len()`
+                    #[expect(clippy::indexing_slicing)]
+                    // `chunk.len()` will never be 0
+                    #[expect(clippy::arithmetic_side_effects)]
                     chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
                 }
                 trace!("feature {} new {:x?} altcode {:x?}", name, code, altcode);
@@ -228,6 +242,11 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
                 // Not strictly necessary, but reduces the number of instructions using longer nop
                 // instructions.
                 for chunk in padded.chunks_mut(NOPS_TABLE.len()) {
+                    // `chunk.len() - 1` is always in bounds because we are chunking by
+                    // `NOPS_TABLE.len()`
+                    #[expect(clippy::indexing_slicing)]
+                    // `chunk.len()` will never be 0
+                    #[expect(clippy::arithmetic_side_effects)]
                     chunk.copy_from_slice(NOPS_TABLE[chunk.len() - 1]);
                 }
 
@@ -282,6 +301,8 @@ mod xsave {
 pub fn kfx_size() -> usize {
     #[cfg(not(cpu_feature_never = "xsave"))]
     {
+        // This wont overflow
+        #[expect(clippy::arithmetic_side_effects)]
         match xsave::info() {
             Some(info) => FXSAVE_SIZE + XSAVE_HEADER_SIZE + info.xsave_size as usize,
             None => FXSAVE_SIZE,

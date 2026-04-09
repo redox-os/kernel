@@ -42,7 +42,7 @@ impl DtbScheme {
         DATA.call_once(|| {
             data_init = true;
 
-            Box::from(DTB_BINARY.get().map(|&d| d).unwrap_or(&[]))
+            Box::from(DTB_BINARY.get().copied().unwrap_or(&[]))
         });
 
         if !data_init {
@@ -176,7 +176,7 @@ impl KernelScheme for DtbScheme {
                     st_mode: MODE_FILE,
                     st_uid: 0,
                     st_gid: 0,
-                    st_size: data.len().try_into().unwrap_or(u64::max_value()),
+                    st_size: data.len().try_into().unwrap_or(u64::MAX),
                     ..Default::default()
                 }
             }

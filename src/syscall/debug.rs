@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::{ascii, fmt::Debug, mem};
 
 use super::{
@@ -187,7 +187,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             c,
             d
         ),
-        SYS_YIELD => format!("yield()"),
+        SYS_YIELD => "yield()".to_owned(),
         _ => format!(
             "UNKNOWN{} {:#X}({:#X}, {:#X}, {:#X}, {:#X}, {:#X}, {:#X})",
             a, a, b, c, d, e, f, g
