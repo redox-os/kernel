@@ -110,7 +110,7 @@ impl Display for LogicalCpuSet {
 
         let raw = self.to_raw();
         let words = raw
-            .get(..((cpu_count + usize::BITS - 1) / usize::BITS) as usize)
+            .get(..cpu_count.div_ceil(usize::BITS) as usize)
             .unwrap_or(&[]);
         for (i, word) in words.iter().enumerate() {
             if i != 0 {
