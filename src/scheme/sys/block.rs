@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
-use crate::{context, percpu, sync::CleanLockToken, syscall::error::Result};
+use crate::{percpu, sync::CleanLockToken, syscall::error::Result};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();

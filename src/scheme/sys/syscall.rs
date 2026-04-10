@@ -2,7 +2,7 @@ use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
 use crate::{
-    context, percpu,
+    percpu,
     sync::CleanLockToken,
     syscall::{self, error::Result},
 };

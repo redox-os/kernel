@@ -19,7 +19,7 @@ use crate::{
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
-    sync::{CleanLockToken, LockToken, RwLock, L0, L1},
+    sync::{CleanLockToken, LockToken, RwLock, L1},
     syscall::debug::SyscallDebugInfo,
 };
 

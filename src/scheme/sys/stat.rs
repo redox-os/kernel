@@ -1,7 +1,7 @@
 use core::fmt::Write as _;
 
 use crate::{
-    context::{ContextRef, Status},
+    context::Status,
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
     percpu::{self, get_all_stats},
     sync::CleanLockToken,
