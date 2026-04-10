@@ -41,6 +41,7 @@ pub fn debug_notify(token: &mut CleanLockToken) {
 
 pub struct DebugScheme;
 
+#[allow(enum_clike_unportable_variant)]
 #[repr(usize)]
 enum SpecialFds {
     Default = -1isize as usize,

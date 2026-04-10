@@ -208,7 +208,9 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     }
 }
 
-pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool, bool, &'a str)> {
+pub fn diag_uart_range<'a>(
+    dtb: &'a Fdt,
+) -> Option<(PhysicalAddress, usize, Option<usize>, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();
     info!("{:?}", uart_node.name);
@@ -222,8 +224,7 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool
     let reg_width_bits = uart_node
         .property("reg-io-width")
         .and_then(|w| w.as_usize())
-        .unwrap_or(1)
-        * 8;
+        .map(|w_byte| w_byte * 8);
 
     Some((
         PhysicalAddress::new(address),
