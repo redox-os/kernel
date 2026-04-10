@@ -114,5 +114,6 @@ panic = "abort"
 [profile.release]
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"
+opt-level = 0
 #lto = true
 debug = "full"

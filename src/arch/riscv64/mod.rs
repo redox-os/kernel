@@ -9,8 +9,8 @@ pub mod start;
 pub mod stop;
 pub mod time;
 
-pub use ::rmm::RiscV64Sv39Arch as CurrentRmmArch;
 use core::arch::naked_asm;
+pub use rmm::riscv64::RiscV64Sv39Arch as CurrentRmmArch;
 
 pub use arch_copy_to_user as arch_copy_from_user;
 
