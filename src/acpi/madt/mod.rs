@@ -1,4 +1,4 @@
-use core::{cell::SyncUnsafeCell, mem};
+use core::cell::SyncUnsafeCell;
 
 use super::sdt::Sdt;
 use crate::find_one_sdt;
@@ -179,7 +179,7 @@ impl Iterator for MadtIter {
             if self.i + entry_len <= self.sdt.data_len() {
                 let item = match entry_type {
                     0x0 => {
-                        if entry_len == mem::size_of::<MadtLocalApic>() + 2 {
+                        if entry_len == size_of::<MadtLocalApic>() + 2 {
                             MadtEntry::LocalApic(unsafe {
                                 &*((self.sdt.data_address() + self.i + 2) as *const MadtLocalApic)
                             })
@@ -188,7 +188,7 @@ impl Iterator for MadtIter {
                         }
                     }
                     0x1 => {
-                        if entry_len == mem::size_of::<MadtIoApic>() + 2 {
+                        if entry_len == size_of::<MadtIoApic>() + 2 {
                             MadtEntry::IoApic(unsafe {
                                 &*((self.sdt.data_address() + self.i + 2) as *const MadtIoApic)
                             })
@@ -197,7 +197,7 @@ impl Iterator for MadtIter {
                         }
                     }
                     0x2 => {
-                        if entry_len == mem::size_of::<MadtIntSrcOverride>() + 2 {
+                        if entry_len == size_of::<MadtIntSrcOverride>() + 2 {
                             MadtEntry::IntSrcOverride(unsafe {
                                 &*((self.sdt.data_address() + self.i + 2)
                                     as *const MadtIntSrcOverride)
@@ -207,7 +207,7 @@ impl Iterator for MadtIter {
                         }
                     }
                     0xB => {
-                        if entry_len >= mem::size_of::<MadtGicc>() + 2 {
+                        if entry_len >= size_of::<MadtGicc>() + 2 {
                             MadtEntry::Gicc(unsafe {
                                 &*((self.sdt.data_address() + self.i + 2) as *const MadtGicc)
                             })
@@ -216,7 +216,7 @@ impl Iterator for MadtIter {
                         }
                     }
                     0xC => {
-                        if entry_len >= mem::size_of::<MadtGicd>() + 2 {
+                        if entry_len >= size_of::<MadtGicd>() + 2 {
                             MadtEntry::Gicd(unsafe {
                                 &*((self.sdt.data_address() + self.i + 2) as *const MadtGicd)
                             })

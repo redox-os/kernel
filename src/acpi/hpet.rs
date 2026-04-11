@@ -1,6 +1,4 @@
-use core::{mem, ptr};
-
-use core::ptr::{read_volatile, write_volatile};
+use core::ptr::{self, read_volatile, write_volatile};
 
 #[cfg(not(target_arch = "x86"))]
 use crate::memory::{RmmA, RmmArch};
@@ -37,7 +35,7 @@ impl Hpet {
     }
 
     pub fn new(sdt: &'static Sdt) -> Option<Hpet> {
-        if &sdt.signature == b"HPET" && sdt.length as usize >= mem::size_of::<Hpet>() {
+        if &sdt.signature == b"HPET" && sdt.length as usize >= size_of::<Hpet>() {
             let s = unsafe { ptr::read((sdt as *const Sdt) as *const Hpet) };
             if s.base_address.address_space == 0 {
                 unsafe { s.map() };

@@ -55,7 +55,7 @@ impl Context {
     ) {
         let mut stack_top = stack.initial_top();
 
-        const INT_REGS_SIZE: usize = core::mem::size_of::<InterruptStack>();
+        const INT_REGS_SIZE: usize = size_of::<InterruptStack>();
 
         if userspace_allowed {
             unsafe {

@@ -89,7 +89,7 @@ impl Context {
     ) {
         let mut stack_top = stack.initial_top();
 
-        const INT_REGS_SIZE: usize = core::mem::size_of::<InterruptStack>();
+        const INT_REGS_SIZE: usize = size_of::<InterruptStack>();
 
         // Kstack::initial_top() is always at least 8 byte aligned. assertion to be safe
         debug_assert!(
@@ -104,13 +104,13 @@ impl Context {
                 stack_top.write_bytes(0_u8, INT_REGS_SIZE);
                 (*stack_top.cast::<InterruptStack>()).init();
 
-                stack_top = stack_top.sub(core::mem::size_of::<usize>());
+                stack_top = stack_top.sub(size_of::<usize>());
                 stack_top
                     .cast::<usize>()
                     .write(crate::interrupt::syscall::enter_usermode as usize);
             }
 
-            stack_top = stack_top.sub(core::mem::size_of::<usize>());
+            stack_top = stack_top.sub(size_of::<usize>());
             stack_top.cast::<usize>().write(func as usize);
         }
 

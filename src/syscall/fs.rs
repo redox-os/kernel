@@ -1,6 +1,6 @@
 //! Filesystem syscalls
 
-use core::{mem::size_of, num::NonZeroUsize};
+use core::num::NonZeroUsize;
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 use redox_path::RedoxPath;

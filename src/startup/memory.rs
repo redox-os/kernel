@@ -6,7 +6,6 @@ use crate::{
 use core::{
     cell::SyncUnsafeCell,
     cmp::{max, min},
-    mem,
     slice::{self, Iter},
 };
 use rmm::{
@@ -184,7 +183,7 @@ fn register_bootloader_areas(areas_base: usize, areas_size: usize) {
     let bootloader_areas = unsafe {
         slice::from_raw_parts(
             areas_base as *const BootloaderMemoryEntry,
-            areas_size / mem::size_of::<BootloaderMemoryEntry>(),
+            areas_size / size_of::<BootloaderMemoryEntry>(),
         )
     };
     for bootloader_area in bootloader_areas.iter() {

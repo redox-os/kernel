@@ -1,9 +1,9 @@
 use core::fmt::Write as _;
 
 use crate::{
-    context::{contexts, ContextRef, Status},
+    context::Status,
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
-    percpu::get_all_stats,
+    percpu::{self, get_all_stats},
     sync::CleanLockToken,
     syscall::error::Result,
     time::START,
@@ -76,11 +76,8 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     let mut running = 0;
     let mut blocked = 0;
 
-    let mut contexts = contexts(token.token());
-    let (contexts, mut token) = contexts.token_split();
-    let statuses = contexts
+    let statuses = percpu::get_all_contexts(token.downgrade())
         .iter()
-        .filter_map(ContextRef::upgrade)
         .map(|context| context.read(token.token()).status.clone())
         .collect::<Vec<_>>();
 

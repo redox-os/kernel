@@ -24,7 +24,7 @@ pub static CLINT: Mutex<Option<Clint>> = Mutex::new(None);
 
 impl Clint {
     pub fn new(addr: *mut u8, size: usize, freq: usize) -> Self {
-        assert!(size >= core::mem::size_of::<ClintRegs>());
+        assert!(size >= size_of::<ClintRegs>());
         Self {
             regs: unsafe { (addr as *mut ClintRegs).as_mut().unwrap() },
             freq: freq as u64

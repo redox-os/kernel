@@ -109,7 +109,9 @@ impl Display for LogicalCpuSet {
         let cpu_count = crate::cpu_count();
 
         let raw = self.to_raw();
-        let words = raw.get(..(cpu_count / usize::BITS) as usize).unwrap_or(&[]);
+        let words = raw
+            .get(..cpu_count.div_ceil(usize::BITS) as usize)
+            .unwrap_or(&[]);
         for (i, word) in words.iter().enumerate() {
             if i != 0 {
                 write!(f, "_")?;
@@ -119,7 +121,7 @@ impl Display for LogicalCpuSet {
             } else {
                 *word
             };
-            write!(f, "{word:x}")?;
+            write!(f, "{word:X}")?;
         }
         Ok(())
     }
@@ -128,5 +130,5 @@ impl Display for LogicalCpuSet {
 pub type RawMask = [usize; SET_WORDS];
 
 pub fn mask_as_bytes(mask: &RawMask) -> &[u8] {
-    unsafe { core::slice::from_raw_parts(mask.as_ptr().cast(), core::mem::size_of::<RawMask>()) }
+    unsafe { core::slice::from_raw_parts(mask.as_ptr().cast(), size_of::<RawMask>()) }
 }

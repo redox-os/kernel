@@ -1,7 +1,11 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
 
-use crate::{context, sync::CleanLockToken, syscall, syscall::error::Result};
+use crate::{
+    percpu,
+    sync::CleanLockToken,
+    syscall::{self, error::Result},
+};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();
@@ -9,9 +13,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let mut rows = Vec::new();
         {
-            let mut contexts = context::contexts(token.token());
-            let (contexts, mut token) = contexts.token_split();
-            for context_ref in contexts.iter().filter_map(|r| r.upgrade()) {
+            for context_ref in percpu::get_all_contexts(token.downgrade()) {
                 let context = context_ref.read(token.token());
                 rows.push((context.pid, context.name, context.current_syscall()));
             }

@@ -149,7 +149,6 @@ macro_rules! int_like {
 #[test]
 fn test() {
     use ::core::sync::atomic::AtomicUsize;
-    use core::mem::size_of;
 
     // Generate type `usize_like`.
     int_like!(UsizeLike, usize);

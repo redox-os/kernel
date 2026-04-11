@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use core::{convert::TryFrom, mem};
+use core::convert::TryFrom;
 use rmm::PhysicalAddress;
 
 use super::{rxsdt::Rxsdt, sdt::Sdt};
@@ -37,7 +37,7 @@ pub struct RsdtIter {
 impl Iterator for RsdtIter {
     type Item = PhysicalAddress;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.i < self.sdt.data_len() / mem::size_of::<u32>() {
+        if self.i < self.sdt.data_len() / size_of::<u32>() {
             let item = unsafe {
                 (self.sdt.data_address() as *const u32)
                     .add(self.i)

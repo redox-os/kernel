@@ -1,6 +1,6 @@
 //! Intrinsics for panic handling
 
-use core::{mem, panic::PanicInfo, slice};
+use core::{panic::PanicInfo, slice};
 
 #[cfg(target_pointer_width = "32")]
 use object::elf::FileHeader32 as FileHeader;
@@ -171,8 +171,7 @@ pub unsafe fn user_stack_trace(stack: &InterruptStack) {
             break;
         }
         let rip_addr = fp + size_of::<usize>();
-        let rip = match UserSliceRo::new(rip_addr, mem::size_of::<usize>())
-            .and_then(|x| x.read_usize())
+        let rip = match UserSliceRo::new(rip_addr, size_of::<usize>()).and_then(|x| x.read_usize())
         {
             Ok(val) => val,
             Err(err) => {
@@ -185,11 +184,10 @@ pub unsafe fn user_stack_trace(stack: &InterruptStack) {
             break;
         }
 
-        let next_fp =
-            match UserSliceRo::new(fp, mem::size_of::<usize>()).and_then(|x| x.read_usize()) {
-                Ok(val) => val,
-                Err(_err) => break,
-            };
+        let next_fp = match UserSliceRo::new(fp, size_of::<usize>()).and_then(|x| x.read_usize()) {
+            Ok(val) => val,
+            Err(_err) => break,
+        };
         if next_fp <= fp {
             println!(
                 "  <Invalid next frame pointer 0x{:>016x}; stack walk ended>",

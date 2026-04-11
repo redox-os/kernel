@@ -1,7 +1,5 @@
 #![allow(unused_imports)]
 
-use core::mem::size_of;
-
 use spin::Once;
 use x86::controlregs::{Cr4, Xcr0};
 
@@ -115,7 +113,7 @@ pub unsafe fn early_init(bsp: bool) {
 
                     // 16 * size_of::<u128>() is well below usize::MAX
                     #[expect(clippy::arithmetic_side_effects)]
-                    if state.size() as usize != 16 * core::mem::size_of::<u128>() {
+                    if state.size() as usize != 16 * size_of::<u128>() {
                         warn!("Unusual AVX state size {}", state.size());
                     }
 
@@ -284,7 +282,7 @@ pub fn features() -> KcpuFeatures {
 
 #[cfg(not(cpu_feature_never = "xsave"))]
 mod xsave {
-    use super::*;
+    use spin::Once;
 
     #[derive(Debug)]
     pub struct XsaveInfo {

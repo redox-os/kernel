@@ -15,12 +15,6 @@ pub mod interrupt;
 /// Miscellaneous processor features
 pub mod misc;
 
-// Flags
-pub mod flags {
-    pub const SHIFT_SINGLESTEP: usize = 8;
-    pub const FLAG_SINGLESTEP: usize = 1 << SHIFT_SINGLESTEP;
-}
-
 // TODO: Maybe support rewriting relocations (using LD's --emit-relocs) when working with entire
 // functions?
 #[unsafe(naked)]

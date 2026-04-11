@@ -28,7 +28,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    mem::{self, size_of},
+    mem::size_of,
     num::NonZeroUsize,
     slice, str,
     sync::atomic::{AtomicUsize, Ordering},
@@ -161,8 +161,13 @@ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
 
 #[cfg(feature = "debugger")]
 #[allow(dead_code)]
-pub fn foreach_addrsp(token: &mut CleanLockToken, mut f: impl FnMut(&Arc<AddrSpaceWrapper>)) {
-    for (_, handle) in HANDLES.read(token.token()).iter() {
+pub fn foreach_addrsp(
+    token: &mut CleanLockToken,
+    mut f: impl FnMut(&Arc<AddrSpaceWrapper>, LockToken<L1>),
+) {
+    let mut handles_guard = HANDLES.read(token.token());
+    let (handles, mut token) = handles_guard.token_split();
+    for (_, handle) in handles.iter() {
         let Handle {
             kind:
                 ContextHandle::AddrSpace { addrspace, .. }
@@ -173,7 +178,7 @@ pub fn foreach_addrsp(token: &mut CleanLockToken, mut f: impl FnMut(&Arc<AddrSpa
         else {
             continue;
         };
-        f(&addrspace);
+        f(&addrspace, token.token());
     }
 }
 
@@ -580,12 +585,10 @@ impl KernelScheme for ProcScheme {
                 let addrsp = AddrSpace::current()?;
                 // TODO: Lock ordering violation
                 let mut token = unsafe { CleanLockToken::new() };
-                let page = addrsp.acquire_write(token.downgrade()).mmap(
+                let page = addrsp.acquire_write(token.downgrade()).mmap_anywhere(
                     &addrsp,
-                    None,
                     NonZeroUsize::new(1).unwrap(),
                     MapFlags::PROT_READ | MapFlags::PROT_WRITE,
-                    None,
                     |page, flags, mapper, flusher| {
                         Grant::allocated_shared_one_page(
                             frame.get(),
@@ -949,7 +952,7 @@ impl ContextHandle {
                     }
                     _ => return Err(Error::new(EINVAL)),
                 }
-                Ok(words_read * mem::size_of::<usize>())
+                Ok(words_read * size_of::<usize>())
             }
             ContextHandle::Regs(kind) => match kind {
                 RegsKind::Float => {
@@ -962,7 +965,7 @@ impl ContextHandle {
                         // registers being uninitiated
                         context.set_fx_regs(regs);
 
-                        Ok(mem::size_of::<FloatRegisters>())
+                        Ok(size_of::<FloatRegisters>())
                     })
                 }
                 RegsKind::Int => {
@@ -980,14 +983,14 @@ impl ContextHandle {
                         Some(stack) => {
                             stack.load(&regs);
 
-                            Ok(mem::size_of::<IntRegisters>())
+                            Ok(size_of::<IntRegisters>())
                         }
                     })
                 }
                 RegsKind::Env => {
                     let regs = unsafe { buf.read_exact::<EnvRegisters>()? };
                     write_env_regs(context, regs, token)?;
-                    Ok(mem::size_of::<EnvRegisters>())
+                    Ok(size_of::<EnvRegisters>())
                 }
             },
             ContextHandle::Sighandler => {
@@ -1007,7 +1010,7 @@ impl ContextHandle {
                 let state = if data.thread_control_addr != 0 && data.proc_control_addr != 0 {
                     let validate_off = |addr, sz| {
                         let off: usize = addr % PAGE_SIZE;
-                        if off.is_multiple_of(mem::align_of::<usize>()) && off + sz <= PAGE_SIZE {
+                        if off.is_multiple_of(align_of::<usize>()) && off + sz <= PAGE_SIZE {
                             Ok(off as u16)
                         } else {
                             Err(Error::new(EINVAL))
@@ -1019,11 +1022,11 @@ impl ContextHandle {
                     Some(SignalState {
                         threadctl_off: validate_off(
                             data.thread_control_addr,
-                            mem::size_of::<Sigcontrol>(),
+                            size_of::<Sigcontrol>(),
                         )?,
                         procctl_off: validate_off(
                             data.proc_control_addr,
-                            mem::size_of::<SigProcControl>(),
+                            size_of::<SigProcControl>(),
                         )?,
                         user_handler: NonZeroUsize::new(data.user_handler)
                             .ok_or(Error::new(EINVAL))?,
@@ -1043,7 +1046,7 @@ impl ContextHandle {
 
                 context.write(token.token()).sig = state;
 
-                Ok(mem::size_of::<SetSighandlerData>())
+                Ok(size_of::<SetSighandlerData>())
             }
             ContextHandle::Start => match context.write(token.token()).status {
                 ref mut status @ Status::HardBlocked {
@@ -1101,7 +1104,7 @@ impl ContextHandle {
                     context,
                 };
 
-                Ok(mem::size_of::<usize>())
+                Ok(size_of::<usize>())
             }
             ContextHandle::CurrentAddrSpace => {
                 let mut iter = buf.usizes();
@@ -1133,9 +1136,9 @@ impl ContextHandle {
                 };
 
                 let written = if arg1.is_some() {
-                    4 * mem::size_of::<usize>()
+                    4 * size_of::<usize>()
                 } else {
-                    3 * mem::size_of::<usize>()
+                    3 * size_of::<usize>()
                 };
 
                 Ok(written)
@@ -1147,7 +1150,7 @@ impl ContextHandle {
                 }
                 let mut lock_token = token.token();
                 addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
-                Ok(mem::size_of::<usize>())
+                Ok(size_of::<usize>())
             }
             Self::SchedAffinity => {
                 let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
@@ -1157,7 +1160,7 @@ impl ContextHandle {
                     .sched_affinity
                     .override_from(&mask);
 
-                Ok(mem::size_of_val(&mask))
+                Ok(size_of_val(&mask))
             }
             ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
@@ -1235,11 +1238,11 @@ impl ContextHandle {
                             let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
                             if let context::Status::Dead { .. } = ctxt.status {
-                                return Ok(mem::size_of::<usize>());
+                                return Ok(size_of::<usize>());
                             }
                             ctxt.status = context::Status::Runnable;
                             ctxt.being_sigkilled = true;
-                            Ok(mem::size_of::<usize>())
+                            Ok(size_of::<usize>())
                         }
                     }
                 }
@@ -1335,7 +1338,7 @@ impl ContextHandle {
                             Output {
                                 float: context.get_fx_regs(),
                             },
-                            mem::size_of::<FloatRegisters>(),
+                            size_of::<FloatRegisters>(),
                         )
                     }
                     RegsKind::Int => {
@@ -1352,7 +1355,7 @@ impl ContextHandle {
                             Some(stack) => {
                                 let mut regs = IntRegisters::default();
                                 stack.save(&mut regs);
-                                Ok((Output { int: regs }, mem::size_of::<IntRegisters>()))
+                                Ok((Output { int: regs }, size_of::<IntRegisters>()))
                             }
                         })?
                     }
@@ -1360,7 +1363,7 @@ impl ContextHandle {
                         Output {
                             env: read_env_regs(context, token)?,
                         },
-                        mem::size_of::<EnvRegisters>(),
+                        size_of::<EnvRegisters>(),
                     ),
                 };
 
@@ -1373,7 +1376,7 @@ impl ContextHandle {
                 let Ok(offset) = usize::try_from(offset) else {
                     return Ok(0);
                 };
-                let grants_to_skip = offset / mem::size_of::<GrantDesc>();
+                let grants_to_skip = offset / size_of::<GrantDesc>();
 
                 // Output a list of grant descriptors, sufficient to allow relibc's fork()
                 // implementation to fmap MAP_SHARED grants.
@@ -1400,12 +1403,12 @@ impl ContextHandle {
                 for (src, chunk) in dst
                     .iter()
                     .take(grants_read)
-                    .zip(buf.in_exact_chunks(mem::size_of::<GrantDesc>()))
+                    .zip(buf.in_exact_chunks(size_of::<GrantDesc>()))
                 {
                     chunk.copy_exactly(src)?;
                 }
 
-                Ok(grants_read * mem::size_of::<GrantDesc>())
+                Ok(grants_read * size_of::<GrantDesc>())
             }
 
             ContextHandle::Filetable { data, .. } => read_from(buf, data, offset),
@@ -1413,13 +1416,13 @@ impl ContextHandle {
                 let mut token = token.token();
                 let addr = addrspace.acquire_read(token.downgrade());
                 buf.write_usize(addr.mmap_min)?;
-                Ok(mem::size_of::<usize>())
+                Ok(size_of::<usize>())
             }
             ContextHandle::SchedAffinity => {
                 let mask = context.read(token.token()).sched_affinity.to_raw();
 
                 buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
-                Ok(mem::size_of_val(&mask))
+                Ok(size_of_val(&mask))
             } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
                 let status = {

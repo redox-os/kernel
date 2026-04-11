@@ -1,5 +1,4 @@
 use alloc::sync::Arc;
-use core::mem;
 use syscall::{EventFlags, O_NONBLOCK};
 
 use crate::{
@@ -88,7 +87,7 @@ impl KernelScheme for EventScheme {
         };
         let mut events_written = 0;
 
-        for chunk in buf.in_exact_chunks(mem::size_of::<Event>()) {
+        for chunk in buf.in_exact_chunks(size_of::<Event>()) {
             let event = unsafe { chunk.read_exact::<Event>()? };
             if queue.write(&[event], token)? == 0 {
                 break;
@@ -96,7 +95,7 @@ impl KernelScheme for EventScheme {
             events_written += 1;
         }
 
-        Ok(events_written * mem::size_of::<Event>())
+        Ok(events_written * size_of::<Event>())
     }
 
     fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {

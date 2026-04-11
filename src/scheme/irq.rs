@@ -2,7 +2,7 @@
 // this scheme should only handle raw IRQ registration and delivery to userspace.
 
 use core::{
-    mem, str,
+    str,
     str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -106,7 +106,7 @@ impl IrqScheme {
             feature = "acpi",
             any(target_arch = "x86", target_arch = "x86_64")
         )) {
-            use crate::acpi::madt::*;
+            use crate::acpi::madt::{madt, MadtEntry};
 
             match madt() {
                 Some(madt) => madt
@@ -450,7 +450,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 irq: handle_irq,
                 ack: ref handle_ack,
             } => {
-                if buffer.len() < mem::size_of::<usize>() {
+                if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
                 let ack = buffer.read_usize()?;
@@ -463,7 +463,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 unsafe {
                     acknowledge(handle_irq as usize);
                 }
-                Ok(mem::size_of::<usize>())
+                Ok(size_of::<usize>())
             }
             _ => Err(Error::new(EBADF)),
         }
@@ -478,18 +478,18 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 irq: handle_irq, ..
             } => Stat {
                 st_mode: MODE_CHR | 0o600,
-                st_size: mem::size_of::<usize>() as u64,
+                st_size: size_of::<usize>() as u64,
                 st_blocks: 1,
-                st_blksize: mem::size_of::<usize>() as u32,
+                st_blksize: size_of::<usize>() as u32,
                 st_ino: handle_irq.into(),
                 st_nlink: 1,
                 ..Default::default()
             },
             Handle::Bsp => Stat {
                 st_mode: MODE_CHR | 0o400,
-                st_size: mem::size_of::<usize>() as u64,
+                st_size: size_of::<usize>() as u64,
                 st_blocks: 1,
-                st_blksize: mem::size_of::<usize>() as u32,
+                st_blksize: size_of::<usize>() as u32,
                 st_ino: INO_BSP,
                 st_nlink: 1,
                 ..Default::default()
@@ -554,23 +554,23 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 irq: handle_irq,
                 ack: ref handle_ack,
             } => {
-                if buffer.len() < mem::size_of::<usize>() {
+                if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
                 let current = COUNTS.lock()[handle_irq as usize];
                 if handle_ack.load(Ordering::SeqCst) != current {
                     buffer.write_usize(current)?;
-                    Ok(mem::size_of::<usize>())
+                    Ok(size_of::<usize>())
                 } else {
                     Ok(0)
                 }
             }
             Handle::Bsp => {
-                if buffer.len() < mem::size_of::<usize>() {
+                if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
                 buffer.write_u32(LogicalCpuId::BSP.get())?;
-                Ok(mem::size_of::<usize>())
+                Ok(size_of::<usize>())
             }
             Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) | Handle::SchemeRoot => {
                 Err(Error::new(EISDIR))

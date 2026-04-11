@@ -38,3 +38,8 @@ pub use ::rmm::x86::X86Arch as CurrentRmmArch;
 
 #[cfg(target_arch = "x86_64")]
 pub use ::rmm::x86_64::X8664Arch as CurrentRmmArch;
+
+// Flags
+pub mod flags {
+    pub const FLAG_SINGLESTEP: usize = 1 << 8;
+}

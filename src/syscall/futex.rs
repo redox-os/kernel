@@ -54,7 +54,7 @@ static FUTEXES: Mutex<L1, FutexList> =
 
 fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Option<PhysicalAddress> {
     // TODO: Move this elsewhere!
-    if addr.data().saturating_add(core::mem::size_of::<usize>()) >= crate::USER_END_OFFSET {
+    if addr.data().saturating_add(size_of::<usize>()) >= crate::USER_END_OFFSET {
         return None;
     }
 
@@ -87,7 +87,7 @@ pub fn futex(
     match op {
         // TODO: FUTEX_WAIT_MULTIPLE?
         FUTEX_WAIT | FUTEX_WAIT64 => {
-            let timeout_opt = UserSlice::ro(val2, core::mem::size_of::<TimeSpec>())?
+            let timeout_opt = UserSlice::ro(val2, size_of::<TimeSpec>())?
                 .none_if_null()
                 .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
                 .transpose()?;

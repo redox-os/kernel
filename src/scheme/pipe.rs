@@ -469,7 +469,7 @@ impl KernelScheme for PipeScheme {
             let (mut vec, mut token) = vec.into_split();
 
             let fds_available = vec.len();
-            let max_fds_read = payload.len() / core::mem::size_of::<usize>();
+            let max_fds_read = payload.len() / size_of::<usize>();
             let fds_to_read = core::cmp::min(fds_available, max_fds_read);
             if fds_to_read > 0 {
                 let fds_to_transfer: Vec<_> = vec.drain(..fds_to_read).collect();

@@ -1,6 +1,4 @@
-use crate::{memory::ArchIntCtx, panic, syscall::IntRegisters};
-
-use super::super::flags::*;
+use crate::{arch::flags::FLAG_SINGLESTEP, memory::ArchIntCtx, panic, syscall::IntRegisters};
 
 #[derive(Default)]
 #[repr(C)]
@@ -512,7 +510,7 @@ macro_rules! interrupt_error {
                 "iretq;",
 
                 inner = sym inner,
-                rax_offset = const(::core::mem::size_of::<$crate::interrupt::handler::PreservedRegisters>() + ::core::mem::size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
+                rax_offset = const(size_of::<$crate::interrupt::handler::PreservedRegisters>() + size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
             );
         }
     };

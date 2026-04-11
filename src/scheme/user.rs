@@ -252,7 +252,7 @@ impl UserInner {
                             // for TLB, but we don't really have any other choice. The scheme must be able
                             // to access the borrowed memory until it has responded to the request.
                             *callee_responsible =
-                                core::mem::replace(caller_responsible, PageSpan::empty());
+                                mem::replace(caller_responsible, PageSpan::empty());
 
                             Err(Error::new(EINTR))
                         } else {
@@ -397,7 +397,7 @@ impl UserInner {
             )
         };
 
-        let mut tail = BorrowedHtBuf::tail(token)?;
+        let mut tail = BorrowedHtBuf::tail_locked(token.downgrade())?;
         let tail_frame = tail.frame();
         if buf.len() > tail.buf().len() {
             return Err(Error::new(EINVAL));
@@ -1044,33 +1044,26 @@ impl UserInner {
             return Err(Error::new(EBUSY));
         }
 
-        let (pid, desc) = {
+        let (ctx, desc) = {
             let current_lock = context::current();
             let mut current = current_lock.read(token.token());
             let (context, mut token) = current.token_split();
             let mut files = context.files.read(token.token());
             let (files, mut token) = files.token_split();
             let desc = files.find_by_scheme(self.scheme_id, file, &mut token)?;
-            (context.pid, desc.description)
+            (context.caller_ctx(), desc.description)
         };
 
-        let response = self.call_inner(
+        let response = self.call(
+            ctx,
             Vec::new(),
-            Sqe {
-                opcode: Opcode::MmapPrep as u8,
-                sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag: self.next_id(token)?,
-                args: [
-                    file as u64,
-                    unaligned_size as u64,
-                    map.flags.bits() as u64,
-                    map.offset as u64,
-                    0,
-                    uid_gid_hack_merge(current_uid_gid(token)),
-                ],
-                caller: pid as u64,
-            },
+            Opcode::MmapPrep,
+            [
+                file as u64,
+                unaligned_size as u64,
+                map.flags.bits() as u64,
+                map.offset as u64,
+            ],
             &mut PageSpan::empty(),
             token,
         )?;
@@ -2050,7 +2043,7 @@ impl KernelScheme for UserScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
-        if !payload.len().is_multiple_of(mem::size_of::<usize>()) {
+        if !payload.len().is_multiple_of(size_of::<usize>()) {
             return Err(Error::new(EINVAL));
         }
 
@@ -2063,7 +2056,7 @@ impl KernelScheme for UserScheme {
         }
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        let len = payload.len() / mem::size_of::<usize>();
+        let len = payload.len() / size_of::<usize>();
         let res = inner.call(
             ctx,
             Vec::new(),

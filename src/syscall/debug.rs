@@ -1,5 +1,5 @@
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
-use core::{ascii, fmt::Debug, mem};
+use core::{ascii, fmt::Debug};
 
 use super::{
     copy_path_to_buf,
@@ -38,7 +38,7 @@ fn debug_buf(ptr: usize, len: usize) -> Result<Vec<u8>> {
     })
 }
 unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
-    unsafe { UserSlice::ro(ptr, mem::size_of::<T>()).and_then(|slice| slice.read_exact::<T>()) }
+    unsafe { UserSlice::ro(ptr, size_of::<T>()).and_then(|slice| slice.read_exact::<T>()) }
 }
 
 //TODO: calling format_call with arguments from another process space will not work
@@ -144,7 +144,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
                 let mut times = vec![unsafe { buf.read_exact::<TimeSpec>()? }];
 
                 // One or two timespecs
-                if let Some(second) = buf.advance(mem::size_of::<TimeSpec>()) {
+                if let Some(second) = buf.advance(size_of::<TimeSpec>()) {
                     times.push(unsafe { second.read_exact::<TimeSpec>()? });
                 }
                 Ok(times)
