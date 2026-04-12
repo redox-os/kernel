@@ -51,6 +51,7 @@ enum SpecialFds {
     CtlProfiling = -4isize as usize,
 
     SchemeRoot = -5isize as usize,
+    // NOTE: when adding new entries, ensure are checked correctly by the profiling code
 }
 
 impl KernelScheme for DebugScheme {
@@ -168,8 +169,11 @@ impl KernelScheme for DebugScheme {
             return Err(Error::new(EBADF));
         }
 
+        // TODO: add "try_from_raw" or similar to prevent future bugs
         #[cfg(feature = "profiling")]
-        if handle.num != SpecialFds::Default as usize {
+        if handle.num != SpecialFds::Default as usize
+            && handle.num != SpecialFds::NoPreserve as usize
+        {
             return crate::profiling::drain_buffer(
                 crate::cpu_set::LogicalCpuId::new(handle.num as u32),
                 buf,

@@ -15,7 +15,6 @@ use crate::{
 #[cfg(feature = "profiling")]
 use crate::{
     idt::Idt,
-    interrupt,
     interrupt::{self, irq::aux_timer, InterruptStack},
 };
 

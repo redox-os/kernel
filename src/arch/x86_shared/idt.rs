@@ -26,7 +26,7 @@ use spin::RwLock;
 
 #[repr(C)]
 pub struct Idt {
-    entries: [IdtEntry; 256],
+    pub(crate) entries: [IdtEntry; 256],
     reservations: [AtomicU32; 8],
     backup_stack_end: usize,
 }
@@ -49,7 +49,7 @@ impl Idt {
     }
 
     #[inline]
-    fn set_reserved(&self, index: u8, reserved: bool) {
+    pub(crate) fn set_reserved(&self, index: u8, reserved: bool) {
         let byte_index = index / 32;
         let bit = index % 32;
 
@@ -58,7 +58,7 @@ impl Idt {
     }
 
     #[inline]
-    fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
+    pub(crate) fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
         let byte_index = index / 32;
         let bit = index % 32;
 
@@ -73,7 +73,7 @@ const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
 static INIT_BSP_IDT: SyncUnsafeCell<Idt> = SyncUnsafeCell::new(Idt::new());
 
 // TODO: VecMap?
-static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
+pub(crate) static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 #[inline]

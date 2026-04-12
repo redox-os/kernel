@@ -1,3 +1,5 @@
+.PHONY: all check
+
 SOURCE:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
 BUILD?=$(CURDIR)
 export RUST_TARGET_PATH=$(SOURCE)/targets
@@ -49,3 +51,13 @@ $(BUILD)/kernel: $(BUILD)/kernel.all
 		--strip-debug \
 		"$(BUILD)/kernel.all" \
 		"$(BUILD)/kernel"
+
+KERNEL_CHECK_FEATURES?=
+
+check:
+	cargo check \
+		--bin kernel \
+		--manifest-path "$(MANIFEST)" \
+		--target "$(TARGET_SPEC)" \
+		-Z build-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+		--features=$(KERNEL_CHECK_FEATURES)

@@ -5,13 +5,14 @@ variables:
 
 workflow:
   rules:
-    - if: '$CI_COMMIT_BRANCH == "master" && $CI_PROJECT_NAMESPACE == "redox-os"'
+    - if: '$CI_PROJECT_NAMESPACE == "redox-os"'
     - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
 
 stages:
   - build
   - cross-build
   - test
+  - other-features
   # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
 
 x86_64:
@@ -82,3 +83,12 @@ x86_64:relibc:
   variables:
     ARCH: "x86_64"
     TARGET: "x86_64-unknown-redox"
+
+profiling-compile:
+  stage: other-features
+  allow_failure: true
+  script:
+    make check
+  variables:
+    ARCH: "x86_64"
+    KERNEL_CHECK_FEATURES: profiling
