@@ -8,12 +8,12 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
-    startup::AP_READY,
     cpu_set::LogicalCpuId,
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,
     },
+    startup::AP_READY,
 };
 
 use super::{Madt, MadtEntry};
@@ -61,7 +61,6 @@ pub(super) fn init(madt: Madt) {
         }
     }
 
-    #[cfg(feature = "profiling")]
     unsafe {
         let preliminary_cpu_count = madt.iter().filter(|e| matches!(e, MadtEntry::LocalApic(entry) if u32::from(entry.id) == me.get() || entry.flags & 1 == 1)).count();
         info!("Preliminary number of CPUs: {preliminary_cpu_count}");

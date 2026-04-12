@@ -50,10 +50,10 @@ interrupt_stack!(debug, @paranoid, |stack| {
 });
 
 interrupt_stack!(non_maskable, @paranoid, |stack| {
-    #[cfg(feature = "profiling")]
+    #[cfg(target_arch = "x86_64")]
     unsafe { crate::profiling::nmi_handler(stack) };
 
-    #[cfg(not(feature = "profiling"))]
+    #[cfg(not(all(target_arch = "x86_64", feature = "profiling")))]
     {
         // TODO: This will likely deadlock
         println!("Non-maskable interrupt");

@@ -198,7 +198,6 @@ pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
         hint::spin_loop();
     }
 
-    #[cfg(feature = "profiling")]
     profiling::maybe_run_profiling_helper_forever(cpu_id);
 
     if !cfg!(feature = "multi_core") {

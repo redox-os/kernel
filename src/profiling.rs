@@ -1,17 +1,18 @@
-#[cfg(feature = "profiling")]
-use core::sync::atomic::AtomicU32;
+use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{SyncUnsafeCell, UnsafeCell},
     mem::size_of,
-    sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
-
-use alloc::{boxed::Box, vec::Vec};
+#[cfg(target_arch = "x86_64")]
+use rmm::Arch;
 
 #[cfg(feature = "profiling")]
+use crate::arch::{idt::Idt, interrupt::irq::aux_timer};
+#[cfg(target_arch = "x86_64")]
 use crate::arch::{
-    idt::Idt,
-    interrupt::{self, irq::aux_timer, InterruptStack},
+    interrupt::{self, InterruptStack},
+    CurrentRmmArch,
 };
 use crate::{
     cpu_set::LogicalCpuId,
@@ -19,15 +20,16 @@ use crate::{
     syscall::{error::*, usercopy::UserSliceWo},
 };
 
+#[cfg(all(feature = "profiling", not(target_arch = "x86_64")))]
+compile_error!("Profiling not supported outside x86_64");
+
 const N: usize = 16 * 1024 * 1024;
 
 pub struct RingBuffer {
     head: AtomicUsize,
     tail: AtomicUsize,
     buf: &'static [UnsafeCell<usize>; N],
-    #[cfg_attr(not(feature = "profiling"), expect(dead_code))]
     pub(crate) nmi_kcount: AtomicUsize,
-    #[cfg_attr(not(feature = "profiling"), expect(dead_code))]
     pub(crate) nmi_ucount: AtomicUsize,
 }
 
@@ -64,7 +66,6 @@ impl RingBuffer {
             [&self.buf[head..tail], &[]]
         }
     }
-    #[cfg_attr(not(feature = "profiling"), expect(dead_code))]
     pub unsafe fn extend(&self, mut slice: &[usize]) -> usize {
         let mut n = 0;
         for mut sender_slice in unsafe { self.sender_owned() } {
@@ -157,8 +158,12 @@ pub fn drain_buffer(cpu_num: LogicalCpuId, buf: UserSliceWo) -> Result<usize> {
     }
 }
 
-#[cfg(feature = "profiling")]
+#[cfg(target_arch = "x86_64")]
 pub unsafe fn nmi_handler(stack: &InterruptStack) {
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
     let Some(profiling) = crate::percpu::PercpuBlock::current().profiling else {
         return;
     };
@@ -184,7 +189,8 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     let mut len = 2;
 
     for i in 2..32 {
-        if bp < crate::PHYS_OFFSET || bp.saturating_add(16) >= crate::PHYS_OFFSET + crate::PML4_SIZE
+        if bp < CurrentRmmArch::PHYS_OFFSET
+            || bp.saturating_add(16) >= CurrentRmmArch::PHYS_OFFSET + crate::PML4_SIZE
         {
             break;
         }
@@ -204,7 +210,6 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     let _ = unsafe { profiling.extend(&buf[..len]) };
 }
 
-#[cfg(feature = "profiling")]
 static NUM_ORDINARY_CPUS: AtomicU32 = AtomicU32::new(u32::MAX);
 
 #[cfg(feature = "profiling")]
@@ -221,8 +226,13 @@ fn profiler_cpu() -> LogicalCpuId {
 }
 
 // SAFETY: must be called before any init()
-#[cfg(feature = "profiling")]
 pub unsafe fn allocate(total_cpu_count: u32) {
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
+    info!("Preliminary number of CPUs: {total_cpu_count}");
+
     let ordinary_cpu_count = total_cpu_count.checked_sub(1).unwrap();
     NUM_ORDINARY_CPUS.store(ordinary_cpu_count, Ordering::SeqCst);
 
@@ -261,19 +271,25 @@ pub unsafe fn init() {
     }
 }
 
-#[cfg(feature = "profiling")]
 static ACK: AtomicU32 = AtomicU32::new(0);
 
 pub fn ready_for_profiling() {
-    #[cfg(feature = "profiling")]
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
     ACK.fetch_add(1, Ordering::Relaxed);
 }
 
-#[cfg(feature = "profiling")]
 pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
     if cpu_id != profiler_cpu() {
         return;
     }
+    #[cfg(target_arch = "x86_64")]
     unsafe {
         for i in 33..255 {
             crate::arch::idt::IDTS
@@ -302,6 +318,10 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
 
 #[cfg(feature = "profiling")]
 pub fn maybe_setup_timer(idt: &mut Idt, cpu_id: LogicalCpuId) {
+    if cfg!(not(feature = "profiling")) {
+        return;
+    }
+
     if cpu_id != profiler_cpu() {
         return;
     }
