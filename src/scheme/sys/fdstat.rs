@@ -1,19 +1,14 @@
 use crate::{
     alloc::string::ToString,
-    context::{
-        self,
-        file::{FileDescription, LockedFileDescription},
-        memory::AddrSpaceWrapper,
-    },
+    context::{file::LockedFileDescription, memory::AddrSpaceWrapper},
     percpu,
     scheme::{self, handles, KernelSchemes},
     sync::CleanLockToken,
     syscall::error::Result,
 };
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use core::{fmt::Write, hash::Hash};
 use hashbrown::HashMap;
-use spin::RwLock;
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     #[derive(Debug)]
