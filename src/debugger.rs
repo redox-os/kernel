@@ -18,9 +18,9 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
     tree.insert(the_zeroed_frame().0, (1, false));
 
-    let old_table = unsafe { RmmA::table(TableKind::User) };
+    let old_table = RmmA::table(TableKind::User);
 
-    let mut contexts = crate::percpu::get_all_contexts(token.downgrade());
+    let contexts = crate::percpu::get_all_contexts(token.downgrade());
     for context_arc in contexts.iter() {
         if target_id.map_or(false, |target_id| Arc::as_ptr(&context_arc) != target_id) {
             continue;
@@ -249,7 +249,6 @@ unsafe fn check_page_table_consistency(
     use crate::{
         context::memory::{PageSpan, Provider},
         memory::{get_page_info, RefCount},
-        paging::*,
     };
 
     let p4 = addr_space.table.utable.table();
