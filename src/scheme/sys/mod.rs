@@ -32,11 +32,8 @@ use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
 mod block;
 mod context;
 mod cpu;
-
-#[cfg(feature = "sys_fdstat")]
-mod fdstat;
-
 mod exe;
+mod fdstat;
 mod iostat;
 mod irq;
 mod log;

@@ -10,6 +10,7 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 use core::{fmt::Write, hash::Hash};
 use hashbrown::HashMap;
 
+#[cfg_attr(not(feature = "sys_fdstat"), expect(dead_code))]
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     #[derive(Debug)]
     struct Ref<T>(Arc<T>);
