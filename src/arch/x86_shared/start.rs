@@ -118,8 +118,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Setup kernel heap
             allocator::init();
 
-            crate::profiling::init();
-
             // Activate memory logging
             crate::log::init();
 
@@ -135,6 +133,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
                 crate::acpi::init(args.acpi_rsdp());
                 device::init_after_acpi();
             }
+            crate::profiling::init();
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization
             device::init_noncore();

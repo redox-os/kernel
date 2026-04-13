@@ -28,6 +28,8 @@ LOCKFILE=$(SOURCE)/Cargo.lock
 MANIFEST=$(SOURCE)/Cargo.toml
 TARGET_SPEC=$(RUST_TARGET_PATH)/$(ARCH)-unknown-kernel.json
 
+KERNEL_CARGO_FEATURES?=
+
 $(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell find $(SOURCE) -name "*.rs" -type f)
 	cargo rustc \
 		--bin kernel \
@@ -35,6 +37,7 @@ $(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell
 		--target "$(TARGET_SPEC)" \
 		--release \
 		-Z build-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+		--features=$(KERNEL_CARGO_FEATURES) \
 		-- \
 		-C link-arg=-T -Clink-arg="$(LD_SCRIPT)" \
 		-C link-arg=-z -Clink-arg=max-page-size=0x1000 \

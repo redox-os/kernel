@@ -99,7 +99,11 @@ impl KernelScheme for DebugScheme {
 
             #[cfg(feature = "profiling")]
             p if p.starts_with("profiling-") => {
-                path[10..].parse().map_err(|_| Error::new(ENOENT))?
+                let num: u32 = path[10..].parse().map_err(|_| Error::new(ENOENT))?;
+                if !crate::profiling::cpu_exists(crate::cpu_set::LogicalCpuId::new(num)) {
+                    return Err(Error::new(ENOENT));
+                }
+                num as usize
             }
 
             #[cfg(feature = "profiling")]
