@@ -63,7 +63,6 @@ pub(super) fn init(madt: Madt) {
 
     unsafe {
         let preliminary_cpu_count = madt.iter().filter(|e| matches!(e, MadtEntry::LocalApic(entry) if u32::from(entry.id) == me.get() || entry.flags & 1 == 1)).count();
-        info!("Preliminary number of CPUs: {preliminary_cpu_count}");
         crate::profiling::allocate(preliminary_cpu_count as u32);
     }
 
