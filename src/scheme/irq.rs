@@ -1,15 +1,13 @@
 // TODO: Rewrite this entire scheme. Legacy x86 APIs should be abstracted by a userspace scheme,
 // this scheme should only handle raw IRQ registration and delivery to userspace.
 
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::{
     str,
     str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use alloc::{borrow::ToOwned, string::String, vec::Vec};
-
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
 use spin::{Mutex, Once};
 use syscall::{
@@ -19,7 +17,7 @@ use syscall::{
 
 use crate::context::file::InternalFlags;
 
-use super::{CallerCtx, OpenResult, SchemeExt, StrOrBytes};
+use super::{CallerCtx, HandleMap, OpenResult, SchemeExt, StrOrBytes};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved, set_reserved};
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
@@ -39,8 +37,7 @@ use crate::{
 ///
 /// IRQ queues
 pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
 /// O_CREAT flag.
@@ -95,7 +92,6 @@ impl Handle {
     }
 }
 
-static NEXT_FD: AtomicUsize = AtomicUsize::new(1);
 static CPUS: Once<Vec<u8>> = Once::new();
 
 pub struct IrqScheme;
@@ -220,8 +216,7 @@ const fn vector_to_irq(vector: u8) -> u8 {
 
 impl crate::scheme::KernelScheme for IrqScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = NEXT_FD.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
+        let id = HANDLES.write(token.token()).insert(Handle::SchemeRoot);
         Ok(id)
     }
     fn kopenat(
@@ -235,7 +230,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     ) -> Result<OpenResult> {
         {
             let handles = HANDLES.read(token.token());
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            let handle = handles.get(id)?;
 
             if !matches!(handle, Handle::SchemeRoot) {
                 return Err(Error::new(EACCES));
@@ -327,8 +322,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         } else {
             return Err(Error::new(ENOENT));
         };
-        let fd = NEXT_FD.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(fd, handle);
+        let fd = HANDLES.write(token.token()).insert(handle);
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
     fn getdents(
@@ -348,11 +342,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
         let mut intermediate = String::new();
 
-        match *HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
+        match *HANDLES.read(token.token()).get(id)? {
             Handle::TopLevel => {
                 let cpus = CPUS.get().expect("IRQ scheme not initialized");
 
@@ -423,7 +413,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(id)?;
 
         if let &Handle::Irq {
             irq: handle_irq, ..
@@ -443,7 +433,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(file)?;
 
         match handle {
             &Handle::Irq {
@@ -471,7 +461,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(id)?;
 
         buf.copy_exactly(&match *handle {
             Handle::Irq {
@@ -522,7 +512,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
         let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(id)?;
 
         let scheme_path = match handle {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
@@ -546,7 +536,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(&file).ok_or(Error::new(EBADF))?;
+        let handle = handles_guard.get(file)?;
 
         match *handle {
             // Ensures that the length of the buffer is larger than the size of a usize

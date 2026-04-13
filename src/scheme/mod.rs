@@ -16,7 +16,7 @@ use core::{
     str,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use hashbrown::hash_map::{DefaultHashBuilder, HashMap};
+use hashbrown::hash_map::{self, DefaultHashBuilder, HashMap};
 use spin::Once;
 use syscall::{
     data::{GlobalSchemes, NewFdParams, StdFsCallMeta},
@@ -122,6 +122,43 @@ impl<'a> StrOrBytes<'a> {
 
     pub fn from_bytes(slice: &'a [u8]) -> Self {
         StrOrBytes::Bytes(slice)
+    }
+}
+
+struct HandleMap<T> {
+    handles: HashMap<usize, T>,
+    next_id: usize,
+}
+
+impl<T> HandleMap<T> {
+    const fn new() -> Self {
+        HandleMap {
+            handles: HashMap::with_hasher(DefaultHashBuilder::new()),
+            next_id: 1,
+        }
+    }
+
+    fn insert(&mut self, handle: T) -> usize {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.handles.insert(id, handle);
+        id
+    }
+
+    fn remove(&mut self, id: usize) -> Result<T> {
+        self.handles.remove(&id).ok_or(Error::new(EBADF))
+    }
+
+    fn get(&self, id: usize) -> Result<&T> {
+        self.handles.get(&id).ok_or(Error::new(EBADF))
+    }
+
+    fn get_mut(&mut self, id: usize) -> Result<&mut T> {
+        self.handles.get_mut(&id).ok_or(Error::new(EBADF))
+    }
+
+    fn iter(&self) -> hash_map::Iter<'_, usize, T> {
+        self.handles.iter()
     }
 }
 

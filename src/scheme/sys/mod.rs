@@ -8,11 +8,7 @@ use ::syscall::{
     EACCES, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::{sync::Arc, vec::Vec};
-use core::{
-    str,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use core::str;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::arch::interrupt;
@@ -27,7 +23,7 @@ use crate::{
     },
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
+use super::{CallerCtx, HandleMap, KernelScheme, OpenResult, StrOrBytes};
 
 mod block;
 mod context;
@@ -68,9 +64,7 @@ impl Kind {
 
 /// System information scheme
 pub struct SysScheme;
-static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 
 const FILES: &[(&str, Kind)] = &[
     ("block", Rd(block::resource)),
@@ -114,8 +108,7 @@ const FILES: &[(&str, Kind)] = &[
 
 impl KernelScheme for SysScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
+        let id = HANDLES.write(token.token()).insert(Handle::SchemeRoot);
         Ok(id)
     }
     fn kopenat(
@@ -127,13 +120,7 @@ impl KernelScheme for SysScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if !matches!(
-            HANDLES
-                .read(token.token())
-                .get(&id)
-                .ok_or(Error::new(EBADF))?,
-            Handle::SchemeRoot
-        ) {
+        if !matches!(HANDLES.read(token.token()).get(id)?, Handle::SchemeRoot) {
             return Err(Error::new(EACCES));
         }
 
@@ -143,9 +130,7 @@ impl KernelScheme for SysScheme {
             .trim_matches('/');
 
         if path.is_empty() {
-            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-
-            HANDLES.write(token.token()).insert(id, Handle::TopLevel);
+            let id = HANDLES.write(token.token()).insert(Handle::TopLevel);
 
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         } else {
@@ -159,24 +144,19 @@ impl KernelScheme for SysScheme {
                 return Err(Error::new(EPERM));
             }
 
-            let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
             // TODO: Initialize resources during openat to use them as a snapshot.
-            HANDLES.write(token.token()).insert(
-                id,
-                Handle::Resource {
-                    path: entry.0,
-                    kind: entry.1,
-                    data: Arc::new(RwLock::new(None)),
-                },
-            );
+            let id = HANDLES.write(token.token()).insert(Handle::Resource {
+                path: entry.0,
+                kind: entry.1,
+                data: Arc::new(RwLock::new(None)),
+            });
             Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
         }
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let (kind, data_lock) = {
-            let handles = HANDLES.read(token.token());
-            match handles.get(&id).ok_or(Error::new(EBADF))? {
+            match HANDLES.read(token.token()).get(id)? {
                 Handle::TopLevel => return Ok(0),
                 Handle::Resource { kind, data, .. } => (*kind, data.clone()),
                 Handle::SchemeRoot => return Err(Error::new(EBADF)),
@@ -200,15 +180,11 @@ impl KernelScheme for SysScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        HANDLES
-            .write(token.token())
-            .remove(&id)
-            .ok_or(Error::new(EBADF))?;
+        HANDLES.write(token.token()).remove(id)?;
         Ok(())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let handles = HANDLES.read(token.token());
-        let path = match handles.get(&id).ok_or(Error::new(EBADF))? {
+        let path = match HANDLES.read(token.token()).get(id)? {
             Handle::TopLevel => "",
             Handle::Resource { path, .. } => path,
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
@@ -237,8 +213,7 @@ impl KernelScheme for SysScheme {
         };
 
         let (kind, data_lock) = {
-            let handles = HANDLES.read(token.token());
-            match handles.get(&id).ok_or(Error::new(EBADF))? {
+            match HANDLES.read(token.token()).get(id)? {
                 Handle::Resource { kind, data, .. } => (*kind, data.clone()),
                 _ => return Err(Error::new(EBADF)),
             }
@@ -265,11 +240,7 @@ impl KernelScheme for SysScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let (handler, intermediate, len) = match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
+        let (handler, intermediate, len) = match HANDLES.read(token.token()).get(id)? {
             Handle::TopLevel
             | Handle::Resource {
                 kind: Kind::Rd(_), ..
@@ -297,11 +268,7 @@ impl KernelScheme for SysScheme {
         let Ok(first_index) = usize::try_from(first_index) else {
             return Ok(0);
         };
-        match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
+        match HANDLES.read(token.token()).get(id)? {
             Handle::Resource { .. } => Err(Error::new(ENOTDIR)),
             Handle::TopLevel => {
                 let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
@@ -322,7 +289,7 @@ impl KernelScheme for SysScheme {
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let stat_base = {
             let handles = HANDLES.read(token.token());
-            match handles.get(&id).ok_or(Error::new(EBADF))? {
+            match handles.get(id)? {
                 Handle::Resource { kind, data, .. } => Some((*kind, data.clone())),
                 Handle::TopLevel => None,
                 Handle::SchemeRoot => return Err(Error::new(EBADF)),
