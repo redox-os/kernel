@@ -1,5 +1,4 @@
 use alloc::{
-    collections::BTreeSet,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -13,13 +12,11 @@ use syscall::PtraceFlags;
 
 use crate::{
     arch::device::ArchPercpuMisc,
-    context::{
-        empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu, ContextLock, ContextRef,
-    },
+    context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
-    sync::{CleanLockToken, LockToken, RwLock, L1},
+    sync::CleanLockToken,
     syscall::debug::SyscallDebugInfo,
 };
 
@@ -50,7 +47,6 @@ pub struct PercpuBlock {
     pub misc_arch_info: crate::arch::device::ArchPercpuMisc,
 
     pub stats: CpuStats,
-    pub contexts: RwLock<L1, BTreeSet<ContextRef>>,
 }
 
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
@@ -72,21 +68,6 @@ pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
         .collect::<Vec<_>>();
     res.sort_unstable_by_key(|(id, _stats)| id.get());
     res
-}
-
-/// Get copy of all cpu ref contexts
-pub fn get_all_contexts(mut token: LockToken<'_, L1>) -> Vec<Arc<ContextLock>> {
-    let mut all_contexts = Vec::new();
-    for block in ALL_PERCPU_BLOCKS
-        .iter()
-        .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
-    {
-        // TODO: When load balancer implemented, contexts need to be locked altogether
-        // TODO: Lock token violation, downgrade this to L2 later
-        let contexts = unsafe { &block.contexts.reupgradeable_read(token.token()) };
-        all_contexts.extend(contexts.iter().filter_map(|x| x.upgrade()));
-    }
-    all_contexts
 }
 
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
@@ -219,7 +200,6 @@ impl PercpuBlock {
             misc_arch_info: ArchPercpuMisc::default(),
 
             stats: CpuStats::default(),
-            contexts: RwLock::new(BTreeSet::new()),
         }
     }
 }
