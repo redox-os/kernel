@@ -1,23 +1,21 @@
 //! This module provides a context-switching mechanism that utilizes a simple round-robin scheduler.
 //! The scheduler iterates over available contexts, selecting the next context to run, while
 //! handling process states and synchronization.
-use crate::sync::ArcRwLockWriteGuard;
-use crate::sync::L4;
+
 use crate::{
     context::{
-        self, arch, contexts, contexts_mut, free_contexts_try, run_contexts_mut,
+        self, arch, contexts, contexts_mut, free_contexts_try, run_contexts,
         ArcContextLockWriteGuard, Context, ContextLock,
     },
     cpu_set::LogicalCpuId,
     cpu_stats,
     percpu::PercpuBlock,
-    sync::CleanLockToken,
+    sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
     hint, mem,
-    ops::Bound,
     sync::atomic::Ordering,
 };
 use syscall::PtraceFlags;
@@ -30,7 +28,7 @@ enum UpdateResult {
 }
 
 // A simple geometric series where value[i] ~= value[i - 1] * 1.25
-const sched_prio_to_weight: [usize; 40] = [
+const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
     3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
     70, 56, 45, 36, 29, 23, 18, 15,
@@ -163,8 +161,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         hint::spin_loop();
         percpu.maybe_handle_tlb_shootdown();
     }
-
-    let cpu_id = crate::cpu_id();
 
     // Lock the previous context.
     let prev_context_lock = crate::context::current();
@@ -347,8 +343,8 @@ fn select_next_context(
     switch_time: u128,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
-    let mut contexts_data = run_contexts_mut(token.token());
-    let mut contexts_list = &mut contexts_data.set;
+    let mut contexts_data = run_contexts(token.token());
+    let contexts_list = &mut contexts_data.set;
     let mut balance = percpu.balance.get();
     let mut i = percpu.last_queue.get() % 40;
 
@@ -393,10 +389,10 @@ fn select_next_context(
             empty_queues = 0;
         }
 
-        if balance[i] < sched_prio_to_weight[20] {
+        if balance[i] < SCHED_PRIO_TO_WEIGHT[20] {
             // This queue does not have enough balance to run,
             // increment the balance!
-            balance[i] += sched_prio_to_weight[i];
+            balance[i] += SCHED_PRIO_TO_WEIGHT[i];
             continue;
         }
 
@@ -431,7 +427,7 @@ fn select_next_context(
                 unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
             {
                 next_context_guard_opt = Some(next_context_guard);
-                balance[i] -= sched_prio_to_weight[20];
+                balance[i] -= SCHED_PRIO_TO_WEIGHT[20];
                 break 'priority;
             } else {
                 contexts.push_back(ContextRef(Arc::clone(&next_context_lock)));
