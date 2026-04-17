@@ -72,13 +72,7 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: Mutex<L2, BTreeSet<ContextRef>> = Mutex::new(BTreeSet::new());
-/// Try to get the global free contexts
-pub fn free_contexts_try(
-    token: LockToken<'_, L1>,
-) -> Option<MutexGuard<'_, L2, BTreeSet<ContextRef>>> {
-    CONTEXTS.try_lock(token)
-}
+static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 // Actual context store for the scheduler
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
@@ -97,15 +91,13 @@ impl RunContextData {
 }
 
 /// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
-    let percpu = PercpuBlock::current();
-    percpu.contexts.read(token)
+pub fn contexts(token: LockToken<'_, L1>) -> RwLockReadGuard<'_, L2, BTreeSet<ContextRef>> {
+    CONTEXTS.read(token)
 }
 
 /// Get per cpu contexts, mutable
-pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
-    let percpu = PercpuBlock::current();
-    percpu.contexts.write(token)
+pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
+    CONTEXTS.write(token)
 }
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
@@ -128,10 +120,12 @@ pub fn init(token: &mut CleanLockToken) {
     context.cpu_id = Some(crate::cpu_id());
     context.enqueued = false;
 
+    let priority = context.prio;
+
     let context_lock = Arc::new(ContextLock::new(context));
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
-    contexts_mut(token.token()).insert(context_ref);
+    contexts_mut(token.token().downgrade()).insert(context_ref.clone());
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -139,6 +133,8 @@ pub fn init(token: &mut CleanLockToken) {
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
     }
+
+    run_contexts(token.downgrade()).set[priority].push_back(context_ref);
 }
 
 pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
@@ -176,6 +172,7 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
         .with_context(|current| Arc::ptr_eq(context, current))
 }
 
+#[derive(Clone)]
 pub struct ContextRef(pub Arc<ContextLock>);
 impl ContextRef {
     pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
@@ -224,7 +221,7 @@ pub fn spawn(
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
     run_contexts(token.token()).set[20].push_back(run_ref);
-    contexts_mut(token.token()).insert(context_ref);
+    contexts_mut(token.token().downgrade()).insert(context_ref);
     context_lock.write(token.token()).enqueued = true;
 
     Ok(context_lock)

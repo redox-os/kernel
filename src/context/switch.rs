@@ -3,10 +3,7 @@
 //! handling process states and synchronization.
 
 use crate::{
-    context::{
-        self, arch, contexts, contexts_mut, free_contexts_try, run_contexts,
-        ArcContextLockWriteGuard, Context, ContextLock,
-    },
+    context::{self, arch, contexts, run_contexts, ArcContextLockWriteGuard, Context, ContextLock},
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
     percpu::PercpuBlock,
@@ -176,12 +173,12 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    // TODO: Optimise this somehow
+    // TODO: Optimise this somehow. Perhaps using a separate timer queue?
     let mut wakeups = Vec::new();
     {
         let current_context = context::current();
 
-        let mut contexts_guard = contexts(token.token());
+        let mut contexts_guard = contexts(token.downgrade());
         let (context, mut token) = contexts_guard.token_split();
         for context_ref in context.iter().filter_map(|r| r.upgrade()) {
             if Arc::ptr_eq(&context_ref, &current_context) {
@@ -214,7 +211,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let was_idle = percpu.stats.add_time(percpu_ms) == CpuState::Idle as u8;
     percpu.switch_internals.switch_time.set(switch_time);
 
-    let mut switch_context_opt = match select_next_context(
+    let switch_context_opt = match select_next_context(
         token,
         percpu,
         cpu_id,
@@ -225,25 +222,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         Ok(opt) => opt,
         Err(early_ret) => return early_ret,
     };
-
-    if switch_context_opt.is_none() {
-        let mut this_contexts = contexts_mut(token.token());
-        let (this_contexts, mut token) = this_contexts.token_split();
-        if let Some(mut free_contexts) = free_contexts_try(token.token())
-            && let Some(context) = free_contexts.pop_last()
-        {
-            // Check if we can run this free context immediately
-            if let Some(next_context) = context.upgrade() {
-                let mut next_context_guard = unsafe { next_context.write_arc() };
-                if let UpdateResult::CanSwitch =
-                    unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
-                {
-                    switch_context_opt = Some(next_context_guard);
-                }
-            }
-            this_contexts.insert(context);
-        }
-    }
 
     // Switch process states, TSS stack pointer, and store new context ID
     match switch_context_opt {
