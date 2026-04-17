@@ -1,6 +1,16 @@
-use core::slice;
+use core::{
+    hint, slice,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
-use crate::memory::{PhysicalAddress, RmmA, RmmArch};
+use crate::{
+    arch::interrupt,
+    context,
+    context::switch::SwitchResult,
+    memory::{PhysicalAddress, RmmA, RmmArch},
+    profiling, scheme,
+    sync::CleanLockToken,
+};
 
 pub mod memory;
 
@@ -9,8 +19,8 @@ pub(crate) struct KernelArgs {
     kernel_base: u64,
     kernel_size: u64,
 
-    pub(crate) stack_base: u64,
-    pub(crate) stack_size: u64,
+    stack_base: u64,
+    stack_size: u64,
 
     env_base: u64,
     env_size: u64,
@@ -64,8 +74,8 @@ impl KernelArgs {
         );
     }
 
-    pub(crate) fn bootstrap(&self) -> crate::Bootstrap {
-        crate::Bootstrap {
+    pub(crate) fn bootstrap(&self) -> Bootstrap {
+        Bootstrap {
             base: crate::memory::Frame::containing(crate::memory::PhysicalAddress::new(
                 self.bootstrap_base as usize,
             )),
@@ -115,6 +125,114 @@ impl KernelArgs {
             fdt::Fdt::new(data).ok()
         } else {
             None
+        }
+    }
+}
+
+pub(crate) fn init_env() -> &'static [u8] {
+    BOOTSTRAP.get().expect("BOOTSTRAP was not set").env
+}
+
+extern "C" fn userspace_init() {
+    let mut token = unsafe { CleanLockToken::new() };
+    let bootstrap = BOOTSTRAP.get().expect("BOOTSTRAP was not set");
+    unsafe { crate::syscall::process::usermode_bootstrap(bootstrap, &mut token) }
+}
+
+pub(crate) struct Bootstrap {
+    pub(crate) base: crate::memory::Frame,
+    pub(crate) page_count: usize,
+    env: &'static [u8],
+}
+
+static BOOTSTRAP: spin::Once<Bootstrap> = spin::Once::new();
+pub(crate) static AP_READY: AtomicBool = AtomicBool::new(false);
+static BSP_READY: AtomicBool = AtomicBool::new(false);
+
+/// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
+pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
+    let mut token = unsafe { CleanLockToken::new() };
+
+    BSP_READY.store(true, Ordering::SeqCst);
+
+    //Initialize the first context, stored in kernel/src/context/mod.rs
+    context::init(&mut token);
+
+    //Initialize global schemes, such as `acpi:`.
+    scheme::init_globals();
+
+    debug!("BSP: {} CPUs", crate::cpu_count());
+    debug!("Env: {:?}", ::core::str::from_utf8(bootstrap.env));
+
+    BOOTSTRAP.call_once(|| bootstrap);
+
+    profiling::ready_for_profiling();
+
+    let owner = None; // kmain not owned by any fd
+    match context::spawn(true, owner, userspace_init, &mut token) {
+        Ok(context_lock) => {
+            let mut context = context_lock.write(token.token());
+            context.status = context::Status::Runnable;
+            context.name.clear();
+            context.name.push_str("[bootstrap]");
+
+            // TODO: Remove these from kernel
+            context.euid = 0;
+            context.egid = 0;
+        }
+        Err(err) => {
+            panic!("failed to spawn userspace_init: {:?}", err);
+        }
+    }
+
+    run_userspace(&mut token)
+}
+
+/// This is the main kernel entry point for secondary CPUs
+#[allow(unreachable_code, unused_variables, dead_code)]
+pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
+    let mut token = unsafe { CleanLockToken::new() };
+
+    AP_READY.store(true, Ordering::SeqCst);
+    while !BSP_READY.load(Ordering::SeqCst) {
+        hint::spin_loop();
+    }
+
+    profiling::maybe_run_profiling_helper_forever(cpu_id);
+
+    if !cfg!(feature = "multi_core") {
+        debug!("AP {}: Disabled", cpu_id);
+
+        loop {
+            unsafe {
+                interrupt::disable();
+                interrupt::halt();
+            }
+        }
+    }
+
+    context::init(&mut token);
+
+    debug!("AP {}", cpu_id);
+
+    profiling::ready_for_profiling();
+
+    run_userspace(&mut token);
+}
+
+fn run_userspace(token: &mut CleanLockToken) -> ! {
+    loop {
+        unsafe {
+            interrupt::disable();
+            match context::switch(token) {
+                SwitchResult::Switched => {
+                    interrupt::enable_and_nop();
+                }
+                SwitchResult::AllContextsIdle => {
+                    // Enable interrupts, then halt CPU (to save power) until the next interrupt is actually fired.
+                    interrupt::enable_and_halt();
+                }
+            }
         }
     }
 }

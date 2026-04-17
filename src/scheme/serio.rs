@@ -1,8 +1,6 @@
 //! PS/2 unfortunately requires a kernel driver to prevent race conditions due
 //! to how status is utilized
-use core::sync::atomic::{AtomicUsize, Ordering};
 
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -14,8 +12,6 @@ use crate::{
         usercopy::UserSliceWo,
     },
 };
-
-static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
 
 use super::StrOrBytes;
 
@@ -33,8 +29,7 @@ struct Handle {
     kind: HandleKind,
 }
 
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 
 /// Add to the input queue
 pub fn serio_input(index: usize, data: u8, token: &mut CleanLockToken) {
@@ -59,13 +54,9 @@ pub struct SerioScheme;
 
 impl KernelScheme for SerioScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(
-            id,
-            Handle {
-                kind: HandleKind::SchemeRoot,
-            },
-        );
+        let id = HANDLES.write(token.token()).insert(Handle {
+            kind: HandleKind::SchemeRoot,
+        });
         Ok(id)
     }
 
@@ -80,7 +71,7 @@ impl KernelScheme for SerioScheme {
     ) -> Result<OpenResult> {
         {
             let handles = HANDLES.read(token.token());
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            let handle = handles.get(id)?;
 
             if !matches!(handle.kind, HandleKind::SchemeRoot) {
                 return Err(Error::new(EACCES));
@@ -97,13 +88,9 @@ impl KernelScheme for SerioScheme {
             return Err(Error::new(ENOENT));
         }
 
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(
-            id,
-            Handle {
-                kind: HandleKind::Device(index),
-            },
-        );
+        let id = HANDLES.write(token.token()).insert(Handle {
+            kind: HandleKind::Device(index),
+        });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
@@ -115,7 +102,7 @@ impl KernelScheme for SerioScheme {
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
         let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get(id)?;
 
         if let HandleKind::Device(_) = handle.kind {
             Ok(EventFlags::empty())
@@ -125,16 +112,12 @@ impl KernelScheme for SerioScheme {
     }
 
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let handles = HANDLES.read(token.token());
-        handles.get(&id).ok_or(Error::new(EBADF))?;
+        HANDLES.read(token.token()).get(id)?;
         Ok(())
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        HANDLES
-            .write(token.token())
-            .remove(&id)
-            .ok_or(Error::new(EBADF))?;
+        HANDLES.write(token.token()).remove(id)?;
         Ok(())
     }
 
@@ -146,10 +129,7 @@ impl KernelScheme for SerioScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handle = *HANDLES.read(token.token()).get(id)?;
 
         let index = match handle.kind {
             HandleKind::Device(index) => index,
@@ -165,10 +145,7 @@ impl KernelScheme for SerioScheme {
     }
 
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handle = *HANDLES.read(token.token()).get(id)?;
 
         let path = match handle.kind {
             HandleKind::Device(index) => format!("serio:{}", index).into_bytes(),

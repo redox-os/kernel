@@ -75,9 +75,9 @@ impl InterruptStack {
     pub fn init(&mut self) {
         // Always enable interrupts!
         self.iret.eflags = x86::bits32::eflags::EFlags::FLAGS_IF.bits() as usize;
-        self.iret.ss = (crate::gdt::GDT_USER_DATA << 3) | 3;
-        self.iret.cs = (crate::gdt::GDT_USER_CODE << 3) | 3;
-        self.gs = (crate::gdt::GDT_USER_GS << 3) | 3;
+        self.iret.ss = (crate::arch::gdt::GDT_USER_DATA << 3) | 3;
+        self.iret.cs = (crate::arch::gdt::GDT_USER_CODE << 3) | 3;
+        self.gs = (crate::arch::gdt::GDT_USER_GS << 3) | 3;
     }
     pub fn dump(&self) {
         self.iret.dump();

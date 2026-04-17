@@ -1,4 +1,3 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -13,8 +12,6 @@ use crate::{
     },
 };
 
-static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-
 /// Input queue
 static INPUT: WaitQueue<u8> = WaitQueue::new();
 
@@ -23,8 +20,7 @@ struct Handle {
     num: usize,
 }
 
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 
 /// Add to the input queue
 pub fn debug_input(data: u8, token: &mut CleanLockToken) {
@@ -52,17 +48,14 @@ enum SpecialFds {
     CtlProfiling = -4isize as usize,
 
     SchemeRoot = -5isize as usize,
+    // NOTE: when adding new entries, ensure are checked correctly by the profiling code
 }
 
 impl KernelScheme for DebugScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(
-            id,
-            Handle {
-                num: SpecialFds::SchemeRoot as usize,
-            },
-        );
+        let id = HANDLES.write(token.token()).insert(Handle {
+            num: SpecialFds::SchemeRoot as usize,
+        });
 
         Ok(id)
     }
@@ -75,13 +68,7 @@ impl KernelScheme for DebugScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-            .num
-            != SpecialFds::SchemeRoot as usize
-        {
+        if HANDLES.read(token.token()).get(id)?.num != SpecialFds::SchemeRoot as usize {
             return Err(Error::new(EACCES));
         }
 
@@ -99,7 +86,11 @@ impl KernelScheme for DebugScheme {
 
             #[cfg(feature = "profiling")]
             p if p.starts_with("profiling-") => {
-                path[10..].parse().map_err(|_| Error::new(ENOENT))?
+                let num: u32 = path[10..].parse().map_err(|_| Error::new(ENOENT))?;
+                if !crate::profiling::cpu_exists(crate::cpu_set::LogicalCpuId::new(num)) {
+                    return Err(Error::new(ENOENT));
+                }
+                num as usize
             }
 
             #[cfg(feature = "profiling")]
@@ -108,8 +99,7 @@ impl KernelScheme for DebugScheme {
             _ => return Err(Error::new(ENOENT)),
         };
 
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, Handle { num });
+        let id = HANDLES.write(token.token()).insert(Handle { num });
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
@@ -120,28 +110,19 @@ impl KernelScheme for DebugScheme {
         _flags: EventFlags,
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        let _handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let _handle = *HANDLES.read(token.token()).get(id)?;
 
         Ok(EventFlags::empty())
     }
 
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let _handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let _handle = *HANDLES.read(token.token()).get(id)?;
 
         Ok(())
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let _handle = {
-            let mut handles = HANDLES.write(token.token());
-            handles.remove(&id).ok_or(Error::new(EBADF))?
-        };
+        HANDLES.write(token.token()).remove(id)?;
 
         Ok(())
     }
@@ -153,10 +134,7 @@ impl KernelScheme for DebugScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handle = *HANDLES.read(token.token()).get(id)?;
 
         if handle.num == SpecialFds::DisableGraphicalDebug as usize
             || handle.num == SpecialFds::SchemeRoot as usize
@@ -169,8 +147,11 @@ impl KernelScheme for DebugScheme {
             return Err(Error::new(EBADF));
         }
 
+        // TODO: add "try_from_raw" or similar to prevent future bugs
         #[cfg(feature = "profiling")]
-        if handle.num != SpecialFds::Default as usize {
+        if handle.num != SpecialFds::Default as usize
+            && handle.num != SpecialFds::NoPreserve as usize
+        {
             return crate::profiling::drain_buffer(
                 crate::cpu_set::LogicalCpuId::new(handle.num as u32),
                 buf,
@@ -193,10 +174,7 @@ impl KernelScheme for DebugScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handle = *HANDLES.read(token.token()).get(id)?;
 
         #[cfg(feature = "profiling")]
         if handle.num == SpecialFds::CtlProfiling as usize {
@@ -241,10 +219,7 @@ impl KernelScheme for DebugScheme {
         Ok(buf.len())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handle = *HANDLES.read(token.token()).get(id)?;
         if handle.num != SpecialFds::Default as usize
             && handle.num != SpecialFds::NoPreserve as usize
         {

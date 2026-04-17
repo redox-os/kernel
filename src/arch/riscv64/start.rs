@@ -5,8 +5,11 @@ use core::{
 };
 
 use crate::{
-    allocator, arch::paging, device, devices::graphical_debug, dtb::serial::init_early,
-    interrupt::exception_handler, startup::KernelArgs,
+    allocator,
+    arch::{device, interrupt::exception_handler, paging},
+    devices::graphical_debug,
+    dtb::serial::init_early,
+    startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -111,7 +114,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             paging::init();
 
-            crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
+            crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
             // Setup kernel heap
             allocator::init();
@@ -132,6 +135,6 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap()
         };
 
-        crate::kmain(bootstrap);
+        crate::startup::kmain(bootstrap);
     }
 }

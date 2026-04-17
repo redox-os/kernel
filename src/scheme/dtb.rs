@@ -1,10 +1,7 @@
-use core::sync::atomic::{self, AtomicUsize};
-
 use alloc::boxed::Box;
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::Once;
 
-use super::{CallerCtx, KernelScheme, OpenResult, StrOrBytes};
+use super::{CallerCtx, HandleMap, KernelScheme, OpenResult, StrOrBytes};
 use crate::{
     dtb::DTB_BINARY,
     scheme::InternalFlags,
@@ -30,9 +27,7 @@ struct Handle {
     stat: bool,
 }
 
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
-static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 static DATA: Once<Box<[u8]>> = Once::new();
 
 impl DtbScheme {
@@ -53,17 +48,10 @@ impl DtbScheme {
 
 impl KernelScheme for DtbScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
-
-        let mut handles_guard = HANDLES.write(token.token());
-
-        let _ = handles_guard.insert(
-            id,
-            Handle {
-                kind: HandleKind::SchemeRoot,
-                stat: false,
-            },
-        );
+        let id = HANDLES.write(token.token()).insert(Handle {
+            kind: HandleKind::SchemeRoot,
+            stat: false,
+        });
         Ok(id)
     }
     fn kopenat(
@@ -76,11 +64,7 @@ impl KernelScheme for DtbScheme {
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if !matches!(
-            HANDLES
-                .read(token.token())
-                .get(&id)
-                .ok_or(Error::new(EBADF))?
-                .kind,
+            HANDLES.read(token.token()).get(id)?.kind,
             HandleKind::SchemeRoot
         ) {
             return Err(Error::new(EACCES));
@@ -92,17 +76,10 @@ impl KernelScheme for DtbScheme {
             .trim_matches('/');
 
         if path.is_empty() {
-            let id = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
-
-            let mut handles_guard = HANDLES.write(token.token());
-
-            let _ = handles_guard.insert(
-                id,
-                Handle {
-                    kind: HandleKind::RawData,
-                    stat: _flags & O_STAT == O_STAT,
-                },
-            );
+            let id = HANDLES.write(token.token()).insert(Handle {
+                kind: HandleKind::RawData,
+                stat: _flags & O_STAT == O_STAT,
+            });
             return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
         }
 
@@ -111,7 +88,7 @@ impl KernelScheme for DtbScheme {
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let mut handles = HANDLES.write(token.token());
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(id)?;
 
         if handle.stat {
             return Err(Error::new(EBADF));
@@ -126,9 +103,7 @@ impl KernelScheme for DtbScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        if HANDLES.write(token.token()).remove(&id).is_none() {
-            return Err(Error::new(EBADF));
-        }
+        HANDLES.write(token.token()).remove(id)?;
         Ok(())
     }
 
@@ -142,7 +117,7 @@ impl KernelScheme for DtbScheme {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let mut handles = HANDLES.write(token.token());
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(id)?;
 
         if handle.stat {
             return Err(Error::new(EBADF));
@@ -168,7 +143,7 @@ impl KernelScheme for DtbScheme {
 
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get(id)?;
         buf.copy_exactly(&match handle.kind {
             HandleKind::RawData => {
                 let data = DATA.get().ok_or(Error::new(EBADFD))?;

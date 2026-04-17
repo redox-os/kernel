@@ -6,7 +6,13 @@ use core::{arch::naked_asm, cell::SyncUnsafeCell, slice};
 
 use fdt::Fdt;
 
-use crate::{allocator, device, devices::graphical_debug, dtb, paging, startup::KernelArgs};
+use crate::{
+    allocator,
+    arch::{device, paging},
+    devices::graphical_debug,
+    dtb,
+    startup::KernelArgs,
+};
 
 /// Test of zero values in BSS.
 static mut BSS_TEST_ZERO: usize = 0;
@@ -94,7 +100,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             // Initialize paging
             paging::init();
 
-            crate::misc::init(crate::cpu_set::LogicalCpuId::new(0));
+            crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
             // Setup kernel heap
             allocator::init();
@@ -122,7 +128,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap()
         };
 
-        crate::kmain(bootstrap);
+        crate::startup::kmain(bootstrap);
     }
 }
 

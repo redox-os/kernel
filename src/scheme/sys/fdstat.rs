@@ -1,39 +1,37 @@
 use crate::{
     alloc::string::ToString,
-    context::{
-        self,
-        file::{FileDescription, LockedFileDescription},
-        memory::AddrSpaceWrapper,
-    },
+    context::{file::LockedFileDescription, memory::AddrSpaceWrapper},
     percpu,
     scheme::{self, handles, KernelSchemes},
     sync::CleanLockToken,
     syscall::error::Result,
 };
-use alloc::{boxed::Box, string::String, sync::Arc, vec::Vec};
+use alloc::{borrow::Cow, string::String, sync::Arc, vec::Vec};
 use core::{fmt::Write, hash::Hash};
 use hashbrown::HashMap;
-use spin::RwLock;
 
+#[derive(Debug)]
+struct Ref<T>(Arc<T>);
+impl<T> Hash for Ref<T> {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(Arc::as_ptr(&self.0) as usize);
+    }
+}
+impl<T> PartialEq for Ref<T> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::as_ptr(&self.0) == Arc::as_ptr(&other.0)
+    }
+}
+impl<T> Eq for Ref<T> {}
+#[derive(Default)]
+struct Descr {
+    owners: HashMap<Ref<AddrSpaceWrapper>, String>,
+    scheme: Cow<'static, str>,
+    number: usize,
+}
+
+#[cfg_attr(not(feature = "sys_fdstat"), expect(dead_code))]
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    #[derive(Debug)]
-    struct Ref<T>(Arc<T>);
-    impl<T> Hash for Ref<T> {
-        fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-            state.write_usize(Arc::as_ptr(&self.0) as usize);
-        }
-    }
-    impl<T> PartialEq for Ref<T> {
-        fn eq(&self, other: &Self) -> bool {
-            Arc::as_ptr(&self.0) == Arc::as_ptr(&other.0)
-        }
-    }
-    impl<T> Eq for Ref<T> {}
-    #[derive(Default)]
-    struct Descr {
-        owners: HashMap<Ref<AddrSpaceWrapper>, String>,
-        scheme: &'static str,
-    }
     let mut map = HashMap::<Ref<LockedFileDescription>, Descr>::new();
     let mut report = String::new();
     let mut schemes_guard = handles().read(token.token());
@@ -66,14 +64,16 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 .owners
                 .entry(Ref(a))
                 .or_insert(context.name.clone().to_string());
-            descr.scheme = scheme
-                .map(|k| match k {
-                    scheme::Handle::SchemeCreationCapability => "SchemeCreationCapability",
-                    scheme::Handle::Scheme(KernelSchemes::Global(g)) => g.as_str(),
-                    scheme::Handle::Scheme(KernelSchemes::User(_)) => "[user]",
-                    scheme::Handle::Scheme(KernelSchemes::SchemeMgr) => "SchemeMgr",
-                })
-                .unwrap_or("[unknown]");
+            descr.scheme = match scheme {
+                Some(scheme::Handle::SchemeCreationCapability) => "SchemeCreationCapability".into(),
+                Some(scheme::Handle::Scheme(KernelSchemes::Global(g))) => g.as_str().into(),
+                Some(scheme::Handle::Scheme(KernelSchemes::User(scheme))) => {
+                    format!("[user {:p}]", Arc::as_ptr(&scheme.inner)).into()
+                }
+                Some(scheme::Handle::Scheme(KernelSchemes::SchemeMgr)) => "SchemeMgr".into(),
+                _ => format!("[unknown {}]", scheme_id.0).into(),
+            };
+            descr.number = file.description.read(token.token()).number;
         }
         writeln!(report, "}}").unwrap();
     }
@@ -85,10 +85,11 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         }
         writeln!(
             report,
-            "{:p}: {:?}; {}",
+            "{:p}: {:?}; {}:{}",
             fr.0,
             ma.owners.values().cloned().collect::<Vec<_>>(),
-            ma.scheme
+            ma.scheme,
+            ma.number,
         )
         .unwrap();
     }

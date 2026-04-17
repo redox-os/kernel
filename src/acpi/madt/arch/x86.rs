@@ -4,15 +4,16 @@ use core::{
 };
 
 use crate::{
-    arch::start::KernelArgsAp,
+    arch::{
+        device::local_apic::the_local_apic,
+        start::{kstart_ap, KernelArgsAp},
+    },
     cpu_set::LogicalCpuId,
-    device::local_apic::the_local_apic,
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,
     },
-    start::kstart_ap,
-    AP_READY,
+    startup::AP_READY,
 };
 
 use super::{Madt, MadtEntry};
@@ -58,6 +59,11 @@ pub(super) fn init(madt: Madt) {
         unsafe {
             (*((TRAMPOLINE as *mut u8).add(i) as *const AtomicU8)).store(*val, Ordering::SeqCst);
         }
+    }
+
+    unsafe {
+        let preliminary_cpu_count = madt.iter().filter(|e| matches!(e, MadtEntry::LocalApic(entry) if u32::from(entry.id) == me.get() || entry.flags & 1 == 1)).count();
+        crate::profiling::allocate(preliminary_cpu_count as u32);
     }
 
     for madt_entry in madt.iter() {

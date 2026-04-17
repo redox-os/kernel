@@ -9,8 +9,8 @@ use crate::{context, percpu, sync::CleanLockToken, syscall::error::Result};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
-        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}\n",
-        "PID", "EUID", "EGID", "STAT", "CPU", "AFFINITY", "TIME", "MEM", "NAME"
+        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{:<8}{}\n",
+        "PID", "EUID", "EGID", "STAT", "CPU", "AFFINITY", "TIME", "PRIVATE", "SHARED", "NAME"
     );
 
     let mut rows = Vec::new();
@@ -36,24 +36,28 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             let heap = match addr_space {
                 Ok(addr_space) => {
                     let addr_space_guard = addr_space.acquire_read(token.downgrade());
-                    let mut memory = 0;
+                    let mut private_memory = 0;
+                    let mut shared_memory = 0;
                     // TODO: All user programs must have some grant in order for executable memory to even
                     // exist, but is this a good indicator of whether it is user or kernel?
                     let is_kernel = addr_space_guard.grants.is_empty();
                     for (_base, info) in addr_space_guard.grants.iter() {
-                        // TODO: shared memory? wrap as method?
-                        if matches!(info.provider, context::memory::Provider::Allocated { .. }) {
-                            memory += info.page_count() * crate::memory::PAGE_SIZE;
+                        // wrap as method?
+                        match info.provider {
+                            context::memory::Provider::Allocated { .. } => {
+                                private_memory += info.page_count() * crate::memory::PAGE_SIZE
+                            }
+                            _ => shared_memory += info.page_count() * crate::memory::PAGE_SIZE,
                         }
                     }
-                    Some((memory, is_kernel))
+                    Some((private_memory, shared_memory, is_kernel))
                 }
                 Err(_) => None,
             };
 
             let mut stat_string = String::new();
             stat_string.push(match heap {
-                Some((_, is_kernel)) => {
+                Some((_, _, is_kernel)) => {
                     if is_kernel {
                         'K'
                     } else {
@@ -95,11 +99,11 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 cpu_time_ns / 10_000_000
             );
 
-            if let Some((heap, _)) = heap {
-                memory += heap;
-            }
-
-            let memory_string = format_bytes(memory);
+            let (priv_memory, shared_memory) = if let Some((privm, shrdm, _)) = heap {
+                (memory + privm, shrdm)
+            } else {
+                (memory, 0)
+            };
 
             rows.push((
                 pid,
@@ -109,7 +113,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 cpu_string,
                 affinity,
                 cpu_time_string,
-                memory_string,
+                format_bytes(priv_memory),
+                format_bytes(shared_memory),
                 name,
             ));
         }
@@ -124,13 +129,14 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         cpu_string,
         affinity,
         cpu_time_string,
-        memory_string,
+        priv_memory_string,
+        shared_memory_string,
         name,
     ) in rows
     {
         let _ = writeln!(
             string,
-            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{}",
+            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{:<8}{}",
             pid,
             euid,
             egid,
@@ -138,7 +144,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             cpu_string,
             affinity,
             cpu_time_string,
-            memory_string,
+            priv_memory_string,
+            shared_memory_string,
             name,
         );
     }

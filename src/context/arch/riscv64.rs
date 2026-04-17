@@ -66,7 +66,7 @@ impl Context {
             }
         }
 
-        self.set_ra(crate::interrupt::syscall::enter_usermode as usize);
+        self.set_ra(crate::arch::interrupt::syscall::enter_usermode as usize);
         self.set_s11(func as usize);
 
         self.set_stack(stack_top as usize);

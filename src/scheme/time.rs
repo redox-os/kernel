@@ -1,9 +1,5 @@
 use alloc::vec::Vec;
-use core::{
-    fmt, str,
-    sync::atomic::{AtomicUsize, Ordering},
-};
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use core::{fmt, str};
 use syscall::data::GlobalSchemes;
 
 use crate::{
@@ -18,7 +14,7 @@ use crate::{
     time,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
+use super::{CallerCtx, HandleMap, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
 
 #[derive(Clone)]
 enum Handle {
@@ -26,9 +22,7 @@ enum Handle {
     Clock(TimeSchemeHandle),
 }
 
-static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 
 pub struct TimeScheme;
 
@@ -59,8 +53,7 @@ pub struct TimeSchemeHandle {
 
 impl KernelScheme for TimeScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES.write(token.token()).insert(id, Handle::SchemeRoot);
+        let id = HANDLES.write(token.token()).insert(Handle::SchemeRoot);
         Ok(id)
     }
     fn kopenat(
@@ -74,7 +67,7 @@ impl KernelScheme for TimeScheme {
     ) -> Result<OpenResult> {
         {
             let handles = HANDLES.read(token.token());
-            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            let handle = handles.get(id)?;
 
             if !matches!(handle, Handle::SchemeRoot) {
                 return Err(Error::new(EACCES));
@@ -100,10 +93,9 @@ impl KernelScheme for TimeScheme {
             _ => return Err(Error::new(ENOENT)),
         }
 
-        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        HANDLES
+        let id = HANDLES
             .write(token.token())
-            .insert(id, Handle::Clock(TimeSchemeHandle { clock, kind }));
+            .insert(Handle::Clock(TimeSchemeHandle { clock, kind }));
 
         Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
     }
@@ -126,25 +118,17 @@ impl KernelScheme for TimeScheme {
     ) -> Result<EventFlags> {
         HANDLES
             .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))
+            .get(id)
             .and(Ok(EventFlags::empty()))
     }
 
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?;
+        HANDLES.read(token.token()).get(id)?;
         Ok(())
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        HANDLES
-            .write(token.token())
-            .remove(&id)
-            .ok_or(Error::new(EBADF))
-            .and(Ok(()))
+        HANDLES.write(token.token()).remove(id).and(Ok(()))
     }
     fn kread(
         &self,
@@ -154,11 +138,7 @@ impl KernelScheme for TimeScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handle = match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
+        let handle = match HANDLES.read(token.token()).get(id)? {
             Handle::Clock(handle) => handle.clone(),
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
@@ -197,11 +177,7 @@ impl KernelScheme for TimeScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handle = match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
+        let handle = match HANDLES.read(token.token()).get(id)? {
             Handle::Clock(handle) => handle.clone(),
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
@@ -230,11 +206,7 @@ impl KernelScheme for TimeScheme {
         Ok(bytes_written)
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let handle = match HANDLES
-            .read(token.token())
-            .get(&id)
-            .ok_or(Error::new(EBADF))?
-        {
+        let handle = match HANDLES.read(token.token()).get(id)? {
             Handle::Clock(handle) => handle.clone(),
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };

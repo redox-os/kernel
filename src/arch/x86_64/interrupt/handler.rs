@@ -97,8 +97,8 @@ impl InterruptStack {
     pub fn init(&mut self) {
         // Always enable interrupts!
         self.iret.rflags = x86::bits64::rflags::RFlags::FLAGS_IF.bits() as usize;
-        self.iret.cs = (crate::gdt::GDT_USER_CODE << 3) | 3;
-        self.iret.ss = (crate::gdt::GDT_USER_DATA << 3) | 3;
+        self.iret.cs = (crate::arch::gdt::GDT_USER_CODE << 3) | 3;
+        self.iret.ss = (crate::arch::gdt::GDT_USER_DATA << 3) | 3;
     }
     pub fn frame_pointer(&self) -> usize {
         self.preserved.rbp
@@ -417,7 +417,7 @@ macro_rules! interrupt_stack {
                 inner = sym inner,
                 IA32_GS_BASE = const(x86::msr::IA32_GS_BASE),
 
-                PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::gdt::ProcessorControlRegion, gdt)),
+                PCR_GDT_OFFSET = const(core::mem::offset_of!($crate::arch::gdt::ProcessorControlRegion, gdt)),
             );
         }
     };
@@ -510,7 +510,7 @@ macro_rules! interrupt_error {
                 "iretq;",
 
                 inner = sym inner,
-                rax_offset = const(size_of::<$crate::interrupt::handler::PreservedRegisters>() + size_of::<$crate::interrupt::handler::ScratchRegisters>() - 8),
+                rax_offset = const(size_of::<$crate::arch::interrupt::handler::PreservedRegisters>() + size_of::<$crate::arch::interrupt::handler::ScratchRegisters>() - 8),
             );
         }
     };

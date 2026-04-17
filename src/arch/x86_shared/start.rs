@@ -5,8 +5,11 @@
 use core::{arch::naked_asm, cell::SyncUnsafeCell, mem::offset_of};
 
 use crate::{
-    allocator, cpu_set::LogicalCpuId, device, devices::graphical_debug, gdt, idt, interrupt,
-    paging, startup::KernelArgs,
+    allocator,
+    arch::{device, gdt, idt, interrupt, paging},
+    cpu_set::LogicalCpuId,
+    devices::graphical_debug,
+    startup::KernelArgs,
 };
 
 /// Test of zero values in BSS.
@@ -107,7 +110,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             paging::init();
 
             #[cfg(target_arch = "x86_64")]
-            crate::alternative::early_init(true);
+            crate::arch::alternative::early_init(true);
 
             // Set up syscall instruction
             interrupt::syscall::init();
@@ -115,14 +118,12 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Setup kernel heap
             allocator::init();
 
-            crate::profiling::init();
-
             // Activate memory logging
             crate::log::init();
 
             // Initialize miscellaneous processor features
             #[cfg(target_arch = "x86_64")]
-            crate::misc::init(LogicalCpuId::BSP);
+            crate::arch::misc::init(LogicalCpuId::BSP);
 
             // Initialize devices
             device::init();
@@ -132,6 +133,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
                 crate::acpi::init(args.acpi_rsdp());
                 device::init_after_acpi();
             }
+            crate::profiling::init();
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization
             device::init_noncore();
@@ -139,7 +141,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             args.bootstrap()
         };
 
-        crate::kmain(bootstrap);
+        crate::startup::kmain(bootstrap);
     }
 }
 
@@ -199,14 +201,14 @@ unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {
             crate::profiling::init();
 
             #[cfg(target_arch = "x86_64")]
-            crate::alternative::early_init(false);
+            crate::arch::alternative::early_init(false);
 
             // Set up syscall instruction
             interrupt::syscall::init();
 
             // Initialize miscellaneous processor features
             #[cfg(target_arch = "x86_64")]
-            crate::misc::init(args.cpu_id);
+            crate::arch::misc::init(args.cpu_id);
 
             // Initialize devices (for AP)
             device::init_ap();
@@ -214,6 +216,6 @@ unsafe extern "C" fn start_ap(args_ptr: *const KernelArgsAp) -> ! {
             args.cpu_id
         };
 
-        crate::kmain_ap(cpu_id);
+        crate::startup::kmain_ap(cpu_id);
     }
 }

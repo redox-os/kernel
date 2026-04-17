@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 
 use super::{find_sdt, sdt::Sdt};
 use crate::{
-    device::generic_timer::GenericTimer,
+    arch::device::generic_timer::GenericTimer,
     dtb::irqchip::{register_irq, IRQ_CHIP},
 };
 

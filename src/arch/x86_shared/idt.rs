@@ -13,12 +13,14 @@ use x86::{
 };
 
 use crate::{
-    cpu_set::LogicalCpuId,
-    interrupt::{
-        irq::{__generic_interrupts_end, __generic_interrupts_start},
-        *,
+    arch::{
+        interrupt::{
+            irq::{__generic_interrupts_end, __generic_interrupts_start},
+            *,
+        },
+        ipi::IpiKind,
     },
-    ipi::IpiKind,
+    cpu_set::LogicalCpuId,
     memory::PAGE_SIZE,
 };
 
@@ -26,7 +28,7 @@ use spin::RwLock;
 
 #[repr(C)]
 pub struct Idt {
-    entries: [IdtEntry; 256],
+    pub(crate) entries: [IdtEntry; 256],
     reservations: [AtomicU32; 8],
     backup_stack_end: usize,
 }
@@ -49,7 +51,7 @@ impl Idt {
     }
 
     #[inline]
-    fn set_reserved(&self, index: u8, reserved: bool) {
+    pub(crate) fn set_reserved(&self, index: u8, reserved: bool) {
         let byte_index = index / 32;
         let bit = index % 32;
 
@@ -58,7 +60,7 @@ impl Idt {
     }
 
     #[inline]
-    fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
+    pub(crate) fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
         let byte_index = index / 32;
         let bit = index % 32;
 
@@ -73,7 +75,7 @@ const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
 static INIT_BSP_IDT: SyncUnsafeCell<Idt> = SyncUnsafeCell::new(Idt::new());
 
 // TODO: VecMap?
-static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
+pub(crate) static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
     RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 #[inline]
@@ -269,7 +271,8 @@ pub unsafe fn install_idt(idt_ptr: *mut Idt) {
 
         #[cfg(target_arch = "x86_64")] // TODO: x86
         {
-            (*crate::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] = idt.backup_stack_end as u64;
+            (*crate::arch::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] =
+                idt.backup_stack_end as u64;
         }
 
         let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
@@ -350,6 +353,9 @@ impl IdtEntry {
     // A function to set the offset more easily
     pub fn set_func(&mut self, func: unsafe extern "C" fn()) {
         self.set_flags(IdtFlags::PRESENT | IdtFlags::RING_0 | IdtFlags::INTERRUPT);
-        self.set_offset((crate::gdt::GDT_KERNEL_CODE as u16) << 3, func as usize);
+        self.set_offset(
+            (crate::arch::gdt::GDT_KERNEL_CODE as u16) << 3,
+            func as usize,
+        );
     }
 }

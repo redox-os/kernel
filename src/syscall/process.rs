@@ -17,14 +17,14 @@ use crate::{
 };
 
 use crate::{
-    context,
-    context::context::FdTbl,
+    context::{self, context::FdTbl},
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
         KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
     },
+    startup::Bootstrap,
     syscall::{error::*, flag::MapFlags},
-    Bootstrap, CurrentRmmArch,
+    CurrentRmmArch,
 };
 
 use super::usercopy::UserSliceWo;
@@ -261,7 +261,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     }
 }
 
-unsafe fn bootstrap_mem(bootstrap: &crate::Bootstrap) -> &'static [u8] {
+unsafe fn bootstrap_mem(bootstrap: &crate::startup::Bootstrap) -> &'static [u8] {
     unsafe {
         core::slice::from_raw_parts(
             CurrentRmmArch::phys_to_virt(bootstrap.base.base()).data() as *const u8,

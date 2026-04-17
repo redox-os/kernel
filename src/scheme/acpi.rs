@@ -1,11 +1,6 @@
-use core::{
-    convert::TryInto,
-    sync::atomic::{self, AtomicUsize},
-};
-
 use alloc::{boxed::Box, vec::Vec};
+use core::convert::TryInto;
 
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use spin::{Mutex, Once};
 use syscall::{
     data::GlobalSchemes,
@@ -30,7 +25,7 @@ use crate::syscall::{
     usercopy::UserSliceWo,
 };
 
-use super::{CallerCtx, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
+use super::{CallerCtx, HandleMap, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
 
 /// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;
@@ -48,9 +43,7 @@ enum HandleKind {
     SchemeRoot,
 }
 
-static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
-static NEXT_FD: AtomicUsize = AtomicUsize::new(0);
+static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
 
 static DATA: Once<Box<[u8]>> = Once::new();
 
@@ -116,16 +109,10 @@ impl AcpiScheme {
 
 impl KernelScheme for AcpiScheme {
     fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let fd = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
-        let mut handles_guard = HANDLES.write(token.token());
-
-        let _ = handles_guard.insert(
-            fd,
-            Handle {
-                kind: HandleKind::SchemeRoot,
-                stat: false,
-            },
-        );
+        let fd = HANDLES.write(token.token()).insert(Handle {
+            kind: HandleKind::SchemeRoot,
+            stat: false,
+        });
 
         Ok(fd)
     }
@@ -139,11 +126,7 @@ impl KernelScheme for AcpiScheme {
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         if !matches!(
-            HANDLES
-                .read(token.token())
-                .get(&id)
-                .ok_or(Error::new(EBADF))?
-                .kind,
+            HANDLES.read(token.token()).get(id)?.kind,
             HandleKind::SchemeRoot
         ) {
             return Err(Error::new(EACCES));
@@ -189,23 +172,17 @@ impl KernelScheme for AcpiScheme {
             _ => return Err(Error::new(ENOENT)),
         };
 
-        let fd = NEXT_FD.fetch_add(1, atomic::Ordering::Relaxed);
-        let mut handles_guard = HANDLES.write(token.token());
-
-        let _ = handles_guard.insert(
-            fd,
-            Handle {
-                kind: handle_kind,
-                // TODO: Redundant
-                stat: flags & O_STAT == O_STAT,
-            },
-        );
+        let fd = HANDLES.write(token.token()).insert(Handle {
+            kind: handle_kind,
+            // TODO: Redundant
+            stat: flags & O_STAT == O_STAT,
+        });
 
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         let mut handles = HANDLES.write(token.token());
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get_mut(id)?;
 
         if handle.stat {
             return Err(Error::new(EBADF));
@@ -226,7 +203,7 @@ impl KernelScheme for AcpiScheme {
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
         let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get(id)?;
 
         if handle.stat {
             return Err(Error::new(EBADF));
@@ -235,9 +212,7 @@ impl KernelScheme for AcpiScheme {
         Ok(EventFlags::empty())
     }
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        if HANDLES.write(token.token()).remove(&id).is_none() {
-            return Err(Error::new(EBADF));
-        }
+        HANDLES.write(token.token()).remove(id)?;
         Ok(())
     }
     fn kreadoff(
@@ -253,10 +228,7 @@ impl KernelScheme for AcpiScheme {
             return Ok(0);
         };
 
-        let handle = {
-            let handles = HANDLES.read(token.token());
-            *handles.get(&id).ok_or(Error::new(EBADF))?
-        };
+        let handle = *HANDLES.read(token.token()).get(id)?;
 
         if handle.stat {
             return Err(Error::new(EBADF));
@@ -301,10 +273,10 @@ impl KernelScheme for AcpiScheme {
         opaque: u64,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let Some(Handle {
+        let Handle {
             kind: HandleKind::TopLevel,
             ..
-        }) = HANDLES.read(token.token()).get(&id)
+        } = HANDLES.read(token.token()).get(id)?
         else {
             return Err(Error::new(ENOTDIR));
         };
@@ -334,7 +306,7 @@ impl KernelScheme for AcpiScheme {
     }
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let handle = handles.get(id)?;
 
         buf.copy_exactly(&match handle.kind {
             HandleKind::Rxsdt => {
