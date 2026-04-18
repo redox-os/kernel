@@ -80,13 +80,8 @@ pub fn free_contexts_try(
     CONTEXTS.try_lock(token)
 }
 
-/// Get the global free contexts
-pub fn free_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, BTreeSet<ContextRef>> {
-    CONTEXTS.lock(token)
-}
-
 // Actual context store for the scheduler
-static RUN_CONTEXTS: RwLock<L1, RunContextData> = RwLock::new(RunContextData::new());
+static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
 
 pub struct RunContextData {
     set: [VecDeque<ContextRef>; 40],
@@ -113,12 +108,8 @@ pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeS
     percpu.contexts.write(token)
 }
 
-pub fn run_contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.read(token)
-}
-
-pub fn run_contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.write(token)
+pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
+    RUN_CONTEXTS.lock(token)
 }
 
 pub fn init(token: &mut CleanLockToken) {
@@ -151,8 +142,7 @@ pub fn init(token: &mut CleanLockToken) {
 }
 
 pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
-    let mut prio = None;
-    {
+    let priority = {
         let mut context = context_lock.write(token.token());
 
         context.wake = None;
@@ -164,14 +154,10 @@ pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockTo
 
         context.enqueued = true;
 
-        prio = Some(context.prio);
-    }
+        context.prio
+    };
 
-    let mut run_queues = run_contexts_mut(token);
-
-    if let Some(priority) = prio {
-        run_queues.set[priority].push_back(ContextRef(Arc::clone(context_lock)));
-    }
+    run_contexts(token).set[priority].push_back(ContextRef(Arc::clone(context_lock)));
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -237,7 +223,7 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
-    run_contexts_mut(token.token()).set[20].push_back(run_ref);
+    run_contexts(token.token()).set[20].push_back(run_ref);
     contexts_mut(token.token()).insert(context_ref);
     context_lock.write(token.token()).enqueued = true;
 

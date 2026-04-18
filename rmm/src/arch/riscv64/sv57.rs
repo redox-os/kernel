@@ -1,0 +1,116 @@
+use core::arch::asm;
+
+use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
+
+#[derive(Clone, Copy)]
+pub struct RiscV64Sv57Arch;
+
+impl Arch for RiscV64Sv57Arch {
+    const KERNEL_SEPARATE_TABLE: bool = false;
+
+    const PAGE_SHIFT: usize = 12; // 4096 bytes
+    const PAGE_ENTRY_SHIFT: usize = 9; // 512 entries, 8 bytes each
+    const PAGE_LEVELS: usize = 5; // L0, L1, L2, L3, L4
+
+    const ENTRY_ADDRESS_WIDTH: usize = 44;
+    const ENTRY_ADDRESS_SHIFT: usize = 10;
+
+    const ENTRY_FLAG_DEFAULT_PAGE: usize = Self::ENTRY_FLAG_PRESENT | Self::ENTRY_FLAG_READONLY;
+    const ENTRY_FLAG_DEFAULT_TABLE: usize = Self::ENTRY_FLAG_PRESENT;
+    const ENTRY_FLAG_PRESENT: usize = 1 << 0;
+    const ENTRY_FLAG_READONLY: usize = 1 << 1;
+    const ENTRY_FLAG_READWRITE: usize = 3 << 1;
+    const ENTRY_FLAG_PAGE_USER: usize = 1 << 4;
+    const ENTRY_FLAG_TABLE_USER: usize = 0;
+    const ENTRY_FLAG_NO_EXEC: usize = 0;
+    const ENTRY_FLAG_EXEC: usize = 1 << 3;
+    const ENTRY_FLAG_GLOBAL: usize = 1 << 5;
+    const ENTRY_FLAG_NO_GLOBAL: usize = 0;
+    const ENTRY_FLAG_DEVICE_MEMORY: usize = 0; // FIXME use Svpbmt
+    const ENTRY_FLAG_UNCACHEABLE: usize = 0; // FIXME use Svpbmt
+    const ENTRY_FLAG_WRITE_COMBINING: usize = 0; // FIXME use Svpbmt
+
+    const PHYS_OFFSET: usize = 0xFF00_0000_0000_0000;
+
+    #[inline(always)]
+    fn invalidate(address: VirtualAddress) {
+        unsafe { asm!("sfence.vma {}", in(reg) address.data()) };
+    }
+
+    #[inline(always)]
+    fn invalidate_all() {
+        unsafe { asm!("sfence.vma") };
+    }
+
+    #[inline(always)]
+    fn table(_table_kind: TableKind) -> PhysicalAddress {
+        let satp: usize;
+        unsafe { asm!("csrr {0}, satp", out(reg) satp) };
+        PhysicalAddress::new(
+            (satp & Self::ENTRY_ADDRESS_MASK) << Self::PAGE_SHIFT, // Convert from PPN
+        )
+    }
+
+    #[inline(always)]
+    unsafe fn set_table(_table_kind: TableKind, address: PhysicalAddress) {
+        let satp = (10 << 60) | // Sv57 MODE
+            (address.data() >> Self::PAGE_SHIFT); // Convert to PPN (TODO: ensure alignment)
+        unsafe {
+            asm!("csrw satp, {0}", in(reg) satp);
+            Self::invalidate_all();
+        }
+    }
+
+    fn virt_is_valid(address: VirtualAddress) -> bool {
+        let mask = !((Self::PAGE_ADDRESS_SIZE as usize - 1) >> 1);
+        let masked = address.data() & mask;
+
+        masked == mask || masked == 0
+    }
+}
+
+const _: () = {
+    assert!(RiscV64Sv57Arch::PAGE_SIZE == 4096);
+    assert!(RiscV64Sv57Arch::PAGE_OFFSET_MASK == 0xFFF);
+    assert!(RiscV64Sv57Arch::PAGE_ADDRESS_SHIFT == 57);
+    assert!(RiscV64Sv57Arch::PAGE_ADDRESS_SIZE == 0x0200_0000_0000_0000);
+    assert!(RiscV64Sv57Arch::PAGE_ADDRESS_MASK == 0x01FF_FFFF_FFFF_F000);
+    assert!(RiscV64Sv57Arch::PAGE_ENTRY_SIZE == 8);
+    assert!(RiscV64Sv57Arch::PAGE_ENTRIES == 512);
+    assert!(RiscV64Sv57Arch::PAGE_ENTRY_MASK == 0x1FF);
+    assert!(RiscV64Sv57Arch::PAGE_NEGATIVE_MASK == 0xFE00_0000_0000_0000);
+
+    assert!(RiscV64Sv57Arch::ENTRY_ADDRESS_SIZE == 0x0000_1000_0000_0000);
+    assert!(RiscV64Sv57Arch::ENTRY_ADDRESS_MASK == 0x0000_0FFF_FFFF_FFFF);
+    assert!(RiscV64Sv57Arch::ENTRY_FLAGS_MASK == 0xFFC0_0000_0000_03FF);
+
+    assert!(RiscV64Sv57Arch::PHYS_OFFSET == 0xFF00_0000_0000_0000);
+};
+
+#[cfg(test)]
+mod tests {
+    use super::RiscV64Sv57Arch;
+    use crate::Arch;
+
+    #[test]
+    fn is_canonical() {
+        use super::VirtualAddress;
+
+        fn yes(address: usize) {
+            assert!(RiscV64Sv57Arch::virt_is_valid(VirtualAddress::new(address)));
+        }
+        fn no(address: usize) {
+            assert!(!RiscV64Sv57Arch::virt_is_valid(VirtualAddress::new(
+                address
+            )));
+        }
+
+        yes(0xFF00_0000_1337_1337);
+        yes(0xFFFF_FFFF_FFFF_FFFF);
+        yes(0x0000_0000_0000_0042);
+        yes(0x00FF_FFFF_FFFF_FFFF);
+        no(0x1337_0000_0000_0000);
+        no(0x1337_8000_0000_0000);
+        no(0x0F00_0000_0000_0000);
+    }
+}

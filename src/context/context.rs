@@ -13,7 +13,6 @@ use crate::{
     context::{
         self, arch,
         file::{FileDescriptor, LockedFileDescription},
-        run_contexts_mut,
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
