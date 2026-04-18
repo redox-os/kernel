@@ -1,7 +1,7 @@
 ENTRY(kstart)
 OUTPUT_FORMAT("elf64-littleriscv", "elf64-littleriscv", "elf64-littleriscv" )
 
-KERNEL_OFFSET = 0xFFFFFF0000000000;
+KERNEL_OFFSET = 0xFFFFFFFF80000000;
 
 SECTIONS {
     . = KERNEL_OFFSET;
@@ -11,7 +11,7 @@ SECTIONS {
     /* Force the zero page to be part of a segment by creating a
      * dummy section in the zero page.
      * Linker will map the segment with the lowest vaddr value at
-     * 0xFFFFFF0000000000 even if the segment has a higher vaddr.
+     * 0xFFFFFFFF80000000 even if the segment has a higher vaddr.
      * As such without the zero page being part of a segment, the
      * kernel would be loaded at an offset from the expected
      * location. As the redox kernel is not currently relocatable,
