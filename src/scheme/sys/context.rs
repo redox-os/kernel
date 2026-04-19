@@ -47,7 +47,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                             context::memory::Provider::Allocated { .. } => {
                                 private_memory += info.page_count() * crate::memory::PAGE_SIZE
                             }
-                            // Excluded because it is not allocable by user, whether if
+                            // Excluded because it is not allocable by user, whether
                             // this region is counted toward usable memory remain unknown
                             context::memory::Provider::PhysBorrowed { .. } => {}
                             _ => shared_memory += info.page_count() * crate::memory::PAGE_SIZE,
