@@ -69,19 +69,14 @@ x86_64:relibc:
   stage: test
   needs: [x86_64]
   script:
-    - mkdir -p target/${ARCH}
-    - redoxer env make BUILD=target/${ARCH}
     - redoxer pkg relibc-tests-bins
-    - mkdir -p target/${TARGET}/sysroot/usr/lib/boot
-    - cp target/${ARCH}/kernel target/${TARGET}/sysroot/usr/lib/boot/
-    - (cd target/${TARGET}/sysroot/root/relibc-tests && mv expected/bins_dynamic/* expected/)
-    # TODO: pkg command need to be polished
-    - rm -rf target/${TARGET}/sysroot/{etc,pkg,include,share}
-    - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ sh -c "cd /root/relibc-tests && sh -e ./run.sh"
-  # Not guaranteed to succeed all of them
+    - mkdir -p target/${TARGET}/sysroot/usr/lib/boot target/${TARGET}/root
+    - redoxer env make BUILD=target/${TARGET}/sysroot/usr/lib/boot
+    - (cd target/${TARGET}/sysroot && mv home/user/relibc-tests/* root/)
+    - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ make run
+  # It is fine if failing sometimes
   allow_failure: true
   variables:
-    ARCH: "x86_64"
     TARGET: "x86_64-unknown-redox"
 
 profiling-compile:
