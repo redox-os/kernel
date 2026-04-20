@@ -27,7 +27,10 @@ pub unsafe fn init_early(dtb: &Fdt) {
                     serial_port.init(false);
                 }
                 Some(SerialKind::Pl011(serial_port))
-            } else if compatible.contains("ns16550a") | compatible.contains("snps,dw-apb-uart") {
+            } else if compatible.contains("ns16550a")
+                | compatible.contains("snps,dw-apb-uart")
+                | compatible.contains("spacemit,k1-uart")
+            {
                 match reg_width_bits {
                     Some(32) => {
                         let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
