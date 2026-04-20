@@ -70,6 +70,7 @@ x86_64:relibc:
   needs: [x86_64]
   script:
     - redoxer pkg relibc-tests-bins
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
     - mkdir -p target/${TARGET}/sysroot/usr/lib/boot target/${TARGET}/root
     - redoxer env make BUILD=target/${TARGET}/sysroot/usr/lib/boot
     - (cd target/${TARGET}/sysroot && mv home/user/relibc-tests/* root/)
