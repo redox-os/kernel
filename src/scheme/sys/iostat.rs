@@ -4,7 +4,7 @@ use crate::{
         memory::{Grant, PageSpan},
     },
     memory::PAGE_SIZE,
-    percpu, scheme,
+    scheme,
     sync::CleanLockToken,
     syscall::{
         error::Result,
@@ -22,7 +22,9 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
     {
         let mut rows = Vec::new();
         {
-            for context_ref in percpu::get_all_contexts(token.downgrade()) {
+            let mut contexts = context::contexts(token.downgrade());
+            let (contexts, mut token) = contexts.token_split();
+            for context_ref in contexts.iter().filter_map(|x| x.upgrade()) {
                 let mut current = context_ref.read(token.token());
                 let (context, mut token) = current.token_split();
                 rows.push((

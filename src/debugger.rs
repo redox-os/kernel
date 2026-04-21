@@ -1,5 +1,5 @@
 use crate::{
-    context::{context::SyscallFrame, Context, ContextLock},
+    context::{context::SyscallFrame, contexts, Context, ContextLock},
     memory::{
         get_page_info, the_zeroed_frame, Frame, RefCount, RmmA, RmmArch, TableKind, PAGE_SIZE,
     },
@@ -20,154 +20,157 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
 
     let old_table = RmmA::table(TableKind::User);
 
-    let contexts = crate::percpu::get_all_contexts(token.downgrade());
-    for context_arc in contexts.iter() {
-        if target_id.map_or(false, |target_id| Arc::as_ptr(&context_arc) != target_id) {
-            continue;
-        }
-        let context = context_arc.read(token.token());
-        println!("{:p}: {}", Arc::as_ptr(&context_arc), context.name);
+    {
+        let mut contexts = contexts(token.downgrade());
+        let (contexts, mut token) = contexts.token_split();
+        for context_arc in contexts.iter().filter_map(|x| x.upgrade()) {
+            if target_id.map_or(false, |target_id| Arc::as_ptr(&context_arc) != target_id) {
+                continue;
+            }
+            let context = context_arc.read(token.token());
+            println!("{:p}: {}", Arc::as_ptr(&context_arc), context.name);
 
-        let mut mark_frame_use = |frame| {
-            tree.entry(frame).or_insert((0, false)).0 += 1;
-        };
+            let mut mark_frame_use = |frame| {
+                tree.entry(frame).or_insert((0, false)).0 += 1;
+            };
 
-        match &context.syscall_head {
-            SyscallFrame::Free(head) => mark_frame_use(head.get()),
-            SyscallFrame::Used { _frame: head } => mark_frame_use(*head),
-            SyscallFrame::Dummy => {}
-        }
-        match &context.syscall_tail {
-            SyscallFrame::Free(tail) => mark_frame_use(tail.get()),
-            SyscallFrame::Used { _frame: tail } => mark_frame_use(*tail),
-            SyscallFrame::Dummy => {}
-        }
+            match &context.syscall_head {
+                SyscallFrame::Free(head) => mark_frame_use(head.get()),
+                SyscallFrame::Used { _frame: head } => mark_frame_use(*head),
+                SyscallFrame::Dummy => {}
+            }
+            match &context.syscall_tail {
+                SyscallFrame::Free(tail) => mark_frame_use(tail.get()),
+                SyscallFrame::Used { _frame: tail } => mark_frame_use(*tail),
+                SyscallFrame::Dummy => {}
+            }
 
-        if let Some(sig) = &context.sig {
-            mark_frame_use(sig.proc_control.get());
-            mark_frame_use(sig.thread_control.get());
-        }
+            if let Some(sig) = &context.sig {
+                mark_frame_use(sig.proc_control.get());
+                mark_frame_use(sig.thread_control.get());
+            }
 
-        // TODO: Lock ordering violation
-        let mut token = unsafe { CleanLockToken::new() };
+            // TODO: Lock ordering violation
+            let mut token = unsafe { CleanLockToken::new() };
 
-        // Switch to context page table to ensure syscall debug and stack dump will work
-        if let Some(ref space) = context.addr_space {
-            let was_new = spaces.insert(
-                space
-                    .acquire_read(token.downgrade())
-                    .table
-                    .utable
-                    .table()
-                    .phys()
-                    .data(),
-            );
-            unsafe {
-                RmmA::set_table(
-                    TableKind::User,
+            // Switch to context page table to ensure syscall debug and stack dump will work
+            if let Some(ref space) = context.addr_space {
+                let was_new = spaces.insert(
                     space
                         .acquire_read(token.downgrade())
                         .table
                         .utable
                         .table()
-                        .phys(),
+                        .phys()
+                        .data(),
                 );
-                #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
-                check_page_table_consistency(
-                    &mut space.acquire_write(token.downgrade()),
-                    was_new,
-                    &mut tree,
+                unsafe {
+                    RmmA::set_table(
+                        TableKind::User,
+                        space
+                            .acquire_read(token.downgrade())
+                            .table
+                            .utable
+                            .table()
+                            .phys(),
+                    );
+                    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+                    check_page_table_consistency(
+                        &mut space.acquire_write(token.downgrade()),
+                        was_new,
+                        &mut tree,
+                    );
+                }
+            }
+
+            println!("status: {:?}", context.status);
+            if !context.status_reason.is_empty() {
+                println!("reason: {}", context.status_reason);
+            }
+            if let Some([a, b, c, d, e, f, g]) = context.current_syscall() {
+                println!(
+                    "syscall: {}",
+                    crate::syscall::debug::format_call(a, b, c, d, e, f, g)
                 );
             }
-        }
+            if let Some(ref addr_space) = context.addr_space {
+                let addr_space = addr_space.acquire_read(token.downgrade());
+                if !addr_space.grants.is_empty() {
+                    println!("grants:");
+                    for (base, info) in addr_space.grants.iter() {
+                        let size = info.page_count() * PAGE_SIZE;
 
-        println!("status: {:?}", context.status);
-        if !context.status_reason.is_empty() {
-            println!("reason: {}", context.status_reason);
-        }
-        if let Some([a, b, c, d, e, f, g]) = context.current_syscall() {
-            println!(
-                "syscall: {}",
-                crate::syscall::debug::format_call(a, b, c, d, e, f, g)
-            );
-        }
-        if let Some(ref addr_space) = context.addr_space {
-            let addr_space = addr_space.acquire_read(token.downgrade());
-            if !addr_space.grants.is_empty() {
-                println!("grants:");
-                for (base, info) in addr_space.grants.iter() {
-                    let size = info.page_count() * PAGE_SIZE;
+                        let flags = format_args!(
+                            "{}{}{}{}",
+                            if info.flags().has_user() { "u" } else { "k" },
+                            if info.flags().has_present() { "r" } else { "-" },
+                            if info.flags().has_write() { "w" } else { "-" },
+                            if info.flags().has_execute() { "x" } else { "-" },
+                        );
 
-                    let flags = format_args!(
-                        "{}{}{}{}",
-                        if info.flags().has_user() { "u" } else { "k" },
-                        if info.flags().has_present() { "r" } else { "-" },
-                        if info.flags().has_write() { "w" } else { "-" },
-                        if info.flags().has_execute() { "x" } else { "-" },
-                    );
+                        #[cfg(target_arch = "aarch64")]
+                        println!(
+                            "    virt 0x{:016x}:0x{:016x} {} size 0x{:08x} {:?}",
+                            base.start_address().data(),
+                            base.next_by(info.page_count() - 1).start_address().data() + 0xFFF,
+                            flags,
+                            size,
+                            info.provider,
+                        );
 
-                    #[cfg(target_arch = "aarch64")]
-                    println!(
-                        "    virt 0x{:016x}:0x{:016x} {} size 0x{:08x} {:?}",
-                        base.start_address().data(),
-                        base.next_by(info.page_count() - 1).start_address().data() + 0xFFF,
-                        flags,
-                        size,
-                        info.provider,
-                    );
+                        // FIXME riscv64 implementation
 
-                    // FIXME riscv64 implementation
+                        #[cfg(target_arch = "x86")]
+                        println!(
+                            "    virt 0x{:08x}:0x{:08x} {} size 0x{:08x} {:?}",
+                            base.start_address().data(),
+                            base.next_by(info.page_count()).start_address().data() + 0xFFF,
+                            flags,
+                            size,
+                            info.provider,
+                        );
 
-                    #[cfg(target_arch = "x86")]
-                    println!(
-                        "    virt 0x{:08x}:0x{:08x} {} size 0x{:08x} {:?}",
-                        base.start_address().data(),
-                        base.next_by(info.page_count()).start_address().data() + 0xFFF,
-                        flags,
-                        size,
-                        info.provider,
-                    );
-
-                    #[cfg(target_arch = "x86_64")]
-                    println!(
-                        "    virt 0x{:016x}:0x{:016x} {} size 0x{:08x} {:?}",
-                        base.start_address().data(),
-                        base.start_address().data() + size - 1,
-                        flags,
-                        size,
-                        info.provider,
-                    );
+                        #[cfg(target_arch = "x86_64")]
+                        println!(
+                            "    virt 0x{:016x}:0x{:016x} {} size 0x{:08x} {:?}",
+                            base.start_address().data(),
+                            base.start_address().data() + size - 1,
+                            flags,
+                            size,
+                            info.provider,
+                        );
+                    }
                 }
             }
-        }
-        if let Some(regs) = context.regs() {
-            println!("regs:");
-            regs.dump();
+            if let Some(regs) = context.regs() {
+                println!("regs:");
+                regs.dump();
 
-            #[cfg(target_arch = "aarch64")]
-            dump_stack(&*context, regs.iret.sp_el0);
+                #[cfg(target_arch = "aarch64")]
+                dump_stack(&*context, regs.iret.sp_el0);
 
-            // FIXME riscv64 implementation
+                // FIXME riscv64 implementation
 
-            #[cfg(target_arch = "x86")]
-            dump_stack(&*context, regs.iret.esp);
+                #[cfg(target_arch = "x86")]
+                dump_stack(&*context, regs.iret.esp);
 
-            #[cfg(target_arch = "x86_64")]
-            {
-                unsafe {
-                    x86::bits64::rflags::stac();
-                }
-                dump_stack(&*context, regs.iret.rsp);
-                unsafe {
-                    x86::bits64::rflags::clac();
+                #[cfg(target_arch = "x86_64")]
+                {
+                    unsafe {
+                        x86::bits64::rflags::stac();
+                    }
+                    dump_stack(&*context, regs.iret.rsp);
+                    unsafe {
+                        x86::bits64::rflags::clac();
+                    }
                 }
             }
+
+            // Switch to original page table
+            unsafe { RmmA::set_table(TableKind::User, old_table) };
+
+            println!();
         }
-
-        // Switch to original page table
-        unsafe { RmmA::set_table(TableKind::User, old_table) };
-
-        println!();
     }
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     crate::scheme::proc::foreach_addrsp(token, |addrsp, mut token| {
