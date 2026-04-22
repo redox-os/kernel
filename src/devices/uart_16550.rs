@@ -108,7 +108,7 @@ where
                 }
             }
 
-            // // Enable DTR, RTS, OUT1, and OUT2, disable loopback
+            // Enable DTR, RTS, OUT1, and OUT2, disable loopback
             (*addr_of_mut!(self.modem_ctrl)).write(0x0F.into());
             // Enable receive interrupt
             (*addr_of_mut!(self.int_en)).write(0x01.into());
