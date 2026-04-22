@@ -132,6 +132,7 @@ pub fn init(token: &mut CleanLockToken) {
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        percpu.switch_internals.set_idle_context(context_lock);
     }
 
     run_contexts(token.downgrade()).set[priority].push_back(context_ref);
