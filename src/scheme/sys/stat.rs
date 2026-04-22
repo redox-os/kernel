@@ -9,6 +9,7 @@ use crate::{
     time::START,
 };
 use alloc::{string::String, vec::Vec};
+use lfll::List;
 
 /// Get the sys:stat data as displayed to the user.
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
@@ -77,11 +78,10 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     let mut blocked = 0;
 
     let statuses = {
-        let mut contexts = contexts(token.downgrade());
-        let (contexts, mut token) = contexts.token_split();
+        let mut contexts = contexts();
         contexts
             .iter()
-            .filter_map(|x| x.upgrade())
+            .filter_map(|(_, x)| x.upgrade())
             .map(|context| context.read(token.token()).status.clone())
             .collect::<Vec<_>>()
     };

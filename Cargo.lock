@@ -112,6 +112,7 @@ dependencies = [
  "cc",
  "fdt",
  "hashbrown 0.14.5",
+ "lfll",
  "linked_list_allocator",
  "object",
  "raw-cpuid",
@@ -126,6 +127,11 @@ dependencies = [
  "toml",
  "x86",
 ]
+
+[[package]]
+name = "lfll"
+version = "0.1.0"
+source = "git+https://github.com/willnode/lfll.git#e2981c722d5d9900401f50b8bf6214a428123ccd"
 
 [[package]]
 name = "linked_list_allocator"

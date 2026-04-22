@@ -54,10 +54,10 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         addrspace.into_drop(token);
     }
     // TODO: Should status == Status::HardBlocked be handled differently?
-    let owner = {
+    let (owner, id) = {
         let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
-        guard.owner_proc_id
+        (guard.owner_proc_id, guard.debug_id)
     };
     if let Some(owner) = owner {
         event::trigger(
@@ -68,7 +68,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         );
     }
     {
-        if !context::contexts_mut(token.downgrade()).remove(&ContextRef(context_lock)) {
+        if !context::contexts().delete(&id) {
             #[cfg(feature = "drop_panic")]
             {
                 panic!("This context is not in the cpu")

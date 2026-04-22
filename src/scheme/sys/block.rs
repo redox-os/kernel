@@ -1,5 +1,6 @@
 use alloc::{string::String, vec::Vec};
 use core::fmt::Write;
+use lfll::List;
 
 use crate::{context::contexts, sync::CleanLockToken, syscall::error::Result};
 
@@ -9,9 +10,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let mut rows = Vec::new();
         {
-            let mut contexts = contexts(token.downgrade());
-            let (contexts, mut token) = contexts.token_split();
-            for context_lock in contexts.iter().filter_map(|x| x.upgrade()) {
+            let mut contexts = contexts();
+            for context_lock in contexts.iter().filter_map(|(_, x)| x.upgrade()) {
                 let context = context_lock.read(token.token());
                 rows.push((context.pid, context.name, context.status_reason));
             }

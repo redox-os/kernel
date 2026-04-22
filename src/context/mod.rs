@@ -4,9 +4,13 @@
 
 use alloc::{
     collections::{BTreeSet, VecDeque},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
-use core::num::NonZeroUsize;
+use core::{
+    cell::{OnceCell, Ref, RefCell},
+    num::NonZeroUsize,
+};
+use lfll::LockFreeDequeList;
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -72,7 +76,7 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
+static CONTEXTS: LockFreeDequeList<ContextRef> = LockFreeDequeList::uninit();
 
 // Actual context store for the scheduler
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
@@ -90,14 +94,9 @@ impl RunContextData {
     }
 }
 
-/// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L1>) -> RwLockReadGuard<'_, L2, BTreeSet<ContextRef>> {
-    CONTEXTS.read(token)
-}
-
-/// Get per cpu contexts, mutable
-pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
-    CONTEXTS.write(token)
+/// Get the global schemes list
+pub fn contexts() -> &'static LockFreeDequeList<ContextRef> {
+    &CONTEXTS
 }
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
@@ -105,8 +104,15 @@ pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextDa
 }
 
 pub fn init(token: &mut CleanLockToken) {
+    let id = crate::cpu_id();
+    if id.get() == 0 {
+        // one time initialization
+        CONTEXTS.init();
+    }
+
     let owner = None; // kmain not owned by any fd
-    let mut context = Context::new(owner).expect("failed to create kmain context");
+    let context_id = contexts().reserve_back();
+    let mut context = Context::new(owner, context_id).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
 
@@ -125,7 +131,7 @@ pub fn init(token: &mut CleanLockToken) {
     let context_lock = Arc::new(ContextLock::new(context));
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
-    contexts_mut(token.token().downgrade()).insert(context_ref.clone());
+    contexts().push_back_reserved(context_ref.clone(), context_id);
 
     unsafe {
         let percpu = PercpuBlock::current();
@@ -206,7 +212,8 @@ pub fn spawn(
 ) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let mut context = Context::new(owner_proc_id)?;
+    let context_id = contexts().reserve_back();
+    let mut context = Context::new(owner_proc_id, context_id)?;
 
     let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?), token.downgrade());
     context
@@ -221,7 +228,7 @@ pub fn spawn(
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
     run_contexts(token.token()).set[20].push_back(run_ref);
-    contexts_mut(token.token().downgrade()).insert(context_ref);
+    contexts().push_back_reserved(context_ref, context_id);
     context_lock.write(token.token()).enqueued = true;
 
     Ok(context_lock)

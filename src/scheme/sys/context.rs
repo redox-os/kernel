@@ -4,6 +4,7 @@ use alloc::{
     vec::Vec,
 };
 use core::fmt::Write;
+use lfll::List;
 
 use crate::{context, context::contexts, sync::CleanLockToken, syscall::error::Result};
 
@@ -15,9 +16,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let mut contexts = contexts(token.downgrade());
-        let (contexts, mut token) = contexts.token_split();
-        for context_ref in contexts.iter().filter_map(|x| x.upgrade()) {
+        let mut contexts = contexts();
+        for context_ref in contexts.iter().filter_map(|(_, x)| x.upgrade()) {
             let context = context_ref.read(token.token());
             let addr_space = context.addr_space().map(|a| a.clone());
 
@@ -36,7 +36,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
             let heap = match addr_space {
                 Ok(addr_space) => {
-                    let addr_space_guard = addr_space.acquire_read(token.token());
+                    let addr_space_guard = addr_space.acquire_read(token.downgrade());
                     let mut private_memory = 0;
                     let mut shared_memory = 0;
                     // TODO: All user programs must have some grant in order for executable memory to even

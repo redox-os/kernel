@@ -15,6 +15,7 @@ use core::{
     hint, mem,
     sync::atomic::Ordering,
 };
+use lfll::List;
 use syscall::PtraceFlags;
 
 use super::ContextRef;
@@ -178,9 +179,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     {
         let current_context = context::current();
 
-        let mut contexts_guard = contexts(token.downgrade());
-        let (context, mut token) = contexts_guard.token_split();
-        for context_ref in context.iter().filter_map(|r| r.upgrade()) {
+        let mut context = contexts();
+        for context_ref in context.iter().filter_map(|(_, r)| r.upgrade()) {
             if Arc::ptr_eq(&context_ref, &current_context) {
                 continue;
             }
