@@ -213,7 +213,6 @@ pub fn diag_uart_range<'a>(
 ) -> Option<(PhysicalAddress, usize, Option<usize>, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();
-    info!("{:?}", uart_node.name);
     let skip_init = uart_node.property("skip-init").is_some();
     let cts_event_walkaround = uart_node.property("cts-event-walkaround").is_some();
     let compatible = uart_node.property("compatible")?.as_str()?;
@@ -224,7 +223,7 @@ pub fn diag_uart_range<'a>(
     let reg_width_bits = uart_node
         .property("reg-io-width")
         .and_then(|w| w.as_usize())
-        .map(|w_byte| w_byte * 8);
+        .and_then(|w_byte| w_byte.checked_mul(8));
 
     Some((
         PhysicalAddress::new(address),

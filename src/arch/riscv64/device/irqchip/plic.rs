@@ -155,8 +155,7 @@ impl InterruptController for Plic {
                      parent,
                      parent_interrupt,
                  }| {
-                    *parent == hlic_ic_idx
-                        && parent_interrupt.is_some_and(|irq| irq == IrqCell::L1(9))
+                    *parent == hlic_ic_idx && matches!(parent_interrupt, Some(IrqCell::L1(9)))
                     // Supervisor external int
                 },
             )
@@ -181,7 +180,6 @@ impl InterruptController for Plic {
     }
 
     fn irq_enable(&mut self, irq_num: u32) {
-        trace!("plic irq enable: {}", irq_num);
         assert!(irq_num > 0 && irq_num as usize <= self.ndev);
         let regs = unsafe { self.regs.as_mut().unwrap() };
         regs.set_priority(irq_num as usize, 1);

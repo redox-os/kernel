@@ -111,13 +111,8 @@ sys_fdstat = []
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"
 
-
 [profile.release]
 # Avoids having to define the eh_personality lang item and reduces kernel size
 panic = "abort"
-opt-level = 3
 #lto = true
 debug = "full"
-
-[profile.release.package."*"]
-opt-level = 3

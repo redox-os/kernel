@@ -100,9 +100,9 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             info!("Redox OS starting...");
             args.print();
 
-            // if let Some(dtb) = &dtb {
-            //     device::dump_fdt(&dtb);
-            // }
+            if let Some(dtb) = &dtb {
+                device::dump_fdt(&dtb);
+            }
 
             // Initialize RMM
             crate::startup::memory::init(&args, None, None);
