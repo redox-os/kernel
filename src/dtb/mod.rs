@@ -208,22 +208,27 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     }
 }
 
-pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool, bool, &'a str)> {
+pub fn diag_uart_range<'a>(
+    dtb: &'a Fdt,
+) -> Option<(PhysicalAddress, usize, Option<usize>, bool, bool, &'a str)> {
     let stdout_path = dtb.chosen().stdout()?;
     let uart_node = stdout_path.node();
     let skip_init = uart_node.property("skip-init").is_some();
     let cts_event_walkaround = uart_node.property("cts-event-walkaround").is_some();
-    let compatible = uart_node
-        .property("compatible")
-        .and_then(NodeProperty::as_str)?;
+    let compatible = uart_node.property("compatible")?.as_str()?;
 
     let mut reg = uart_node.reg()?;
     let memory = reg.next()?;
     let address = get_mmio_address(dtb, &uart_node, &memory)?;
+    let reg_width_bits = uart_node
+        .property("reg-io-width")
+        .and_then(|w| w.as_usize())
+        .and_then(|w_byte| w_byte.checked_mul(8));
 
     Some((
         PhysicalAddress::new(address),
         memory.size?,
+        reg_width_bits,
         skip_init,
         cts_event_walkaround,
         compatible,
