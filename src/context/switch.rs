@@ -178,10 +178,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let mut wakeups = Vec::new();
     {
         let current_context = context::current();
+        let idle_context = percpu.switch_internals.idle_context();
 
         let mut context = contexts();
         for context_ref in context.iter().filter_map(|(_, r)| r.upgrade()) {
             if Arc::ptr_eq(&context_ref, &current_context) {
+                continue;
+            }
+            if Arc::ptr_eq(&context_ref, &idle_context) {
                 continue;
             }
             let guard = context_ref.read(token.token());
@@ -447,8 +451,14 @@ fn select_next_context(
 
         return Ok(Some(next_context_guard));
     } else {
-        // We found no other process to run.
-        Ok(None)
+        let idle_context = percpu.switch_internals.idle_context();
+        if !Arc::ptr_eq(&prev_context_lock, &idle_context) {
+            // We switch into the idle context
+            Ok(Some(unsafe { idle_context.write_arc() }))
+        } else {
+            // We found no other process to run.
+            Ok(None)
+        }
     }
 }
 
@@ -463,6 +473,8 @@ pub struct ContextSwitchPercpu {
 
     current_ctxt: RefCell<Option<Arc<ContextLock>>>,
 
+    /// The idle process.
+    idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
     pub(crate) being_sigkilled: Cell<bool>,
 }
 
@@ -473,6 +485,7 @@ impl ContextSwitchPercpu {
             switch_time: Cell::new(0),
             pit_ticks: Cell::new(0),
             current_ctxt: RefCell::new(None),
+            idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
         }
     }
@@ -512,5 +525,29 @@ impl ContextSwitchPercpu {
     /// - `new`: The new context to be set as the current context.
     pub unsafe fn set_current_context(&self, new: Arc<ContextLock>) {
         *self.current_ctxt.borrow_mut() = Some(new);
+    }
+
+    /// Sets the idle context to a new value.
+    ///
+    /// # Safety
+    /// This function is unsafe as it modifies the idle context state directly.
+    ///
+    /// # Parameters
+    /// - `new`: The new context to be set as the idle context.
+    pub unsafe fn set_idle_context(&self, new: Arc<ContextLock>) {
+        *self.idle_ctxt.borrow_mut() = Some(new);
+    }
+
+    /// Retrieves the current idle context.
+    ///
+    /// # Returns
+    /// A reference to the idle context.
+    pub fn idle_context(&self) -> Arc<ContextLock> {
+        Arc::clone(
+            self.idle_ctxt
+                .borrow()
+                .as_ref()
+                .expect("no idle context present"),
+        )
     }
 }
