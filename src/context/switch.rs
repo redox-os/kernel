@@ -8,7 +8,7 @@ use crate::{
         ArcContextLockWriteGuard, Context, ContextLock,
     },
     cpu_set::LogicalCpuId,
-    cpu_stats,
+    cpu_stats::{self, CpuState},
     percpu::PercpuBlock,
     sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
@@ -236,7 +236,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     // Update per-cpu times
     let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
     let percpu_ms = percpu_nanos / 1_000_000;
-    percpu.stats.add_time(percpu_ms);
+    let was_idle = percpu.stats.add_time(percpu_ms) == CpuState::Idle as u8;
     percpu.switch_internals.switch_time.set(switch_time);
 
     // Switch process states, TSS stack pointer, and store new context ID
@@ -255,7 +255,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             next_context.cpu_id = Some(cpu_id);
 
             // Update times
-            prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
+            if !was_idle {
+                prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
+            }
             next_context.switch_time = switch_time;
             if next_context.userspace {
                 percpu.stats.set_state(cpu_stats::CpuState::User);

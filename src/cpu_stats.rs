@@ -78,20 +78,22 @@ impl CpuStats {
         self.state.store(new_state as u8, Ordering::Relaxed);
     }
 
-    /// Increments time statistics of a CPU
+    /// Increments time statistics of a CPU, return the state is was accounting to.
     ///
     /// Which statistic is incremented depends on the [`State`] of the CPU.
     ///
     /// # Parameters
     /// * `nanos` - Number of nanoseconds to add.
     #[inline]
-    pub fn add_time(&self, nanos: u64) {
-        match self.state.load(Ordering::Relaxed) {
+    pub fn add_time(&self, nanos: u64) -> u8 {
+        let state = self.state.load(Ordering::Relaxed);
+        match state {
             val if val == CpuState::Idle as u8 => self.idle.fetch_add(nanos, Ordering::Relaxed),
             val if val == CpuState::User as u8 => self.user.fetch_add(nanos, Ordering::Relaxed),
             val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(nanos, Ordering::Relaxed),
             _ => unreachable!("all possible values are covered"),
         };
+        state
     }
 
     /// Add an IRQ event to both the global count and the CPU that handled it.
