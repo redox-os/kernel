@@ -560,6 +560,17 @@ impl<L: Level, T> RwLock<L, T> {
             rwlock: self.clone(),
         }
     }
+
+    // Unsafe due to not using token, currently required by context::switch
+    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
+        let Some(guard) = self.inner.try_write() else {
+            return None;
+        };
+        core::mem::forget(guard);
+        Some(ArcRwLockWriteGuard {
+            rwlock: self.clone(),
+        })
+    }
 }
 
 /// RAII structure used to release the exclusive write access of a lock when dropped

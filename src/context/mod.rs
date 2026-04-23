@@ -7,7 +7,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use lfll::LockFreeDequeList;
+use lfll::{List, LockFreeDequeList};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -94,6 +94,10 @@ impl RunContextData {
     pub fn push_back(&self, prio: usize, ctx: ContextRef) {
         self.len[prio].fetch_add(1, Ordering::Relaxed);
         self.set[prio].push_back(ctx);
+    }
+    pub fn pop_front(&self, prio: usize) -> Option<&ContextRef> {
+        self.len[prio].fetch_sub(1, Ordering::Relaxed);
+        self.set[prio].pop_front().map(|x| x.1)
     }
     pub fn total(&self) -> usize {
         let mut sum = 0;

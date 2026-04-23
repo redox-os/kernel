@@ -191,7 +191,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             if Arc::ptr_eq(&context_ref, &idle_context) {
                 continue;
             }
-            let guard = context_ref.read(token.token());
+            let Some(guard) = context_ref.try_read(token.token()) else {
+                continue;
+            };
             if guard.status.is_soft_blocked() {
                 if let Some(wake) = guard.wake {
                     if switch_time >= wake {
@@ -367,7 +369,6 @@ fn select_next_context(
             break 'priority;
         }
 
-        let contexts = &contexts_data.set[i];
         let contexts_len = contexts_data.len[i].load(Ordering::Relaxed);
 
         if contexts_len == 0 {
@@ -389,8 +390,8 @@ fn select_next_context(
         }
 
         for _ in 0..contexts_len {
-            let next_context_lock = match contexts.pop_front() {
-                Some((_, lock)) => match lock.upgrade() {
+            let next_context_lock = match contexts_data.pop_front(i) {
+                Some(lock) => match lock.upgrade() {
                     Some(new_lock) => new_lock,
                     None => {
                         skipped_contexts += 1;
@@ -401,11 +402,26 @@ fn select_next_context(
             };
 
             if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
-                contexts.push_back(ContextRef(Arc::clone(&next_context_lock)));
+                contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
                 continue;
             }
+            let mut next_context_guard = unsafe {
+                let Some(next_context_guard) = next_context_lock.try_write_arc() else {
+                    contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
+                    continue;
+                };
 
-            let mut next_context_guard = unsafe { next_context_lock.write_arc() };
+                // make sure it is accessible. TODO: pass this to switch_to?
+                if let Some(addr_space) = &next_context_guard.addr_space {
+                    let mut token = CleanLockToken::new();
+                    let Some(next_context_guard) = addr_space.inner.try_read(token.token()) else {
+                        contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
+                        continue;
+                    };
+                }
+                next_context_guard
+            };
+
             next_context_guard.enqueued = false;
 
             if !next_context_guard.status.is_runnable() {
@@ -427,7 +443,7 @@ fn select_next_context(
                 balance[i] -= SCHED_PRIO_TO_WEIGHT[20];
                 break 'priority;
             } else {
-                contexts.push_back(ContextRef(Arc::clone(&next_context_lock)));
+                contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
                 next_context_guard.enqueued = true;
                 skipped_contexts += 1;
 
