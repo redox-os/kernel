@@ -10,7 +10,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let mut rows = Vec::new();
         {
-            let mut contexts = contexts();
+            let contexts = contexts();
             for context_lock in contexts.iter().filter_map(|(_, x)| x.upgrade()) {
                 let context = context_lock.read(token.token());
                 rows.push((context.pid, context.name, context.status_reason));

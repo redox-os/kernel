@@ -3,7 +3,7 @@ use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::Ordering,
 };
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 

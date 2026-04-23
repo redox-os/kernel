@@ -3,7 +3,10 @@
 //! handling process states and synchronization.
 
 use crate::{
-    context::{self, arch, contexts, run_contexts, ArcContextLockWriteGuard, Context, ContextLock},
+    context::{
+        self, arch, contexts, run_contexts, ArcContextLockWriteGuard, Context, ContextLock,
+        PRIO_CAP,
+    },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
     percpu::PercpuBlock,
@@ -180,7 +183,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         let current_context = context::current();
         let idle_context = percpu.switch_internals.idle_context();
 
-        let mut context = contexts();
+        let context = contexts();
         for context_ref in context.iter().filter_map(|(_, r)| r.upgrade()) {
             if Arc::ptr_eq(&context_ref, &current_context) {
                 continue;
@@ -334,8 +337,7 @@ fn select_next_context(
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
-    let mut contexts_data = run_contexts(token.token());
-    let contexts_list = &mut contexts_data.set;
+    let mut contexts_data = run_contexts();
     let mut balance = percpu.balance.get();
     let mut i = percpu.last_queue.get() % 40;
 
@@ -346,11 +348,11 @@ fn select_next_context(
     let mut total_iters = 0;
     let mut next_context_guard_opt = None;
 
-    let total_contexts: usize = contexts_list.iter().map(|q| q.len()).sum();
+    let total_contexts: usize = contexts_data.total();
     let mut skipped_contexts = 0;
 
     'priority: loop {
-        i = (i + 1) % 40;
+        i = (i + 1) % PRIO_CAP;
         total_iters += 1;
 
         // The least prioritised queue takes <5000 iters to build up
@@ -365,11 +367,10 @@ fn select_next_context(
             break 'priority;
         }
 
-        let contexts = contexts_list
-            .get_mut(i)
-            .expect("i should be between [0, 39]!");
+        let contexts = &contexts_data.set[i];
+        let contexts_len = contexts_data.len[i].load(Ordering::Relaxed);
 
-        if contexts.is_empty() {
+        if contexts_len == 0 {
             empty_queues += 1;
             if empty_queues >= 40 {
                 // If all queues are empty, just break out
@@ -387,10 +388,9 @@ fn select_next_context(
             continue;
         }
 
-        let len = contexts.len();
-        for _ in 0..len {
+        for _ in 0..contexts_len {
             let next_context_lock = match contexts.pop_front() {
-                Some(lock) => match lock.upgrade() {
+                Some((_, lock)) => match lock.upgrade() {
                     Some(new_lock) => new_lock,
                     None => {
                         skipped_contexts += 1;
@@ -445,7 +445,7 @@ fn select_next_context(
         // Send the old process to the back of the line (if it is still runnable)
         if prev_context_guard.status.is_runnable() {
             let prio = prev_context_guard.prio;
-            contexts_list[prio].push_back(ContextRef(Arc::clone(&prev_context_lock)));
+            contexts_data.push_back(prio, ContextRef(Arc::clone(&prev_context_lock)));
             prev_context_guard.enqueued = true;
         }
 

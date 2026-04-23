@@ -9,7 +9,6 @@ use crate::{
         context::SyscallFrame,
         file::{FileDescription, FileDescriptor, InternalFlags},
         memory::{AddrSpace, Grant, PageSpan},
-        ContextRef,
     },
     event,
     sync::{CleanLockToken, RwLock},

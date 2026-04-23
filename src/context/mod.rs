@@ -2,13 +2,10 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{
-    collections::{BTreeSet, VecDeque},
-    sync::{Arc, Weak},
-};
+use alloc::sync::Arc;
 use core::{
-    cell::{OnceCell, Ref, RefCell},
     num::NonZeroUsize,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 use lfll::LockFreeDequeList;
 
@@ -17,10 +14,7 @@ use crate::{
     cpu_set::LogicalCpuSet,
     memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L4,
-    },
+    sync::{ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, L0, L1, L2, L4},
     syscall::error::Result,
 };
 
@@ -79,18 +73,34 @@ pub use self::arch::empty_cr3;
 static CONTEXTS: LockFreeDequeList<ContextRef> = LockFreeDequeList::uninit();
 
 // Actual context store for the scheduler
-static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
+static RUN_CONTEXTS: RunContextData = RunContextData::new();
+
+const PRIO_CAP: usize = 40;
 
 pub struct RunContextData {
-    set: [VecDeque<ContextRef>; 40],
+    set: [LockFreeDequeList<ContextRef>; PRIO_CAP],
+    len: [AtomicUsize; PRIO_CAP],
 }
 
 impl RunContextData {
     pub const fn new() -> Self {
-        const EMPTY_VEC: VecDeque<ContextRef> = VecDeque::new();
+        const EMPTY_VEC: LockFreeDequeList<ContextRef> = LockFreeDequeList::uninit();
+        const EMPTY_LEN: AtomicUsize = AtomicUsize::new(0);
         Self {
-            set: [EMPTY_VEC; 40],
+            set: [EMPTY_VEC; PRIO_CAP],
+            len: [EMPTY_LEN; PRIO_CAP],
         }
+    }
+    pub fn push_back(&self, prio: usize, ctx: ContextRef) {
+        self.len[prio].fetch_add(1, Ordering::Relaxed);
+        self.set[prio].push_back(ctx);
+    }
+    pub fn total(&self) -> usize {
+        let mut sum = 0;
+        for i in 0..PRIO_CAP {
+            sum += self.len[i].load(Ordering::Relaxed);
+        }
+        sum
     }
 }
 
@@ -99,15 +109,18 @@ pub fn contexts() -> &'static LockFreeDequeList<ContextRef> {
     &CONTEXTS
 }
 
-pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.lock(token)
+pub fn run_contexts() -> &'static RunContextData {
+    &RUN_CONTEXTS
 }
 
-pub fn init(token: &mut CleanLockToken) {
+pub fn init(_token: &mut CleanLockToken) {
     let id = crate::cpu_id();
     if id.get() == 0 {
         // one time initialization
         CONTEXTS.init();
+        for runc in &RUN_CONTEXTS.set {
+            runc.init();
+        }
     }
 
     let owner = None; // kmain not owned by any fd
@@ -140,8 +153,7 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
-
-    run_contexts(token.downgrade()).set[priority].push_back(context_ref);
+    run_contexts().push_back(priority, context_ref);
 }
 
 pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
@@ -160,7 +172,7 @@ pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockTo
         context.prio
     };
 
-    run_contexts(token).set[priority].push_back(ContextRef(Arc::clone(context_lock)));
+    run_contexts().push_back(priority, ContextRef(Arc::clone(context_lock)));
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -228,7 +240,7 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
-    run_contexts(token.token()).set[20].push_back(run_ref);
+    run_contexts().push_back(20, run_ref);
     contexts().push_back_reserved(context_ref, context_id);
     context_lock.write(token.token()).enqueued = true;
 

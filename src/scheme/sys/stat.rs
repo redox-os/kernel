@@ -78,7 +78,7 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     let mut blocked = 0;
 
     let statuses = {
-        let mut contexts = contexts();
+        let contexts = contexts();
         contexts
             .iter()
             .filter_map(|(_, x)| x.upgrade())
