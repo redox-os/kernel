@@ -7,7 +7,7 @@ use alloc::{
 use lfll::{List, LockFreeDequeList};
 
 use crate::{
-    context::{self, ContextLock, PreemptGuardL2},
+    context::{self, is_current, ContextLock, PreemptGuardL2},
     sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
@@ -28,25 +28,17 @@ impl WaitCondition {
         self.notify_locked(token.token().downgrade())
     }
 
+    // Notify as though a signal woke the waiters
     pub fn notify_locked(&self, mut token: LockToken<'_, L1>) -> usize {
         let contexts = &self.contexts;
         let mut len = 0;
         while let Some((_, context_weak)) = contexts.pop_front() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write(token.token()).unblock();
-            }
-            len += 1;
-        }
-        len
-    }
-
-    // Notify as though a signal woke the waiters
-    pub unsafe fn notify_signal(&self, mut token: LockToken<'_, L1>) -> usize {
-        let contexts = &self.contexts;
-        let mut len = 0;
-        for (_, context_weak) in contexts.iter() {
-            if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write(token.token()).unblock();
+                if let Some(mut ctx) = context_ref.try_write(token.token()) {
+                    ctx.unblock();
+                } else {
+                    contexts.push_back(Weak::clone(context_weak));
+                }
             }
             len += 1;
         }
@@ -129,7 +121,7 @@ impl WaitCondition {
 
     fn inner_drop(&mut self, token: LockToken<'_, L1>) {
         unsafe {
-            self.notify_signal(token);
+            self.notify_locked(token);
         }
     }
 }
