@@ -8,7 +8,7 @@ use crate::{
         ArcContextLockWriteGuard, Context, ContextLock,
     },
     cpu_set::LogicalCpuId,
-    cpu_stats,
+    cpu_stats::{self, CpuState},
     percpu::PercpuBlock,
     sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
@@ -208,11 +208,23 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     let cpu_id = crate::cpu_id();
 
-    let mut switch_context_opt =
-        match select_next_context(token, percpu, cpu_id, switch_time, &mut prev_context_guard) {
-            Ok(opt) => opt,
-            Err(early_ret) => return early_ret,
-        };
+    // Update per-cpu times
+    let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
+    let percpu_ms = percpu_nanos / 1_000_000;
+    let was_idle = percpu.stats.add_time(percpu_ms) == CpuState::Idle as u8;
+    percpu.switch_internals.switch_time.set(switch_time);
+
+    let mut switch_context_opt = match select_next_context(
+        token,
+        percpu,
+        cpu_id,
+        switch_time,
+        was_idle,
+        &mut prev_context_guard,
+    ) {
+        Ok(opt) => opt,
+        Err(early_ret) => return early_ret,
+    };
 
     if switch_context_opt.is_none() {
         let mut this_contexts = contexts_mut(token.token());
@@ -233,12 +245,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         }
     }
 
-    // Update per-cpu times
-    let percpu_nanos = switch_time.saturating_sub(percpu.switch_internals.switch_time.get()) as u64;
-    let percpu_ms = percpu_nanos / 1_000_000;
-    percpu.stats.add_time(percpu_ms);
-    percpu.switch_internals.switch_time.set(switch_time);
-
     // Switch process states, TSS stack pointer, and store new context ID
     match switch_context_opt {
         Some(mut next_context_guard) => {
@@ -255,7 +261,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             next_context.cpu_id = Some(cpu_id);
 
             // Update times
-            prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
+            if !was_idle {
+                prev_context.cpu_time += switch_time.saturating_sub(prev_context.switch_time);
+            }
             next_context.switch_time = switch_time;
             if next_context.userspace {
                 percpu.stats.set_state(cpu_stats::CpuState::User);
@@ -341,6 +349,7 @@ fn select_next_context(
     percpu: &PercpuBlock,
     cpu_id: LogicalCpuId,
     switch_time: u128,
+    was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
     let mut contexts_data = run_contexts(token.token());
@@ -420,6 +429,12 @@ fn select_next_context(
             if !next_context_guard.status.is_runnable() {
                 skipped_contexts += 1;
                 continue; // Lazy removal of blocked contexts
+            }
+
+            // Do not spawn the kernel (the idle context) again after idling,
+            // otherwise the next switch will idling again
+            if was_idle && !next_context_guard.userspace {
+                continue;
             }
 
             // Is this context runnable on this CPU?
