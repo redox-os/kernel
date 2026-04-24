@@ -9,7 +9,7 @@ pub struct Rsdp {
     _oemid: [u8; 6],
     revision: u8,
     rsdt_address: u32,
-    _length: u32,
+    length: u32,
     xsdt_address: u64,
     _extended_checksum: u8,
     _reserved: [u8; 3],
@@ -18,8 +18,26 @@ pub struct Rsdp {
 impl Rsdp {
     pub unsafe fn get_rsdp(already_supplied_rsdp: Option<*const u8>) -> Option<Rsdp> {
         already_supplied_rsdp.map(|rsdp_ptr| {
-            // TODO: Validate
-            unsafe { *(rsdp_ptr as *const Rsdp) }
+            let rsdp = unsafe { *(rsdp_ptr as *const Rsdp) };
+
+            assert_eq!(rsdp.signature, *b"RSD PTR ", "RSDP signature check failed");
+
+            let mut sum: u8 = 0;
+            for i in 0..20 {
+                sum = sum.wrapping_add(unsafe { rsdp_ptr.add(i).read() });
+            }
+            assert_eq!(sum, 0, "RSDP checksum failed");
+
+
+            if rsdp.revision >= 2 {
+                let mut sum: u8 = 0;
+                for i in 0..rsdp.length as usize {
+                    sum = sum.wrapping_add(unsafe { rsdp_ptr.add(i).read() });
+                }
+                assert_eq!(sum, 0, "XSDP checksum failed");
+            }
+
+            rsdp
         })
     }
 
