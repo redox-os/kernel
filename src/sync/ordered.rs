@@ -206,7 +206,7 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
 }
 
 #[cfg(feature = "busy_panic")]
-pub const DEADLOCK_SPIN_CAP: usize = 1000;
+pub const DEADLOCK_SPIN_CAP: usize = 5000;
 
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
