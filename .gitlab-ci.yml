@@ -71,7 +71,7 @@ x86_64:relibc:
   script:
     - redoxer pkg relibc-tests-bins
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - mkdir -p target/${TARGET}/sysroot/usr/lib/boot target/${TARGET}/root
+    - mkdir -p target/${TARGET}/sysroot/{usr/lib/boot,root} target/${TARGET}/root
     - redoxer env make BUILD=target/${TARGET}/sysroot/usr/lib/boot
     - (cd target/${TARGET}/sysroot && mv home/user/relibc-tests/* root/)
     - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ make run
