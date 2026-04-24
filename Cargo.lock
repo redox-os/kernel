@@ -131,7 +131,7 @@ dependencies = [
 [[package]]
 name = "lfll"
 version = "0.1.0"
-source = "git+https://github.com/willnode/lfll.git#97d35a86f955d34f2a53112c247dfbb20f5c1164"
+source = "git+https://github.com/willnode/lfll.git#d18844d3aba86188549566ab418ed9790b7f816a"
 
 [[package]]
 name = "linked_list_allocator"

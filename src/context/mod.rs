@@ -70,7 +70,7 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: LockFreeDequeList<ContextRef> = LockFreeDequeList::uninit();
+static CONTEXTS: LockFreeDequeList<ContextRef> = LockFreeDequeList::new();
 
 // Actual context store for the scheduler
 static RUN_CONTEXTS: RunContextData = RunContextData::new();
@@ -84,7 +84,7 @@ pub struct RunContextData {
 
 impl RunContextData {
     pub const fn new() -> Self {
-        const EMPTY_VEC: LockFreeDequeList<ContextRef> = LockFreeDequeList::uninit();
+        const EMPTY_VEC: LockFreeDequeList<ContextRef> = LockFreeDequeList::new();
         const EMPTY_LEN: AtomicUsize = AtomicUsize::new(0);
         Self {
             set: [EMPTY_VEC; PRIO_CAP],
@@ -119,13 +119,6 @@ pub fn run_contexts() -> &'static RunContextData {
 
 pub fn init(_token: &mut CleanLockToken) {
     let id = crate::cpu_id();
-    if id.get() == 0 {
-        // one time initialization
-        CONTEXTS.init();
-        for runc in &RUN_CONTEXTS.set {
-            runc.init();
-        }
-    }
 
     let owner = None; // kmain not owned by any fd
     let context_id = contexts().reserve_back();
