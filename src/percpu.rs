@@ -7,11 +7,11 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
 
-use rmm::Arch;
+use rmm::{Arch, PageMapperTableDeferred};
 use syscall::PtraceFlags;
 
 use crate::{
-    arch::device::ArchPercpuMisc,
+    arch::{self, device::ArchPercpuMisc},
     context::{empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu},
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
@@ -30,6 +30,7 @@ pub struct PercpuBlock {
 
     pub current_addrsp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
     pub new_addrsp_tmp: Cell<Option<Arc<AddrSpaceWrapper>>>,
+    pub switch_addrsp_tmp: Cell<Option<PageMapperTableDeferred<arch::CurrentRmmArch>>>,
     pub wants_tlb_shootdown: AtomicBool,
     pub balance: Cell<[usize; 40]>,
     pub last_queue: Cell<usize>,
@@ -132,6 +133,7 @@ pub unsafe fn switch_arch_hook() {
 
         let cur_addrsp = percpu.current_addrsp.borrow();
         let next_addrsp = percpu.new_addrsp_tmp.take();
+        let switch_addrsp = percpu.switch_addrsp_tmp.take();
 
         let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
             (Some(p), Some(n)) => Arc::ptr_eq(p, n),
@@ -160,20 +162,14 @@ pub unsafe fn switch_arch_hook() {
 
         drop(cur_addrsp);
 
-        // Tell future TLB shootdown handlers that old_addrsp_tmp is no longer the current address
-        // space.
-        *percpu.current_addrsp.borrow_mut() = next_addrsp;
-
-        match &*percpu.current_addrsp.borrow() {
-            Some(next_addrsp) => {
+        match (next_addrsp, switch_addrsp) {
+            (Some(next_addrsp), Some(mapper)) => {
                 next_addrsp.used_by.atomic_set(percpu.cpu_id);
-                let mut token = CleanLockToken::new();
-                let mut token = token.token();
-                let next = next_addrsp.acquire_read(token.downgrade());
-
-                next.table.utable.make_current();
+                *percpu.current_addrsp.borrow_mut() = Some(next_addrsp);
+                mapper.make_current();
             }
             _ => {
+                *percpu.current_addrsp.borrow_mut() = None;
                 crate::memory::RmmA::set_table(rmm::TableKind::User, empty_cr3());
             }
         }
@@ -186,6 +182,7 @@ impl PercpuBlock {
             switch_internals: ContextSwitchPercpu::default(),
             current_addrsp: RefCell::new(None),
             new_addrsp_tmp: Cell::new(None),
+            switch_addrsp_tmp: Cell::new(None),
             wants_tlb_shootdown: AtomicBool::new(false),
             balance: Cell::new([0; 40]),
             last_queue: Cell::new(39),

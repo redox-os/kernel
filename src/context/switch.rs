@@ -19,6 +19,7 @@ use core::{
     sync::atomic::Ordering,
 };
 use lfll::List;
+use rmm::PageMapperTableDeferred;
 use syscall::PtraceFlags;
 
 use super::ContextRef;
@@ -27,6 +28,8 @@ enum UpdateResult {
     CanSwitch,
     Skip,
 }
+
+type SwitchMapper = Option<PageMapperTableDeferred<crate::arch::CurrentRmmArch>>;
 
 // A simple geometric series where value[i] ~= value[i - 1] * 1.25
 const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
@@ -234,7 +237,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     // Switch process states, TSS stack pointer, and store new context ID
     match switch_context_opt {
-        Some(mut next_context_guard) => {
+        Some((mut next_context_guard, addr_space)) => {
             // Update context states and prepare for the switch.
             let prev_context = &mut *prev_context_guard;
             let next_context = &mut *next_context_guard;
@@ -309,6 +312,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 .set(next_context.being_sigkilled);
 
             unsafe {
+                percpu.switch_addrsp_tmp.set(addr_space);
                 arch::switch_to(prev_context, next_context);
             }
 
@@ -338,7 +342,7 @@ fn select_next_context(
     switch_time: u128,
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
-) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
+) -> Result<Option<(ArcContextLockWriteGuard, SwitchMapper)>, SwitchResult> {
     let mut contexts_data = run_contexts();
     let mut balance = percpu.balance.get();
     let mut i = percpu.last_queue.get() % 40;
@@ -405,21 +409,23 @@ fn select_next_context(
                 contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
                 continue;
             }
-            let mut next_context_guard = unsafe {
+            let (mut next_context_guard, addr_space) = unsafe {
                 let Some(next_context_guard) = next_context_lock.try_write_arc() else {
                     contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
                     continue;
                 };
 
-                // make sure it is accessible. TODO: pass this to switch_to?
+                let mut addr_space_opt = None;
+
                 if let Some(addr_space) = &next_context_guard.addr_space {
                     let mut token = CleanLockToken::new();
-                    let Some(next_context_guard) = addr_space.inner.try_read(token.token()) else {
+                    let Some(addr) = addr_space.inner.try_read(token.token()) else {
                         contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
                         continue;
                     };
+                    addr_space_opt = Some(addr.table.utable.to_table_deferred())
                 }
-                next_context_guard
+                (next_context_guard, addr_space_opt)
             };
 
             next_context_guard.enqueued = false;
@@ -433,7 +439,7 @@ fn select_next_context(
             if let UpdateResult::CanSwitch =
                 unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
             {
-                next_context_guard_opt = Some(next_context_guard);
+                next_context_guard_opt = Some((next_context_guard, addr_space));
                 balance[i] -= SCHED_PRIO_TO_WEIGHT[20];
                 break 'priority;
             } else {
@@ -450,7 +456,7 @@ fn select_next_context(
     percpu.balance.set(balance);
     percpu.last_queue.set(i);
 
-    if let Some(next_context_guard) = next_context_guard_opt {
+    if let Some((next_context_guard, addr_space)) = next_context_guard_opt {
         // We found a new process!
         // Send the old process to the back of the line (if it is still runnable)
         if prev_context_guard.status.is_runnable() {
@@ -459,12 +465,12 @@ fn select_next_context(
             prev_context_guard.enqueued = true;
         }
 
-        return Ok(Some(next_context_guard));
+        return Ok(Some((next_context_guard, addr_space)));
     } else {
         let idle_context = percpu.switch_internals.idle_context();
         if !was_idle && !Arc::ptr_eq(&prev_context_lock, &idle_context) {
             // We switch into the idle context
-            Ok(Some(unsafe { idle_context.write_arc() }))
+            Ok(Some(unsafe { (idle_context.write_arc(), None) }))
         } else {
             // We found no other process to run.
             Ok(None)

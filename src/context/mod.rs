@@ -7,7 +7,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use lfll::{List, LockFreeDequeList};
+use lfll::LockFreeDequeList;
 
 use crate::{
     context::memory::AddrSpaceWrapper,

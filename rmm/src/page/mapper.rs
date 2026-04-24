@@ -33,6 +33,10 @@ impl<A: Arch, F> PageMapper<A, F> {
         self.table().phys() == A::table(self.table_kind)
     }
 
+    pub fn to_table_deferred(&self) -> PageMapperTableDeferred<A> {
+        PageMapperTableDeferred::new(self.table_kind, self.table_addr)
+    }
+
     pub unsafe fn make_current(&self) {
         unsafe {
             A::set_table(self.table_kind, self.table_addr);
@@ -265,5 +269,26 @@ impl<A, F: core::fmt::Debug> core::fmt::Debug for PageMapper<A, F> {
             .field("frame", &self.table_addr)
             .field("allocator", &self.allocator)
             .finish()
+    }
+}
+
+pub struct PageMapperTableDeferred<A> {
+    table_kind: TableKind,
+    table_addr: PhysicalAddress,
+    _phantom: PhantomData<fn() -> A>,
+}
+
+impl<A: Arch> PageMapperTableDeferred<A> {
+    pub fn new(table_kind: TableKind, table_addr: PhysicalAddress) -> Self {
+        Self {
+            table_kind,
+            table_addr,
+            _phantom: PhantomData,
+        }
+    }
+    pub unsafe fn make_current(&self) {
+        unsafe {
+            A::set_table(self.table_kind, self.table_addr);
+        }
     }
 }
