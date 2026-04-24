@@ -11,20 +11,24 @@ use crate::{
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
-    inner: Mutex<L2, VecDeque<T>>,
+    incoming: Mutex<L2, VecDeque<T>>,
+    outgoing: Mutex<L2, VecDeque<T>>,
     pub condition: WaitCondition,
 }
 
 impl<T> WaitQueue<T> {
     pub const fn new() -> WaitQueue<T> {
         WaitQueue {
-            inner: Mutex::new(VecDeque::new()),
+            incoming: Mutex::new(VecDeque::new()),
+            outgoing: Mutex::new(VecDeque::new()),
             condition: WaitCondition::new(),
         }
     }
+
     pub fn is_currently_empty(&self, token: &mut CleanLockToken) -> bool {
-        self.inner.lock(token.token()).is_empty()
+        self.incoming.lock(token.token()).is_empty() && self.outgoing.lock(token.token()).is_empty()
     }
+
     pub fn receive_into_user(
         &self,
         buf: UserSliceWo,
@@ -33,14 +37,43 @@ impl<T> WaitQueue<T> {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         loop {
-            let inner = self.inner.lock(token.token());
-            let (mut inner, mut token) = inner.into_split();
+            let mut tmp_queue = VecDeque::new();
+            {
+                let mut out = self.outgoing.lock(token.token());
+                if !out.is_empty() {
+                    let (s1, s2) = out.as_slices();
+                    let s1_bytes = unsafe {
+                        core::slice::from_raw_parts(s1.as_ptr().cast::<u8>(), size_of_val(s1))
+                    };
+                    let s2_bytes = unsafe {
+                        core::slice::from_raw_parts(s2.as_ptr().cast::<u8>(), size_of_val(s2))
+                    };
 
-            if inner.is_empty() {
+                    let mut bytes_copied = buf.copy_common_bytes_from_slice(s1_bytes)?;
+
+                    if let Some(buf_for_s2) = buf.advance(s1_bytes.len()) {
+                        bytes_copied += buf_for_s2.copy_common_bytes_from_slice(s2_bytes)?;
+                    }
+
+                    let _ = out.drain(..bytes_copied / size_of::<T>());
+                    return Ok(bytes_copied);
+                }
+
+                // Act as outgoing.drain(..), but much faster
+                core::mem::swap(&mut *out, &mut tmp_queue);
+            }
+
+            let incoming_guard = self.incoming.lock(token.token());
+            let (mut incoming, mut split_token) = incoming_guard.into_split();
+
+            if incoming.is_empty() {
                 if block {
                     // SAFETY: Uses wait_inner because this inner is L2. It's guaranteed there's no other
                     // lock held at this point because clean token is provided from caller.
-                    if !self.condition.wait_inner(inner, reason, &mut token) {
+                    if !self
+                        .condition
+                        .wait_inner(incoming, reason, &mut split_token)
+                    {
                         return Err(Error::new(EINTR));
                     }
                     continue;
@@ -54,21 +87,15 @@ impl<T> WaitQueue<T> {
                 }
             }
 
-            let (s1, s2) = inner.as_slices();
-            let s1_bytes =
-                unsafe { core::slice::from_raw_parts(s1.as_ptr().cast::<u8>(), size_of_val(s1)) };
-            let s2_bytes =
-                unsafe { core::slice::from_raw_parts(s2.as_ptr().cast::<u8>(), size_of_val(s2)) };
+            // Act as incoming.drain(..), but much faster
+            core::mem::swap(&mut *incoming, &mut tmp_queue);
+            drop(incoming);
 
-            let mut bytes_copied = buf.copy_common_bytes_from_slice(s1_bytes)?;
-
-            if let Some(buf_for_s2) = buf.advance(s1_bytes.len()) {
-                bytes_copied += buf_for_s2.copy_common_bytes_from_slice(s2_bytes)?;
+            {
+                let mut out = self.outgoing.lock(token.token());
+                // outgoing = incoming
+                *out = tmp_queue;
             }
-
-            let _ = inner.drain(..bytes_copied / size_of::<T>());
-
-            return Ok(bytes_copied);
         }
     }
 
@@ -78,7 +105,7 @@ impl<T> WaitQueue<T> {
 
     pub fn send_locked(&self, value: T, mut token: LockToken<'_, L1>) -> usize {
         let len = {
-            let mut inner = self.inner.lock(token.token());
+            let mut inner = self.incoming.lock(token.token());
             inner.push_back(value);
             inner.len()
         };
