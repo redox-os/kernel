@@ -942,7 +942,10 @@ impl ContextHandle {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
 
                         let unpin = false;
-                        addrspace.munmap(page_span, unpin, token)?;
+                        let res = addrspace.munmap(page_span, unpin, token)?;
+                        for r in res {
+                            let _ = r.unmap(token);
+                        }
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
