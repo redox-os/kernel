@@ -170,7 +170,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     if !IS_PROFILING.load(Ordering::Relaxed) {
         return;
     }
-    if stack.iret.cs & 0b11 == 0b00 {
+    if stack.iret.cs & 0b11 == 0b11 {
         profiling.nmi_ucount.fetch_add(1, Ordering::Relaxed);
         return;
     } else if stack.iret.rflags & (1 << 9) != 0 {
