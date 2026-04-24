@@ -117,7 +117,10 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     {
         let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
-        addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false, token)?;
+        let res = addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false, token)?;
+        for r in res {
+            let _ = r.unmap(token);
+        }
     }
 
     res

@@ -975,7 +975,10 @@ impl UserInner {
                         drop(states_lock);
 
                         let unpin = true;
-                        AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
+                        let res = AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
+                        for r in res {
+                            let _ = r.unmap(token);
+                        }
                     }
                 },
                 // invalid state
@@ -1330,7 +1333,10 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         if let Some(ref addrsp) = self.addrsp
             && !self.span.is_empty()
         {
-            addrsp.munmap(self.span, unpin, token)?;
+            let res = addrsp.munmap(self.span, unpin, token)?;
+            for r in res {
+                let _ = r.unmap(token);
+            }
         }
 
         Ok(())
