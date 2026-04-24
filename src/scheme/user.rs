@@ -5,8 +5,10 @@ use alloc::{
 use core::{
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
+    ops::{Deref, DerefMut},
+    sync::atomic::Ordering,
 };
-use slab::Slab;
+use lfll::{List, LockFreeDequeList};
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -27,7 +29,7 @@ use crate::{
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
-    sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
+    sync::{CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, WaitQueue, L1},
     syscall::{
         data::{Map, StdFsCallMeta},
         error::*,
@@ -44,8 +46,8 @@ pub struct UserInner {
     context: Weak<ContextLock>,
     todo: WaitQueue<Sqe>,
 
-    // TODO: custom packed radix tree data structure
-    states: Mutex<L1, Slab<State>>,
+    // TODO: This maybe should be LockFreeSkipList to address very large states?
+    states: LockFreeDequeList<Mutex<L1, State>>,
 }
 
 enum State {
@@ -160,18 +162,23 @@ impl UserInner {
             scheme_id,
             context,
             todo: WaitQueue::new(),
-            states: Mutex::new(Slab::with_capacity(32)),
+            states: LockFreeDequeList::new(),
         }
     }
 
-    fn next_id(&self, token: &mut CleanLockToken) -> Result<u32> {
-        let idx = {
-            let mut states = self.states.lock(token.token());
-            states.insert(State::Placeholder)
-        };
+    fn next_id(&self, _token: &mut CleanLockToken) -> Result<u32> {
+        let idx = { self.states.push_back(Mutex::new(State::Placeholder)) };
 
         // TODO: implement blocking?
         u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
+    }
+
+    fn get_state_mut<'a>(
+        &'a self,
+        tag: &'a i64,
+        mut token: &'a mut CleanLockToken,
+    ) -> Option<MutexGuard<'a, L1, State>> {
+        Some(self.states.get(tag)?.lock(token.token()))
     }
 
     fn call(
@@ -222,8 +229,9 @@ impl UserInner {
                 .write(token.token())
                 .block("UserInner::call");
             {
-                let mut states = self.states.lock(token.token());
-                states[sqe.tag as usize] = State::Waiting {
+                let tag = sqe.tag as i64;
+                let state = self.get_state_mut(&tag, token);
+                *state.unwrap().deref_mut() = State::Waiting {
                     context: Arc::downgrade(&current_context),
                     fds,
                     canceling: false,
@@ -260,12 +268,10 @@ impl UserInner {
                         }
                     };
 
-                let states = self.states.lock(token.token());
-                let (mut states, mut token) = states.into_split();
-                match states.get_mut(sqe.tag as usize) {
+                match self.get_state_mut(&(sqe.tag as _), token) {
                     // invalid state
                     None => return Err(Error::new(EBADFD)),
-                    Some(o) => match mem::replace(o, State::Placeholder) {
+                    Some(mut o) => match mem::replace(o.deref_mut(), State::Placeholder) {
                         // signal wakeup while awaiting cancelation
                         State::Waiting {
                             canceling: true,
@@ -273,9 +279,10 @@ impl UserInner {
                             context,
                             fds,
                         } => {
+                            let (mut state, mut token) = o.into_split();
                             let maybe_eintr =
                                 eintr_if_sigkill(&mut callee_responsible, &mut token.token());
-                            *o = State::Waiting {
+                            *state = State::Waiting {
                                 canceling: true,
                                 callee_responsible,
                                 context,
@@ -291,7 +298,7 @@ impl UserInner {
                             // We do not want to drop the lock before blocking
                             // as if we get preempted in between we might miss a
                             // wakeup.
-                            drop(states);
+                            drop(state);
                         }
                         // spurious wakeup
                         State::Waiting {
@@ -300,10 +307,11 @@ impl UserInner {
                             context,
                             mut callee_responsible,
                         } => {
+                            let (mut state, mut token) = o.into_split();
                             let maybe_eintr = eintr_if_sigkill(&mut callee_responsible, &mut token);
                             let current_context = context::current();
 
-                            *o = State::Waiting {
+                            *state = State::Waiting {
                                 // Currently we treat all spurious wakeups to have the same behavior
                                 // as signals (i.e., we send a cancellation request). It is not something
                                 // that should happen, but it certainly can happen, for example if a context
@@ -353,17 +361,18 @@ impl UserInner {
                             context::current()
                                 .write(token.token())
                                 .block("UserInner::call (spurious wakeup)");
-                            drop(states);
+                            drop(state);
                         }
 
                         // invalid state
                         old_state @ (State::Placeholder | State::Fmap(_)) => {
-                            *o = old_state;
+                            let (mut state, _) = o.into_split();
+                            *state = old_state;
                             return Err(Error::new(EBADFD));
                         }
 
                         State::Responded(response) => {
-                            states.remove(sqe.tag as usize);
+                            self.states.delete(&(sqe.tag as _));
                             return Ok(response);
                         }
                     },
@@ -487,13 +496,17 @@ impl UserInner {
 
         let cur_space_lock = AddrSpace::current()?;
         let dst_space_lock = {
-            Arc::clone(
-                context_weak
-                    .upgrade()
-                    .ok_or(Error::new(ESRCH))?
-                    .read(token.token())
-                    .addr_space()?,
-            )
+            match context_weak.upgrade() {
+                Some(ctx) => {
+                    if context::is_current(&ctx) {
+                        // Will automatically bail below this code
+                        Arc::clone(&cur_space_lock)
+                    } else {
+                        Arc::clone(ctx.read(token.token()).addr_space()?)
+                    }
+                }
+                None => return Err(Error::new(ESRCH)),
+            }
         };
 
         if Arc::ptr_eq(&dst_space_lock, &cur_space_lock) {
@@ -735,8 +748,8 @@ impl UserInner {
 
         let tag = self.next_id(token)?;
         {
-            let mut states = self.states.lock(token.token());
-            states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+            *self.get_state_mut(&(tag as _), token).unwrap() =
+                State::Fmap(Arc::downgrade(&context::current()));
         }
 
         self.todo.send(
@@ -793,10 +806,9 @@ impl UserInner {
             } => {
                 let description = {
                     match self
-                        .states
-                        .lock(token.token())
-                        .get_mut(tag as usize)
+                        .get_state_mut(&(tag as _), token)
                         .ok_or(Error::new(EINVAL))?
+                        .deref_mut()
                     {
                         &mut State::Waiting { ref mut fds, .. } => {
                             if fds.is_empty() {
@@ -861,9 +873,8 @@ impl UserInner {
                 }
 
                 let context = {
-                    let mut states = self.states.lock(token.token());
-                    match states.get_mut(tag as usize) {
-                        Some(o) => match mem::replace(o, State::Placeholder) {
+                    match self.get_state_mut(&(tag as _), token) {
+                        Some(mut o) => match mem::replace(o.deref_mut(), State::Placeholder) {
                             // invalid state
                             State::Placeholder => {
                                 return Err(Error::new(EBADFD));
@@ -874,7 +885,7 @@ impl UserInner {
                                 return Err(Error::new(EINVAL));
                             }
                             State::Fmap(context) => {
-                                states.remove(tag as usize);
+                                self.states.delete(&(tag as _));
                                 context
                             }
                         },
@@ -913,77 +924,77 @@ impl UserInner {
         let to_close: Vec<FileDescription>;
 
         {
-            let mut states_lock = self.states.lock(token.token());
-            let (states, mut lock_token) = states_lock.token_split();
-            match states.get_mut(tag as usize) {
-                Some(o) => match mem::replace(o, State::Placeholder) {
-                    // invalid state
-                    State::Placeholder => return Err(Error::new(EBADFD)),
-                    // invalid scheme to kernel call
-                    old_state @ (State::Responded(_) | State::Fmap(_)) => {
-                        *o = old_state;
-                        return Err(Error::new(EINVAL));
-                    }
-
-                    State::Waiting {
-                        context,
-                        fds,
-                        canceling,
-                        callee_responsible,
-                    } => {
-                        // Convert ECANCELED to EINTR if a request was being canceled (currently always
-                        // due to signals).
-                        if let Response::Regular(ref mut res, _, _) = response
-                            && canceling
-                            && *res == Err(Error::new(ECANCELED))
-                        {
-                            *res = Err(Error::new(EINTR));
-                        }
-
-                        // TODO: Require ECANCELED?
-                        if let Response::Regular(ref mut res, _, _) = response
-                            && !canceling
-                            && *res == Err(Error::new(EINTR))
-                        {
-                            // EINTR is valid after cancelation has been requested, but not otherwise.
-                            // This is because the userspace signal trampoline will be invoked after a
-                            // syscall returns EINTR.
-                            *res = Err(Error::new(EIO));
-                        }
-
-                        if let Response::MultipleFds(ref mut response_fds) = response {
-                            *response_fds = Some(fds);
-                            to_close = Vec::new();
-                        } else {
-                            to_close = fds
-                                .into_iter()
-                                .filter_map(|f| Arc::try_unwrap(f).ok())
-                                .map(RwLock::into_inner)
-                                .collect();
-                        }
-
-                        match context.upgrade() {
-                            Some(context) => {
-                                *o = State::Responded(response);
-                                context.write(lock_token.token()).unblock();
-                            }
-                            _ => {
-                                states.remove(tag as usize);
-                            }
-                        }
-
-                        drop(states_lock);
-
-                        let unpin = true;
-                        let res = AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
-                        for r in res {
-                            let _ = r.unmap(token);
-                        }
-                    }
-                },
+            let tag = tag as _;
+            let Some(mut o) = self.get_state_mut(&tag, token) else {
                 // invalid state
-                None => return Err(Error::new(EBADFD)),
-            }
+                return Err(Error::new(EBADFD));
+            };
+            match mem::replace(o.deref_mut(), State::Placeholder) {
+                // invalid state
+                State::Placeholder => return Err(Error::new(EBADFD)),
+                // invalid scheme to kernel call
+                old_state @ (State::Responded(_) | State::Fmap(_)) => {
+                    *o = old_state;
+                    return Err(Error::new(EINVAL));
+                }
+
+                State::Waiting {
+                    context,
+                    fds,
+                    canceling,
+                    callee_responsible,
+                } => {
+                    // Convert ECANCELED to EINTR if a request was being canceled (currently always
+                    // due to signals).
+                    if let Response::Regular(ref mut res, _, _) = response
+                        && canceling
+                        && *res == Err(Error::new(ECANCELED))
+                    {
+                        *res = Err(Error::new(EINTR));
+                    }
+
+                    // TODO: Require ECANCELED?
+                    if let Response::Regular(ref mut res, _, _) = response
+                        && !canceling
+                        && *res == Err(Error::new(EINTR))
+                    {
+                        // EINTR is valid after cancelation has been requested, but not otherwise.
+                        // This is because the userspace signal trampoline will be invoked after a
+                        // syscall returns EINTR.
+                        *res = Err(Error::new(EIO));
+                    }
+
+                    if let Response::MultipleFds(ref mut response_fds) = response {
+                        *response_fds = Some(fds);
+                        to_close = Vec::new();
+                    } else {
+                        to_close = fds
+                            .into_iter()
+                            .filter_map(|f| Arc::try_unwrap(f).ok())
+                            .map(RwLock::into_inner)
+                            .collect();
+                    }
+                    let (mut o, mut token_lock) = o.into_split();
+
+                    match context.upgrade() {
+                        Some(context) => {
+                            *o = State::Responded(response);
+                            context.write(token_lock.token()).unblock();
+                        }
+                        _ => {
+                            self.states.delete(&(tag as _));
+                        }
+                    }
+
+                    drop(o);
+
+                    let unpin = true;
+                    let res = AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
+                    for r in res {
+                        let _ = r.unmap(token);
+                    }
+                }
+            };
         }
 
         for fd in to_close {
@@ -1182,10 +1193,9 @@ impl UserInner {
     ) -> Result<usize> {
         let num_fds = descs.len();
         match self
-            .states
-            .lock(token.token())
-            .get_mut(request_id)
+            .get_state_mut(&(request_id as i64), token)
             .ok_or(Error::new(EINVAL))?
+            .deref_mut()
         {
             &mut State::Waiting { ref mut fds, .. } => *fds = descs,
             _ => return Err(Error::new(ENOENT)),
@@ -1243,10 +1253,9 @@ impl UserInner {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let descriptions = match self
-            .states
-            .lock(token.token())
-            .get_mut(request_id)
+            .get_state_mut(&(request_id as i64), token)
             .ok_or(Error::new(EINVAL))?
+            .deref_mut()
         {
             &mut State::Waiting { ref mut fds, .. } => mem::take(fds),
             _ => return Err(Error::new(ENOENT)),
