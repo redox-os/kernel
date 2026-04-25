@@ -555,7 +555,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
         assert_ne!(
             memory_map_area.size, 0,
-            "RMM should enforce areas are not zeroed"
+            "RMM should enforce areas are not of length 0"
         );
 
         // TODO: Should RMM do this?

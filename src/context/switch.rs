@@ -188,13 +188,12 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 continue;
             }
             let guard = context_ref.read(token.token());
-            if guard.status.is_soft_blocked() {
-                if let Some(wake) = guard.wake {
-                    if switch_time >= wake {
-                        wakeups.push(Arc::clone(&context_ref));
-                        continue;
-                    }
-                }
+            if guard.status.is_soft_blocked()
+                && let Some(wake) = guard.wake
+                && switch_time >= wake
+            {
+                wakeups.push(Arc::clone(&context_ref));
+                continue;
             }
 
             if guard.status.is_runnable() && !guard.enqueued && !guard.running {
@@ -467,7 +466,7 @@ fn select_next_context(
             prev_context_guard.enqueued = true;
         }
 
-        return Ok(Some(next_context_guard));
+        Ok(Some(next_context_guard))
     } else {
         // We found no other process to run.
         Ok(None)

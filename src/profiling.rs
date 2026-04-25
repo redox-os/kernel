@@ -170,7 +170,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
     if !IS_PROFILING.load(Ordering::Relaxed) {
         return;
     }
-    if stack.iret.cs & 0b00 == 0b11 {
+    if stack.iret.cs & 0b11 == 0b11 {
         profiling.nmi_ucount.fetch_add(1, Ordering::Relaxed);
         return;
     } else if stack.iret.rflags & (1 << 9) != 0 {
@@ -188,6 +188,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
 
     let mut len = 2;
 
+    #[expect(clippy::needless_range_loop)]
     for i in 2..32 {
         if bp < CurrentRmmArch::PHYS_OFFSET
             || bp.saturating_add(16) >= CurrentRmmArch::PHYS_OFFSET + crate::PML4_SIZE
@@ -303,7 +304,7 @@ pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
         let apic = &mut crate::arch::device::local_apic::the_local_apic();
         apic.set_lvt_timer((0b01 << 17) | 32);
         apic.set_div_conf(0b1011);
-        apic.set_init_count(0xffff_f);
+        apic.set_init_count(0x000f_ffff);
 
         while ACK.load(Ordering::Relaxed) < NUM_ORDINARY_CPUS.load(Ordering::SeqCst) {
             core::hint::spin_loop();
