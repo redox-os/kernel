@@ -413,12 +413,6 @@ fn select_next_context(
                 continue; // Lazy removal of blocked contexts
             }
 
-            // Do not spawn the kernel (the idle context) again after idling,
-            // otherwise the next switch will idling again
-            if was_idle && !next_context_guard.userspace {
-                continue;
-            }
-
             // Is this context runnable on this CPU?
             if let UpdateResult::CanSwitch =
                 unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
@@ -452,7 +446,7 @@ fn select_next_context(
         return Ok(Some(next_context_guard));
     } else {
         let idle_context = percpu.switch_internals.idle_context();
-        if !Arc::ptr_eq(&prev_context_lock, &idle_context) {
+        if !was_idle && !Arc::ptr_eq(&prev_context_lock, &idle_context) {
             // We switch into the idle context
             Ok(Some(unsafe { idle_context.write_arc() }))
         } else {

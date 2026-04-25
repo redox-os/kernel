@@ -126,7 +126,7 @@ pub fn init(token: &mut CleanLockToken) {
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
     contexts_mut(token.token().downgrade()).insert(context_ref.clone());
-
+    // Set this as current context and idle context, but don't treat it as regular context queue
     unsafe {
         let percpu = PercpuBlock::current();
         percpu
@@ -134,8 +134,6 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
-
-    run_contexts(token.downgrade()).set[priority].push_back(context_ref);
 }
 
 pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
