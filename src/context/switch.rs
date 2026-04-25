@@ -27,6 +27,7 @@ use super::ContextRef;
 enum UpdateResult {
     CanSwitch,
     Skip,
+    Blocked,
 }
 
 type SwitchMapper = Option<PageMapperTableDeferred<crate::arch::CurrentRmmArch>>;
@@ -79,7 +80,7 @@ unsafe fn update_runnable(
     if context.status.is_runnable() {
         UpdateResult::CanSwitch
     } else {
-        UpdateResult::Skip
+        UpdateResult::Blocked
     }
 }
 
@@ -181,17 +182,12 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     // Alarm (previously in update_runnable)
     // TODO: Optimise this somehow. Perhaps using a separate timer queue?
-    let mut wakeups = Vec::new();
     {
         let current_context = context::current();
-        let idle_context = percpu.switch_internals.idle_context();
 
-        let context = contexts();
-        for context_ref in context.iter().filter_map(|(_, r)| r.upgrade()) {
+        for (id, context_ref) in run_contexts().idle.iter() {
+            let context_ref = context_ref.upgrade().unwrap();
             if Arc::ptr_eq(&context_ref, &current_context) {
-                continue;
-            }
-            if Arc::ptr_eq(&context_ref, &idle_context) {
                 continue;
             }
             let Some(guard) = context_ref.try_read(token.token()) else {
@@ -200,19 +196,22 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             if guard.status.is_soft_blocked() {
                 if let Some(wake) = guard.wake {
                     if switch_time >= wake {
-                        wakeups.push(Arc::clone(&context_ref));
+                        let prio = guard.prio;
+                        drop(guard);
+                        run_contexts().idle.delete(id);
+                        run_contexts().push_back(prio, ContextRef(context_ref));
                         continue;
                     }
                 }
             }
 
-            if guard.status.is_runnable() && !guard.enqueued && !guard.running {
-                wakeups.push(Arc::clone(&context_ref));
+            if guard.status.is_runnable() && !guard.running {
+                let prio = guard.prio;
+                drop(guard);
+                run_contexts().idle.delete(id);
+                run_contexts().push_back(prio, ContextRef(context_ref));
             }
         }
-    }
-    for context_lock in wakeups {
-        context::wakeup_context(&context_lock, token.token());
     }
 
     let cpu_id = crate::cpu_id();
@@ -428,23 +427,21 @@ fn select_next_context(
                 (next_context_guard, addr_space_opt)
             };
 
-            next_context_guard.enqueued = false;
-
-            if !next_context_guard.status.is_runnable() {
-                skipped_contexts += 1;
-                continue; // Lazy removal of blocked contexts
-            }
-
             // Is this context runnable on this CPU?
-            if let UpdateResult::CanSwitch =
-                unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
-            {
+            let sw = unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) };
+            if let UpdateResult::CanSwitch = sw {
                 next_context_guard_opt = Some((next_context_guard, addr_space));
                 balance[i] -= SCHED_PRIO_TO_WEIGHT[20];
                 break 'priority;
             } else {
-                contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
-                next_context_guard.enqueued = true;
+                if matches!(sw, UpdateResult::Blocked) {
+                    run_contexts().idle.insert(
+                        next_context_guard.debug_id,
+                        ContextRef(Arc::clone(&next_context_lock)),
+                    );
+                } else {
+                    contexts_data.push_back(i, ContextRef(Arc::clone(&next_context_lock)));
+                };
                 skipped_contexts += 1;
 
                 if skipped_contexts >= total_contexts {
@@ -462,7 +459,11 @@ fn select_next_context(
         if prev_context_guard.status.is_runnable() {
             let prio = prev_context_guard.prio;
             contexts_data.push_back(prio, ContextRef(Arc::clone(&prev_context_lock)));
-            prev_context_guard.enqueued = true;
+        } else {
+            run_contexts().idle.insert(
+                prev_context_guard.debug_id,
+                ContextRef(Arc::clone(&prev_context_lock)),
+            );
         }
 
         return Ok(Some((next_context_guard, addr_space)));

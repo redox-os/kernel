@@ -7,7 +7,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicUsize, Ordering},
 };
-use lfll::LockFreeDequeList;
+use lfll::{LockFreeDequeList, LockFreeSkipList};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -80,6 +80,7 @@ const PRIO_CAP: usize = 40;
 pub struct RunContextData {
     set: [LockFreeDequeList<ContextRef>; PRIO_CAP],
     len: [AtomicUsize; PRIO_CAP],
+    idle: LockFreeSkipList<i64, ContextRef>,
 }
 
 impl RunContextData {
@@ -89,6 +90,7 @@ impl RunContextData {
         Self {
             set: [EMPTY_VEC; PRIO_CAP],
             len: [EMPTY_LEN; PRIO_CAP],
+            idle: LockFreeSkipList::new(),
         }
     }
     pub fn push_back(&self, prio: usize, ctx: ContextRef) {
@@ -134,7 +136,6 @@ pub fn init(_token: &mut CleanLockToken) {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
-    context.enqueued = false;
 
     let priority = context.prio;
 
@@ -148,25 +149,6 @@ pub fn init(_token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
-}
-
-pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
-    let priority = {
-        let mut context = context_lock.write(token.token());
-
-        context.wake = None;
-        context.unblock();
-
-        if !(context.status.is_runnable() && !context.running && !context.enqueued) {
-            return;
-        }
-
-        context.enqueued = true;
-
-        context.prio
-    };
-
-    run_contexts().push_back(priority, ContextRef(Arc::clone(context_lock)));
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -236,7 +218,6 @@ pub fn spawn(
     let run_ref = ContextRef(Arc::clone(&context_lock));
     run_contexts().push_back(20, run_ref);
     contexts().push_back_reserved(context_ref, context_id);
-    context_lock.write(token.token()).enqueued = true;
 
     Ok(context_lock)
 }
