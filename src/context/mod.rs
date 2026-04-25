@@ -77,6 +77,9 @@ static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new())
 // Actual context store for the scheduler
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
 
+// Context that has been pushed out from RUN_CONTEXTS after being idle
+static IDLE_CONTEXTS: Mutex<L2, VecDeque<ContextRef>> = Mutex::new(VecDeque::new());
+
 pub struct RunContextData {
     set: [VecDeque<ContextRef>; 40],
 }
@@ -100,6 +103,10 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
     CONTEXTS.write(token)
 }
 
+pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<ContextRef>> {
+    IDLE_CONTEXTS.lock(token)
+}
+
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
     RUN_CONTEXTS.lock(token)
 }
@@ -118,7 +125,6 @@ pub fn init(token: &mut CleanLockToken) {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
-    context.enqueued = false;
 
     let priority = context.prio;
 
@@ -134,25 +140,6 @@ pub fn init(token: &mut CleanLockToken) {
             .set_current_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
-}
-
-pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
-    let priority = {
-        let mut context = context_lock.write(token.token());
-
-        context.wake = None;
-        context.unblock();
-
-        if !(context.status.is_runnable() && !context.running && !context.enqueued) {
-            return;
-        }
-
-        context.enqueued = true;
-
-        context.prio
-    };
-
-    run_contexts(token).set[priority].push_back(ContextRef(Arc::clone(context_lock)));
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -219,9 +206,8 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
-    run_contexts(token.token()).set[20].push_back(run_ref);
-    contexts_mut(token.token().downgrade()).insert(context_ref);
-    context_lock.write(token.token()).enqueued = true;
+    idle_contexts(token.downgrade()).push_back(run_ref);
+    contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)
 }

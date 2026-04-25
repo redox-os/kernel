@@ -3,7 +3,10 @@
 //! handling process states and synchronization.
 
 use crate::{
-    context::{self, arch, contexts, run_contexts, ArcContextLockWriteGuard, Context, ContextLock},
+    context::{
+        self, arch, contexts, idle_contexts, run_contexts, ArcContextLockWriteGuard, Context,
+        ContextLock,
+    },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
     percpu::PercpuBlock,
@@ -22,6 +25,7 @@ use super::ContextRef;
 enum UpdateResult {
     CanSwitch,
     Skip,
+    Blocked,
 }
 
 // A simple geometric series where value[i] ~= value[i - 1] * 1.25
@@ -72,7 +76,7 @@ unsafe fn update_runnable(
     if context.status.is_runnable() {
         UpdateResult::CanSwitch
     } else {
-        UpdateResult::Skip
+        UpdateResult::Blocked
     }
 }
 
@@ -177,34 +181,52 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let mut wakeups = Vec::new();
     {
         let current_context = context::current();
-        let idle_context = percpu.switch_internals.idle_context();
-
-        let mut contexts_guard = contexts(token.downgrade());
-        let (context, mut token) = contexts_guard.token_split();
-        for context_ref in context.iter().filter_map(|r| r.upgrade()) {
+        let idle_contexts = idle_contexts(token.downgrade());
+        let (mut idle_contexts, mut token) = idle_contexts.into_split();
+        let len = idle_contexts.len();
+        for i in 0..len {
+            let Some(context_ref) = idle_contexts.pop_front() else {
+                break;
+            };
+            let Some(context_ref) = context_ref.upgrade() else {
+                continue;
+            };
             if Arc::ptr_eq(&context_ref, &current_context) {
+                idle_contexts.push_back(ContextRef(context_ref));
                 continue;
             }
-            if Arc::ptr_eq(&context_ref, &idle_context) {
+            let Some(guard) = context_ref.try_read(token.token()) else {
+                idle_contexts.push_back(ContextRef(context_ref));
                 continue;
-            }
-            let guard = context_ref.read(token.token());
+            };
             if guard.status.is_soft_blocked() {
                 if let Some(wake) = guard.wake {
                     if switch_time >= wake {
-                        wakeups.push(Arc::clone(&context_ref));
+                        let prio = guard.prio;
+                        drop(guard);
+                        wakeups.push((prio, ContextRef(context_ref)));
                         continue;
                     }
                 }
             }
 
-            if guard.status.is_runnable() && !guard.enqueued && !guard.running {
-                wakeups.push(Arc::clone(&context_ref));
+            if guard.status.is_runnable() && !guard.running {
+                let prio = guard.prio;
+                drop(guard);
+                wakeups.push((prio, ContextRef(context_ref)));
+                continue;
             }
+
+            drop(guard);
+            idle_contexts.push_back(ContextRef(context_ref));
         }
     }
-    for context_lock in wakeups {
-        context::wakeup_context(&context_lock, token.token());
+
+    if wakeups.len() > 0 {
+        let mut run_contexts = run_contexts(token.token());
+        for (prio, context_lock) in wakeups {
+            run_contexts.set[prio].push_back(context_lock);
+        }
     }
 
     let cpu_id = crate::cpu_id();
@@ -334,8 +356,10 @@ fn select_next_context(
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Result<Option<ArcContextLockWriteGuard>, SwitchResult> {
-    let mut contexts_data = run_contexts(token.token());
+    let contexts_data = run_contexts(token.token());
+    let (mut contexts_data, mut token) = contexts_data.into_split();
     let contexts_list = &mut contexts_data.set;
+    let idle_context = percpu.switch_internals.idle_context();
     let mut balance = percpu.balance.get();
     let mut i = percpu.last_queue.get() % 40;
 
@@ -401,28 +425,27 @@ fn select_next_context(
             };
 
             if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
-                contexts.push_back(ContextRef(Arc::clone(&next_context_lock)));
+                contexts.push_back(ContextRef(next_context_lock));
                 continue;
             }
-
-            let mut next_context_guard = unsafe { next_context_lock.write_arc() };
-            next_context_guard.enqueued = false;
-
-            if !next_context_guard.status.is_runnable() {
-                skipped_contexts += 1;
-                continue; // Lazy removal of blocked contexts
+            if Arc::ptr_eq(&next_context_lock, &idle_context) {
+                contexts.push_back(ContextRef(next_context_lock));
+                continue;
             }
+            let mut next_context_guard = unsafe { next_context_lock.write_arc() };
 
             // Is this context runnable on this CPU?
-            if let UpdateResult::CanSwitch =
-                unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) }
-            {
+            let sw = unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) };
+            if let UpdateResult::CanSwitch = sw {
                 next_context_guard_opt = Some(next_context_guard);
                 balance[i] -= SCHED_PRIO_TO_WEIGHT[20];
                 break 'priority;
             } else {
-                contexts.push_back(ContextRef(Arc::clone(&next_context_lock)));
-                next_context_guard.enqueued = true;
+                if matches!(sw, UpdateResult::Blocked) {
+                    idle_contexts(token.token()).push_back(ContextRef(next_context_lock));
+                } else {
+                    contexts.push_back(ContextRef(next_context_lock));
+                };
                 skipped_contexts += 1;
 
                 if skipped_contexts >= total_contexts {
@@ -434,18 +457,20 @@ fn select_next_context(
     percpu.balance.set(balance);
     percpu.last_queue.set(i);
 
-    if let Some(next_context_guard) = next_context_guard_opt {
-        // We found a new process!
+    if !Arc::ptr_eq(&prev_context_lock, &idle_context) {
         // Send the old process to the back of the line (if it is still runnable)
         if prev_context_guard.status.is_runnable() {
             let prio = prev_context_guard.prio;
             contexts_list[prio].push_back(ContextRef(Arc::clone(&prev_context_lock)));
-            prev_context_guard.enqueued = true;
+        } else {
+            idle_contexts(token.token()).push_back(ContextRef(Arc::clone(&prev_context_lock)));
         }
+    }
 
+    if let Some(next_context_guard) = next_context_guard_opt {
+        // We found a new process!
         return Ok(Some(next_context_guard));
     } else {
-        let idle_context = percpu.switch_internals.idle_context();
         if !was_idle && !Arc::ptr_eq(&prev_context_lock, &idle_context) {
             // We switch into the idle context
             Ok(Some(unsafe { idle_context.write_arc() }))

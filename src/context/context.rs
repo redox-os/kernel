@@ -140,8 +140,6 @@ pub struct Context {
     pub fmap_ret: Option<Frame>,
     /// Priority
     pub prio: usize,
-    /// Enqueued
-    pub enqueued: bool,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,
@@ -200,7 +198,6 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             prio: 20,
-            enqueued: false,
             being_sigkilled: false,
             owner_proc_id,
 
