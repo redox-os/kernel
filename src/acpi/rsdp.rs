@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use rmm::PhysicalAddress;
 
 /// RSDP
@@ -16,9 +18,9 @@ pub struct Rsdp {
 }
 
 impl Rsdp {
-    pub unsafe fn get_rsdp(already_supplied_rsdp: Option<*const u8>) -> Option<Rsdp> {
-        already_supplied_rsdp.map(|rsdp_ptr| {
-            let rsdp = unsafe { *(rsdp_ptr as *const Rsdp) };
+    pub unsafe fn get_rsdp(already_supplied_rsdp: Option<NonNull<u8>>) -> Option<Rsdp> {
+        already_supplied_rsdp.map(|rsdp_ptr: NonNull<u8>| {
+            let rsdp: Rsdp = unsafe { rsdp_ptr.cast().read() };
 
             assert_eq!(rsdp.signature, *b"RSD PTR ", "RSDP signature check failed");
 
