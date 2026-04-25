@@ -1,14 +1,15 @@
 use core::fmt::Write as _;
 
 use crate::{
-    context::Status,
+    context::{contexts, Status},
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
-    percpu::{self, get_all_stats},
+    percpu::get_all_stats,
     sync::CleanLockToken,
     syscall::error::Result,
     time::START,
 };
 use alloc::{string::String, vec::Vec};
+use lfll::List;
 
 /// Get the sys:stat data as displayed to the user.
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
@@ -76,10 +77,14 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     let mut running = 0;
     let mut blocked = 0;
 
-    let statuses = percpu::get_all_contexts(token.downgrade())
-        .iter()
-        .map(|context| context.read(token.token()).status.clone())
-        .collect::<Vec<_>>();
+    let statuses = {
+        let contexts = contexts();
+        contexts
+            .iter()
+            .filter_map(|(_, x)| x.upgrade())
+            .map(|context| context.read(token.token()).status.clone())
+            .collect::<Vec<_>>()
+    };
 
     for status in statuses {
         if matches!(status, Status::Runnable) {

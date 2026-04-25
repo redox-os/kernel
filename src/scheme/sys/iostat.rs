@@ -1,10 +1,10 @@
 use crate::{
     context::{
-        self,
+        self, contexts,
         memory::{Grant, PageSpan},
     },
     memory::PAGE_SIZE,
-    percpu, scheme,
+    scheme,
     sync::CleanLockToken,
     syscall::{
         error::Result,
@@ -14,6 +14,7 @@ use crate::{
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
 use core::{fmt::Write, num::NonZeroUsize, str};
+use lfll::List;
 
 fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = String::new();
@@ -22,7 +23,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
     {
         let mut rows = Vec::new();
         {
-            for context_ref in percpu::get_all_contexts(token.downgrade()) {
+            for context_ref in contexts().iter().filter_map(|(_, x)| x.upgrade()) {
                 let mut current = context_ref.read(token.token());
                 let (context, mut token) = current.token_split();
                 rows.push((

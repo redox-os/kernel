@@ -593,7 +593,7 @@ impl AddrSpace {
     ) -> Result<Vec<UnmapResult>> {
         let mut notify_files = Vec::new();
 
-        let next = |grants: &mut UserGrants, span: PageSpan| {
+        let next = |grants: &UserGrants, span: PageSpan| {
             grants
                 .conflicts(span)
                 .map(|(base, info)| {

@@ -2,21 +2,19 @@
 //!
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
-use alloc::{
-    collections::{BTreeSet, VecDeque},
-    sync::Arc,
+use alloc::sync::Arc;
+use core::{
+    num::NonZeroUsize,
+    sync::atomic::{AtomicUsize, Ordering},
 };
-use core::num::NonZeroUsize;
+use lfll::{LockFreeDequeList, LockFreeSkipList};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
     cpu_set::LogicalCpuSet,
     memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L4,
-    },
+    sync::{ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, L0, L1, L2, L4},
     syscall::error::Result,
 };
 
@@ -72,49 +70,61 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: Mutex<L2, BTreeSet<ContextRef>> = Mutex::new(BTreeSet::new());
-/// Try to get the global free contexts
-pub fn free_contexts_try(
-    token: LockToken<'_, L1>,
-) -> Option<MutexGuard<'_, L2, BTreeSet<ContextRef>>> {
-    CONTEXTS.try_lock(token)
-}
+static CONTEXTS: LockFreeDequeList<ContextRef> = LockFreeDequeList::new();
 
 // Actual context store for the scheduler
-static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
+static RUN_CONTEXTS: RunContextData = RunContextData::new();
+
+const PRIO_CAP: usize = 40;
 
 pub struct RunContextData {
-    set: [VecDeque<ContextRef>; 40],
+    set: [LockFreeDequeList<ContextRef>; PRIO_CAP],
+    len: [AtomicUsize; PRIO_CAP],
+    idle: LockFreeSkipList<i64, ContextRef>,
 }
 
 impl RunContextData {
     pub const fn new() -> Self {
-        const EMPTY_VEC: VecDeque<ContextRef> = VecDeque::new();
+        const EMPTY_VEC: LockFreeDequeList<ContextRef> = LockFreeDequeList::new();
+        const EMPTY_LEN: AtomicUsize = AtomicUsize::new(0);
         Self {
-            set: [EMPTY_VEC; 40],
+            set: [EMPTY_VEC; PRIO_CAP],
+            len: [EMPTY_LEN; PRIO_CAP],
+            idle: LockFreeSkipList::new(),
         }
+    }
+    pub fn push_back(&self, prio: usize, ctx: ContextRef) {
+        self.len[prio].fetch_add(1, Ordering::Relaxed);
+        self.set[prio].push_back(ctx);
+    }
+    pub fn pop_front(&self, prio: usize) -> Option<&ContextRef> {
+        self.len[prio].fetch_sub(1, Ordering::Relaxed);
+        self.set[prio].pop_front().map(|x| x.1)
+    }
+    pub fn total(&self) -> usize {
+        let mut sum = 0;
+        for i in 0..PRIO_CAP {
+            sum += self.len[i].load(Ordering::Relaxed);
+        }
+        sum
     }
 }
 
-/// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
-    let percpu = PercpuBlock::current();
-    percpu.contexts.read(token)
+/// Get the global schemes list
+pub fn contexts() -> &'static LockFreeDequeList<ContextRef> {
+    &CONTEXTS
 }
 
-/// Get per cpu contexts, mutable
-pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
-    let percpu = PercpuBlock::current();
-    percpu.contexts.write(token)
+pub fn run_contexts() -> &'static RunContextData {
+    &RUN_CONTEXTS
 }
 
-pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.lock(token)
-}
+pub fn init(_token: &mut CleanLockToken) {
+    let id = crate::cpu_id();
 
-pub fn init(token: &mut CleanLockToken) {
     let owner = None; // kmain not owned by any fd
-    let mut context = Context::new(owner).expect("failed to create kmain context");
+    let context_id = contexts().reserve_back();
+    let mut context = Context::new(owner, context_id).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
 
@@ -126,38 +136,19 @@ pub fn init(token: &mut CleanLockToken) {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
-    context.enqueued = false;
+
+    let priority = context.prio;
 
     let context_lock = Arc::new(ContextLock::new(context));
 
-    let context_ref = ContextRef(Arc::clone(&context_lock));
-    contexts_mut(token.token()).insert(context_ref);
-
+    // Set this as current context and idle context, but don't treat it as regular context queue
     unsafe {
         let percpu = PercpuBlock::current();
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        percpu.switch_internals.set_idle_context(context_lock);
     }
-}
-
-pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
-    let priority = {
-        let mut context = context_lock.write(token.token());
-
-        context.wake = None;
-        context.unblock();
-
-        if !(context.status.is_runnable() && !context.running && !context.enqueued) {
-            return;
-        }
-
-        context.enqueued = true;
-
-        context.prio
-    };
-
-    run_contexts(token).set[priority].push_back(ContextRef(Arc::clone(context_lock)));
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -176,6 +167,7 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
         .with_context(|current| Arc::ptr_eq(context, current))
 }
 
+#[derive(Clone)]
 pub struct ContextRef(pub Arc<ContextLock>);
 impl ContextRef {
     pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
@@ -209,7 +201,8 @@ pub fn spawn(
 ) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let mut context = Context::new(owner_proc_id)?;
+    let context_id = contexts().reserve_back();
+    let mut context = Context::new(owner_proc_id, context_id)?;
 
     let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?), token.downgrade());
     context
@@ -223,9 +216,8 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
-    run_contexts(token.token()).set[20].push_back(run_ref);
-    contexts_mut(token.token()).insert(context_ref);
-    context_lock.write(token.token()).enqueued = true;
+    run_contexts().push_back(20, run_ref);
+    contexts().push_back_reserved(context_ref, context_id);
 
     Ok(context_lock)
 }

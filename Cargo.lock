@@ -112,6 +112,7 @@ dependencies = [
  "cc",
  "fdt",
  "hashbrown 0.14.5",
+ "lfll",
  "linked_list_allocator",
  "object",
  "raw-cpuid",
@@ -120,12 +121,16 @@ dependencies = [
  "rmm",
  "rustc-demangle",
  "sbi-rt",
- "slab",
  "smallvec",
  "spin",
  "toml",
  "x86",
 ]
+
+[[package]]
+name = "lfll"
+version = "0.1.0"
+source = "git+https://github.com/willnode/lfll.git#d18844d3aba86188549566ab418ed9790b7f816a"
 
 [[package]]
 name = "linked_list_allocator"
@@ -285,12 +290,6 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
-
-[[package]]
-name = "slab"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"

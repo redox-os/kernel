@@ -206,7 +206,7 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
 }
 
 #[cfg(feature = "busy_panic")]
-pub const DEADLOCK_SPIN_CAP: usize = 1_000_000_000;
+pub const DEADLOCK_SPIN_CAP: usize = 5000;
 
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
@@ -559,6 +559,17 @@ impl<L: Level, T> RwLock<L, T> {
         ArcRwLockWriteGuard {
             rwlock: self.clone(),
         }
+    }
+
+    // Unsafe due to not using token, currently required by context::switch
+    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
+        let Some(guard) = self.inner.try_write() else {
+            return None;
+        };
+        core::mem::forget(guard);
+        Some(ArcRwLockWriteGuard {
+            rwlock: self.clone(),
+        })
     }
 }
 

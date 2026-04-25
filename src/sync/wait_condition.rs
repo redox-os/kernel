@@ -4,21 +4,22 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
+use lfll::{List, LockFreeDequeList};
 
 use crate::{
-    context::{self, ContextLock, PreemptGuardL2},
+    context::{self, is_current, ContextLock, PreemptGuardL2},
     sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<L3, Vec<Weak<ContextLock>>>,
+    contexts: LockFreeDequeList<Weak<ContextLock>>,
 }
 
 impl WaitCondition {
     pub const fn new() -> WaitCondition {
         WaitCondition {
-            contexts: Mutex::new(Vec::new()),
+            contexts: LockFreeDequeList::new(),
         }
     }
 
@@ -27,27 +28,19 @@ impl WaitCondition {
         self.notify_locked(token.token().downgrade())
     }
 
-    pub fn notify_locked(&self, token: LockToken<'_, L1>) -> usize {
-        let mut contexts = self.contexts.lock(token);
-        let (contexts, mut token) = contexts.token_split();
-        let len = contexts.len();
-        while let Some(context_weak) = contexts.pop() {
-            if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write(token.token()).unblock();
-            }
-        }
-        len
-    }
-
     // Notify as though a signal woke the waiters
-    pub unsafe fn notify_signal(&self, token: LockToken<'_, L1>) -> usize {
-        let mut contexts = self.contexts.lock(token);
-        let (contexts, mut token) = contexts.token_split();
-        let len = contexts.len();
-        for context_weak in contexts.iter() {
+    pub fn notify_locked(&self, mut token: LockToken<'_, L1>) -> usize {
+        let contexts = &self.contexts;
+        let mut len = 0;
+        while let Some((_, context_weak)) = contexts.pop_front() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write(token.token()).unblock();
+                if let Some(mut ctx) = context_ref.try_write(token.token()) {
+                    ctx.unblock();
+                } else {
+                    contexts.push_back(Weak::clone(context_weak));
+                }
             }
+            len += 1;
         }
         len
     }
@@ -90,8 +83,7 @@ impl WaitCondition {
             }
 
             self.contexts
-                .lock(token.token())
-                .push(Arc::downgrade(&current_context_ref));
+                .push_back(Arc::downgrade(&current_context_ref));
 
             drop(guard);
         }
@@ -105,13 +97,13 @@ impl WaitCondition {
         let mut waited = true;
 
         {
-            let mut contexts = self.contexts.lock(token.token());
+            let contexts = &self.contexts;
 
-            if let Some(index) = contexts
+            if let Some((index, _)) = contexts
                 .iter()
-                .position(|c| Weak::as_ptr(c) == Arc::as_ptr(&current_context_ref))
+                .find(|(_, c)| Weak::as_ptr(c) == Arc::as_ptr(&current_context_ref))
             {
-                contexts.remove(index);
+                contexts.delete(index);
                 waited = false;
             }
         }
@@ -129,7 +121,7 @@ impl WaitCondition {
 
     fn inner_drop(&mut self, token: LockToken<'_, L1>) {
         unsafe {
-            self.notify_signal(token);
+            self.notify_locked(token);
         }
     }
 }

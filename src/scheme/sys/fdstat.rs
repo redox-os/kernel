@@ -1,7 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    context::{file::LockedFileDescription, memory::AddrSpaceWrapper},
-    percpu,
+    context::{contexts, file::LockedFileDescription, memory::AddrSpaceWrapper},
     scheme::{self, handles, KernelSchemes},
     sync::CleanLockToken,
     syscall::error::Result,
@@ -9,6 +8,7 @@ use crate::{
 use alloc::{borrow::Cow, string::String, sync::Arc, vec::Vec};
 use core::{fmt::Write, hash::Hash};
 use hashbrown::HashMap;
+use lfll::List;
 
 #[derive(Debug)]
 struct Ref<T>(Arc<T>);
@@ -37,7 +37,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut schemes_guard = handles().read(token.token());
     let (schemes, mut token) = schemes_guard.token_split();
 
-    'contexts: for context in percpu::get_all_contexts(token.token()) {
+    'contexts: for context in contexts().iter().filter_map(|(_, x)| x.upgrade()) {
         let mut context_guard = context.read(token.token());
         let (context, token) = context_guard.token_split();
         let mut files_guard = context.files.read(token);

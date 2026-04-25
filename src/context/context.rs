@@ -3,7 +3,7 @@ use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::atomic::Ordering,
 };
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
@@ -86,7 +86,7 @@ pub enum SyscallFrame {
 /// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
 pub struct Context {
-    pub debug_id: u32,
+    pub debug_id: i64,
     /// Signal handler
     pub sig: Option<SignalState>,
     /// Status of context
@@ -140,8 +140,6 @@ pub struct Context {
     pub fmap_ret: Option<Frame>,
     /// Priority
     pub prio: usize,
-    /// Enqueued
-    pub enqueued: bool,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,
@@ -173,10 +171,9 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(owner_proc_id: Option<NonZeroUsize>) -> Result<Context> {
-        static DEBUG_ID: AtomicU32 = AtomicU32::new(1);
+    pub fn new(owner_proc_id: Option<NonZeroUsize>, debug_id: i64) -> Result<Context> {
         let this = Self {
-            debug_id: DEBUG_ID.fetch_add(1, Ordering::Relaxed),
+            debug_id,
             sig: None,
             status: Status::HardBlocked {
                 reason: HardBlockedReason::NotYetStarted,
@@ -200,7 +197,6 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             prio: 20,
-            enqueued: false,
             being_sigkilled: false,
             owner_proc_id,
 
