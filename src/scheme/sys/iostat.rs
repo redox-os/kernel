@@ -24,7 +24,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
         {
             let mut contexts = context::contexts(token.downgrade());
             let (contexts, mut token) = contexts.token_split();
-            for context_ref in contexts.iter().filter_map(|x| x.upgrade()) {
+            for context_ref in contexts.iter() {
                 let mut current = context_ref.read(token.token());
                 let (context, mut token) = current.token_split();
                 rows.push((

@@ -81,7 +81,6 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
         let (contexts, mut token) = contexts.token_split();
         contexts
             .iter()
-            .filter_map(|x| x.upgrade())
             .map(|context| context.read(token.token()).status.clone())
             .collect::<Vec<_>>()
     };

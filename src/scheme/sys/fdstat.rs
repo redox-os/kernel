@@ -38,7 +38,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let mut contexts = contexts(token.token());
     let (contexts, mut token) = contexts.token_split();
-    'contexts: for context in contexts.iter().filter_map(|x| x.upgrade()) {
+    'contexts: for context in contexts.iter() {
         let mut context_guard = context.read(token.token());
         let (context, token) = context_guard.token_split();
         let mut files_guard = context.files.read(token);

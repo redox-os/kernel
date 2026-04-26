@@ -6,7 +6,7 @@ use alloc::{
     collections::{BTreeSet, VecDeque},
     sync::{Arc, Weak},
 };
-use core::num::NonZeroUsize;
+use core::{num::NonZeroUsize, ops::Deref};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -166,9 +166,10 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
 
 #[derive(Clone)]
 pub struct ContextRef(pub Arc<ContextLock>);
-impl ContextRef {
-    pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
-        Some(Arc::clone(&self.0))
+impl Deref for ContextRef {
+    type Target = Arc<ContextLock>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
