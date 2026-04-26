@@ -4,8 +4,8 @@
 
 use crate::{
     context::{
-        self, arch, contexts, idle_contexts, run_contexts, ArcContextLockWriteGuard, Context,
-        ContextLock,
+        self, arch, contexts, idle_contexts, idle_contexts_try, run_contexts,
+        ArcContextLockWriteGuard, Context, ContextLock,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -177,50 +177,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    // TODO: Optimise this somehow. Perhaps using a separate timer queue?
-    let mut wakeups = Vec::new();
-    {
-        let current_context = context::current();
-        let idle_contexts = idle_contexts(token.downgrade());
-        let (mut idle_contexts, mut token) = idle_contexts.into_split();
-        let len = idle_contexts.len();
-        for i in 0..len {
-            let Some(context_ref) = idle_contexts.pop_front() else {
-                break;
-            };
-            let Some(context_ref) = context_ref.upgrade() else {
-                continue;
-            };
-            if Arc::ptr_eq(&context_ref, &current_context) {
-                idle_contexts.push_back(ContextRef(context_ref));
-                continue;
-            }
-            let Some(guard) = context_ref.try_read(token.token()) else {
-                idle_contexts.push_back(ContextRef(context_ref));
-                continue;
-            };
-            if guard.status.is_soft_blocked() {
-                if let Some(wake) = guard.wake {
-                    if switch_time >= wake {
-                        let prio = guard.prio;
-                        drop(guard);
-                        wakeups.push((prio, ContextRef(context_ref)));
-                        continue;
-                    }
-                }
-            }
-
-            if guard.status.is_runnable() && !guard.running {
-                let prio = guard.prio;
-                drop(guard);
-                wakeups.push((prio, ContextRef(context_ref)));
-                continue;
-            }
-
-            drop(guard);
-            idle_contexts.push_back(ContextRef(context_ref));
-        }
-    }
+    let wakeups = wakeup_contexts(token, switch_time);
 
     if wakeups.len() > 0 {
         let mut run_contexts = run_contexts(token.token());
@@ -345,6 +302,55 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             SwitchResult::AllContextsIdle
         }
     }
+}
+
+fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize, ContextRef)> {
+    // TODO: Optimise this somehow. Perhaps using a separate timer queue?
+    let mut wakeups = Vec::new();
+    let current_context = context::current();
+    let Some(idle_contexts) = idle_contexts_try(token.downgrade()) else {
+        // other cpus may spawning or killing contexts so let's skip wakeups to avoid contention
+        return wakeups;
+    };
+    let (mut idle_contexts, mut token) = idle_contexts.into_split();
+    let len = idle_contexts.len();
+    for i in 0..len {
+        let Some(context_ref) = idle_contexts.pop_front() else {
+            break;
+        };
+        let Some(context_ref) = context_ref.upgrade() else {
+            continue;
+        };
+        if Arc::ptr_eq(&context_ref, &current_context) {
+            idle_contexts.push_back(ContextRef(context_ref));
+            continue;
+        }
+        let Some(guard) = context_ref.try_read(token.token()) else {
+            idle_contexts.push_back(ContextRef(context_ref));
+            continue;
+        };
+        if guard.status.is_soft_blocked() {
+            if let Some(wake) = guard.wake {
+                if switch_time >= wake {
+                    let prio = guard.prio;
+                    drop(guard);
+                    wakeups.push((prio, ContextRef(context_ref)));
+                    continue;
+                }
+            }
+        }
+
+        if guard.status.is_runnable() && !guard.running {
+            let prio = guard.prio;
+            drop(guard);
+            wakeups.push((prio, ContextRef(context_ref)));
+            continue;
+        }
+
+        drop(guard);
+        idle_contexts.push_back(ContextRef(context_ref));
+    }
+    wakeups
 }
 
 /// This is the scheduler function which currently utilises Deficit Weighted Round Robin Scheduler

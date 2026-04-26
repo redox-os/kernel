@@ -107,6 +107,12 @@ pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<Co
     IDLE_CONTEXTS.lock(token)
 }
 
+pub fn idle_contexts_try(
+    token: LockToken<'_, L1>,
+) -> Option<MutexGuard<'_, L2, VecDeque<ContextRef>>> {
+    IDLE_CONTEXTS.try_lock(token)
+}
+
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
     RUN_CONTEXTS.lock(token)
 }
