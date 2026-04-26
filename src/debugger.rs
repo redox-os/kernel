@@ -23,7 +23,7 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
     {
         let mut contexts = contexts(token.downgrade());
         let (contexts, mut token) = contexts.token_split();
-        for context_arc in contexts.iter().filter_map(|x| x.upgrade()) {
+        for context_arc in contexts.iter() {
             if target_id.map_or(false, |target_id| Arc::as_ptr(&context_arc) != target_id) {
                 continue;
             }
