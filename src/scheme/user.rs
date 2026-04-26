@@ -526,27 +526,22 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
-        let (dst_space, mut token) = dst_space_guard.token_split();
+        let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
+        let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
 
-        let free_span = dst_space
-            .grants
-            .find_free(dst_space.mmap_min, page_count)
-            .ok_or(Error::new(ENOMEM))?;
+        let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf
+            .split_at(middle_page_count * PAGE_SIZE)
+            .expect("split must succeed");
 
-        let head = if !head_part_of_buf.is_empty() {
+        let head_len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
+
+        let head_buf_opt = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::head_locked(token.token())?;
-            let frame = array.frame();
-
-            let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
-
+            let mut array = BorrowedHtBuf::head_locked(token.downgrade())?;
             if READ {
                 array.buf_mut()[..offset].fill(0_u8);
-                array.buf_mut()[offset + len..].fill(0_u8);
-
-                let slice = &mut array.buf_mut()[offset..][..len];
-                let head_part_of_buf = user_buf.limit(len).expect("always smaller than max len");
+                array.buf_mut()[offset + head_len..].fill(0_u8);
+                let slice = &mut array.buf_mut()[offset..][..head_len];
 
                 head_part_of_buf
                     .reinterpret_unchecked::<true, false>()
@@ -554,7 +549,41 @@ impl UserInner {
             } else {
                 array.buf_mut().fill(0_u8);
             }
+            Some(array)
+        } else {
+            None
+        };
 
+        let tail_buf_opt = if !tail_part_of_buf.is_empty() {
+            // FIXME: Signal context can probably recursively use head/tail.
+            let mut array = BorrowedHtBuf::tail_locked(token.downgrade())?;
+
+            if READ {
+                let (to_copy, to_zero) = array.buf_mut().split_at_mut(tail_size);
+                to_zero.fill(0_u8);
+
+                // FIXME: remove reinterpret_unchecked
+                tail_part_of_buf
+                    .reinterpret_unchecked::<true, false>()
+                    .copy_to_slice(to_copy)?;
+            } else {
+                array.buf_mut().fill(0_u8);
+            }
+            Some(array)
+        } else {
+            None
+        };
+
+        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
+        let (dst_space, _token_split) = dst_space_guard.token_split();
+
+        let free_span = dst_space
+            .grants
+            .find_free(dst_space.mmap_min, page_count)
+            .ok_or(Error::new(ENOMEM))?;
+
+        let head = if let Some(array) = head_buf_opt {
+            let frame = array.frame();
             dst_space.mmap(
                 &dst_space_lock,
                 Some(free_span.base),
@@ -584,13 +613,6 @@ impl UserInner {
         } else {
             (free_span.base, src_page)
         };
-
-        let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
-        let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
-
-        let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf
-            .split_at(middle_page_count * PAGE_SIZE)
-            .expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
             dst_space.mmap(
@@ -636,25 +658,9 @@ impl UserInner {
             )?;
         }
 
-        let tail = if !tail_part_of_buf.is_empty() {
+        let tail = if let Some(array) = tail_buf_opt {
             let tail_dst_page = first_middle_dst_page.next_by(middle_page_count);
-
-            // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::tail_locked(token.token())?;
             let frame = array.frame();
-
-            if READ {
-                let (to_copy, to_zero) = array.buf_mut().split_at_mut(tail_size);
-
-                to_zero.fill(0_u8);
-
-                // FIXME: remove reinterpret_unchecked
-                tail_part_of_buf
-                    .reinterpret_unchecked::<true, false>()
-                    .copy_to_slice(to_copy)?;
-            } else {
-                array.buf_mut().fill(0_u8);
-            }
 
             dst_space.mmap(
                 &dst_space_lock,

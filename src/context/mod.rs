@@ -132,8 +132,6 @@ pub fn init(token: &mut CleanLockToken) {
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
 
-    let priority = context.prio;
-
     let context_lock = Arc::new(ContextLock::new(context));
 
     let context_ref = ContextRef(Arc::clone(&context_lock));

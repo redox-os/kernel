@@ -36,7 +36,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
             let heap = match addr_space {
                 Ok(addr_space) => {
-                    let addr_space_guard = addr_space.acquire_read(token.token());
+                    let addr_space_guard = addr_space.acquire_read(token.downgrade());
                     let mut private_memory = 0;
                     let mut shared_memory = 0;
                     // TODO: All user programs must have some grant in order for executable memory to even
