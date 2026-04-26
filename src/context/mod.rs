@@ -4,7 +4,7 @@
 
 use alloc::{
     collections::{BTreeSet, VecDeque},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 use core::num::NonZeroUsize;
 
@@ -78,15 +78,15 @@ static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new())
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
 
 // Context that has been pushed out from RUN_CONTEXTS after being idle
-static IDLE_CONTEXTS: Mutex<L2, VecDeque<ContextRef>> = Mutex::new(VecDeque::new());
+static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque::new());
 
 pub struct RunContextData {
-    set: [VecDeque<ContextRef>; 40],
+    set: [VecDeque<WeakContextRef>; 40],
 }
 
 impl RunContextData {
     pub const fn new() -> Self {
-        const EMPTY_VEC: VecDeque<ContextRef> = VecDeque::new();
+        const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
             set: [EMPTY_VEC; 40],
         }
@@ -103,13 +103,13 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
     CONTEXTS.write(token)
 }
 
-pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<ContextRef>> {
+pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<WeakContextRef>> {
     IDLE_CONTEXTS.lock(token)
 }
 
 pub fn idle_contexts_try(
     token: LockToken<'_, L1>,
-) -> Option<MutexGuard<'_, L2, VecDeque<ContextRef>>> {
+) -> Option<MutexGuard<'_, L2, VecDeque<WeakContextRef>>> {
     IDLE_CONTEXTS.try_lock(token)
 }
 
@@ -189,6 +189,31 @@ impl PartialEq for ContextRef {
 }
 impl Eq for ContextRef {}
 
+#[derive(Clone)]
+pub struct WeakContextRef(pub Weak<ContextLock>);
+impl WeakContextRef {
+    pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
+        self.0.upgrade()
+    }
+}
+
+impl Ord for WeakContextRef {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        Ord::cmp(&Weak::as_ptr(&self.0), &Weak::as_ptr(&other.0))
+    }
+}
+impl PartialOrd for WeakContextRef {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(Ord::cmp(self, other))
+    }
+}
+impl PartialEq for WeakContextRef {
+    fn eq(&self, other: &Self) -> bool {
+        Ord::cmp(self, other) == core::cmp::Ordering::Equal
+    }
+}
+impl Eq for WeakContextRef {}
+
 /// Spawn a context from a function.
 pub fn spawn(
     userspace_allowed: bool,
@@ -210,8 +235,7 @@ pub fn spawn(
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
-
-    let run_ref = ContextRef(Arc::clone(&context_lock));
+    let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
     idle_contexts(token.downgrade()).push_back(run_ref);
     contexts_mut(token.downgrade()).insert(context_ref);
 

@@ -4,8 +4,8 @@
 
 use crate::{
     context::{
-        self, arch, contexts, idle_contexts, idle_contexts_try, run_contexts,
-        ArcContextLockWriteGuard, Context, ContextLock,
+        self, arch, idle_contexts, idle_contexts_try, run_contexts, ArcContextLockWriteGuard,
+        Context, ContextLock, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -19,8 +19,6 @@ use core::{
     sync::atomic::Ordering,
 };
 use syscall::PtraceFlags;
-
-use super::ContextRef;
 
 enum UpdateResult {
     CanSwitch,
@@ -304,7 +302,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
-fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize, ContextRef)> {
+fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize, WeakContextRef)> {
     // TODO: Optimise this somehow. Perhaps using a separate timer queue?
     let mut wakeups = Vec::new();
     let current_context = context::current();
@@ -314,19 +312,19 @@ fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize,
     };
     let (mut idle_contexts, mut token) = idle_contexts.into_split();
     let len = idle_contexts.len();
-    for i in 0..len {
+    for _ in 0..len {
         let Some(context_ref) = idle_contexts.pop_front() else {
             break;
         };
-        let Some(context_ref) = context_ref.upgrade() else {
+        let Some(context) = context_ref.upgrade() else {
             continue;
         };
-        if Arc::ptr_eq(&context_ref, &current_context) {
-            idle_contexts.push_back(ContextRef(context_ref));
+        if Arc::ptr_eq(&context, &current_context) {
+            idle_contexts.push_back(context_ref);
             continue;
         }
-        let Some(guard) = context_ref.try_read(token.token()) else {
-            idle_contexts.push_back(ContextRef(context_ref));
+        let Some(guard) = context.try_read(token.token()) else {
+            idle_contexts.push_back(context_ref);
             continue;
         };
         if guard.status.is_soft_blocked() {
@@ -334,7 +332,7 @@ fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize,
                 if switch_time >= wake {
                     let prio = guard.prio;
                     drop(guard);
-                    wakeups.push((prio, ContextRef(context_ref)));
+                    wakeups.push((prio, context_ref));
                     continue;
                 }
             }
@@ -343,12 +341,12 @@ fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize,
         if guard.status.is_runnable() && !guard.running {
             let prio = guard.prio;
             drop(guard);
-            wakeups.push((prio, ContextRef(context_ref)));
+            wakeups.push((prio, context_ref));
             continue;
         }
 
         drop(guard);
-        idle_contexts.push_back(ContextRef(context_ref));
+        idle_contexts.push_back(context_ref);
     }
     wakeups
 }
@@ -419,9 +417,9 @@ fn select_next_context(
 
         let len = contexts.len();
         for _ in 0..len {
-            let next_context_lock = match contexts.pop_front() {
+            let (next_context_ref, next_context_lock) = match contexts.pop_front() {
                 Some(lock) => match lock.upgrade() {
-                    Some(new_lock) => new_lock,
+                    Some(new_lock) => (lock, new_lock),
                     None => {
                         skipped_contexts += 1;
                         continue; // Ghost Process, just continue
@@ -431,11 +429,11 @@ fn select_next_context(
             };
 
             if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
-                contexts.push_back(ContextRef(next_context_lock));
+                contexts.push_back(next_context_ref);
                 continue;
             }
             if Arc::ptr_eq(&next_context_lock, &idle_context) {
-                contexts.push_back(ContextRef(next_context_lock));
+                contexts.push_back(next_context_ref);
                 continue;
             }
             let mut next_context_guard = unsafe { next_context_lock.write_arc() };
@@ -448,9 +446,9 @@ fn select_next_context(
                 break 'priority;
             } else {
                 if matches!(sw, UpdateResult::Blocked) {
-                    idle_contexts(token.token()).push_back(ContextRef(next_context_lock));
+                    idle_contexts(token.token()).push_back(next_context_ref);
                 } else {
-                    contexts.push_back(ContextRef(next_context_lock));
+                    contexts.push_back(next_context_ref);
                 };
                 skipped_contexts += 1;
 
@@ -465,11 +463,12 @@ fn select_next_context(
 
     if !Arc::ptr_eq(&prev_context_lock, &idle_context) {
         // Send the old process to the back of the line (if it is still runnable)
+        let prev_ctx = WeakContextRef(Arc::downgrade(&prev_context_lock));
         if prev_context_guard.status.is_runnable() {
             let prio = prev_context_guard.prio;
-            contexts_list[prio].push_back(ContextRef(Arc::clone(&prev_context_lock)));
+            contexts_list[prio].push_back(prev_ctx);
         } else {
-            idle_contexts(token.token()).push_back(ContextRef(Arc::clone(&prev_context_lock)));
+            idle_contexts(token.token()).push_back(prev_ctx);
         }
     }
 
