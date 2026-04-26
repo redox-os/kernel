@@ -72,16 +72,13 @@ pub use self::arch::empty_cr3;
 
 // Set of weak references to all contexts available for scheduling. The only strong references are
 // the context file descriptors.
-static CONTEXTS: Mutex<L2, BTreeSet<ContextRef>> = Mutex::new(BTreeSet::new());
-/// Try to get the global free contexts
-pub fn free_contexts_try(
-    token: LockToken<'_, L1>,
-) -> Option<MutexGuard<'_, L2, BTreeSet<ContextRef>>> {
-    CONTEXTS.try_lock(token)
-}
+static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
 // Actual context store for the scheduler
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
+
+// Context that has been pushed out from RUN_CONTEXTS after being idle
+static IDLE_CONTEXTS: Mutex<L2, VecDeque<ContextRef>> = Mutex::new(VecDeque::new());
 
 pub struct RunContextData {
     set: [VecDeque<ContextRef>; 40],
@@ -97,15 +94,23 @@ impl RunContextData {
 }
 
 /// Get the global schemes list, const
-pub fn contexts(token: LockToken<'_, L0>) -> RwLockReadGuard<'_, L1, BTreeSet<ContextRef>> {
-    let percpu = PercpuBlock::current();
-    percpu.contexts.read(token)
+pub fn contexts(token: LockToken<'_, L1>) -> RwLockReadGuard<'_, L2, BTreeSet<ContextRef>> {
+    CONTEXTS.read(token)
 }
 
 /// Get per cpu contexts, mutable
-pub fn contexts_mut(token: LockToken<'_, L0>) -> RwLockWriteGuard<'_, L1, BTreeSet<ContextRef>> {
-    let percpu = PercpuBlock::current();
-    percpu.contexts.write(token)
+pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
+    CONTEXTS.write(token)
+}
+
+pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<ContextRef>> {
+    IDLE_CONTEXTS.lock(token)
+}
+
+pub fn idle_contexts_try(
+    token: LockToken<'_, L1>,
+) -> Option<MutexGuard<'_, L2, VecDeque<ContextRef>>> {
+    IDLE_CONTEXTS.try_lock(token)
 }
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
@@ -126,38 +131,21 @@ pub fn init(token: &mut CleanLockToken) {
     context.status = Status::Runnable;
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
-    context.enqueued = false;
+
+    let priority = context.prio;
 
     let context_lock = Arc::new(ContextLock::new(context));
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
-    contexts_mut(token.token()).insert(context_ref);
-
+    contexts_mut(token.token().downgrade()).insert(context_ref.clone());
+    // Set this as current context and idle context, but don't treat it as regular context queue
     unsafe {
         let percpu = PercpuBlock::current();
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        percpu.switch_internals.set_idle_context(context_lock);
     }
-}
-
-pub fn wakeup_context(context_lock: &Arc<RwLock<L4, Context>>, mut token: LockToken<L0>) {
-    let priority = {
-        let mut context = context_lock.write(token.token());
-
-        context.wake = None;
-        context.unblock();
-
-        if !(context.status.is_runnable() && !context.running && !context.enqueued) {
-            return;
-        }
-
-        context.enqueued = true;
-
-        context.prio
-    };
-
-    run_contexts(token).set[priority].push_back(ContextRef(Arc::clone(context_lock)));
 }
 
 pub fn current() -> Arc<ContextLock> {
@@ -176,6 +164,7 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
         .with_context(|current| Arc::ptr_eq(context, current))
 }
 
+#[derive(Clone)]
 pub struct ContextRef(pub Arc<ContextLock>);
 impl ContextRef {
     pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
@@ -223,9 +212,8 @@ pub fn spawn(
     let context_ref = ContextRef(Arc::clone(&context_lock));
 
     let run_ref = ContextRef(Arc::clone(&context_lock));
-    run_contexts(token.token()).set[20].push_back(run_ref);
-    contexts_mut(token.token()).insert(context_ref);
-    context_lock.write(token.token()).enqueued = true;
+    idle_contexts(token.downgrade()).push_back(run_ref);
+    contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)
 }

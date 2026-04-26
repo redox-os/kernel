@@ -1,7 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    context::{file::LockedFileDescription, memory::AddrSpaceWrapper},
-    percpu,
+    context::{contexts, file::LockedFileDescription, memory::AddrSpaceWrapper},
     scheme::{self, handles, KernelSchemes},
     sync::CleanLockToken,
     syscall::error::Result,
@@ -37,7 +36,9 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut schemes_guard = handles().read(token.token());
     let (schemes, mut token) = schemes_guard.token_split();
 
-    'contexts: for context in percpu::get_all_contexts(token.token()) {
+    let mut contexts = contexts(token.token());
+    let (contexts, mut token) = contexts.token_split();
+    'contexts: for context in contexts.iter().filter_map(|x| x.upgrade()) {
         let mut context_guard = context.read(token.token());
         let (context, token) = context_guard.token_split();
         let mut files_guard = context.files.read(token);
