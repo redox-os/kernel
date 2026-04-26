@@ -2,7 +2,7 @@ use alloc::collections::VecDeque;
 use syscall::{EAGAIN, EINTR};
 
 use crate::{
-    sync::{CleanLockToken, LockToken, Mutex, MutexGuard, WaitCondition, L1, L2},
+    sync::{CleanLockToken, LockToken, Mutex, MutexGuard, WaitCondition, L1, L2, L3},
     syscall::{
         error::{Error, Result, EINVAL},
         usercopy::UserSliceWo,
@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct WaitQueue<T> {
-    incoming: Mutex<L2, VecDeque<T>>,
+    incoming: Mutex<L3, VecDeque<T>>,
     outgoing: Mutex<L2, VecDeque<T>>,
     pub condition: WaitCondition,
 }
@@ -58,17 +58,16 @@ impl<T> WaitQueue<T> {
                 return Ok(bytes_copied);
             }
 
-            let incoming_guard = unsafe { self.incoming.relock(token.token()) };
-            let (mut incoming, mut split_token) = incoming_guard.into_split();
+            let mut incoming = self.incoming.lock(token.token());
 
             if incoming.is_empty() {
                 if block {
-                    drop(outgoing);
+                    drop(incoming);
                     // SAFETY: Uses wait_inner because this inner is L2. It's guaranteed there's no other
                     // lock held at this point because clean token is provided from caller.
                     if !self
                         .condition
-                        .wait_inner(incoming, reason, &mut split_token)
+                        .wait_inner(outgoing, reason, &mut token.token())
                     {
                         return Err(Error::new(EINTR));
                     }
