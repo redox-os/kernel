@@ -485,15 +485,19 @@ impl UserInner {
             });
         }
 
-        let cur_space_lock = AddrSpace::current()?;
-        let dst_space_lock = {
-            Arc::clone(
-                context_weak
-                    .upgrade()
-                    .ok_or(Error::new(ESRCH))?
-                    .read(token.token())
-                    .addr_space()?,
-            )
+        let (cur_space_lock, dst_space_lock) = {
+            match context_weak.upgrade() {
+                Some(ctx) if context::is_current(&ctx) => {
+                    let cur_space_lock = AddrSpace::current()?;
+                    // Will bail below this code
+                    (cur_space_lock, Arc::clone(&cur_space_lock))
+                }
+                Some(ctx) => (
+                    AddrSpace::current()?,
+                    Arc::clone(ctx.read(token.token()).addr_space()?),
+                ),
+                None => return Err(Error::new(ESRCH)),
+            }
         };
 
         if Arc::ptr_eq(&dst_space_lock, &cur_space_lock) {
