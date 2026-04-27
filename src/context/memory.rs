@@ -23,7 +23,7 @@ use crate::{
     scheme::{self, KernelSchemes},
     sync::{
         CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockUpgradableGuard,
-        RwLockWriteGuard, L2, L3,
+        RwLockWriteGuard, L4, L5,
     },
 };
 
@@ -84,7 +84,7 @@ impl UnmapResult {
 
 #[derive(Debug)]
 pub struct AddrSpaceWrapper {
-    pub inner: RwLock<L3, AddrSpace>,
+    pub inner: RwLock<L5, AddrSpace>,
     pub tlb_ack: AtomicU32,
     pub used_by: LogicalCpuSet,
 }
@@ -98,32 +98,32 @@ impl AddrSpaceWrapper {
     }
     pub fn acquire_read<'a>(
         &'a self,
-        lock_token: LockToken<'a, L2>,
-    ) -> RwLockReadGuard<'a, L3, AddrSpace> {
+        lock_token: LockToken<'a, L4>,
+    ) -> RwLockReadGuard<'a, L5, AddrSpace> {
         self.inner.read(lock_token)
     }
     pub fn acquire_upgradeable_read<'a>(
         &'a self,
-        lock_token: LockToken<'a, L2>,
-    ) -> RwLockUpgradableGuard<'a, L3, AddrSpace> {
+        lock_token: LockToken<'a, L4>,
+    ) -> RwLockUpgradableGuard<'a, L5, AddrSpace> {
         self.inner.upgradeable_read(lock_token)
     }
     pub fn acquire_write<'a>(
         &'a self,
-        lock_token: LockToken<'a, L2>,
-    ) -> RwLockWriteGuard<'a, L3, AddrSpace> {
+        lock_token: LockToken<'a, L4>,
+    ) -> RwLockWriteGuard<'a, L5, AddrSpace> {
         self.inner.write(lock_token)
     }
     pub unsafe fn acquire_reupgradeable_read<'a>(
         &'a self,
-        lock_token: LockToken<'a, L3>,
-    ) -> RwLockUpgradableGuard<'a, L3, AddrSpace> {
+        lock_token: LockToken<'a, L5>,
+    ) -> RwLockUpgradableGuard<'a, L5, AddrSpace> {
         unsafe { self.inner.reupgradeable_read(lock_token) }
     }
     pub unsafe fn acquire_rewrite<'a>(
         &'a self,
-        lock_token: LockToken<'a, L3>,
-    ) -> RwLockWriteGuard<'a, L3, AddrSpace> {
+        lock_token: LockToken<'a, L5>,
+    ) -> RwLockWriteGuard<'a, L5, AddrSpace> {
         unsafe { self.inner.rewrite(lock_token) }
     }
     pub fn into_drop(self, token: &mut CleanLockToken) {
@@ -334,7 +334,7 @@ impl AddrSpaceWrapper {
         new_page_count: usize,
         new_flags: MapFlags,
         mut notify_files_out: Option<&mut Vec<UnmapResult>>,
-        token: LockToken<L3>,
+        token: LockToken<L5>,
     ) -> Result<Page> {
         let dst_lock = self;
         // SAFETY: This is moving data between two AddrSpace. Caller ensures the two is a different AddrSpace
@@ -2452,16 +2452,16 @@ pub fn try_correcting_page_tables(
 
 // TODO: maybe refactor the return type into a struct/typedef?
 #[expect(clippy::type_complexity)]
-/// XXX: This require passing L3 addr_space_guard.
+/// XXX: This require passing L5 addr_space_guard.
 /// Caller must ensure there's no other lock being held at this point.
 /// Caller also need to provide clean token for the new AddrSpace.
 fn correct_inner<'l>(
     addr_space_lock: &'l Arc<AddrSpaceWrapper>,
-    mut addr_space: RwLockWriteGuard<'l, L3, AddrSpace>,
+    mut addr_space: RwLockWriteGuard<'l, L5, AddrSpace>,
     faulting_page: Page,
     access: AccessMode,
     recursion_level: u32,
-) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, L3, AddrSpace>), PfError> {
+) -> Result<(Frame, PageFlush<RmmA>, RwLockWriteGuard<'l, L5, AddrSpace>), PfError> {
     let mut flusher = Flusher::with_cpu_set(&addr_space_lock.used_by, &addr_space_lock.tlb_ack);
 
     let Some((grant_base, grant_info)) = addr_space.grants.contains(faulting_page) else {
@@ -2756,7 +2756,7 @@ pub struct BorrowedFmapSource<'a> {
     pub mode: MmapMode,
     // TODO: There should be a method that obtains the lock from the guard.
     pub addr_space_lock: &'a Arc<AddrSpaceWrapper>,
-    pub addr_space_guard: RwLockWriteGuard<'a, L3, AddrSpace>,
+    pub addr_space_guard: RwLockWriteGuard<'a, L5, AddrSpace>,
 }
 
 pub fn handle_notify_files(notify_files: Vec<UnmapResult>, token: &mut CleanLockToken) {
