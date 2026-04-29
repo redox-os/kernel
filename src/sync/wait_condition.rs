@@ -111,7 +111,7 @@ impl WaitCondition {
                 .iter()
                 .position(|c| Weak::as_ptr(c) == Arc::as_ptr(&current_context_ref))
             {
-                contexts.remove(index);
+                contexts.swap_remove(index);
                 waited = false;
             }
         }
