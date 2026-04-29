@@ -96,7 +96,7 @@ pub fn tick(token: &mut CleanLockToken) {
     ticks_cell.set(new_ticks);
 
     // Trigger a context switch after every 3 ticks (approx. 6.75 ms).
-    if new_ticks >= 3 {
+    if new_ticks >= 3 && arch::CONTEXT_SWITCH_LOCK.load(Ordering::Relaxed) == false {
         switch(token);
         crate::context::signal::signal_handler(token);
     }
