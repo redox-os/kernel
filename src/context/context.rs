@@ -60,6 +60,9 @@ impl Status {
     pub fn is_soft_blocked(&self) -> bool {
         matches!(self, Self::Blocked)
     }
+    pub fn is_dead(&self) -> bool {
+        matches!(self, Self::Dead { .. })
+    }
 }
 
 #[derive(Clone, Debug)]

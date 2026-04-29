@@ -336,6 +336,9 @@ fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize,
                     continue;
                 }
             }
+        } else if guard.status.is_dead() {
+            // TODO: who hold this dead context?
+            continue;
         }
 
         if guard.status.is_runnable() && !guard.running {
