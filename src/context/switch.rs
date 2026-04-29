@@ -96,7 +96,7 @@ pub fn tick(token: &mut CleanLockToken) {
     ticks_cell.set(new_ticks);
 
     // Trigger a context switch after every 3 ticks (approx. 6.75 ms).
-    if new_ticks >= 3 {
+    if new_ticks >= 3 && arch::CONTEXT_SWITCH_LOCK.load(Ordering::Relaxed) == false {
         switch(token);
         crate::context::signal::signal_handler(token);
     }
@@ -176,13 +176,30 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     // Alarm (previously in update_runnable)
     let wakeups = wakeup_contexts(token, switch_time);
+    let wakeups_len = wakeups.len();
 
-    if wakeups.len() > 0 {
+    if wakeups_len > 0 {
         let mut run_contexts = run_contexts(token.token());
         for (prio, context_lock) in wakeups {
             run_contexts.set[prio].push_back(context_lock);
         }
     }
+
+    /* // uncomment to debug contexts count
+    let cpu_count = crate::cpu_count() as usize;
+    let len_idle = idle_contexts(token.downgrade()).len();
+    let all_contexts = context::contexts(token.downgrade())
+        .len()
+        .saturating_sub(cpu_count); // ignore kmain
+    print!(
+        "\r TIME {}.{} IDLE {} WAKEUPS {} ALL {} ",
+        switch_time / 1000_000_000,
+        (switch_time / 100_000_000) % 10,
+        len_idle,
+        wakeups_len,
+        all_contexts
+    );
+    */
 
     let cpu_id = crate::cpu_id();
 
@@ -336,6 +353,9 @@ fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize,
                     continue;
                 }
             }
+        } else if guard.status.is_dead() {
+            // TODO: who hold this dead context?
+            continue;
         }
 
         if guard.status.is_runnable() && !guard.running {

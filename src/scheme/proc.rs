@@ -1240,7 +1240,7 @@ impl ContextHandle {
                         } else {
                             let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
-                            if let context::Status::Dead { .. } = ctxt.status {
+                            if ctxt.status.is_dead() {
                                 return Ok(size_of::<usize>());
                             }
                             ctxt.status = context::Status::Runnable;
