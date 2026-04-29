@@ -1004,7 +1004,7 @@ pub fn bulk_add_fds(
         return Ok(0);
     }
     let current_lock = context::current();
-    let mut current = current_lock.write(token.token());
+    let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();
 
     let files: Vec<FileDescriptor> = descriptions
@@ -1048,7 +1048,7 @@ pub fn bulk_insert_fds(
         .read_usize()?;
 
     let current_lock = context::current();
-    let mut current = current_lock.write(token.token());
+    let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();
 
     if first_fd == usize::MAX {
