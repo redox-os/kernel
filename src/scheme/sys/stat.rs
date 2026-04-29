@@ -86,9 +86,9 @@ fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
     };
 
     for status in statuses {
-        if matches!(status, Status::Runnable) {
+        if status.is_runnable() {
             running += 1;
-        } else if !matches!(status, Status::Dead { .. }) {
+        } else if !status.is_dead() {
             blocked += 1;
         }
     }
