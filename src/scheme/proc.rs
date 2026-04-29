@@ -441,7 +441,7 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let old_ctx = try_stop_context(context, token, |context, _| {
+                let old_ctx = try_stop_context(context, token, |context, token| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -452,9 +452,7 @@ impl KernelScheme for ProcScheme {
                     ))]
                     regs.set_arg1(arg1);
 
-                    // TODO: Lock ordering violation
-                    let mut token = unsafe { CleanLockToken::new() };
-                    Ok(context.set_addr_space(Some(new), token.downgrade()))
+                    Ok(context.set_addr_space(Some(new), token))
                 })?;
                 if let Some(old_ctx) = old_ctx
                     && let Some(addrspace) = Arc::into_inner(old_ctx)

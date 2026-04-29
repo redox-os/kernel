@@ -317,7 +317,6 @@ impl AddrSpaceWrapper {
         unpin: bool,
         token: &mut CleanLockToken,
     ) -> Result<Vec<UnmapResult>> {
-        let mut token = token.token();
         let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
 
@@ -666,7 +665,9 @@ impl AddrSpace {
             }
 
             // Remove irrelevant region
-            let unmap_result = grant.unmap(this_mapper, this_flusher);
+            // TODO: Lock ordering violation
+            let mut token = unsafe { CleanLockToken::new() };
+            let unmap_result = grant.unmap(this_mapper, this_flusher, &mut token);
 
             // Notify scheme that holds grant
             if unmap_result.file_desc.is_some() {
@@ -765,7 +766,7 @@ impl AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher) };
+            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher, token) };
 
             let _ = res.unmap(token);
         }
@@ -1964,6 +1965,7 @@ impl Grant {
         mut self,
         mapper: &mut PageMapper,
         flusher: &mut impl GenericFlusher,
+        token: &mut CleanLockToken,
     ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());
@@ -1974,9 +1976,6 @@ impl Grant {
             ..
         } = self.info.provider
         {
-            // TODO: Lock ordering violation
-            let mut token = unsafe { CleanLockToken::new() };
-            let mut token = token.token();
             let mut guard = address_space.acquire_write(token.downgrade());
 
             for (_, grant) in guard

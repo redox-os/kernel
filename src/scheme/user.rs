@@ -1340,12 +1340,15 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
             dst.copy_from_slice(&src.buf()[..dst.len()])?;
         }
         let unpin = true;
-        if let Some(ref addrsp) = self.addrsp
-            && !self.span.is_empty()
-        {
-            let res = addrsp.munmap(self.span, unpin, token)?;
-            for r in res {
-                let _ = r.unmap(token);
+        if let Some(addrsp) = self.addrsp.take() {
+            if !self.span.is_empty() {
+                let res = addrsp.munmap(self.span, unpin, token)?;
+                for r in res {
+                    let _ = r.unmap(token);
+                }
+            }
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
             }
         }
 
@@ -1353,11 +1356,6 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
         self.release_inner(token)?;
-        if let Some(addrsp) = self.addrsp.take()
-            && let Some(addrsp) = Arc::into_inner(addrsp)
-        {
-            addrsp.into_drop(token);
-        }
         if let Some(src) = self.head.src.take() {
             src.into_drop(token);
         }
