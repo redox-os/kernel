@@ -3,7 +3,7 @@ use crate::{
         self,
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
         Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
@@ -521,7 +521,7 @@ impl KernelScheme for ProcScheme {
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
-                let mut notify_files = Vec::new();
+                let mut notify_files = UnmapVec::new();
 
                 // TODO: Validate flags
                 let result_base = if consume {
