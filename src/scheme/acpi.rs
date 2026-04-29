@@ -181,7 +181,7 @@ impl KernelScheme for AcpiScheme {
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
-        let mut handles = HANDLES.read(token.token());
+        let handles = HANDLES.read(token.token());
         let handle = handles.get(id)?;
 
         if handle.stat {

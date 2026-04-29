@@ -633,7 +633,7 @@ impl KernelScheme for ProcScheme {
     ) -> Result<usize> {
         // TODO: simplify
         let handle = {
-            let mut handles = HANDLES.read(token.token());
+            let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -667,7 +667,7 @@ impl KernelScheme for ProcScheme {
 
         // Don't hold a global lock during the context switch later on
         let handle = {
-            let mut handles = HANDLES.read(token.token());
+            let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
@@ -696,7 +696,7 @@ impl KernelScheme for ProcScheme {
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
-        let mut handles = HANDLES.read(token.token());
+        let handles = HANDLES.read(token.token());
         let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         handle.fsize()

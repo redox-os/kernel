@@ -80,13 +80,13 @@ impl WaitCondition {
             let mut preempt = PreemptGuardL2::new(&current_context_ref, &mut token);
             let token = preempt.token();
             {
-                let mut context = current_context_ref.write(token.token());
+                let context = current_context_ref.upgradeable_read(token.token());
                 if let Some((control, pctl, _)) = context.sigcontrol()
                     && control.currently_pending_unblocked(pctl) != 0
                 {
                     return false;
                 }
-                context.block(reason);
+                context.upgrade().block(reason);
             }
 
             self.contexts

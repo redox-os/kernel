@@ -41,14 +41,14 @@ pub fn nanosleep(
 
     let current_context = context::current();
     {
-        let mut context = current_context.write(token.token());
+        let context = current_context.upgradeable_read(token.token());
 
         if let Some((tctl, pctl, _)) = context.sigcontrol()
             && tctl.currently_pending_unblocked(pctl) != 0
         {
             return Err(Error::new(EINTR));
         }
-
+        let mut context = context.upgrade();
         context.wake = Some(end);
         context.block("nanosleep");
     }
