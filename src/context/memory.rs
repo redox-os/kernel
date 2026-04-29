@@ -65,7 +65,7 @@ impl UnmapResult {
         };
 
         let (scheme_id, number) = {
-            let desc = description.write(token.token());
+            let desc = description.read(token.token());
             (desc.scheme, desc.number)
         };
 

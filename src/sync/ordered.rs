@@ -620,6 +620,14 @@ impl<'a, L: Level, T> RwLockWriteGuard<'a, L, T> {
         drop(self.inner);
         self.lock_token
     }
+
+    /// Upgrade to RO lock
+    pub fn downgrade(self) -> RwLockReadGuard<'a, L, T> {
+        RwLockReadGuard {
+            inner: self.inner.downgrade(),
+            lock_token: self.lock_token,
+        }
+    }
 }
 
 impl<L: Level, T> core::ops::Deref for RwLockWriteGuard<'_, L, T> {

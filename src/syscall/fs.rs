@@ -441,7 +441,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     .ok_or(Error::new(EBADF))?;
 
     let (scheme_id, number, flags) = {
-        let desc = file.description.write(token.token());
+        let desc = file.description.read(token.token());
         (desc.scheme, desc.number, desc.flags)
     };
 

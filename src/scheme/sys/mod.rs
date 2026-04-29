@@ -165,7 +165,7 @@ impl KernelScheme for SysScheme {
         if matches!(kind, Kind::Wr(_)) {
             return Ok(0);
         }
-        let is_data_none = data_lock.write(token.token()).is_none();
+        let is_data_none = data_lock.read(token.token()).is_none();
         if is_data_none {
             let new_data = kind.generate_data(token)?;
             let mut data_guard = data_lock.write(token.token());
@@ -218,7 +218,7 @@ impl KernelScheme for SysScheme {
                 _ => return Err(Error::new(EBADF)),
             }
         };
-        let is_data_none = data_lock.write(token.token()).is_none();
+        let is_data_none = data_lock.read(token.token()).is_none();
         if is_data_none {
             let new_data = kind.generate_data(token)?;
             let mut data_guard = data_lock.write(token.token());
@@ -296,7 +296,7 @@ impl KernelScheme for SysScheme {
             }
         };
         let stat = if let Some((kind, data_lock)) = stat_base {
-            let is_data_none = data_lock.write(token.token()).is_none();
+            let is_data_none = data_lock.read(token.token()).is_none();
             if is_data_none {
                 let new_data = kind.generate_data(token)?;
                 let mut data_guard = data_lock.write(token.token());
