@@ -1,4 +1,8 @@
-use alloc::{collections::BTreeMap, sync::Arc, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+    vec::Vec,
+};
 use arrayvec::ArrayVec;
 use core::{
     cmp,
@@ -791,10 +795,10 @@ impl Deref for AddrSpaceSwitchReadGuard {
 pub struct UserGrants {
     // Using a BTreeMap for its range method.
     inner: BTreeMap<Page, GrantInfo>,
-    // Using a BTreeMap for its range method.
-    holes: BTreeMap<VirtualAddress, usize>,
-    // TODO: Would an additional map ordered by (size,start) to allow for O(log n) allocations be
-    // beneficial?
+    // Holes ordered by memory address for merging adjacent holes
+    holes_by_addr: BTreeMap<VirtualAddress, usize>,
+    // Holes ordered by size then start address for fast allocations
+    holes_by_size: BTreeSet<(usize, VirtualAddress)>,
 }
 
 #[derive(Clone, Copy)]
@@ -896,10 +900,41 @@ impl Debug for PageSpan {
 
 impl UserGrants {
     pub fn new() -> Self {
+        let mut holes_by_addr = BTreeMap::new();
+        let mut holes_by_size = BTreeSet::new();
+
+        let initial_offset = VirtualAddress::new(0);
+        let initial_size = crate::USER_END_OFFSET;
+
+        holes_by_addr.insert(initial_offset, initial_size);
+        holes_by_size.insert((initial_size, initial_offset));
+
         Self {
             inner: BTreeMap::new(),
-            holes: core::iter::once((VirtualAddress::new(0), crate::USER_END_OFFSET))
-                .collect::<BTreeMap<_, _>>(),
+            holes_by_addr,
+            holes_by_size,
+        }
+    }
+    /// Internal helper to keep the two hole maps in sync
+    fn insert_hole(&mut self, offset: VirtualAddress, size: usize) {
+        self.holes_by_addr.insert(offset, size);
+        self.holes_by_size.insert((size, offset));
+    }
+    /// Internal helper to keep the two hole maps in sync
+    fn remove_hole(&mut self, offset: &VirtualAddress) -> Option<usize> {
+        if let Some(size) = self.holes_by_addr.remove(offset) {
+            self.holes_by_size.remove(&(size, *offset));
+            Some(size)
+        } else {
+            None
+        }
+    }
+    /// Internal helper to keep the two hole maps in sync
+    fn resize_hole(&mut self, offset: &VirtualAddress, new_size: usize) {
+        if let Some(size) = self.holes_by_addr.get_mut(offset) {
+            self.holes_by_size.remove(&(*size, *offset));
+            *size = new_size;
+            self.holes_by_size.insert((new_size, *offset));
         }
     }
 
@@ -962,18 +997,16 @@ impl UserGrants {
         // TODO: Allow explicitly allocating guard pages? Perhaps using mprotect or mmap with
         // PROT_NONE?
 
-        let (hole_start, _hole_size) = self
-            .holes
-            .iter()
-            .skip_while(|(hole_offset, hole_size)| hole_offset.data() + **hole_size <= min)
-            .find(|(hole_offset, hole_size)| {
-                let avail_size =
-                    if hole_offset.data() <= min && min <= hole_offset.data() + **hole_size {
-                        **hole_size - (min - hole_offset.data())
-                    } else {
-                        **hole_size
-                    };
-                page_count * PAGE_SIZE <= avail_size
+        let req_size = page_count * PAGE_SIZE;
+        let (_, hole_start) = self
+            .holes_by_size
+            .range((req_size, VirtualAddress::new(0))..)
+            .find(|&&(hole_size, hole_offset)| {
+                // A hole might be large enough, but the usable
+                // portion above `min` address might be too small.
+                let usable_start = cmp::max(hole_offset.data(), min);
+                let hole_end = hole_offset.data() + hole_size;
+                usable_start + req_size <= hole_end
             })?;
         // Create new region
         Some(PageSpan::new(
@@ -989,10 +1022,14 @@ impl UserGrants {
         let size = page_count * PAGE_SIZE;
         let end_address = base.start_address().add(size);
 
-        let previous_hole = self.holes.range_mut(..start_address).next_back();
+        let previous_hole = self
+            .holes_by_addr
+            .range(..start_address)
+            .next_back()
+            .map(|(&k, &v)| (k, v));
 
         if let Some((hole_offset, hole_size)) = previous_hole {
-            let prev_hole_end = hole_offset.data() + *hole_size;
+            let prev_hole_end = hole_offset.data() + hole_size;
 
             // Note that prev_hole_end cannot exactly equal start_address, since that would imply
             // there is another grant at that position already, as it would otherwise have been
@@ -1002,46 +1039,49 @@ impl UserGrants {
                 // hole_offset must be below (but never equal to) the start address due to the
                 // `..start_address()` limit; hence, all we have to do is to shrink the
                 // previous offset.
-                *hole_size = start_address.data() - hole_offset.data();
+                self.resize_hole(&hole_offset, start_address.data() - hole_offset.data());
             }
             if prev_hole_end > end_address.data() {
                 // The grant is splitting this hole in two, so insert the new one at the end.
-                self.holes
-                    .insert(end_address, prev_hole_end - end_address.data());
+                self.insert_hole(end_address, prev_hole_end - end_address.data());
             }
         }
 
         // Next hole
-        if let Some(hole_size) = self.holes.remove(&start_address) {
+        if let Some(hole_size) = self.remove_hole(&start_address) {
             let remainder = hole_size - size;
             if remainder > 0 {
-                self.holes.insert(end_address, remainder);
+                self.insert_hole(end_address, remainder);
             }
         }
     }
-    fn unreserve(holes: &mut BTreeMap<VirtualAddress, usize>, base: Page, page_count: usize) {
-        // TODO
+
+    fn unreserve(&mut self, base: Page, page_count: usize) {
         let start_address = base.start_address();
         let size = page_count * PAGE_SIZE;
         let end_address = base.start_address().add(size);
 
         // The size of any possible hole directly after the to-be-freed region.
-        let exactly_after_size = holes.remove(&end_address);
-
+        let exactly_after_size = self.remove_hole(&end_address);
         // There was a range that began exactly prior to the to-be-freed region, so simply
         // increment the size such that it occupies the grant too. If in addition there was a grant
         // directly after the grant, include it too in the size.
-        if let Some((hole_offset, hole_size)) = holes
-            .range_mut(..start_address)
+        if let Some((hole_offset, hole_size)) = self
+            .holes_by_addr
+            .range(..start_address)
             .next_back()
             .filter(|(offset, size)| offset.data() + **size == start_address.data())
+            .map(|(&offset, &size)| (offset, size))
         {
-            *hole_size = end_address.data() - hole_offset.data() + exactly_after_size.unwrap_or(0);
+            self.resize_hole(
+                &hole_offset,
+                end_address.data() - hole_offset.data() + exactly_after_size.unwrap_or(0),
+            );
         } else {
             // There was no free region directly before the to-be-freed region, however will
             // now unconditionally insert a new free region where the grant was, and add that extra
             // size if there was something after it.
-            holes.insert(start_address, size + exactly_after_size.unwrap_or(0));
+            self.insert_hole(start_address, size + exactly_after_size.unwrap_or(0));
         }
     }
     pub fn insert(&mut self, mut grant: Grant) {
@@ -1093,7 +1133,7 @@ impl UserGrants {
 
         if (base..base.next_by(info.page_count())).contains(&page) {
             let (base, info) = cursor.remove_prev().unwrap();
-            Self::unreserve(&mut self.holes, base, info.page_count());
+            self.unreserve(base, info.page_count());
             Some(Grant { base, info })
         } else {
             None
