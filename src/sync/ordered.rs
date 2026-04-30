@@ -600,6 +600,17 @@ impl<L: Level, T> RwLock<L, T> {
             rwlock: self.clone(),
         }
     }
+
+    // Unsafe due to not using token, currently required by context::switch
+    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
+        let Some(guard) = self.inner.try_write() else {
+            return None;
+        };
+        core::mem::forget(guard);
+        Some(ArcRwLockWriteGuard {
+            rwlock: self.clone(),
+        })
+    }
 }
 
 /// RAII structure used to release the exclusive write access of a lock when dropped
@@ -699,6 +710,41 @@ impl<L: Level, T> core::ops::Deref for RwLockUpgradableGuard<'_, L, T> {
 
     fn deref(&self) -> &Self::Target {
         self.inner.deref()
+    }
+}
+
+pub struct ArcRwLockReadGuard<L: Level + 'static, T> {
+    rwlock: Arc<RwLock<L, T>>,
+}
+
+impl<L: Level, T> ArcRwLockReadGuard<L, T> {
+    pub fn rwlock(s: &Self) -> &Arc<RwLock<L, T>> {
+        &s.rwlock
+    }
+}
+
+impl<L: Level, T> core::ops::Deref for ArcRwLockReadGuard<L, T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.rwlock.inner.as_mut_ptr() }
+    }
+}
+
+impl<L: Level, T> core::ops::DerefMut for ArcRwLockReadGuard<L, T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.rwlock.inner.as_mut_ptr() }
+    }
+}
+
+impl<L: Level, T> Drop for ArcRwLockReadGuard<L, T> {
+    #[inline]
+    fn drop(&mut self) {
+        unsafe {
+            self.rwlock.inner.force_read_decrement();
+        }
     }
 }
 

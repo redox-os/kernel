@@ -5,7 +5,7 @@ use core::{
     fmt::Debug,
     mem::ManuallyDrop,
     num::NonZeroUsize,
-    ops::Bound,
+    ops::{Bound, Deref},
     sync::atomic::{AtomicU32, Ordering},
 };
 use rmm::{Arch as _, PageFlush};
@@ -765,6 +765,25 @@ impl AddrSpace {
 
             let _ = res.unmap(token);
         }
+    }
+}
+
+pub struct AddrSpaceSwitchReadGuard {
+    pub lock: RwLockReadGuard<'static, L5, AddrSpace>,
+}
+
+impl AddrSpaceSwitchReadGuard {
+    pub fn new(guard: RwLockReadGuard<'_, L5, AddrSpace>) -> Self {
+        Self {
+            lock: unsafe { core::mem::transmute(guard) },
+        }
+    }
+}
+impl Deref for AddrSpaceSwitchReadGuard {
+    type Target = RwLockReadGuard<'static, L5, AddrSpace>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.lock
     }
 }
 
