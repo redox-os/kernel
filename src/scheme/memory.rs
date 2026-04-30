@@ -6,7 +6,7 @@ use rmm::PhysicalAddress;
 use crate::{
     context::{
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
     },
     memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
     sync::CleanLockToken,
@@ -78,7 +78,7 @@ impl MemoryScheme {
             .ok_or(Error::new(EINVAL))?;
         let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
 
-        let mut notify_files = Vec::new();
+        let mut notify_files = UnmapVec::new();
 
         if is_phys_contiguous && map.flags.contains(MapFlags::MAP_SHARED) {
             // TODO: Should this be supported?

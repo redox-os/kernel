@@ -7,6 +7,7 @@ use core::{
     num::NonZeroUsize,
 };
 use slab::Slab;
+use smallvec::SmallVec;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -20,7 +21,7 @@ use crate::{
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
-            PageSpan, DANGLING,
+            PageSpan, UnmapResult, UnmapVec, DANGLING,
         },
         BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },
@@ -1117,7 +1118,7 @@ impl UserInner {
         };
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
-        let mut notify_files = Vec::new();
+        let mut notify_files = UnmapVec::new();
         // TODO: Not a Lock ordering violation
         // we've checked Arc::ptr_eq(&src_address_space, &dst_addr_space) before,
         // but it's difficult to apply src.arquire_rewrite
@@ -1340,12 +1341,15 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
             dst.copy_from_slice(&src.buf()[..dst.len()])?;
         }
         let unpin = true;
-        if let Some(ref addrsp) = self.addrsp
-            && !self.span.is_empty()
-        {
-            let res = addrsp.munmap(self.span, unpin, token)?;
-            for r in res {
-                let _ = r.unmap(token);
+        if let Some(addrsp) = self.addrsp.take() {
+            if !self.span.is_empty() {
+                let res = addrsp.munmap(self.span, unpin, token)?;
+                for r in res {
+                    let _ = r.unmap(token);
+                }
+            }
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
             }
         }
 
@@ -1353,11 +1357,6 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
         self.release_inner(token)?;
-        if let Some(addrsp) = self.addrsp.take()
-            && let Some(addrsp) = Arc::into_inner(addrsp)
-        {
-            addrsp.into_drop(token);
-        }
         if let Some(src) = self.head.src.take() {
             src.into_drop(token);
         }

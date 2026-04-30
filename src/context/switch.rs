@@ -12,12 +12,13 @@ use crate::{
     percpu::PercpuBlock,
     sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
-use alloc::{sync::Arc, vec::Vec};
+use alloc::sync::Arc;
 use core::{
     cell::{Cell, RefCell},
     hint, mem,
     sync::atomic::Ordering,
 };
+use smallvec::SmallVec;
 use syscall::PtraceFlags;
 
 enum UpdateResult {
@@ -320,9 +321,12 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
-fn wakeup_contexts(token: &mut CleanLockToken, switch_time: u128) -> Vec<(usize, WeakContextRef)> {
+fn wakeup_contexts(
+    token: &mut CleanLockToken,
+    switch_time: u128,
+) -> SmallVec<[(usize, WeakContextRef); 16]> {
     // TODO: Optimise this somehow. Perhaps using a separate timer queue?
-    let mut wakeups = Vec::new();
+    let mut wakeups = SmallVec::new();
     let current_context = context::current();
     let Some(idle_contexts) = idle_contexts_try(token.downgrade()) else {
         // other cpus may spawning or killing contexts so let's skip wakeups to avoid contention

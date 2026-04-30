@@ -13,6 +13,7 @@ use core::{
     sync::atomic::{AtomicU32, Ordering},
 };
 use rmm::{Arch as _, PageFlush};
+use smallvec::SmallVec;
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
 
 use crate::{
@@ -58,6 +59,8 @@ pub struct UnmapResult {
     pub size: usize,
     pub flags: MunmapFlags,
 }
+pub type UnmapVec = SmallVec<[UnmapResult; 16]>;
+
 impl UnmapResult {
     pub fn unmap(mut self, token: &mut CleanLockToken) -> Result<()> {
         let Some(GrantFileRef {
@@ -316,8 +319,7 @@ impl AddrSpaceWrapper {
         requested_span: PageSpan,
         unpin: bool,
         token: &mut CleanLockToken,
-    ) -> Result<Vec<UnmapResult>> {
-        let mut token = token.token();
+    ) -> Result<UnmapVec> {
         let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
 
@@ -337,7 +339,7 @@ impl AddrSpaceWrapper {
         requested_dst_base: Option<Page>,
         new_page_count: usize,
         new_flags: MapFlags,
-        mut notify_files_out: Option<&mut Vec<UnmapResult>>,
+        mut notify_files_out: Option<&mut UnmapVec>,
         token: LockToken<L5>,
     ) -> Result<Page> {
         let dst_lock = self;
@@ -414,7 +416,7 @@ impl AddrSpaceWrapper {
 
         if new_page_count < src_span.count {
             let unpin = false;
-            let notify_files: Vec<UnmapResult> = AddrSpace::munmap_inner(
+            let notify_files = AddrSpace::munmap_inner(
                 src_grants,
                 src_mapper,
                 src_flusher,
@@ -594,8 +596,8 @@ impl AddrSpace {
         this_flusher: &mut Flusher,
         mut requested_span: PageSpan,
         unpin: bool,
-    ) -> Result<Vec<UnmapResult>> {
-        let mut notify_files = Vec::new();
+    ) -> Result<UnmapVec> {
+        let mut notify_files = UnmapVec::new();
 
         let next = |grants: &mut UserGrants, span: PageSpan| {
             grants
@@ -666,7 +668,9 @@ impl AddrSpace {
             }
 
             // Remove irrelevant region
-            let unmap_result = grant.unmap(this_mapper, this_flusher);
+            // TODO: Lock ordering violation
+            let mut token = unsafe { CleanLockToken::new() };
+            let unmap_result = grant.unmap(this_mapper, this_flusher, &mut token);
 
             // Notify scheme that holds grant
             if unmap_result.file_desc.is_some() {
@@ -691,7 +695,7 @@ impl AddrSpace {
         requested_base_opt: Option<Page>,
         page_count: NonZeroUsize,
         flags: MapFlags,
-        notify_files_out: Option<&mut Vec<UnmapResult>>,
+        notify_files_out: Option<&mut UnmapVec>,
         map: impl FnOnce(Page, PageFlags<RmmA>, &mut PageMapper, &mut Flusher) -> Result<Grant>,
     ) -> Result<Page> {
         assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
@@ -765,7 +769,7 @@ impl AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher) };
+            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher, token) };
 
             let _ = res.unmap(token);
         }
@@ -1964,6 +1968,7 @@ impl Grant {
         mut self,
         mapper: &mut PageMapper,
         flusher: &mut impl GenericFlusher,
+        token: &mut CleanLockToken,
     ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());
@@ -1974,9 +1979,6 @@ impl Grant {
             ..
         } = self.info.provider
         {
-            // TODO: Lock ordering violation
-            let mut token = unsafe { CleanLockToken::new() };
-            let mut token = token.token();
             let mut guard = address_space.acquire_write(token.downgrade());
 
             for (_, grant) in guard
@@ -2818,7 +2820,7 @@ pub struct BorrowedFmapSource<'a> {
     pub addr_space_guard: RwLockWriteGuard<'a, L5, AddrSpace>,
 }
 
-pub fn handle_notify_files(notify_files: Vec<UnmapResult>, token: &mut CleanLockToken) {
+pub fn handle_notify_files(notify_files: UnmapVec, token: &mut CleanLockToken) {
     for file in notify_files {
         let _ = file.unmap(token);
     }
