@@ -210,17 +210,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let was_idle = percpu.stats.add_time(percpu_ms) == CpuState::Idle as u8;
     percpu.switch_internals.switch_time.set(switch_time);
 
-    let switch_context_opt = match select_next_context(
+    let switch_context_opt = select_next_context(
         token,
         percpu,
         cpu_id,
         switch_time,
         was_idle,
         &mut prev_context_guard,
-    ) {
-        Ok(opt) => opt,
-        Err(early_ret) => return early_ret,
-    };
+    );
 
     // Switch process states, TSS stack pointer, and store new context ID
     match switch_context_opt {
@@ -384,7 +381,7 @@ fn select_next_context(
     switch_time: u128,
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
-) -> Result<Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)>, SwitchResult> {
+) -> Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)> {
     let contexts_data = run_contexts(token.token());
     let (mut contexts_data, mut token) = contexts_data.into_split();
     let contexts_list = &mut contexts_data.set;
@@ -516,14 +513,14 @@ fn select_next_context(
 
     if let Some((next_context_guard, addr_space)) = next_context_guard_opt {
         // We found a new process!
-        return Ok(Some((next_context_guard, addr_space)));
+        return Some((next_context_guard, addr_space));
     } else {
         if !was_idle && !Arc::ptr_eq(&prev_context_lock, &idle_context) {
             // We switch into the idle context
-            Ok(Some(unsafe { (idle_context.write_arc(), None) }))
+            Some(unsafe { (idle_context.write_arc(), None) })
         } else {
             // We found no other process to run.
-            Ok(None)
+            None
         }
     }
 }
