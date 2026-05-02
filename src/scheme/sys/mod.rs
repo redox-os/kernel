@@ -120,10 +120,6 @@ impl KernelScheme for SysScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if !matches!(HANDLES.read(token.token()).get(id)?, Handle::SchemeRoot) {
-            return Err(Error::new(EACCES));
-        }
-
         let path = user_buf
             .as_str()
             .or(Err(Error::new(EINVAL)))?
@@ -190,7 +186,7 @@ impl KernelScheme for SysScheme {
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
-        const FIRST: &[u8] = b"sys:";
+        const FIRST: &[u8] = b"/scheme/sys/";
         let mut bytes_read = buf.copy_common_bytes_from_slice(FIRST)?;
 
         if let Some(remaining) = buf.advance(FIRST.len()) {
