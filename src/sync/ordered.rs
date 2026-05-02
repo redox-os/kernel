@@ -271,38 +271,6 @@ impl<L: Level, T> Mutex<L, T> {
         })
     }
 
-    /// Arcquires the lock_token to replace older MutexGuard.
-    /// SAFETY: Caller must guarantee lock_token is coming from MutexWriteGuard::into_token() from the same lock.
-    ///         OR Caller must guarantee lock_token is coming from different lock, which can happen when two lock need to copy data each other.
-    pub unsafe fn relock<'a>(&'a self, lock_token: LockToken<'a, L>) -> MutexGuard<'a, L, T> {
-        let inner = {
-            #[cfg(feature = "busy_panic")]
-            let mut i = DEADLOCK_SPIN_CAP;
-            let my_percpu = PercpuBlock::current();
-
-            loop {
-                match self.inner.try_lock() {
-                    Some(inner) => break inner,
-                    None => {
-                        my_percpu.maybe_handle_tlb_shootdown();
-                        core::hint::spin_loop();
-                        #[cfg(feature = "busy_panic")]
-                        {
-                            i -= 1;
-                            if i == 0 {
-                                panic!("Deadlock at mutex may have triggered")
-                            }
-                        }
-                    }
-                }
-            }
-        };
-        MutexGuard {
-            inner,
-            lock_token: lock_token,
-        }
-    }
-
     /// Consumes this Mutex, returning the underlying data.
     pub fn into_inner(self) -> T {
         self.inner.into_inner()
@@ -330,14 +298,6 @@ impl<'a, L: Level, T: ?Sized + 'a> MutexGuard<'a, L, T> {
     /// the second a [`LockToken`] that can be used for further locking
     pub fn into_split(self) -> (spin::MutexGuard<'a, T>, LockToken<'a, L>) {
         (self.inner, self.lock_token)
-    }
-
-    /// Merge the guard from `into_split`
-    pub fn from_split(lock: spin::MutexGuard<'a, T>, token: LockToken<'a, L>) -> Self {
-        Self {
-            inner: lock,
-            lock_token: token,
-        }
     }
 }
 
