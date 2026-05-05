@@ -1,6 +1,8 @@
 //! # ACPI
 //! Code to parse the ACPI tables
 
+use core::ptr::NonNull;
+
 use alloc::{boxed::Box, string::String, vec::Vec};
 
 use hashbrown::HashMap;
@@ -83,7 +85,7 @@ impl Rxsdt for RxsdtEnum {
 pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(already_supplied_rsdp: Option<*const u8>) {
+pub unsafe fn init(already_supplied_rsdp: Option<NonNull<u8>>) {
     unsafe {
         {
             let mut sdt_ptrs = SDT_POINTERS.write();

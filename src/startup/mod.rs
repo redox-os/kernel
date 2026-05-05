@@ -1,5 +1,7 @@
 use core::{
-    hint, slice,
+    hint,
+    ptr::NonNull,
+    slice,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -94,7 +96,7 @@ impl KernelArgs {
         }
     }
 
-    pub(crate) fn acpi_rsdp(&self) -> Option<*const u8> {
+    pub(crate) fn acpi_rsdp(&self) -> Option<NonNull<u8>> {
         if self.hwdesc_base != 0 {
             let data = unsafe {
                 slice::from_raw_parts(
@@ -104,7 +106,7 @@ impl KernelArgs {
                 )
             };
             if data.starts_with(b"RSD PTR ") {
-                Some(data.as_ptr())
+                Some(NonNull::from_ref(data).cast())
             } else {
                 None
             }

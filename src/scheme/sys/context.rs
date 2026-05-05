@@ -19,7 +19,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         let (contexts, mut token) = contexts.token_split();
         for context_ref in contexts.iter() {
             let context = context_ref.read(token.token());
-            let addr_space = context.addr_space().map(|a| a.clone());
+            let addr_space = context.addr_space().cloned();
 
             let affinity = context.sched_affinity.to_string();
             let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;

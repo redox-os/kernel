@@ -513,7 +513,7 @@ fn select_next_context(
 
     if let Some((next_context_guard, addr_space)) = next_context_guard_opt {
         // We found a new process!
-        return Some((next_context_guard, addr_space));
+        Some((next_context_guard, addr_space))
     } else {
         if !was_idle && !Arc::ptr_eq(&prev_context_lock, &idle_context) {
             // We switch into the idle context
