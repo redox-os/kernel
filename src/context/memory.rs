@@ -1466,15 +1466,15 @@ impl Grant {
             for dst_page in span.pages() {
                 let src_page = src.src_base.next_by(dst_page.offset_from(span.base));
 
-                let (frame, is_cow) = match src.mode {
+                let (frame, page_flags, is_cow) = match src.mode {
                     MmapMode::Shared => {
                         // TODO: Error code for "scheme responded with unmapped page"?
-                        let frame = match src_addrspace
+                        let (frame, page_flags) = match src_addrspace
                             .table
                             .utable
                             .translate(src_page.start_address())
                         {
-                            Some((phys, _)) => Frame::containing(phys),
+                            Some((phys, page_flags)) => (Frame::containing(phys), page_flags),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
                                 let (frame, _, new_guard) = correct_inner(
@@ -1485,20 +1485,26 @@ impl Grant {
                                     0,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
+                                let page_flags = new_guard
+                                    .table
+                                    .utable
+                                    .translate(src_page.start_address())
+                                    .unwrap()
+                                    .1;
                                 guard = new_guard;
-                                frame
+                                (frame, page_flags)
                             }
                         };
 
-                        (frame, false)
+                        (frame, page_flags, false)
                     }
                     MmapMode::Cow => unsafe {
-                        let frame = match guard
+                        let (frame, page_flags) = match guard
                             .table
                             .utable
                             .remap_with(src_page.start_address(), |flags| flags.write(false))
                         {
-                            Some((_, phys, _)) => Frame::containing(phys),
+                            Some((page_flags, phys, _)) => (Frame::containing(phys), page_flags),
                             // TODO: ensure the correct context is hardblocked, if necessary
                             None => {
                                 let (frame, _, new_guard) = correct_inner(
@@ -1509,12 +1515,19 @@ impl Grant {
                                     0,
                                 )
                                 .map_err(|_| Error::new(EIO))?;
+                                // FIXME correct_inner should read the page flags instead
+                                let page_flags = new_guard
+                                    .table
+                                    .utable
+                                    .translate(src_page.start_address())
+                                    .unwrap()
+                                    .1;
                                 guard = new_guard;
-                                frame
+                                (frame, page_flags)
                             }
                         };
 
-                        (frame, true)
+                        (frame, page_flags, true)
                     },
                 };
                 src_addrspace = &mut *guard;
@@ -1574,7 +1587,14 @@ impl Grant {
                         .map_phys(
                             dst_page.start_address(),
                             frame.base(),
-                            new_flags.write(new_flags.has_write() && !is_cow),
+                            new_flags
+                                .write(new_flags.has_write() && !is_cow)
+                                // FIXME make sure this stays in sync with the MemoryType flags
+                                .uncacheable(page_flags.has_flag(RmmA::ENTRY_FLAG_UNCACHEABLE))
+                                .device_memory(page_flags.has_flag(RmmA::ENTRY_FLAG_DEVICE_MEMORY))
+                                .write_combining(
+                                    page_flags.has_flag(RmmA::ENTRY_FLAG_WRITE_COMBINING),
+                                ),
                         )
                         .unwrap();
                     flush.ignore();
