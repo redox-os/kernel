@@ -7,6 +7,7 @@ use core::{
     num::NonZeroUsize,
 };
 use slab::Slab;
+use smallvec::SmallVec;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -20,7 +21,7 @@ use crate::{
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
-            PageSpan, DANGLING,
+            PageSpan, UnmapResult, UnmapVec, DANGLING,
         },
         BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },
@@ -487,13 +488,17 @@ impl UserInner {
 
         let cur_space_lock = AddrSpace::current()?;
         let dst_space_lock = {
-            Arc::clone(
-                context_weak
-                    .upgrade()
-                    .ok_or(Error::new(ESRCH))?
-                    .read(token.token())
-                    .addr_space()?,
-            )
+            match context_weak.upgrade() {
+                Some(ctx) => {
+                    if context::is_current(&ctx) {
+                        // Will bail below this code
+                        Arc::clone(&cur_space_lock)
+                    } else {
+                        Arc::clone(ctx.read(token.token()).addr_space()?)
+                    }
+                }
+                None => return Err(Error::new(ESRCH)),
+            }
         };
 
         if Arc::ptr_eq(&dst_space_lock, &cur_space_lock) {
@@ -522,27 +527,22 @@ impl UserInner {
             .split_at(core::cmp::min(align_offset, user_buf.len()))
             .expect("split must succeed");
 
-        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
-        let (dst_space, mut token) = dst_space_guard.token_split();
+        let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
+        let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
 
-        let free_span = dst_space
-            .grants
-            .find_free(dst_space.mmap_min, page_count)
-            .ok_or(Error::new(ENOMEM))?;
+        let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf
+            .split_at(middle_page_count * PAGE_SIZE)
+            .expect("split must succeed");
 
-        let head = if !head_part_of_buf.is_empty() {
+        let head_len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
+
+        let head_buf_opt = if !head_part_of_buf.is_empty() {
             // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::head_locked(token.token())?;
-            let frame = array.frame();
-
-            let len = core::cmp::min(PAGE_SIZE - offset, user_buf.len());
-
+            let mut array = BorrowedHtBuf::head_locked(token.downgrade())?;
             if READ {
                 array.buf_mut()[..offset].fill(0_u8);
-                array.buf_mut()[offset + len..].fill(0_u8);
-
-                let slice = &mut array.buf_mut()[offset..][..len];
-                let head_part_of_buf = user_buf.limit(len).expect("always smaller than max len");
+                array.buf_mut()[offset + head_len..].fill(0_u8);
+                let slice = &mut array.buf_mut()[offset..][..head_len];
 
                 head_part_of_buf
                     .reinterpret_unchecked::<true, false>()
@@ -550,7 +550,41 @@ impl UserInner {
             } else {
                 array.buf_mut().fill(0_u8);
             }
+            Some(array)
+        } else {
+            None
+        };
 
+        let tail_buf_opt = if !tail_part_of_buf.is_empty() {
+            // FIXME: Signal context can probably recursively use head/tail.
+            let mut array = BorrowedHtBuf::tail_locked(token.downgrade())?;
+
+            if READ {
+                let (to_copy, to_zero) = array.buf_mut().split_at_mut(tail_size);
+                to_zero.fill(0_u8);
+
+                // FIXME: remove reinterpret_unchecked
+                tail_part_of_buf
+                    .reinterpret_unchecked::<true, false>()
+                    .copy_to_slice(to_copy)?;
+            } else {
+                array.buf_mut().fill(0_u8);
+            }
+            Some(array)
+        } else {
+            None
+        };
+
+        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
+        let (dst_space, _token_split) = dst_space_guard.token_split();
+
+        let free_span = dst_space
+            .grants
+            .find_free(dst_space.mmap_min, page_count)
+            .ok_or(Error::new(ENOMEM))?;
+
+        let head = if let Some(array) = head_buf_opt {
+            let frame = array.frame();
             dst_space.mmap(
                 &dst_space_lock,
                 Some(free_span.base),
@@ -580,13 +614,6 @@ impl UserInner {
         } else {
             (free_span.base, src_page)
         };
-
-        let middle_page_count = middle_tail_part_of_buf.len() / PAGE_SIZE;
-        let tail_size = middle_tail_part_of_buf.len() % PAGE_SIZE;
-
-        let (_middle_part_of_buf, tail_part_of_buf) = middle_tail_part_of_buf
-            .split_at(middle_page_count * PAGE_SIZE)
-            .expect("split must succeed");
 
         if let Some(middle_page_count) = NonZeroUsize::new(middle_page_count) {
             dst_space.mmap(
@@ -632,25 +659,9 @@ impl UserInner {
             )?;
         }
 
-        let tail = if !tail_part_of_buf.is_empty() {
+        let tail = if let Some(array) = tail_buf_opt {
             let tail_dst_page = first_middle_dst_page.next_by(middle_page_count);
-
-            // FIXME: Signal context can probably recursively use head/tail.
-            let mut array = BorrowedHtBuf::tail_locked(token.token())?;
             let frame = array.frame();
-
-            if READ {
-                let (to_copy, to_zero) = array.buf_mut().split_at_mut(tail_size);
-
-                to_zero.fill(0_u8);
-
-                // FIXME: remove reinterpret_unchecked
-                tail_part_of_buf
-                    .reinterpret_unchecked::<true, false>()
-                    .copy_to_slice(to_copy)?;
-            } else {
-                array.buf_mut().fill(0_u8);
-            }
 
             dst_space.mmap(
                 &dst_space_lock,
@@ -975,7 +986,10 @@ impl UserInner {
                         drop(states_lock);
 
                         let unpin = true;
-                        AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
+                        let res = AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
+                        for r in res {
+                            let _ = r.unmap(token);
+                        }
                     }
                 },
                 // invalid state
@@ -1104,7 +1118,7 @@ impl UserInner {
         };
 
         let page_count_nz = NonZeroUsize::new(page_count).expect("already validated map.size != 0");
-        let mut notify_files = Vec::new();
+        let mut notify_files = UnmapVec::new();
         // TODO: Not a Lock ordering violation
         // we've checked Arc::ptr_eq(&src_address_space, &dst_addr_space) before,
         // but it's difficult to apply src.arquire_rewrite
@@ -1327,21 +1341,22 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
             dst.copy_from_slice(&src.buf()[..dst.len()])?;
         }
         let unpin = true;
-        if let Some(ref addrsp) = self.addrsp
-            && !self.span.is_empty()
-        {
-            addrsp.munmap(self.span, unpin, token)?;
+        if let Some(addrsp) = self.addrsp.take() {
+            if !self.span.is_empty() {
+                let res = addrsp.munmap(self.span, unpin, token)?;
+                for r in res {
+                    let _ = r.unmap(token);
+                }
+            }
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
+            }
         }
 
         Ok(())
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
         self.release_inner(token)?;
-        if let Some(addrsp) = self.addrsp.take()
-            && let Some(addrsp) = Arc::into_inner(addrsp)
-        {
-            addrsp.into_drop(token);
-        }
         if let Some(src) = self.head.src.take() {
             src.into_drop(token);
         }

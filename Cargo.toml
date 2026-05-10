@@ -83,6 +83,8 @@ default = [
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
+  #"busy_panic",
+  #"drop_panic",
   #"syscall_debug"
 ]
 

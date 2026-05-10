@@ -3,7 +3,7 @@ use crate::{
         self,
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
         Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
@@ -441,7 +441,7 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let old_ctx = try_stop_context(context, token, |context, _| {
+                let old_ctx = try_stop_context(context, token, |context, token| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
                     regs.set_stack_pointer(new_sp);
@@ -452,9 +452,7 @@ impl KernelScheme for ProcScheme {
                     ))]
                     regs.set_arg1(arg1);
 
-                    // TODO: Lock ordering violation
-                    let mut token = unsafe { CleanLockToken::new() };
-                    Ok(context.set_addr_space(Some(new), token.downgrade()))
+                    Ok(context.set_addr_space(Some(new), token))
                 })?;
                 if let Some(old_ctx) = old_ctx
                     && let Some(addrspace) = Arc::into_inner(old_ctx)
@@ -523,7 +521,7 @@ impl KernelScheme for ProcScheme {
 
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
 
-                let mut notify_files = Vec::new();
+                let mut notify_files = UnmapVec::new();
 
                 // TODO: Validate flags
                 let result_base = if consume {
@@ -633,8 +631,8 @@ impl KernelScheme for ProcScheme {
     ) -> Result<usize> {
         // TODO: simplify
         let handle = {
-            let mut handles = HANDLES.write(token.token());
-            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
@@ -667,8 +665,8 @@ impl KernelScheme for ProcScheme {
 
         // Don't hold a global lock during the context switch later on
         let handle = {
-            let mut handles = HANDLES.write(token.token());
-            let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
             handle.clone()
         };
 
@@ -696,8 +694,8 @@ impl KernelScheme for ProcScheme {
     }
 
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
-        let mut handles = HANDLES.write(token.token());
-        let handle = handles.get_mut(&id).ok_or(Error::new(EBADF))?;
+        let handles = HANDLES.read(token.token());
+        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
         handle.fsize()
     }
@@ -942,7 +940,10 @@ impl ContextHandle {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
 
                         let unpin = false;
-                        addrspace.munmap(page_span, unpin, token)?;
+                        let res = addrspace.munmap(page_span, unpin, token)?;
+                        for r in res {
+                            let _ = r.unmap(token);
+                        }
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
@@ -1237,7 +1238,7 @@ impl ContextHandle {
                         } else {
                             let mut ctxt = context.write(token.token());
                             //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
-                            if let context::Status::Dead { .. } = ctxt.status {
+                            if ctxt.status.is_dead() {
                                 return Ok(size_of::<usize>());
                             }
                             ctxt.status = context::Status::Runnable;

@@ -5,7 +5,7 @@ use alloc::{
 };
 use core::fmt::Write;
 
-use crate::{context, percpu, sync::CleanLockToken, syscall::error::Result};
+use crate::{context, context::contexts, sync::CleanLockToken, syscall::error::Result};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
@@ -15,10 +15,11 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let contexts = percpu::get_all_contexts(token.downgrade());
-        for context_ref in contexts {
+        let mut contexts = contexts(token.downgrade());
+        let (contexts, mut token) = contexts.token_split();
+        for context_ref in contexts.iter() {
             let context = context_ref.read(token.token());
-            let addr_space = context.addr_space().map(|a| a.clone());
+            let addr_space = context.addr_space().cloned();
 
             let affinity = context.sched_affinity.to_string();
             let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;

@@ -1,5 +1,4 @@
 use alloc::{
-    collections::BTreeSet,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -14,12 +13,13 @@ use syscall::PtraceFlags;
 use crate::{
     arch::device::ArchPercpuMisc,
     context::{
-        empty_cr3, memory::AddrSpaceWrapper, switch::ContextSwitchPercpu, ContextLock, ContextRef,
+        empty_cr3,
+        memory::{AddrSpaceSwitchReadGuard, AddrSpaceWrapper},
+        switch::ContextSwitchPercpu,
     },
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     ptrace::Session,
-    sync::{CleanLockToken, LockToken, RwLock, L1},
     syscall::debug::SyscallDebugInfo,
 };
 
@@ -33,6 +33,7 @@ pub struct PercpuBlock {
 
     pub current_addrsp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
     pub new_addrsp_tmp: Cell<Option<Arc<AddrSpaceWrapper>>>,
+    pub new_addrsp_guard: Cell<Option<AddrSpaceSwitchReadGuard>>,
     pub wants_tlb_shootdown: AtomicBool,
     pub balance: Cell<[usize; 40]>,
     pub last_queue: Cell<usize>,
@@ -50,7 +51,6 @@ pub struct PercpuBlock {
     pub misc_arch_info: crate::arch::device::ArchPercpuMisc,
 
     pub stats: CpuStats,
-    pub contexts: RwLock<L1, BTreeSet<ContextRef>>,
 }
 
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
@@ -72,21 +72,6 @@ pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
         .collect::<Vec<_>>();
     res.sort_unstable_by_key(|(id, _stats)| id.get());
     res
-}
-
-/// Get copy of all cpu ref contexts
-pub fn get_all_contexts(mut token: LockToken<'_, L1>) -> Vec<Arc<ContextLock>> {
-    let mut all_contexts = Vec::new();
-    for block in ALL_PERCPU_BLOCKS
-        .iter()
-        .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
-    {
-        // TODO: When load balancer implemented, contexts need to be locked altogether
-        // TODO: Lock token violation, downgrade this to L2 later
-        let contexts = unsafe { &block.contexts.reupgradeable_read(token.token()) };
-        all_contexts.extend(contexts.iter().filter_map(|x| x.upgrade()));
-    }
-    all_contexts
 }
 
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
@@ -151,6 +136,7 @@ pub unsafe fn switch_arch_hook() {
 
         let cur_addrsp = percpu.current_addrsp.borrow();
         let next_addrsp = percpu.new_addrsp_tmp.take();
+        let next_addrsp_guard = percpu.new_addrsp_guard.take();
 
         let retain_pgtbl = match (&*cur_addrsp, &next_addrsp) {
             (Some(p), Some(n)) => Arc::ptr_eq(p, n),
@@ -183,14 +169,13 @@ pub unsafe fn switch_arch_hook() {
         // space.
         *percpu.current_addrsp.borrow_mut() = next_addrsp;
 
-        match &*percpu.current_addrsp.borrow() {
+        if let Some(next_addrsp) = &*percpu.current_addrsp.borrow() {
+            next_addrsp.used_by.atomic_set(percpu.cpu_id);
+        }
+        match next_addrsp_guard {
             Some(next_addrsp) => {
-                next_addrsp.used_by.atomic_set(percpu.cpu_id);
-                let mut token = CleanLockToken::new();
-                let mut token = token.token();
-                let next = next_addrsp.acquire_read(token.downgrade());
-
-                next.table.utable.make_current();
+                next_addrsp.table.utable.make_current();
+                drop(next_addrsp);
             }
             _ => {
                 crate::memory::RmmA::set_table(rmm::TableKind::User, empty_cr3());
@@ -205,6 +190,7 @@ impl PercpuBlock {
             switch_internals: ContextSwitchPercpu::default(),
             current_addrsp: RefCell::new(None),
             new_addrsp_tmp: Cell::new(None),
+            new_addrsp_guard: Cell::new(None),
             wants_tlb_shootdown: AtomicBool::new(false),
             balance: Cell::new([0; 40]),
             last_queue: Cell::new(39),
@@ -219,7 +205,6 @@ impl PercpuBlock {
             misc_arch_info: ArchPercpuMisc::default(),
 
             stats: CpuStats::default(),
-            contexts: RwLock::new(BTreeSet::new()),
         }
     }
 }

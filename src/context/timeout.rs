@@ -68,7 +68,7 @@ pub fn trigger(token: &mut CleanLockToken) {
             };
 
             if trigger {
-                registry.remove(i).unwrap()
+                registry.swap_remove_back(i).unwrap()
             } else {
                 i += 1;
                 continue;
