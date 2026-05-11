@@ -1,5 +1,8 @@
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    hash::{Hash, Hasher},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
 use syscall::data::GlobalSchemes;
@@ -121,11 +124,26 @@ pub struct RegKey {
     pub number: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialOrd, Ord)]
 pub struct QueueKey {
     pub queue: EventQueueId,
     pub id: usize,
     pub data: usize,
+}
+
+impl PartialEq for QueueKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.queue == other.queue && self.id == other.id
+    }
+}
+
+impl Eq for QueueKey {}
+
+impl Hash for QueueKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.queue.hash(state);
+        self.id.hash(state);
+    }
 }
 
 type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
