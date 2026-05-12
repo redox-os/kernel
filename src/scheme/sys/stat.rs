@@ -1,8 +1,9 @@
 use core::fmt::Write as _;
 
 use crate::{
-    context::{contexts, Status},
+    context::{contexts, get_contexts_stats, Status},
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
+    event::get_event_stat,
     percpu::get_all_stats,
     sync::CleanLockToken,
     syscall::error::Result,
@@ -14,14 +15,18 @@ use alloc::{string::String, vec::Vec};
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let start_time_sec = *START.lock(token.token()) / 1_000_000_000;
 
-    let (contexts_running, contexts_blocked) = get_contexts_stats(token);
+    let (contexts_alive, contexts_running, contexts_blocked) = get_contexts_stats(token);
+    let (event_keys, event_subs) = get_event_stat(token);
     let res = format!(
         "{}{}\n\
         boot_time: {start_time_sec}\n\
         context_switches: {}\n\
         contexts_created: {}\n\
+        contexts_alive: {contexts_alive}\n\
         contexts_running: {contexts_running}\n\
-        contexts_blocked: {contexts_blocked}",
+        contexts_blocked: {contexts_blocked}\n\
+        event_registries: {event_keys}\n\
+        event_subcribers: {event_subs}\n",
         get_cpu_stats(),
         get_irq_stats(),
         get_context_switch_count(),
@@ -69,28 +74,4 @@ fn get_irq_stats() -> String {
     }
 
     output
-}
-
-/// Format contexts stats.
-fn get_contexts_stats(token: &mut CleanLockToken) -> (u64, u64) {
-    let mut running = 0;
-    let mut blocked = 0;
-
-    let statuses = {
-        let mut contexts = contexts(token.downgrade());
-        let (contexts, mut token) = contexts.token_split();
-        contexts
-            .iter()
-            .map(|context| context.read(token.token()).status.clone())
-            .collect::<Vec<_>>()
-    };
-
-    for status in statuses {
-        if status.is_runnable() {
-            running += 1;
-        } else if !status.is_dead() {
-            blocked += 1;
-        }
-    }
-    (running, blocked)
 }
