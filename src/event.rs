@@ -190,6 +190,17 @@ pub fn unregister_file(scheme: SchemeId, number: usize, token: &mut CleanLockTok
     registry.remove(&RegKey { scheme, number });
 }
 
+pub fn get_event_stat(token: &mut CleanLockToken) -> (usize, usize) {
+    let mut regc = 0;
+    let mut regl = 0;
+    let registry = REGISTRY.read(token.token());
+    for (k, v) in registry.iter() {
+        regl += v.len();
+        regc += 1;
+    }
+    (regc, regl)
+}
+
 //TODO: Implement unregister_queue
 // pub fn unregister_queue(scheme: SchemeId, number: usize) {
 //

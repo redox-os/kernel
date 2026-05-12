@@ -384,7 +384,6 @@ fn select_next_context(
 ) -> Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)> {
     let contexts_data = run_contexts(token.token());
     let (mut contexts_data, mut token) = contexts_data.into_split();
-    let contexts_list = &mut contexts_data.set;
     let idle_context = percpu.switch_internals.idle_context();
     let mut balance = percpu.balance.get();
     let mut i = percpu.last_queue.get() % 40;
@@ -396,7 +395,8 @@ fn select_next_context(
     let mut total_iters = 0;
     let mut next_context_guard_opt = None;
 
-    let total_contexts: usize = contexts_list.iter().map(|q| q.len()).sum();
+    let total_contexts: usize = contexts_data.update_count();
+    let contexts_list = &mut contexts_data.set;
     let mut skipped_contexts = 0;
 
     'priority: loop {
