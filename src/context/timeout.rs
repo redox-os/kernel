@@ -28,6 +28,10 @@ fn registry(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, Registry> {
     REGISTRY.lock(token)
 }
 
+pub fn get_timeout_stat(token: &mut CleanLockToken) -> usize {
+    REGISTRY.lock(token.token()).len()
+}
+
 pub fn register(
     scheme_id: SchemeId,
     event_id: usize,

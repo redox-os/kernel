@@ -21,7 +21,7 @@ use crate::{
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
-            PageSpan, UnmapResult, UnmapVec, DANGLING,
+            PageSpan, UnmapVec, DANGLING,
         },
         BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },

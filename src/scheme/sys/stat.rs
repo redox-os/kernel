@@ -6,7 +6,7 @@ use crate::{
     event::get_event_stat,
     percpu::get_all_stats,
     sync::CleanLockToken,
-    syscall::error::Result,
+    syscall::{error::Result, futex::get_futex_stat},
     time::START,
 };
 use alloc::{string::String, vec::Vec};
@@ -17,6 +17,9 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let (contexts_alive, contexts_running, contexts_blocked) = get_contexts_stats(token);
     let (event_keys, event_subs) = get_event_stat(token);
+    let (futex_keys, futex_subs) = get_futex_stat(token);
+    let pipe_subs = crate::scheme::pipe::get_pipe_stat(token);
+    let timeout_subs = crate::context::timeout::get_timeout_stat(token);
     let res = format!(
         "{}{}\n\
         boot_time: {start_time_sec}\n\
@@ -26,7 +29,11 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         contexts_running: {contexts_running}\n\
         contexts_blocked: {contexts_blocked}\n\
         event_registries: {event_keys}\n\
-        event_subcribers: {event_subs}\n",
+        event_subcribers: {event_subs}\n\
+        futex_registries: {futex_keys}\n\
+        futex_subcribers: {futex_subs}\n\
+        pipe_subcribers: {pipe_subs}\n\
+        timeout_subscribers: {timeout_subs}\n",
         get_cpu_stats(),
         get_irq_stats(),
         get_context_switch_count(),
