@@ -52,6 +52,17 @@ pub struct FutexEntry {
 static FUTEXES: Mutex<L1, FutexList> =
     Mutex::new(FutexList::with_hasher(DefaultHashBuilder::new()));
 
+pub fn get_futex_stat(token: &mut CleanLockToken) -> (usize, usize) {
+    let mut regc = 0;
+    let mut regl = 0;
+    let registry = FUTEXES.lock(token.token());
+    for (k, v) in registry.iter() {
+        regl += v.len();
+        regc += 1;
+    }
+    (regc, regl)
+}
+
 fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Option<PhysicalAddress> {
     // TODO: Move this elsewhere!
     if addr.data().saturating_add(size_of::<usize>()) >= crate::USER_END_OFFSET {
