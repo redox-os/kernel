@@ -209,7 +209,11 @@ pub fn futex(
                         if futex.target_virtaddr != target_virtaddr
                             || !current_addrsp_weak.ptr_eq(&futex.addr_space)
                         {
-                            i += 1;
+                            if futex.addr_space.strong_count() == 0 {
+                                futexes.swap_remove(i);
+                            } else {
+                                i += 1;
+                            }
                             continue;
                         }
                         futex.context_lock.write(token.token()).unblock();
