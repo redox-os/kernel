@@ -1,5 +1,8 @@
 use alloc::sync::Arc;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    hash::{Hash, Hasher},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
 use syscall::data::GlobalSchemes;
@@ -121,11 +124,26 @@ pub struct RegKey {
     pub number: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialOrd, Ord)]
 pub struct QueueKey {
     pub queue: EventQueueId,
     pub id: usize,
     pub data: usize,
+}
+
+impl PartialEq for QueueKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.queue == other.queue && self.id == other.id
+    }
+}
+
+impl Eq for QueueKey {}
+
+impl Hash for QueueKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.queue.hash(state);
+        self.id.hash(state);
+    }
 }
 
 type Registry = HashMap<RegKey, HashMap<QueueKey, EventFlags>>;
@@ -170,6 +188,17 @@ pub fn sync(reg_key: RegKey, token: &mut CleanLockToken) -> Result<EventFlags> {
 pub fn unregister_file(scheme: SchemeId, number: usize, token: &mut CleanLockToken) {
     let mut registry = REGISTRY.write(token.token());
     registry.remove(&RegKey { scheme, number });
+}
+
+pub fn get_event_stat(token: &mut CleanLockToken) -> (usize, usize) {
+    let mut regc = 0;
+    let mut regl = 0;
+    let registry = REGISTRY.read(token.token());
+    for (k, v) in registry.iter() {
+        regl += v.len();
+        regc += 1;
+    }
+    (regc, regl)
 }
 
 //TODO: Implement unregister_queue

@@ -22,7 +22,7 @@ use crate::{
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L2, L3, L4, L5},
+    sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -59,6 +59,9 @@ impl Status {
     }
     pub fn is_soft_blocked(&self) -> bool {
         matches!(self, Self::Blocked)
+    }
+    pub fn is_dead(&self) -> bool {
+        matches!(self, Self::Dead { .. })
     }
 }
 
@@ -383,7 +386,7 @@ impl Context {
     pub fn set_addr_space(
         &mut self,
         addr_space: Option<Arc<AddrSpaceWrapper>>,
-        token: LockToken<L2>,
+        token: LockToken<L4>,
     ) -> Option<Arc<AddrSpaceWrapper>> {
         if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
@@ -450,12 +453,11 @@ impl Context {
         let kstack = self.kstack.as_ref()?;
         Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
     }
-    pub fn sigcontrol(&mut self) -> Option<(&Sigcontrol, &SigProcControl, &mut SignalState)> {
-        Some(Self::sigcontrol_raw(self.sig.as_mut()?))
+    pub fn sigcontrol(&self) -> Option<(&Sigcontrol, &SigProcControl, &SignalState)> {
+        let (for_thread, for_proc) = Self::sigcontrol_raw(self.sig.as_ref()?);
+        Some((for_thread, for_proc, self.sig.as_ref()?))
     }
-    pub fn sigcontrol_raw(
-        sig: &mut SignalState,
-    ) -> (&Sigcontrol, &SigProcControl, &mut SignalState) {
+    pub fn sigcontrol_raw(sig: &SignalState) -> (&Sigcontrol, &SigProcControl) {
         let check = |off| {
             assert_eq!(usize::from(off) % align_of::<usize>(), 0);
             assert!(usize::from(off).saturating_add(size_of::<Sigcontrol>()) < PAGE_SIZE);
@@ -472,7 +474,7 @@ impl Context {
                 .byte_add(usize::from(sig.procctl_off))
         };
 
-        (for_thread, for_proc, sig)
+        (for_thread, for_proc)
     }
     pub fn caller_ctx(&self) -> CallerCtx {
         CallerCtx {
@@ -1001,7 +1003,7 @@ pub fn bulk_add_fds(
         return Ok(0);
     }
     let current_lock = context::current();
-    let mut current = current_lock.write(token.token());
+    let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();
 
     let files: Vec<FileDescriptor> = descriptions
@@ -1045,7 +1047,7 @@ pub fn bulk_insert_fds(
         .read_usize()?;
 
     let current_lock = context::current();
-    let mut current = current_lock.write(token.token());
+    let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();
 
     if first_fd == usize::MAX {

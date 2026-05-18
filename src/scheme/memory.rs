@@ -1,12 +1,12 @@
 use core::num::NonZeroUsize;
 
-use alloc::{sync::Arc, vec::Vec};
+use alloc::sync::Arc;
 use rmm::PhysicalAddress;
 
 use crate::{
     context::{
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
     },
     memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
     sync::CleanLockToken,
@@ -78,7 +78,7 @@ impl MemoryScheme {
             .ok_or(Error::new(EINVAL))?;
         let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
 
-        let mut notify_files = Vec::new();
+        let mut notify_files = UnmapVec::new();
 
         if is_phys_contiguous && map.flags.contains(MapFlags::MAP_SHARED) {
             // TODO: Should this be supported?
@@ -153,6 +153,7 @@ impl MemoryScheme {
                         // Default
                         MemoryType::Writeback => (),
 
+                        // When adding a new flag make sure to modify Grant::borrow_fmap to copy the flag over
                         MemoryType::WriteCombining => page_flags = page_flags.write_combining(true),
                         MemoryType::Uncacheable => page_flags = page_flags.uncacheable(true),
                         MemoryType::DeviceMemory => page_flags = page_flags.device_memory(true),

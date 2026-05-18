@@ -4,13 +4,12 @@ use crate::{context, sync::CleanLockToken, syscall::flag::SigcontrolFlags};
 
 pub fn signal_handler(token: &mut CleanLockToken) {
     let context_lock = context::current();
-    let mut context_guard = context_lock.write(token.token());
-    let context = &mut *context_guard;
+    let context = context_lock.upgradeable_read(token.token());
 
     let being_sigkilled = context.being_sigkilled;
 
     if being_sigkilled {
-        drop(context_guard);
+        drop(context);
         drop(context_lock);
         crate::syscall::process::exit_this_context(None, token);
     }
@@ -48,6 +47,7 @@ pub fn signal_handler(token: &mut CleanLockToken) {
 
     let sigh_instr_ptr = st.user_handler.get();
 
+    let mut context = context.upgrade();
     let Some(regs) = context.regs_mut() else {
         // TODO: is this even reachable?
         trace!("No registers, returning");
@@ -59,6 +59,7 @@ pub fn signal_handler(token: &mut CleanLockToken) {
 
     regs.set_instr_pointer(sigh_instr_ptr);
 
+    let mut context = context.downgrade();
     let (thread_ctl, _, _) = context
         .sigcontrol()
         .expect("cannot have been unset while holding the lock");

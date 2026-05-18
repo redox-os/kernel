@@ -120,10 +120,6 @@ impl KernelScheme for SysScheme {
         ctx: CallerCtx,
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if !matches!(HANDLES.read(token.token()).get(id)?, Handle::SchemeRoot) {
-            return Err(Error::new(EACCES));
-        }
-
         let path = user_buf
             .as_str()
             .or(Err(Error::new(EINVAL)))?
@@ -165,7 +161,7 @@ impl KernelScheme for SysScheme {
         if matches!(kind, Kind::Wr(_)) {
             return Ok(0);
         }
-        let is_data_none = data_lock.write(token.token()).is_none();
+        let is_data_none = data_lock.read(token.token()).is_none();
         if is_data_none {
             let new_data = kind.generate_data(token)?;
             let mut data_guard = data_lock.write(token.token());
@@ -190,7 +186,7 @@ impl KernelScheme for SysScheme {
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
 
-        const FIRST: &[u8] = b"sys:";
+        const FIRST: &[u8] = b"/scheme/sys/";
         let mut bytes_read = buf.copy_common_bytes_from_slice(FIRST)?;
 
         if let Some(remaining) = buf.advance(FIRST.len()) {
@@ -218,7 +214,7 @@ impl KernelScheme for SysScheme {
                 _ => return Err(Error::new(EBADF)),
             }
         };
-        let is_data_none = data_lock.write(token.token()).is_none();
+        let is_data_none = data_lock.read(token.token()).is_none();
         if is_data_none {
             let new_data = kind.generate_data(token)?;
             let mut data_guard = data_lock.write(token.token());
@@ -296,7 +292,7 @@ impl KernelScheme for SysScheme {
             }
         };
         let stat = if let Some((kind, data_lock)) = stat_base {
-            let is_data_none = data_lock.write(token.token()).is_none();
+            let is_data_none = data_lock.read(token.token()).is_none();
             if is_data_none {
                 let new_data = kind.generate_data(token)?;
                 let mut data_guard = data_lock.write(token.token());

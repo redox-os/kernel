@@ -28,6 +28,10 @@ fn registry(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, Registry> {
     REGISTRY.lock(token)
 }
 
+pub fn get_timeout_stat(token: &mut CleanLockToken) -> usize {
+    REGISTRY.lock(token.token()).len()
+}
+
 pub fn register(
     scheme_id: SchemeId,
     event_id: usize,
@@ -68,7 +72,7 @@ pub fn trigger(token: &mut CleanLockToken) {
             };
 
             if trigger {
-                registry.remove(i).unwrap()
+                registry.swap_remove_back(i).unwrap()
             } else {
                 i += 1;
                 continue;

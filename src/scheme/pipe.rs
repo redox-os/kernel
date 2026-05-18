@@ -65,6 +65,10 @@ pub fn pipe(token: &mut CleanLockToken) -> Result<(usize, usize)> {
     Ok((id, id | WRITE_NOT_READ_BIT))
 }
 
+pub fn get_pipe_stat(token: &mut CleanLockToken) -> usize {
+    PIPES.read(token.token()).len()
+}
+
 pub struct PipeScheme;
 
 impl PipeScheme {
