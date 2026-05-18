@@ -74,7 +74,7 @@ x86_64:relibc:
     - mkdir -p target/${TARGET}/sysroot/{usr/lib/boot,root} target/${TARGET}/root
     - redoxer env make BUILD=target/${TARGET}/sysroot/usr/lib/boot
     - (cd target/${TARGET}/sysroot && mv home/user/relibc-tests/* root/)
-    - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ make run
+    - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ make run BUILD=/root
   # It is fine if failing sometimes
   allow_failure: true
   variables:
