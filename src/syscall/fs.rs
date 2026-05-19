@@ -326,7 +326,7 @@ fn call_fdwrite(
 
     let len = fds.len();
 
-    fdwrite_inner(fd, fds, flags, 0, metadata, token)?;
+    fdwrite_inner(fd, fds, flags, metadata, token)?;
 
     Ok(len)
 }
@@ -335,7 +335,6 @@ fn fdwrite_inner(
     socket: FileHandle,
     target_fds: Vec<FileHandle>,
     flags: CallFlags,
-    arg: u64,
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
@@ -385,7 +384,7 @@ fn fdwrite_inner(
         CallFlags::empty()
     };
 
-    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, arg, metadata, token)
+    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)
 }
 
 fn call_fdread(
@@ -427,7 +426,70 @@ pub fn sendfd(
     if sendfd_flags.contains(SendFdFlags::EXCLUSIVE) {
         call_flags |= CallFlags::FD_EXCLUSIVE;
     }
-    fdwrite_inner(socket, Vec::from([fd]), call_flags, arg, &[], token)
+    fdwrite_inner(socket, Vec::from([fd]), call_flags, &[arg], token)
+}
+
+pub fn call_multiple_fds(
+    fds: UserSliceRo,
+    payload: UserSliceRw,
+    flags: CallFlags,
+    metadata: UserSliceRo,
+    token: &mut CleanLockToken,
+) -> Result<usize> {
+    let mut meta = [0_u64; 2];
+
+    // TODO: bytemuck/plain
+    let copied = metadata.copy_common_bytes_to_slice(unsafe {
+        core::slice::from_raw_parts_mut(meta.as_mut_ptr().cast(), meta.len() * 8)
+    })?;
+
+    let (target_fd, scheme_id, mut fds) = {
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let mut fds_iter = fds.usizes();
+
+        let fd_res = fds_iter.next();
+        let fd = fd_res.ok_or(Error::new(EBADF))?.map(FileHandle::new)?;
+
+        let consume = flags.contains(CallFlags::CONSUME);
+
+        let (file, mut split_token) = match (current.token_split(), consume) {
+            ((ctxt, mut split_token), true) => {
+                (ctxt.remove_file(fd, &mut split_token), split_token)
+            }
+            ((ctxt, mut split_token), false) => (ctxt.get_file(fd, &mut split_token), split_token),
+        };
+        let file = file.ok_or(Error::new(EBADF))?;
+
+        let scheme_id = {
+            let desc = file.description.read(split_token.token());
+            desc.scheme
+        };
+
+        (file, scheme_id, fds_iter)
+    };
+
+    let scheme = scheme::get_scheme(token.token(), scheme_id).map_err(|e| e)?;
+
+    if flags.contains(CallFlags::STD_FS) {
+        scheme.translate_std_fs_call_multiple_fds(
+            target_fd.description,
+            &mut fds,
+            payload,
+            flags,
+            &meta[..copied / 8],
+            token,
+        )
+    } else {
+        scheme.kcall_multiple_fds(
+            target_fd.description,
+            &mut fds,
+            payload,
+            flags,
+            &meta[..copied / 8],
+            token,
+        )
+    }
 }
 
 /// File descriptor controls

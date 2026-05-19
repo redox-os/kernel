@@ -1155,7 +1155,6 @@ impl UserInner {
         &self,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        _arg: u64,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -1285,6 +1284,183 @@ impl UserInner {
 
     pub fn into_drop(self, token: &mut CleanLockToken) {
         self.todo.condition.into_drop(token);
+    }
+
+    fn kcall_multiple_ids(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        fds: &mut dyn Iterator<Item = Result<usize>>,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let mut ids = Vec::new();
+        {
+            let current_lock = context::current();
+            let mut current = current_lock.read(token.token());
+            let consume = flags.contains(CallFlags::CONSUME);
+            let (scheme_id, num) = {
+                let (_, mut split_token) = current.token_split();
+                let desc = desc.read(split_token.token());
+                (desc.scheme, desc.number)
+            };
+            ids.push(num);
+
+            for fd in fds {
+                let fd = FileHandle::new(fd?);
+                let (file, mut split_token) = match (current.token_split(), consume) {
+                    ((ctxt, mut split_token), true) => {
+                        (ctxt.remove_file(fd, &mut split_token), split_token)
+                    }
+                    ((ctxt, mut split_token), false) => {
+                        (ctxt.get_file(fd, &mut split_token), split_token)
+                    }
+                };
+                let file = file.ok_or(Error::new(EBADF))?;
+                let desc = file.description.read(split_token.token());
+                if desc.scheme != scheme_id {
+                    return Err(Error::new(EBADF));
+                }
+                ids.push(desc.number)
+            }
+        }
+
+        let ids_address = self.capture_user(
+            UserSlice::ro(ids.as_ptr() as *const u8 as usize, ids.len())?,
+            token,
+        )?;
+        let mut address = self.capture_user(payload, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let mut sqe = Sqe {
+            opcode: Opcode::Call as u8,
+            sqe_flags: SqeFlags::MULTIPLE_IDS,
+            _rsvd: 0,
+            tag: self.next_id(token)?,
+            caller: ctx.pid as u64,
+            args: [
+                ids_address.base() as u64,
+                ids_address.len() as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[4..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+        match self.call_inner(Vec::new(), sqe, address.span(), token)? {
+            Response::Regular(res, _, notify_on_detach) => {
+                address.release(token)?;
+                ids_address.release(token)?;
+                desc.write(token.token())
+                    .internal_flags
+                    .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
+                res
+            }
+            _ => {
+                let _ = address.release(token);
+                let _ = ids_address.release(token);
+                Err(Error::new(EIO))
+            }
+        }
+    }
+
+    fn kstdfscall_multiple_ids(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        fds: &mut dyn Iterator<Item = Result<usize>>,
+        _kind: StdFsCallKind,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: StdFsCallMeta,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let mut ids = Vec::new();
+        {
+            let current_lock = context::current();
+            let mut current = current_lock.read(token.token());
+            let consume = flags.contains(CallFlags::CONSUME);
+            let (scheme_id, num) = {
+                let (_, mut split_token) = current.token_split();
+                let desc = desc.read(split_token.token());
+                (desc.scheme, desc.number)
+            };
+            ids.push(num);
+            for fd_res in fds {
+                let raw_fd = fd_res?;
+                let fd = FileHandle::new(raw_fd);
+
+                let (file, mut split_token) = match (current.token_split(), consume) {
+                    ((ctxt, mut split_token), true) => {
+                        (ctxt.remove_file(fd, &mut split_token), split_token)
+                    }
+                    ((ctxt, mut split_token), false) => {
+                        (ctxt.get_file(fd, &mut split_token), split_token)
+                    }
+                };
+                let file = file.ok_or_else(|| Error::new(EBADF))?;
+
+                let desc = file.description.read(split_token.token());
+                if desc.scheme != scheme_id {
+                    return Err(Error::new(EXDEV));
+                }
+                ids.push(desc.number)
+            }
+        }
+
+        let ids_bytes = unsafe {
+            core::slice::from_raw_parts(
+                ids.as_ptr() as *const u8,
+                ids.len() * core::mem::size_of::<usize>(),
+            )
+        };
+        let ids_address = self.copy_and_capture_tail(ids_bytes, token)?;
+        let mut address = self.capture_user(payload, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let sqe_tag = self.next_id(token)?;
+
+        let mut sqe = Sqe {
+            opcode: Opcode::StdFsCall as u8,
+            sqe_flags: SqeFlags::MULTIPLE_IDS,
+            _rsvd: 0,
+            tag: sqe_tag,
+            caller: ctx.pid as u64,
+            args: [
+                ids_address.base() as u64,
+                ids_address.len() as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[4..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+
+        match self.call_inner(Vec::new(), sqe, address.span(), token)? {
+            Response::Regular(res, _, notify_on_detach) => {
+                address.release(token)?;
+                ids_address.release(token)?;
+                desc.write(token.token())
+                    .internal_flags
+                    .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
+                res
+            }
+            unexpected => {
+                let _ = address.release(token);
+                let _ = ids_address.release(token);
+                Err(Error::new(EIO))
+            }
+        }
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
@@ -2025,8 +2201,7 @@ impl KernelScheme for UserScheme {
         number: usize,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        arg: u64,
-        _metadata: &[u64],
+        metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2043,7 +2218,12 @@ impl KernelScheme for UserScheme {
                 ctx,
                 descs,
                 Opcode::Sendfd,
-                [number, sendfd_flags.bits(), arg as usize, len],
+                [
+                    number,
+                    sendfd_flags.bits(),
+                    *metadata.first().unwrap_or(&0) as usize,
+                    len,
+                ],
                 &mut PageSpan::empty(),
                 token,
             )?
@@ -2054,7 +2234,7 @@ impl KernelScheme for UserScheme {
         id: usize,
         payload: UserSliceRw,
         flags: CallFlags,
-        _metadata: &[u64],
+        metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2076,7 +2256,13 @@ impl KernelScheme for UserScheme {
             ctx,
             Vec::new(),
             Opcode::Recvfd,
-            [id, recvfd_flags.bits(), len],
+            [
+                id,
+                recvfd_flags.bits(),
+                len,
+                *metadata.first().unwrap_or(&0) as usize,
+                *metadata.get(1).unwrap_or(&0) as usize,
+            ],
             &mut PageSpan::empty(),
             token,
         )?;
@@ -2115,6 +2301,78 @@ impl KernelScheme for UserScheme {
 
         Ok(num_fds)
     }
+    fn kcall_multiple_fds(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        fds: &mut dyn Iterator<Item = Result<usize>>,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let inner = self.inner.clone();
+        if flags.contains(CallFlags::SCHEME_IDS) {
+            return inner.kcall_multiple_ids(desc, fds, payload, flags, metadata, token);
+        }
+
+        let number = desc.read(token.token()).number;
+
+        let mut descs_to_send = Vec::new();
+        {
+            let current_lock = context::current();
+            let mut current = current_lock.read(token.token());
+            let consume = flags.contains(CallFlags::CONSUME);
+
+            for fd_res in fds {
+                let raw_fd = fd_res?;
+                let fd = FileHandle::new(raw_fd);
+
+                let file = match (current.token_split(), consume) {
+                    ((ctxt, mut split_token), true) => ctxt.remove_file(fd, &mut split_token),
+                    ((ctxt, mut split_token), false) => ctxt.get_file(fd, &mut split_token),
+                };
+                let file = file.ok_or_else(|| Error::new(EBADF))?;
+                descs_to_send.push(file.description)
+            }
+        }
+
+        let mut address = inner.capture_user(payload, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let sqe_tag = inner.next_id(token)?;
+
+        let mut sqe = Sqe {
+            opcode: Opcode::Call as u8,
+            sqe_flags: SqeFlags::MULTIPLE_FDS,
+            _rsvd: 0,
+            tag: sqe_tag,
+            caller: ctx.pid as u64,
+            args: [
+                number as u64,
+                descs_to_send.len() as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[4..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+
+        match inner.call_inner(descs_to_send, sqe, address.span(), token) {
+            Ok(res) => {
+                address.release(token)?;
+                res.into_regular()
+            }
+            Err(e) => {
+                let _ = address.release(token);
+                Err(e)
+            }
+        }
+    }
     fn translate_std_fs_call(
         &self,
         id: usize,
@@ -2132,6 +2390,102 @@ impl KernelScheme for UserScheme {
         };
         let metadata = StdFsCallMeta::new(kind, arg1, arg2);
         self.kstdfscall(id, kind, desc, payload, flags, metadata, token)
+    }
+
+    fn translate_std_fs_call_multiple_fds(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        fds: &mut dyn Iterator<Item = Result<usize>>,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let &[kind, arg1, ..] = metadata else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let Some(kind) = StdFsCallKind::try_from_raw(kind as u8) else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+
+        let metadata = StdFsCallMeta::new(kind, arg1, 0);
+        self.kstdfscall_multiple_fds(desc, fds, kind, payload, flags, metadata, token)
+    }
+
+    fn kstdfscall_multiple_fds(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        fds: &mut dyn Iterator<Item = Result<usize>>,
+        kind: StdFsCallKind,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: StdFsCallMeta,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let inner = self.inner.clone();
+
+        if flags.contains(CallFlags::SCHEME_IDS) {
+            return inner.kstdfscall_multiple_ids(desc, fds, kind, payload, flags, metadata, token);
+        }
+
+        let number = desc.read(token.token()).number;
+
+        let mut descs_to_send = Vec::new();
+        {
+            let current_lock = context::current();
+            let mut current = current_lock.read(token.token());
+            let consume = flags.contains(CallFlags::CONSUME);
+
+            for fd_res in fds {
+                let raw_fd = fd_res?;
+                let fd = FileHandle::new(raw_fd);
+
+                let file = match (current.token_split(), consume) {
+                    ((ctxt, mut split_token), true) => ctxt.remove_file(fd, &mut split_token),
+                    ((ctxt, mut split_token), false) => ctxt.get_file(fd, &mut split_token),
+                };
+                let file = file.ok_or_else(|| Error::new(EBADF))?;
+                descs_to_send.push(file.description)
+            }
+        }
+
+        let mut address = inner.capture_user(payload, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let sqe_tag = inner.next_id(token)?;
+
+        let mut sqe = Sqe {
+            opcode: Opcode::StdFsCall as u8,
+            sqe_flags: SqeFlags::MULTIPLE_IDS,
+            _rsvd: 0,
+            tag: sqe_tag,
+            caller: ctx.pid as u64,
+            args: [
+                number as u64,
+                descs_to_send.len() as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+            ],
+        };
+        {
+            let dst = &mut sqe.args[4..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+
+        match inner.call_inner(descs_to_send, sqe, address.span(), token) {
+            Ok(res) => {
+                address.release(token)?;
+                res.into_regular()
+            }
+            Err(e) => {
+                let _ = address.release(token);
+                Err(e)
+            }
+        }
     }
 }
 

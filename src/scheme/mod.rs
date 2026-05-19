@@ -395,12 +395,11 @@ impl KernelScheme for SchemeList {
         id: usize,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        arg: u64,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
-            Some(inner) => inner.call_fdwrite(descs, flags, arg, metadata, token),
+            Some(inner) => inner.call_fdwrite(descs, flags, metadata, token),
             None => Err(Error::new(EBADF)),
         }
     }
@@ -711,7 +710,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         id: usize,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        args: u64,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -728,10 +726,19 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EOPNOTSUPP))
     }
 
+    fn relpathat(
+        &self,
+        ids: Vec<usize>,
+        payload: UserSliceRo,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+
     fn translate_std_fs_call(
         &self,
         id: usize,
-        desc: Arc<LockedFileDescription>,
+        _desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -763,6 +770,89 @@ pub trait KernelScheme: Send + Sync + 'static {
             Fchown => self.kstdfscall(id, kind, desc, payload, flags, metadata, token),
             Unlinkat => self.kstdfscall(fd, kind, payload, metadata, &caller).map(|_| 0)
             */
+            _ => Err(Error::new(EOPNOTSUPP)),
+        }
+    }
+    fn kcall_multiple_fds(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        ids: &mut dyn Iterator<Item = Result<usize>>,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+
+    fn kstdfscall_multiple_fds(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        ids: &mut dyn Iterator<Item = Result<usize>>,
+        kind: StdFsCallKind,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: StdFsCallMeta,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
+    fn translate_std_fs_call_multiple_fds(
+        &self,
+        desc: Arc<LockedFileDescription>,
+        fds: &mut dyn Iterator<Item = Result<usize>>,
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let &[kind, arg1, ..] = metadata else {
+            return Err(Error::new(EINVAL));
+        };
+        let Some(kind) = StdFsCallKind::try_from_raw(kind as u8) else {
+            return Err(Error::new(EOPNOTSUPP));
+        };
+        let metadata = StdFsCallMeta::new(kind, arg1, 0);
+        use syscall::flag::StdFsCallKind::*;
+        match kind {
+            Relpathat => {
+                if flags.contains(CallFlags::SCHEME_IDS) {
+                    return Err(Error::new(EINVAL));
+                }
+                let mut nums = Vec::new();
+                let (scheme_id, nums) = {
+                    let current_lock = context::current();
+                    let mut current = current_lock.read(token.token());
+                    let consume = flags.contains(CallFlags::CONSUME);
+                    let (scheme_id, num) = {
+                        let (_, mut split_token) = current.token_split();
+                        let desc = desc.read(split_token.token());
+                        (desc.scheme, desc.number)
+                    };
+                    nums.push(num);
+
+                    for fd in fds {
+                        let fd = FileHandle::new(fd?);
+                        let (file, mut split_token) = match (current.token_split(), consume) {
+                            ((ctxt, mut split_token), true) => {
+                                (ctxt.remove_file(fd, &mut split_token), split_token)
+                            }
+                            ((ctxt, mut split_token), false) => {
+                                (ctxt.get_file(fd, &mut split_token), split_token)
+                            }
+                        };
+                        let file = file.ok_or(Error::new(EBADF))?;
+                        let desc = file.description.read(split_token.token());
+                        if desc.scheme != scheme_id {
+                            return Err(Error::new(EBADF));
+                        }
+                        nums.push(desc.number)
+                    }
+                    (scheme_id, nums)
+                };
+
+                self.relpathat(nums, payload.into_ro()?, token)
+            }
             _ => Err(Error::new(EOPNOTSUPP)),
         }
     }
