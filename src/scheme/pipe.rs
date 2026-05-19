@@ -385,7 +385,6 @@ impl KernelScheme for PipeScheme {
         id: usize,
         mut descs: Vec<Arc<LockedFileDescription>>,
         _flags: CallFlags,
-        _args: u64,
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
