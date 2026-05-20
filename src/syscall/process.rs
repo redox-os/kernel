@@ -30,31 +30,35 @@ use crate::{
 use super::usercopy::UserSliceWo;
 
 pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
-    let mut close_files;
-    let addrspace_opt;
-
     let context_lock = context::current();
-    {
+    let (addrspace_opt, mut close_files) = {
         let mut context = context_lock.write(token.token());
         let (context, mut token) = context.token_split();
-        close_files = Arc::try_unwrap(mem::take(&mut context.files))
+        let close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
-        addrspace_opt = context
-            .set_addr_space(None, token)
-            .and_then(|a| Arc::try_unwrap(a).ok());
+        let addrspace_opt = context.set_addr_space(None, token);
         drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
         drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
-    }
+        (addrspace_opt, close_files)
+    };
 
     // Files must be closed while context is valid so that messages can be passed
     close_files.force_close_all(token);
     if let Some(addrspace) = addrspace_opt {
-        addrspace.into_drop(token);
+        // TODO: addrspace utable should be dropped immediately but it's not the case.
+        //       the utable leaves us with 8 memory pages (32K) leak per context
+        if let Ok(addrspace) = Arc::try_unwrap(addrspace) {
+            addrspace.into_drop(token);
+        }
     }
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
         let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
+        // TODO: context should be dropped immediately but it's not the case.
+        //       we drop kstack to prevent 32 memory pages (128K) leaking
+        drop(guard.kstack.take());
+
         guard.owner_proc_id
     };
     if let Some(owner) = owner {
