@@ -40,7 +40,7 @@ pub struct FutexEntry {
     // TODO: FUTEX_REQUEUE
     target_virtaddr: VirtualAddress,
     // Context to wake up, and compare address spaces.
-    context_lock: Arc<ContextLock>,
+    context_lock: Weak<ContextLock>,
     // address space to check against if virt matches but not phys
     addr_space: Weak<AddrSpaceWrapper>,
 }
@@ -171,7 +171,7 @@ pub fn futex(
                     .or_insert_with(Vec::new)
                     .push(FutexEntry {
                         target_virtaddr,
-                        context_lock: context_lock.clone(),
+                        context_lock: Arc::downgrade(&context_lock),
                         addr_space: Arc::downgrade(&current_addrsp),
                     });
             }
@@ -216,7 +216,9 @@ pub fn futex(
                             }
                             continue;
                         }
-                        futex.context_lock.write(token.token()).unblock();
+                        if let Some(ctx) = futex.context_lock.upgrade() {
+                            ctx.write(token.token()).unblock();
+                        }
                         futexes.swap_remove(i);
                         woken += 1;
                     }

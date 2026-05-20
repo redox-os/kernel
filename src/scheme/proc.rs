@@ -150,7 +150,7 @@ enum ContextHandle {
 }
 #[derive(Clone)]
 struct Handle {
-    context: Arc<ContextLock>,
+    context: Weak<ContextLock>,
     kind: ContextHandle,
 }
 pub struct ProcScheme;
@@ -192,7 +192,7 @@ fn new_handle(
 }
 
 enum OpenTy {
-    Ctxt(Arc<ContextLock>),
+    Ctxt(Weak<ContextLock>),
     Auth,
 }
 
@@ -292,7 +292,11 @@ impl ProcScheme {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
             OpenTy::Ctxt(context) => {
-                match self.openat_context(operation_name, Arc::clone(&context), token)? {
+                match self.openat_context(
+                    operation_name,
+                    context.upgrade().ok_or(Error::new(ESRCH))?,
+                    token,
+                )? {
                     Some((kind, positioned)) => (Handle { context, kind }, positioned),
                     _ => {
                         return Err(Error::new(EINVAL));
@@ -309,7 +313,7 @@ impl ProcScheme {
                         HANDLES.write(token.token()).insert(
                             id.get(),
                             Handle {
-                                context,
+                                context: Arc::downgrade(&context),
                                 kind: ContextHandle::OpenViaDup,
                             },
                         );
@@ -321,7 +325,7 @@ impl ProcScheme {
 
                 (
                     Handle {
-                        context,
+                        context: Arc::downgrade(&context),
                         kind: ContextHandle::OpenViaDup,
                     },
                     false,
@@ -405,7 +409,7 @@ impl KernelScheme for ProcScheme {
             id,
             Handle {
                 // TODO: placeholder
-                context: context::current(),
+                context: Arc::downgrade(&context::current()),
                 kind: ContextHandle::Authority,
             },
         );
@@ -441,6 +445,7 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
+                let context = context.upgrade().ok_or(Error::new(ESRCH))?;
                 let old_ctx = try_stop_context(context, token, |context, token| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
@@ -477,7 +482,11 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },
                 context,
             } => {
-                context.write(token.token()).files = new_ft;
+                context
+                    .upgrade()
+                    .ok_or(Error::new(ESRCH))?
+                    .write(token.token())
+                    .files = new_ft;
             }
             _ => (),
         }
@@ -497,7 +506,7 @@ impl KernelScheme for ProcScheme {
             .ok_or(Error::new(EBADF))?
             .clone();
         let Handle { kind, ref context } = handle;
-
+        let context = context.upgrade().ok_or(Error::new(ESRCH))?;
         match kind {
             ContextHandle::AddrSpace { ref addrspace } => {
                 if Arc::ptr_eq(addrspace, dst_addr_space) {
@@ -619,7 +628,13 @@ impl KernelScheme for ProcScheme {
         };
 
         let Handle { context, kind } = handle;
-        kind.kreadoff(id, context, buf, offset, token)
+        kind.kreadoff(
+            id,
+            context.upgrade().ok_or(Error::new(ESRCH))?,
+            buf,
+            offset,
+            token,
+        )
     }
     fn kcall(
         &self,
@@ -671,7 +686,7 @@ impl KernelScheme for ProcScheme {
         };
 
         let Handle { context, kind } = handle;
-        kind.kwriteoff(id, context, buf, token)
+        kind.kwriteoff(id, context.upgrade().ok_or(Error::new(ESRCH))?, buf, token)
     }
 
     fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
@@ -1092,7 +1107,7 @@ impl ContextHandle {
                                 binary_format,
                                 data: data.clone(),
                             },
-                            context: Arc::clone(&context),
+                            context: Arc::downgrade(&context),
                         };
                         ft
                     }
@@ -1102,7 +1117,7 @@ impl ContextHandle {
 
                 *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle {
                     kind: ContextHandle::AwaitingFiletableChange { new_ft: filetable },
-                    context,
+                    context: Arc::downgrade(&context),
                 };
 
                 Ok(size_of::<usize>())
@@ -1127,7 +1142,7 @@ impl ContextHandle {
                 };
 
                 *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle {
-                    context,
+                    context: Arc::downgrade(&context),
                     kind: Self::AwaitingAddrSpaceChange {
                         new: Arc::clone(addrspace),
                         new_sp: sp,
