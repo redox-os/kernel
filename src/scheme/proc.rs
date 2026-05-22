@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::{CallerCtx, KernelSchemes, OpenResult};
-use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
+use ::syscall::{CallFlags, ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
     string::String,
@@ -143,7 +143,6 @@ enum ContextHandle {
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
     // directory.
     OpenViaDup,
-    SchedAffinity,
 
     MmapMinAddr(Arc<AddrSpaceWrapper>),
 }
@@ -246,7 +245,6 @@ impl ProcScheme {
                 )),
                 false,
             ),
-            "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status { privileged: false }, false),
             _ if path.starts_with("auth-") => {
                 let nonprefix = &path["auth-".len()..];
@@ -1208,16 +1206,6 @@ impl ContextHandle {
                 addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
                 Ok(size_of::<usize>())
             }
-            Self::SchedAffinity => {
-                let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
-
-                context
-                    .write(token.token())
-                    .sched_affinity
-                    .override_from(&mask);
-
-                Ok(size_of_val(&mask))
-            }
             ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
 
@@ -1482,12 +1470,6 @@ impl ContextHandle {
                 buf.write_usize(addr.mmap_min)?;
                 Ok(size_of::<usize>())
             }
-            ContextHandle::SchedAffinity => {
-                let mask = context.read(token.token()).sched_affinity.to_raw();
-
-                buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
-                Ok(size_of_val(&mask))
-            } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
                 let status = {
                     let context = context.read(token.token());
@@ -1571,9 +1553,9 @@ impl ContextHandle {
                 let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
 
                 match verb {
-                    ProcSchemeVerb::Iopl => context
-                        .write(token.token())
-                        .set_userspace_io_allowed(true),
+                    ProcSchemeVerb::Iopl => {
+                        context.write(token.token()).set_userspace_io_allowed(true)
+                    }
                     ProcSchemeVerb::Start => match context.write(token.token()).status {
                         ref mut status @ Status::HardBlocked {
                             reason: HardBlockedReason::NotYetStarted,
@@ -1582,6 +1564,25 @@ impl ContextHandle {
                         }
                         _ => return Err(Error::new(EINVAL)),
                     },
+                    ProcSchemeVerb::SchedAffinity => {
+                        let requested_mask = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<crate::cpu_set::RawMask>()? })
+                        } else {
+                            None
+                        };
+
+                        if flags.contains(CallFlags::READ) {
+                            let mask = context.read(token.token()).sched_affinity.to_raw();
+
+                            payload.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
+                        }
+                        if let Some(new) = requested_mask {
+                            context
+                                .write(token.token())
+                                .sched_affinity
+                                .override_from(&new);
+                        }
+                    }
                     _ => return Err(Error::new(EINVAL)),
                 }
                 Ok(0)
