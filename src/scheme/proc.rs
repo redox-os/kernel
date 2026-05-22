@@ -93,13 +93,13 @@ fn try_stop_context<T>(
     ret
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegsKind {
     Float,
     Int,
     Env,
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum ContextHandle {
     // Opened by the process manager, after which it is locked. This capability is used to open
     // Attr handles, to set ens/euid/egid/pid.
@@ -112,7 +112,6 @@ enum ContextHandle {
 
     Regs(RegsKind),
     Sighandler,
-    Start,
     NewFiletable {
         filetable: Arc<LockedFdTbl>,
         binary_format: bool,
@@ -237,7 +236,6 @@ impl ProcScheme {
             "regs/int" => (ContextHandle::Regs(RegsKind::Int), false),
             "regs/env" => (ContextHandle::Regs(RegsKind::Env), false),
             "sighandler" => (ContextHandle::Sighandler, false),
-            "start" => (ContextHandle::Start, false),
             "open_via_dup" => (ContextHandle::OpenViaDup, false),
             "mmap-min-addr" => (
                 ContextHandle::MmapMinAddr(Arc::clone(
@@ -660,7 +658,7 @@ impl KernelScheme for ProcScheme {
             payload,
             flags,
             metadata,
-            Arc::clone(&handle.context.upgrade().ok_or(Error::new(ESRCH))?),
+            handle.context.upgrade().ok_or(Error::new(ESRCH))?,
             token,
         )
     }
@@ -1115,15 +1113,6 @@ impl ContextHandle {
 
                 Ok(size_of::<SetSighandlerData>())
             }
-            ContextHandle::Start => match context.write(token.token()).status {
-                ref mut status @ Status::HardBlocked {
-                    reason: HardBlockedReason::NotYetStarted,
-                } => {
-                    *status = Status::Runnable;
-                    Ok(buf.len())
-                }
-                _ => Err(Error::new(EINVAL)),
-            },
             ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } => {
                 Err(Error::new(EBADF))
             }
@@ -1582,9 +1571,17 @@ impl ContextHandle {
                 let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
 
                 match verb {
-                    ProcSchemeVerb::Iopl => context::current()
+                    ProcSchemeVerb::Iopl => context
                         .write(token.token())
                         .set_userspace_io_allowed(true),
+                    ProcSchemeVerb::Start => match context.write(token.token()).status {
+                        ref mut status @ Status::HardBlocked {
+                            reason: HardBlockedReason::NotYetStarted,
+                        } => {
+                            *status = Status::Runnable;
+                        }
+                        _ => return Err(Error::new(EINVAL)),
+                    },
                     _ => return Err(Error::new(EINVAL)),
                 }
                 Ok(0)
