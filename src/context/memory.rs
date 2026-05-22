@@ -71,9 +71,9 @@ impl UnmapResult {
             return Ok(());
         };
 
-        /// TODO: This is not ideal, the lock must be held until try_close(), however that would break borrowing rules.
-        /// Proper unmap operation would be a recursive operation, since closing a file can trigger another unmap().
-        /// We should refactor Result of munmap() to handle unmap and closing files recursively.
+        // TODO: This is not ideal, the lock must be held until try_close(), however that would break borrowing rules.
+        // Proper unmap operation would be a recursive operation, since closing a file can trigger another unmap().
+        // We should refactor Result of munmap() to handle unmap and closing files recursively.
         let (scheme_id, number) = {
             let desc = description.write(token.token());
             (desc.scheme, desc.number)
@@ -1073,7 +1073,7 @@ impl UserGrants {
         // There was a range that began exactly prior to the to-be-freed region, so simply
         // increment the size such that it occupies the grant too. If in addition there was a grant
         // directly after the grant, include it too in the size.
-        if let Some((hole_offset, hole_size)) = self
+        if let Some((hole_offset, _hole_size)) = self
             .holes_by_addr
             .range(..start_address)
             .next_back()

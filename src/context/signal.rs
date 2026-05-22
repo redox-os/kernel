@@ -59,7 +59,7 @@ pub fn signal_handler(token: &mut CleanLockToken) {
 
     regs.set_instr_pointer(sigh_instr_ptr);
 
-    let mut context = context.downgrade();
+    let context = context.downgrade();
     let (thread_ctl, _, _) = context
         .sigcontrol()
         .expect("cannot have been unset while holding the lock");

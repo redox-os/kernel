@@ -56,7 +56,7 @@ pub fn get_futex_stat(token: &mut CleanLockToken) -> (usize, usize) {
     let mut regc = 0;
     let mut regl = 0;
     let registry = FUTEXES.lock(token.token());
-    for (k, v) in registry.iter() {
+    for (_, v) in registry.iter() {
         regl += v.len();
         regc += 1;
     }

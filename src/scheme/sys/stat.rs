@@ -1,7 +1,7 @@
 use core::fmt::Write as _;
 
 use crate::{
-    context::{contexts, get_contexts_stats, Status},
+    context::get_contexts_stats,
     cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
     event::get_event_stat,
     percpu::get_all_stats,

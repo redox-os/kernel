@@ -7,7 +7,6 @@ use core::{
     num::NonZeroUsize,
 };
 use slab::Slab;
-use smallvec::SmallVec;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
