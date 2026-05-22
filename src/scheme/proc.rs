@@ -30,7 +30,7 @@ use alloc::{
 use core::{
     mem::size_of,
     num::NonZeroUsize,
-    slice, str,
+    str,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
@@ -93,12 +93,6 @@ fn try_stop_context<T>(
     ret
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RegsKind {
-    Float,
-    Int,
-    Env,
-}
 #[derive(Debug, Clone)]
 enum ContextHandle {
     // Opened by the process manager, after which it is locked. This capability is used to open
@@ -110,7 +104,6 @@ enum ContextHandle {
         privileged: bool,
     }, // can write ContextVerb
 
-    Regs(RegsKind),
     Sighandler,
     NewFiletable {
         filetable: Arc<LockedFdTbl>,
@@ -228,9 +221,6 @@ impl ProcScheme {
             ),
             "current-addrspace" => (ContextHandle::CurrentAddrSpace, false),
             "current-filetable" => (ContextHandle::CurrentFiletable, false),
-            "regs/float" => (ContextHandle::Regs(RegsKind::Float), false),
-            "regs/int" => (ContextHandle::Regs(RegsKind::Int), false),
-            "regs/env" => (ContextHandle::Regs(RegsKind::Env), false),
             "sighandler" => (ContextHandle::Sighandler, false),
             "open_via_dup" => (ContextHandle::OpenViaDup, false),
             "status" => (ContextHandle::Status { privileged: false }, false),
@@ -1003,45 +993,6 @@ impl ContextHandle {
                 }
                 Ok(words_read * size_of::<usize>())
             }
-            ContextHandle::Regs(kind) => match kind {
-                RegsKind::Float => {
-                    let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
-
-                    try_stop_context(context, token, |context, _| {
-                        // NOTE: The kernel will never touch floats
-
-                        // Ignore the rare case of floating point
-                        // registers being uninitiated
-                        context.set_fx_regs(regs);
-
-                        Ok(size_of::<FloatRegisters>())
-                    })
-                }
-                RegsKind::Int => {
-                    let regs = unsafe { buf.read_exact::<IntRegisters>()? };
-
-                    try_stop_context(context, token, |context, _| match context.regs_mut() {
-                        None => {
-                            println!(
-                                "{}:{}: Couldn't read registers from stopped process",
-                                file!(),
-                                line!()
-                            );
-                            Err(Error::new(ENOTRECOVERABLE))
-                        }
-                        Some(stack) => {
-                            stack.load(&regs);
-
-                            Ok(size_of::<IntRegisters>())
-                        }
-                    })
-                }
-                RegsKind::Env => {
-                    let regs = unsafe { buf.read_exact::<EnvRegisters>()? };
-                    write_env_regs(context, regs, token)?;
-                    Ok(size_of::<EnvRegisters>())
-                }
-            },
             ContextHandle::Sighandler => {
                 let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
 
@@ -1351,56 +1302,6 @@ impl ContextHandle {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self {
-            ContextHandle::Regs(kind) => {
-                union Output {
-                    float: FloatRegisters,
-                    int: IntRegisters,
-                    env: EnvRegisters,
-                }
-
-                let (output, size) = match kind {
-                    RegsKind::Float => {
-                        let context = context.read(token.token());
-                        // NOTE: The kernel will never touch floats
-
-                        (
-                            Output {
-                                float: context.get_fx_regs(),
-                            },
-                            size_of::<FloatRegisters>(),
-                        )
-                    }
-                    RegsKind::Int => {
-                        try_stop_context(context, token, |context, _| match context.regs() {
-                            None => {
-                                assert!(!context.running, "try_stop_context is broken, clearly");
-                                println!(
-                                    "{}:{}: Couldn't read registers from stopped process",
-                                    file!(),
-                                    line!()
-                                );
-                                Err(Error::new(ENOTRECOVERABLE))
-                            }
-                            Some(stack) => {
-                                let mut regs = IntRegisters::default();
-                                stack.save(&mut regs);
-                                Ok((Output { int: regs }, size_of::<IntRegisters>()))
-                            }
-                        })?
-                    }
-                    RegsKind::Env => (
-                        Output {
-                            env: read_env_regs(context, token)?,
-                        },
-                        size_of::<EnvRegisters>(),
-                    ),
-                };
-
-                let src_buf =
-                    unsafe { slice::from_raw_parts(&output as *const _ as *const u8, size) };
-
-                buf.copy_common_bytes_from_slice(src_buf)
-            }
             ContextHandle::AddrSpace { addrspace } => {
                 let Ok(offset) = usize::try_from(offset) else {
                     return Ok(0);
@@ -1556,7 +1457,76 @@ impl ContextHandle {
                                 .override_from(&new);
                         }
                     }
-                    _ => return Err(Error::new(EINVAL)),
+                    ProcSchemeVerb::RegsInt => {
+                        let new_requested = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<IntRegisters>()? })
+                        } else {
+                            None
+                        };
+                        let mut old = IntRegisters::default();
+                        try_stop_context(context, token, |context, _| match context.regs_mut() {
+                            None => {
+                                println!(
+                                    "{}:{}: Couldn't read registers from stopped process",
+                                    file!(),
+                                    line!()
+                                );
+                                Err(Error::new(ENOTRECOVERABLE))
+                            }
+                            Some(stack) => {
+                                stack.save(&mut old);
+
+                                if let Some(regs) = new_requested {
+                                    stack.load(&regs);
+                                }
+
+                                Ok(size_of::<IntRegisters>())
+                            }
+                        })?;
+
+                        if flags.contains(CallFlags::READ) {
+                            payload.copy_exactly(&old)?;
+                        }
+                    }
+                    ProcSchemeVerb::RegsEnv => {
+                        let new_requested = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<EnvRegisters>()? })
+                        } else {
+                            None
+                        };
+
+                        if flags.contains(CallFlags::READ) {
+                            // TODO: avoid clone?
+                            let regs = read_env_regs(Arc::clone(&context), token)?;
+                            payload.copy_exactly(&regs)?;
+                        }
+                        if let Some(new) = new_requested {
+                            write_env_regs(context, new, token)?;
+                        }
+                    }
+                    ProcSchemeVerb::RegsFloat => {
+                        let new_requested = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<FloatRegisters>()? })
+                        } else {
+                            None
+                        };
+
+                        let old_regs = try_stop_context(context, token, |context, _| {
+                            // NOTE: The kernel will never touch floats
+
+                            // Ignore the rare case of floating point
+                            // registers being uninitiated
+                            let old = context.get_fx_regs();
+                            if let Some(new) = new_requested {
+                                context.set_fx_regs(new);
+                            }
+
+                            Ok(old)
+                        })?;
+                        if flags.contains(CallFlags::READ) {
+                            payload.copy_exactly(&old_regs)?;
+                        }
+                    }
                 }
                 Ok(0)
             }
