@@ -143,8 +143,6 @@ enum ContextHandle {
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
     // directory.
     OpenViaDup,
-
-    MmapMinAddr(Arc<AddrSpaceWrapper>),
 }
 #[derive(Clone)]
 struct Handle {
@@ -169,8 +167,7 @@ pub fn foreach_addrsp(
         let Handle {
             kind:
                 ContextHandle::AddrSpace { addrspace, .. }
-                | ContextHandle::AwaitingAddrSpaceChange { new: addrspace, .. }
-                | ContextHandle::MmapMinAddr(addrspace),
+                | ContextHandle::AwaitingAddrSpaceChange { new: addrspace, .. },
             ..
         } = handle
         else {
@@ -236,15 +233,6 @@ impl ProcScheme {
             "regs/env" => (ContextHandle::Regs(RegsKind::Env), false),
             "sighandler" => (ContextHandle::Sighandler, false),
             "open_via_dup" => (ContextHandle::OpenViaDup, false),
-            "mmap-min-addr" => (
-                ContextHandle::MmapMinAddr(Arc::clone(
-                    context
-                        .read(token.token())
-                        .addr_space()
-                        .map_err(|_| Error::new(ENOENT))?,
-                )),
-                false,
-            ),
             "status" => (ContextHandle::Status { privileged: false }, false),
             _ if path.starts_with("auth-") => {
                 let nonprefix = &path["auth-".len()..];
@@ -466,7 +454,7 @@ impl KernelScheme for ProcScheme {
                 );
             }
             Handle {
-                kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
+                kind: ContextHandle::AddrSpace { addrspace },
                 ..
             } => {
                 if let Some(addrspace) = Arc::into_inner(addrspace) {
@@ -651,8 +639,7 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
-        handle.kind.kcall(
-            fds,
+        handle.kind.specific_kcall(
             payload,
             flags,
             metadata,
@@ -817,7 +804,6 @@ impl KernelScheme for ProcScheme {
                         b"exclusive" => ContextHandle::AddrSpace {
                             addrspace: addrspace.try_clone(token)?,
                         },
-                        b"mmap-min-addr" => ContextHandle::MmapMinAddr(Arc::clone(addrspace)),
 
                         _ if buf.starts_with(GRANT_FD_PREFIX) => {
                             let string = core::str::from_utf8(&buf[GRANT_FD_PREFIX.len()..])
@@ -1197,15 +1183,6 @@ impl ContextHandle {
 
                 Ok(written)
             }
-            Self::MmapMinAddr(ref addrspace) => {
-                let val = buf.read_usize()?;
-                if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
-                    return Err(Error::new(EINVAL));
-                }
-                let mut lock_token = token.token();
-                addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
-                Ok(size_of::<usize>())
-            }
             ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
 
@@ -1464,12 +1441,6 @@ impl ContextHandle {
             }
 
             ContextHandle::Filetable { data, .. } => read_from(buf, data, offset),
-            ContextHandle::MmapMinAddr(addrspace) => {
-                let mut token = token.token();
-                let addr = addrspace.acquire_read(token.downgrade());
-                buf.write_usize(addr.mmap_min)?;
-                Ok(size_of::<usize>())
-            }
             ContextHandle::Status { .. } => {
                 let status = {
                     let context = context.read(token.token());
@@ -1536,20 +1507,22 @@ impl ContextHandle {
             _ => Err(Error::new(EBADF)),
         }
     }
-    pub fn kcall(
+    pub fn specific_kcall(
         &self,
-        fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
         context: Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        let verb: u8 = metadata
+            .first()
+            .copied()
+            .and_then(|m| u8::try_from(m).ok())
+            .ok_or(Error::new(EINVAL))?;
+
         match self {
             ContextHandle::OpenViaDup => {
-                let verb: u8 = (*metadata.first().ok_or(Error::new(EINVAL))?)
-                    .try_into()
-                    .map_err(|_| Error::new(EINVAL))?;
                 let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
 
                 match verb {
@@ -1669,6 +1642,33 @@ impl ContextHandle {
                         Ok(0)
                     }
                 }
+            }
+            ContextHandle::AddrSpace { addrspace } => {
+                let verb = AddrSpaceVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
+
+                match verb {
+                    AddrSpaceVerb::MmapMin => {
+                        let requested_min = if flags.contains(CallFlags::WRITE) {
+                            let val = payload.read_usize()?;
+                            if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
+                                return Err(Error::new(EINVAL));
+                            }
+                            Some(val)
+                        } else {
+                            None
+                        };
+                        if flags.contains(CallFlags::READ) {
+                            let mut token = token.token();
+                            let addr = addrspace.acquire_read(token.downgrade()).mmap_min;
+                            payload.write_usize(addr)?;
+                        }
+                        if let Some(val) = requested_min {
+                            let mut lock_token = token.token();
+                            addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
+                        }
+                    }
+                }
+                Ok(0)
             }
             _ => Err(Error::new(EBADF)),
         }
