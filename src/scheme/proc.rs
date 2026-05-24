@@ -37,7 +37,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::data::GlobalSchemes;
+use syscall::{data::GlobalSchemes, Error};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -639,8 +639,8 @@ impl KernelScheme for ProcScheme {
     fn kcall(
         &self,
         fds: &[usize],
-        _payload: UserSliceRw,
-        _flags: CallFlags,
+        payload: UserSliceRw,
+        flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -655,22 +655,14 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
-        let ContextHandle::OpenViaDup = handle.kind else {
-            return Err(Error::new(EBADF));
-        };
-
-        let verb: u8 = (*metadata.first().ok_or(Error::new(EINVAL))?)
-            .try_into()
-            .map_err(|_| Error::new(EINVAL))?;
-        let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
-
-        match verb {
-            ProcSchemeVerb::Iopl => context::current()
-                .write(token.token())
-                .set_userspace_io_allowed(true),
-            _ => return Err(Error::new(EINVAL)),
-        }
-        Ok(0)
+        handle.kind.kcall(
+            fds,
+            payload,
+            flags,
+            metadata,
+            Arc::clone(&handle.context.upgrade().ok_or(Error::new(ESRCH))?),
+            token,
+        )
     }
     fn kwriteoff(
         &self,
@@ -864,6 +856,62 @@ impl KernelScheme for ProcScheme {
             token,
         )
         .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+    }
+    fn kfdwrite(
+        &self,
+        id: usize,
+        descs: Vec<Arc<context::file::LockedFileDescription>>,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let context = {
+            let mut handles = HANDLES.read(token.token());
+            let (handles, mut token) = handles.token_split();
+            let handle = handles.get(&id).unwrap();
+
+            let Handle { context, kind } = handle;
+
+            if let ContextHandle::Filetable {
+                filetable,
+                binary_format,
+                data,
+            } = &handle.kind
+            {
+                context.upgrade().unwrap().clone()
+            } else {
+                return Err(Error::new(EBADF));
+            }
+        };
+
+        let target_fd = metadata.get(0).ok_or(Error::new(EINVAL))?;
+
+        if let Some(file) = {
+            let mut context = context.read(token.token());
+            let (context, mut token) = context.token_split();
+            context.remove_file(FileHandle(*target_fd as usize), &mut token.token())
+        } {
+            file.close(token)?;
+        }
+
+        let mut file = descs.get(0).unwrap();
+        let mut context = context.write(token.token());
+        let (context, mut token) = context.token_split();
+        context
+            .insert_file(
+                FileHandle(usize::try_from(*target_fd).map_err(|_| Error::new(EBADFD))?),
+                context::file::FileDescriptor {
+                    description: file.clone(),
+                    cloexec: {
+                        let file = file.read(token.token());
+                        file.flags as usize & syscall::O_CLOEXEC == syscall::O_CLOEXEC
+                    },
+                },
+                &mut token,
+            )
+            .ok_or(Error::new(EMFILE))?;
+
+        Ok(0)
     }
 }
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
@@ -1503,6 +1551,116 @@ impl ContextHandle {
             // TODO: Find a better way to switch address spaces, since they also require switching
             // the instruction and stack pointer. Maybe remove `<pid>/regs` altogether and replace it
             // with `<pid>/ctx`
+            _ => Err(Error::new(EBADF)),
+        }
+    }
+    pub fn kcall(
+        &self,
+        fds: &[usize],
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        context: Arc<ContextLock>,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        match self {
+            ContextHandle::OpenViaDup => {
+                let verb: u8 = (*metadata.first().ok_or(Error::new(EINVAL))?)
+                    .try_into()
+                    .map_err(|_| Error::new(EINVAL))?;
+                let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
+
+                match verb {
+                    ProcSchemeVerb::Iopl => context::current()
+                        .write(token.token())
+                        .set_userspace_io_allowed(true),
+                    _ => return Err(Error::new(EINVAL)),
+                }
+                Ok(0)
+            }
+            ContextHandle::Filetable {
+                filetable,
+                binary_format: _,
+                data: _,
+            } => {
+                let op = syscall::flag::FileTableVerb::try_from_raw(
+                    u8::try_from(*metadata.first().ok_or(Error::new(EINVAL))?)
+                        .map_err(|_| Error::new(EINVAL))?,
+                )
+                .ok_or(Error::new(EINVAL))?;
+
+                match op {
+                    FileTableVerb::Close => {
+                        let fd = payload.read_usize().map_err(|_| Error::new(EBADFD))?;
+                        let file = {
+                            let mut context = context.read(token.token());
+                            let (context, mut token) = context.token_split();
+                            context
+                                .remove_file(FileHandle(fd), &mut token.token())
+                                .ok_or(Error::new(EBADF))?
+                        };
+                        file.close(token)?;
+                        Ok(0)
+                    }
+
+                    FileTableVerb::Dup2 => {
+                        let mut it = payload.usizes();
+                        let old = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        let new = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+
+                        if old == new {
+                            return Ok(0);
+                        }
+                        let file = {
+                            let mut context = context.read(token.token());
+                            let (context, mut token) = context.token_split();
+                            context.remove_file(new, &mut token)
+                        };
+                        if let Some(file) = file {
+                            file.close(token)?;
+                        }
+
+                        let mut context = context.read(token.token());
+                        let (context, mut token) = context.token_split();
+                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        context
+                            .insert_file(new, file, &mut token)
+                            .ok_or(Error::new(EMFILE))?;
+
+                        Ok(0)
+                    }
+                    FileTableVerb::CloseCloExec => {
+                        let mut to_be_removed = Vec::new();
+                        {
+                            let files = filetable.upgrade().unwrap();
+                            let mut files = files.read(token.token());
+                            let (files, mut token) = files.token_split();
+                            for (i, f) in files.posix_fdtbl.iter().enumerate() {
+                                if let Some(f) = f {
+                                    let desc = f.description.clone();
+                                    let desc = desc.read(token.token());
+                                    let flags = desc.flags;
+                                    if flags as usize & syscall::flag::O_CLOEXEC
+                                        == syscall::flag::O_CLOEXEC
+                                    {
+                                        to_be_removed.push(i);
+                                    }
+                                }
+                            }
+                        }
+                        for i in to_be_removed {
+                            let file = {
+                                let mut context = context.read(token.token());
+                                let (context, mut token) = context.token_split();
+                                context.remove_file(FileHandle(i), &mut token)
+                            }
+                            .unwrap();
+                            file.close(token)?;
+                        }
+                        Ok(0)
+                    }
+                }
+            }
             _ => Err(Error::new(EBADF)),
         }
     }

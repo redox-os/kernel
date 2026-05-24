@@ -896,7 +896,7 @@ impl FdTbl {
             .ok_or(Error::new(EBADF))
     }
 
-    fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
+    pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
         let index = i.get();
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
 
