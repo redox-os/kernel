@@ -37,6 +37,7 @@ $(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell
 		--target "$(TARGET_SPEC)" \
 		--release \
 		-Z build-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+		-Z json-target-spec \
 		--features=$(KERNEL_CARGO_FEATURES) \
 		-- \
 		-C link-arg=-T -Clink-arg="$(LD_SCRIPT)" \
@@ -63,4 +64,5 @@ check:
 		--manifest-path "$(MANIFEST)" \
 		--target "$(TARGET_SPEC)" \
 		-Z build-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
+		-Z json-target-spec \
 		--features=$(KERNEL_CHECK_FEATURES)
