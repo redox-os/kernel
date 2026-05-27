@@ -105,7 +105,7 @@ pub(super) fn init(madt: Madt) {
                     ap_args_ptr.write(&args as *const _ as u64);
                     ap_page_table.write(page_table_physaddr as u64);
                     #[expect(clippy::fn_to_numeric_cast)]
-                    ap_code.write(kstart_ap as u64);
+                    ap_code.write(kstart_ap as *const () as u64);
 
                     // TODO: Is this necessary (this fence)?
                     core::arch::asm!("");

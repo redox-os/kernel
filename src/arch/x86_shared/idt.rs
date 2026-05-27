@@ -196,14 +196,15 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
     current_idt[18].set_ist(BACKUP_IST);
 
     assert_eq!(
-        __generic_interrupts_end as usize - __generic_interrupts_start as usize,
+        __generic_interrupts_end as *const () as usize
+            - __generic_interrupts_start as *const () as usize,
         224 * 8
     );
 
     for i in 0..224 {
         current_idt[i + 32].set_func(unsafe {
             mem::transmute::<usize, unsafe extern "C" fn()>(
-                __generic_interrupts_start as usize + i * 8,
+                __generic_interrupts_start as *const () as usize + i * 8,
             )
         });
     }
