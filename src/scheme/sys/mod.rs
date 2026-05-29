@@ -5,7 +5,7 @@
 
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EACCES, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
+    EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::str;
@@ -113,7 +113,7 @@ impl KernelScheme for SysScheme {
     }
     fn kopenat(
         &self,
-        id: usize,
+        _id: usize,
         user_buf: StrOrBytes,
         _flags: usize,
         _fcntl_flags: u32,

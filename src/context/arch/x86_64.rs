@@ -107,7 +107,7 @@ impl Context {
                 stack_top = stack_top.sub(size_of::<usize>());
                 stack_top
                     .cast::<usize>()
-                    .write(crate::arch::interrupt::syscall::enter_usermode as usize);
+                    .write(crate::arch::interrupt::syscall::enter_usermode as *const () as usize);
             }
 
             stack_top = stack_top.sub(size_of::<usize>());

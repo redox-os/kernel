@@ -7,7 +7,6 @@ use core::{
     num::NonZeroUsize,
 };
 use slab::Slab;
-use smallvec::SmallVec;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
@@ -21,7 +20,7 @@ use crate::{
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
-            PageSpan, UnmapResult, UnmapVec, DANGLING,
+            PageSpan, UnmapVec, DANGLING,
         },
         BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },

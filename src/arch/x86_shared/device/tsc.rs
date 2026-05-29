@@ -99,7 +99,7 @@ pub fn get_kvm_support() -> &'static Option<KvmSupport> {
     static KVM_SUPPORT: Once<Option<KvmSupport>> = Once::new();
 
     KVM_SUPPORT.call_once(|| {
-        let res = unsafe { __cpuid(0x4000_0000) };
+        let res = __cpuid(0x4000_0000);
         if [res.ebx, res.ecx, res.edx].map(u32::to_le_bytes) != [*b"KVMK", *b"VMKV", *b"M\0\0\0"] {
             return None;
         }
@@ -107,7 +107,7 @@ pub fn get_kvm_support() -> &'static Option<KvmSupport> {
         if max_leaf < 0x4000_0001 {
             return None;
         }
-        let res = unsafe { __cpuid(0x4000_0001) };
+        let res = __cpuid(0x4000_0001);
 
         let supp_feats = KvmFeatureBits::from_bits_retain(res.eax);
 

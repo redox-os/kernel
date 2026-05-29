@@ -27,7 +27,7 @@ pub unsafe fn init() {
 
         msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
         #[expect(clippy::fn_to_numeric_cast)]
-        msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as u64);
+        msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as *const () as u64);
 
         // DF needs to be cleared, required by the compiler ABI. If DF were not part of FMASK,
         // userspace would be able to reverse the direction of in-kernel REP MOVS/STOS/(CMPS/SCAS), and

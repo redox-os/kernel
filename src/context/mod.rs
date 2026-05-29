@@ -82,6 +82,7 @@ static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque:
 
 pub struct RunContextData {
     set: [VecDeque<WeakContextRef>; 40],
+    count: usize,
 }
 
 impl RunContextData {
@@ -89,7 +90,12 @@ impl RunContextData {
         const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
             set: [EMPTY_VEC; 40],
+            count: 0,
         }
+    }
+    pub fn update_count(&mut self) -> usize {
+        self.count = self.set.iter().map(|q| q.len()).sum();
+        self.count
     }
 }
 
@@ -321,4 +327,12 @@ impl Drop for PreemptGuardL2<'_> {
     fn drop(&mut self) {
         self.context.write(self.token.token()).preempt_locks -= 1;
     }
+}
+
+pub fn get_contexts_stats(token: &mut CleanLockToken) -> (usize, usize, usize) {
+    let alive = contexts(token.downgrade()).len();
+    let running = run_contexts(token.token()).count;
+    let blocked = idle_contexts(token.downgrade()).len();
+
+    (alive, running, blocked)
 }

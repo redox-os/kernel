@@ -112,7 +112,9 @@ pub fn allocate_p2frame_complex(
     freelist.for_orders[frame_order as usize] = next_free.frame();
 
     // TODO: Is this LIFO cache optimal?
-    //info!("MIN{min_order}FRAMEORD{frame_order}");
+    // if min_order > 0 {
+    //     info!("MIN {min_order} FRAMEORD {frame_order}");
+    // }
     for order in (min_order..frame_order).rev() {
         //info!("SPLIT ORDER {order}");
         let order_page_count = 1 << order;
@@ -231,7 +233,9 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
         old_head_info.set_prev(P2Frame::new(Some(new_head), largest_order));
     }
 
-    //info!("FREED {frame:?}+2^{order}");
+    // if order > 0 {
+    //     info!("FREED {current:?}+2^{order}");
+    // }
     freelist.used_frames -= 1 << order;
 }
 

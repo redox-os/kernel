@@ -40,7 +40,7 @@ pub struct FutexEntry {
     // TODO: FUTEX_REQUEUE
     target_virtaddr: VirtualAddress,
     // Context to wake up, and compare address spaces.
-    context_lock: Arc<ContextLock>,
+    context_lock: Weak<ContextLock>,
     // address space to check against if virt matches but not phys
     addr_space: Weak<AddrSpaceWrapper>,
 }
@@ -51,6 +51,17 @@ pub struct FutexEntry {
 // lwp_park/lwp_unpark from NetBSD) could be a simpler replacement.
 static FUTEXES: Mutex<L1, FutexList> =
     Mutex::new(FutexList::with_hasher(DefaultHashBuilder::new()));
+
+pub fn get_futex_stat(token: &mut CleanLockToken) -> (usize, usize) {
+    let mut regc = 0;
+    let mut regl = 0;
+    let registry = FUTEXES.lock(token.token());
+    for (_, v) in registry.iter() {
+        regl += v.len();
+        regc += 1;
+    }
+    (regc, regl)
+}
 
 fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Option<PhysicalAddress> {
     // TODO: Move this elsewhere!
@@ -160,7 +171,7 @@ pub fn futex(
                     .or_insert_with(Vec::new)
                     .push(FutexEntry {
                         target_virtaddr,
-                        context_lock: context_lock.clone(),
+                        context_lock: Arc::downgrade(&context_lock),
                         addr_space: Arc::downgrade(&current_addrsp),
                     });
             }
@@ -198,10 +209,16 @@ pub fn futex(
                         if futex.target_virtaddr != target_virtaddr
                             || !current_addrsp_weak.ptr_eq(&futex.addr_space)
                         {
-                            i += 1;
+                            if futex.addr_space.strong_count() == 0 {
+                                futexes.swap_remove(i);
+                            } else {
+                                i += 1;
+                            }
                             continue;
                         }
-                        futex.context_lock.write(token.token()).unblock();
+                        if let Some(ctx) = futex.context_lock.upgrade() {
+                            ctx.write(token.token()).unblock();
+                        }
                         futexes.swap_remove(i);
                         woken += 1;
                     }
