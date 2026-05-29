@@ -195,13 +195,39 @@ pub fn syscall(
             }),
 
             SYS_CLOSE => close(fd, token).map(|()| 0),
-            SYS_CALL => call(
-                fd,
-                UserSlice::rw(c, d)?,
-                CallFlags::from_bits(e & !0xff).ok_or(Error::new(EINVAL))?,
-                UserSlice::ro(f, (e & 0xff) * 8)?,
-                token,
-            ),
+            SYS_CALL => {
+                let flags = CallFlags::from_bits(e & !0xff).ok_or(Error::new(EINVAL))?;
+                if flags.contains(CallFlags::MULTIPLE_FDS) {
+                    if g / core::mem::size_of::<usize>() > 16 {
+                        return Err(Error::new(EINVAL));
+                    };
+                    let mut fds = [0_usize; 16];
+                    let fds_slice = UserSlice::ro(b, g)?;
+
+                    // TODO: bytemuck/plain
+                    let copied = fds_slice.copy_common_bytes_to_slice(unsafe {
+                        core::slice::from_raw_parts_mut(
+                            fds.as_mut_ptr().cast(),
+                            fds.len() * core::mem::size_of::<usize>(),
+                        )
+                    })?;
+                    call(
+                        &fds[..copied / core::mem::size_of::<usize>()],
+                        UserSlice::rw(c, d)?,
+                        flags,
+                        UserSlice::ro(f, (e & 0xff) * 8)?,
+                        token,
+                    )
+                } else {
+                    call(
+                        &[b],
+                        UserSlice::rw(c, d)?,
+                        flags,
+                        UserSlice::ro(f, (e & 0xff) * 8)?,
+                        token,
+                    )
+                }
+            }
             SYS_OPENAT => {
                 openat(fd, UserSlice::ro(c, d)?, e, f as _, 0, 0, token).map(FileHandle::into)
             }
@@ -233,7 +259,6 @@ pub fn syscall(
 
             SYS_MPROTECT => mprotect(b, c, MapFlags::from_bits_truncate(d), token).map(|()| 0),
             SYS_MREMAP => mremap(b, c, d, e, f, token),
-
             _ => Err(Error::new(ENOSYS)),
         }
     }

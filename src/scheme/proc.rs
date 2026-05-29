@@ -638,12 +638,16 @@ impl KernelScheme for ProcScheme {
     }
     fn kcall(
         &self,
-        id: usize,
+        fds: &[usize],
         _payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        if fds.len() != 1 {
+            return Err(Error::new(EINVAL));
+        }
+        let id = fds[0];
         // TODO: simplify
         let handle = {
             let handles = HANDLES.read(token.token());
