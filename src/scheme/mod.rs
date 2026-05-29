@@ -395,12 +395,11 @@ impl KernelScheme for SchemeList {
         id: usize,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        arg: u64,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
-            Some(inner) => inner.call_fdwrite(descs, flags, arg, metadata, token),
+            Some(inner) => inner.call_fdwrite(descs, flags, metadata, token),
             None => Err(Error::new(EBADF)),
         }
     }
@@ -678,6 +677,15 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<()> {
         Err(Error::new(ENOENT))
     }
+    fn relpathat(
+        &self,
+        dirfd: usize,
+        fd: usize,
+        payload: UserSliceRo,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
@@ -686,7 +694,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     }
     fn kcall(
         &self,
-        id: usize,
+        fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -696,7 +704,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     }
     fn kstdfscall(
         &self,
-        id: usize,
+        fds: &[usize],
         kind: StdFsCallKind,
         desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
@@ -711,7 +719,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         id: usize,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        args: u64,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -730,7 +737,7 @@ pub trait KernelScheme: Send + Sync + 'static {
 
     fn translate_std_fs_call(
         &self,
-        id: usize,
+        fds: &[usize],
         desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         flags: CallFlags,
@@ -744,26 +751,40 @@ pub trait KernelScheme: Send + Sync + 'static {
             return Err(Error::new(EOPNOTSUPP));
         };
         let metadata = StdFsCallMeta::new(kind, arg1, arg2);
-        use syscall::flag::StdFsCallKind::*;
+        use StdFsCallKind::*;
         match kind {
-            Fchmod => self.fchmod(id, metadata.arg1 as u16, token).map(|_| 0),
-            Getdents => self.getdents(
-                id,
-                payload.into_wo()?,
-                metadata.arg2 as u16,
-                metadata.arg1,
-                token,
-            ),
-            Fstat => self.kfstat(id, payload.into_wo()?, token).map(|_| 0),
-            Fstatvfs => self.kfstatvfs(id, payload.into_wo()?, token).map(|_| 0),
-            Fsync => self.fsync(id, token).map(|_| 0),
-            Ftruncate => self.ftruncate(id, metadata.arg1 as usize, token).map(|_| 0),
-            Futimens => self.kfutimens(id, payload.into_ro()?, token),
-            /* TODO: Support Fchown and Unlinkat using std_fs_call
-            Fchown => self.kstdfscall(id, kind, desc, payload, flags, metadata, token),
-            Unlinkat => self.kstdfscall(fd, kind, payload, metadata, &caller).map(|_| 0)
-            */
-            _ => Err(Error::new(EOPNOTSUPP)),
+            Relpathat => {
+                if fds.len() != 2 {
+                    return Err(Error::new(EINVAL));
+                }
+                self.relpathat(fds[0], fds[1], payload.into_ro()?, token)
+            }
+            _ => {
+                if fds.len() != 1 {
+                    return Err(Error::new(EINVAL));
+                }
+                let id = fds[0];
+                match kind {
+                    Fchmod => self.fchmod(id, metadata.arg1 as u16, token).map(|_| 0),
+                    Getdents => self.getdents(
+                        id,
+                        payload.into_wo()?,
+                        metadata.arg2 as u16,
+                        metadata.arg1,
+                        token,
+                    ),
+                    Fstat => self.kfstat(id, payload.into_wo()?, token).map(|_| 0),
+                    Fstatvfs => self.kfstatvfs(id, payload.into_wo()?, token).map(|_| 0),
+                    Fsync => self.fsync(id, token).map(|_| 0),
+                    Ftruncate => self.ftruncate(id, metadata.arg1 as usize, token).map(|_| 0),
+                    Futimens => self.kfutimens(id, payload.into_ro()?, token),
+                    /* TODO: Support Fchown and Unlinkat using std_fs_call
+                    Fchown => self.kstdfscall(fds, kind, desc, payload, flags, metadata, token),
+                    Unlinkat => self.kstdfscall(fds, kind, payload, metadata, &caller).map(|_| 0)
+                    */
+                    _ => Err(Error::new(EOPNOTSUPP)),
+                }
+            }
         }
     }
 }

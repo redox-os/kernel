@@ -1154,7 +1154,6 @@ impl UserInner {
         &self,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        _arg: u64,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -1927,7 +1926,7 @@ impl KernelScheme for UserScheme {
     }
     fn kcall(
         &self,
-        id: usize,
+        fds: &[usize],
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
@@ -1938,22 +1937,36 @@ impl KernelScheme for UserScheme {
         let mut address = inner.capture_user(payload, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
+        let mut sqe_flags = SqeFlags::empty();
+        let mut last_arg = 0;
+        if fds.len() == 2 {
+            sqe_flags |= SqeFlags::MULTIPLE_IDS;
+            last_arg = fds[1] as u64;
+        } else if fds.len() > 2 || fds.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+
         let mut sqe = Sqe {
             opcode: Opcode::Call as u8,
-            sqe_flags: SqeFlags::empty(),
+            sqe_flags,
             _rsvd: 0,
             tag: inner.next_id(token)?,
             caller: ctx.pid as u64,
             args: [
-                id as u64,
+                fds[0] as u64,
                 address.base() as u64,
                 address.len() as u64,
                 0,
                 0,
-                0,
+                last_arg,
             ],
         };
-        {
+
+        if fds.len() == 2 {
+            let dst = &mut sqe.args[3..5];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        } else {
             let dst = &mut sqe.args[3..];
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
@@ -1971,7 +1984,7 @@ impl KernelScheme for UserScheme {
     }
     fn kstdfscall(
         &self,
-        id: usize,
+        fds: &[usize],
         _kind: StdFsCallKind,
         desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
@@ -1984,22 +1997,35 @@ impl KernelScheme for UserScheme {
         let mut address = inner.capture_user(payload, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
+        let mut sqe_flags = SqeFlags::empty();
+        let mut last_arg = 0;
+        if fds.len() == 2 {
+            sqe_flags |= SqeFlags::MULTIPLE_IDS;
+            last_arg = fds[1] as u64;
+        } else if fds.len() > 2 || fds.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+
         let mut sqe = Sqe {
             opcode: Opcode::StdFsCall as u8,
-            sqe_flags: SqeFlags::empty(),
+            sqe_flags,
             _rsvd: 0,
             tag: inner.next_id(token)?,
             caller: ctx.pid as u64,
             args: [
-                id as u64,
+                fds[0] as u64,
                 address.base() as u64,
                 address.len() as u64,
                 0,
                 0,
-                0,
+                last_arg,
             ],
         };
-        {
+        if fds.len() == 2 {
+            let dst = &mut sqe.args[3..5];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        } else {
             let dst = &mut sqe.args[3..];
             let len = dst.len().min(metadata.len());
             dst[..len].copy_from_slice(&metadata[..len]);
@@ -2024,8 +2050,7 @@ impl KernelScheme for UserScheme {
         number: usize,
         descs: Vec<Arc<LockedFileDescription>>,
         flags: CallFlags,
-        arg: u64,
-        _metadata: &[u64],
+        metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2042,7 +2067,12 @@ impl KernelScheme for UserScheme {
                 ctx,
                 descs,
                 Opcode::Sendfd,
-                [number, sendfd_flags.bits(), arg as usize, len],
+                [
+                    number,
+                    sendfd_flags.bits(),
+                    *metadata.first().unwrap_or(&0) as usize,
+                    len,
+                ],
                 &mut PageSpan::empty(),
                 token,
             )?
@@ -2053,7 +2083,7 @@ impl KernelScheme for UserScheme {
         id: usize,
         payload: UserSliceRw,
         flags: CallFlags,
-        _metadata: &[u64],
+        metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2075,7 +2105,13 @@ impl KernelScheme for UserScheme {
             ctx,
             Vec::new(),
             Opcode::Recvfd,
-            [id, recvfd_flags.bits(), len],
+            [
+                id,
+                recvfd_flags.bits(),
+                len,
+                *metadata.first().unwrap_or(&0) as usize,
+                *metadata.get(1).unwrap_or(&0) as usize,
+            ],
             &mut PageSpan::empty(),
             token,
         )?;
@@ -2114,9 +2150,10 @@ impl KernelScheme for UserScheme {
 
         Ok(num_fds)
     }
+
     fn translate_std_fs_call(
         &self,
-        id: usize,
+        fds: &[usize],
         desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
         flags: CallFlags,
@@ -2130,7 +2167,7 @@ impl KernelScheme for UserScheme {
             return Err(Error::new(EOPNOTSUPP));
         };
         let metadata = StdFsCallMeta::new(kind, arg1, arg2);
-        self.kstdfscall(id, kind, desc, payload, flags, metadata, token)
+        self.kstdfscall(fds, kind, desc, payload, flags, metadata, token)
     }
 }
 

@@ -250,12 +250,16 @@ impl KernelScheme for MemoryScheme {
     }
     fn kcall(
         &self,
-        id: usize,
+        fds: &[usize],
         payload: UserSliceRw,
         _flags: syscall::CallFlags,
         _metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        if fds.len() != 1 {
+            return Err(Error::new(EINVAL));
+        }
+        let id = fds[0];
         let (handle_ty, _, _) = u32::try_from(id)
             .ok()
             .and_then(from_raw)

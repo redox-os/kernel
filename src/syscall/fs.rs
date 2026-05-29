@@ -255,7 +255,7 @@ pub fn dup2(
     }
 }
 pub fn call(
-    fd: FileHandle,
+    fds: &[usize],
     payload: UserSliceRw,
     flags: CallFlags,
     metadata: UserSliceRo,
@@ -270,42 +270,103 @@ pub fn call(
 
     match flags {
         f if f.contains(CallFlags::WRITE | CallFlags::FD) => {
-            call_fdwrite(fd, payload, flags, &meta[..copied / 8], token)
+            if fds.len() != 1 {
+                return Err(Error::new(EINVAL));
+            }
+            call_fdwrite(
+                FileHandle::from(fds[0]),
+                payload,
+                flags,
+                &meta[..copied / 8],
+                token,
+            )
         }
         f if f.contains(CallFlags::READ | CallFlags::FD) => {
-            call_fdread(fd, payload, flags, &meta[..copied / 8], token)
+            if fds.len() != 1 {
+                return Err(Error::new(EINVAL));
+            }
+            call_fdread(
+                FileHandle::from(fds[0]),
+                payload,
+                flags,
+                &meta[..copied / 8],
+                token,
+            )
         }
-        _ => call_normal(fd, payload, flags, &meta[..copied / 8], token),
+        _ => call_normal(fds, payload, flags, &meta[..copied / 8], token),
     }
 }
 
 fn call_normal(
-    fd: FileHandle,
+    fds: &[usize],
     payload: UserSliceRw,
     flags: CallFlags,
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
-    let file = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        match (current.token_split(), flags.contains(CallFlags::CONSUME)) {
-            ((ctxt, mut token), true) => ctxt.remove_file(fd, &mut token),
-            ((ctxt, mut token), false) => ctxt.get_file(fd, &mut token),
-        }
+    if fds.len() > 2 || fds.is_empty() {
+        return Err(Error::new(EINVAL));
     }
-    .ok_or(Error::new(EBADF))?;
 
-    let (scheme_id, number) = {
-        let desc = file.description.read(token.token());
-        (desc.scheme, desc.number)
+    let mut nums = Vec::new();
+
+    let current_lock = context::current();
+    let consume = flags.contains(CallFlags::CONSUME);
+    let mut fds = fds.iter();
+
+    let (target_file, scheme_id) = {
+        let fd = FileHandle::from(fds.next().copied().unwrap());
+        let mut current = current_lock.read(token.token());
+
+        let (file, mut split_token) = match (current.token_split(), consume) {
+            ((ctxt, mut split_token), true) => {
+                (ctxt.remove_file(fd, &mut split_token), split_token)
+            }
+            ((ctxt, mut split_token), false) => (ctxt.get_file(fd, &mut split_token), split_token),
+        };
+        let file = file.ok_or(Error::new(EBADF))?;
+
+        let desc = file.description.read(split_token.token());
+
+        let scheme_id = desc.scheme;
+        nums.push(desc.number);
+        drop(desc);
+        let target_file = file;
+        (target_file, scheme_id)
     };
+
+    for &fd in fds {
+        let fd = FileHandle::from(fd);
+        let mut current = current_lock.read(token.token());
+
+        let (file, mut split_token) = match (current.token_split(), consume) {
+            ((ctxt, mut split_token), true) => {
+                (ctxt.remove_file(fd, &mut split_token), split_token)
+            }
+            ((ctxt, mut split_token), false) => (ctxt.get_file(fd, &mut split_token), split_token),
+        };
+        let file = file.ok_or(Error::new(EBADF))?;
+
+        let desc = file.description.read(split_token.token());
+        if desc.scheme != scheme_id {
+            return Err(Error::new(EXDEV));
+        }
+        nums.push(desc.number);
+    }
+
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     if flags.contains(CallFlags::STD_FS) {
-        scheme.translate_std_fs_call(number, file.description, payload, flags, metadata, token)
+        scheme.translate_std_fs_call(
+            &nums,
+            target_file.description,
+            payload,
+            flags,
+            metadata,
+            token,
+        )
     } else {
-        scheme.kcall(number, payload, flags, metadata, token)
+        scheme.kcall(&nums, payload, flags, metadata, token)
     }
 }
 
@@ -326,7 +387,7 @@ fn call_fdwrite(
 
     let len = fds.len();
 
-    fdwrite_inner(fd, fds, flags, 0, metadata, token)?;
+    fdwrite_inner(fd, fds, flags, metadata, token)?;
 
     Ok(len)
 }
@@ -335,7 +396,6 @@ fn fdwrite_inner(
     socket: FileHandle,
     target_fds: Vec<FileHandle>,
     flags: CallFlags,
-    arg: u64,
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
@@ -385,7 +445,7 @@ fn fdwrite_inner(
         CallFlags::empty()
     };
 
-    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, arg, metadata, token)
+    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)
 }
 
 fn call_fdread(
@@ -427,7 +487,7 @@ pub fn sendfd(
     if sendfd_flags.contains(SendFdFlags::EXCLUSIVE) {
         call_flags |= CallFlags::FD_EXCLUSIVE;
     }
-    fdwrite_inner(socket, Vec::from([fd]), call_flags, arg, &[], token)
+    fdwrite_inner(socket, Vec::from([fd]), call_flags, &[arg], token)
 }
 
 /// File descriptor controls
