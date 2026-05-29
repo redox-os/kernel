@@ -960,9 +960,7 @@ impl ContextHandle {
 
                         let unpin = false;
                         let res = addrspace.munmap(page_span, unpin, token)?;
-                        for r in res {
-                            let _ = r.unmap(token);
-                        }
+                        handle_notify_files(res, token);
                     }
                     ADDRSPACE_OP_MPROTECT => {
                         let page_span = crate::syscall::validate_region(next()??, next()??)?;
@@ -1248,9 +1246,7 @@ impl ContextHandle {
                                         false,
                                         token,
                                     )?;
-                                    for r in res {
-                                        let _ = r.unmap(token);
-                                    }
+                                    handle_notify_files(res, token);
                                 }
                             }
                             crate::syscall::exit_this_context(None, token);
@@ -1318,9 +1314,7 @@ impl ContextHandle {
                                         false,
                                         token,
                                     )?;
-                                    for r in res {
-                                        let _ = r.unmap(token);
-                                    }
+                                    handle_notify_files(res, token);
                                 }
                             }
                             crate::syscall::exit_this_context(None, token);

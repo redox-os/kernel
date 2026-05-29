@@ -9,7 +9,9 @@ use crate::{
     context::{
         self,
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
-        memory::{AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions},
+        memory::{
+            handle_notify_files, AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions,
+        },
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{self, FileHandle, KernelScheme, OpenResult, StrOrBytes},
@@ -674,10 +676,7 @@ pub fn funmap(virtual_address: usize, length: usize, token: &mut CleanLockToken)
         .ok_or(Error::new(EINVAL))?;
     let unpin = false;
     let notify = addr_space.munmap(span, unpin, token)?;
-
-    for map in notify {
-        let _ = map.unmap(token);
-    }
+    handle_notify_files(notify, token);
 
     Ok(0)
 }

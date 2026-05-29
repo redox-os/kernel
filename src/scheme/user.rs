@@ -19,8 +19,8 @@ use crate::{
         context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
-            AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant, GrantFileRef, MmapMode,
-            PageSpan, UnmapVec, DANGLING,
+            handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
+            GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
         BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },
@@ -986,9 +986,7 @@ impl UserInner {
 
                         let unpin = true;
                         let res = AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
-                        for r in res {
-                            let _ = r.unmap(token);
-                        }
+                        handle_notify_files(res, token);
                     }
                 },
                 // invalid state
@@ -1143,9 +1141,7 @@ impl UserInner {
             )?
         };
 
-        for map in notify_files {
-            let _ = map.unmap(token);
-        }
+        handle_notify_files(notify_files, token);
 
         Ok(dst_base.start_address().data())
     }
@@ -1342,9 +1338,7 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         if let Some(addrsp) = self.addrsp.take() {
             if !self.span.is_empty() {
                 let res = addrsp.munmap(self.span, unpin, token)?;
-                for r in res {
-                    let _ = r.unmap(token);
-                }
+                handle_notify_files(res, token);
             }
             if let Some(addrsp) = Arc::into_inner(addrsp) {
                 addrsp.into_drop(token);

@@ -1,7 +1,7 @@
 use crate::{
     context::{
         self,
-        memory::{Grant, PageSpan},
+        memory::{handle_notify_files, Grant, PageSpan},
     },
     memory::PAGE_SIZE,
     scheme,
@@ -120,9 +120,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
         let res = addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false, token)?;
-        for r in res {
-            let _ = r.unmap(token);
-        }
+        handle_notify_files(res, token);
     }
 
     res
