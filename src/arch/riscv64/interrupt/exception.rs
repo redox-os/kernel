@@ -6,6 +6,7 @@ use crate::{
     arch::{device::irqchip, start::BOOT_HART_ID},
     context::signal::excp_handler,
     memory::GenericPfFlags,
+    percpu::PercpuBlock,
     ptrace,
     sync::CleanLockToken,
     syscall::{self, flag::*},
@@ -144,9 +145,7 @@ unsafe fn handle_system_exception(scause: usize, regs: &InterruptStack) {
 unsafe fn handle_interrupt(interrupt: usize) {
     unsafe {
         let mut token = CleanLockToken::new();
-        // FIXME retrieve from percpu area
-        // For now all the interrupts go to boot hart so this suffices...
-        let hart: usize = BOOT_HART_ID.load(Ordering::Relaxed);
+        let hart: usize = PercpuBlock::current().misc_arch_info.hart_id;
         irqchip::hlic::interrupt(hart, interrupt, &mut token);
     }
 }

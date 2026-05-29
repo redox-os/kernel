@@ -1,6 +1,7 @@
 use core::arch::asm;
 
 use crate::{
+    arch::device::ArchPercpuMisc,
     cpu_set::LogicalCpuId,
     memory::{RmmA, RmmArch},
     percpu::PercpuBlock,
@@ -27,21 +28,27 @@ impl PercpuBlock {
 }
 
 #[cold]
-pub unsafe fn init(cpu_id: LogicalCpuId) {
+pub unsafe fn init(cpu_id: LogicalCpuId, hart_id: usize) {
     unsafe {
         let frame = crate::memory::allocate_frame().expect("failed to allocate percpu memory");
         let virt = RmmA::phys_to_virt(frame.base()).data() as *mut ArchPercpu;
 
-        virt.write(ArchPercpu {
+        let mut arch_per_cpu = ArchPercpu {
             tmp: 0,
             s_sp: 0,
             percpu: PercpuBlock::init(cpu_id),
-        });
+        };
+
+        arch_per_cpu.percpu.misc_arch_info = ArchPercpuMisc { hart_id };
+
+        virt.write(arch_per_cpu);
 
         asm!(
             "mv tp, {}",
             "csrw sscratch, tp",
             in(reg) virt as usize
         );
+
+        crate::percpu::init_tlb_shootdown(cpu_id, &raw mut (*virt).percpu);
     }
 }

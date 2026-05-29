@@ -54,3 +54,11 @@ pub unsafe fn init_clint(fdt: &Fdt) {
         .expect("failed to lock CLINT")
         .init(0);
 }
+
+pub unsafe fn init_clint_ap(hart_id: usize) {
+    clint::CLINT
+        .lock()
+        .as_mut()
+        .expect("failed to lock CLINT")
+        .init(hart_id);
+}

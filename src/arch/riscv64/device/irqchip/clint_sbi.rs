@@ -1,7 +1,7 @@
 use crate::{
-    context,
-    context::timeout,
+    context::{self, timeout},
     dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+    percpu::PercpuBlock,
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
@@ -115,7 +115,8 @@ impl Clint {
     pub(crate) fn irq_handler(self: &mut Self, hart_id: usize, irq: usize) {
         match irq {
             IRQ_IPI => {
-                println!("IPI interrupt at {}", hart_id);
+                // in case it was a tlb ipi; sbi doesn't support additional ipi info
+                PercpuBlock::current().maybe_handle_tlb_shootdown();
             }
             IRQ_TIMER => {
                 let mtime: usize;

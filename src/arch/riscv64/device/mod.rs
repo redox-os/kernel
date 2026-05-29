@@ -101,10 +101,12 @@ pub unsafe fn init_noncore() {
     }
 }
 
-pub struct ArchPercpuMisc;
+pub struct ArchPercpuMisc {
+    pub hart_id: usize,
+}
 
 impl ArchPercpuMisc {
     pub const fn default() -> Self {
-        Self
+        Self { hart_id: 0 }
     }
 }
