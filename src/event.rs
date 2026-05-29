@@ -5,13 +5,14 @@ use core::{
 };
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
-use syscall::data::GlobalSchemes;
+use syscall::{data::GlobalSchemes, EINTR};
 
 use crate::{
     context,
     scheme::{self, SchemeExt, SchemeId},
     sync::{
-        CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0, L1, L2,
+        CleanLockToken, LockToken, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0,
+        L1, L2,
     },
     syscall::{
         data::Event,
@@ -26,6 +27,7 @@ int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 pub struct EventQueue {
     id: EventQueueId,
     queue: WaitQueue<Event>,
+    timeout_opt: Mutex<L1, Option<u128>>,
 }
 
 impl EventQueue {
@@ -33,6 +35,7 @@ impl EventQueue {
         EventQueue {
             id,
             queue: WaitQueue::new(),
+            timeout_opt: Mutex::new(None),
         }
     }
 
@@ -41,12 +44,49 @@ impl EventQueue {
     }
 
     pub fn read(&self, buf: UserSliceWo, block: bool, token: &mut CleanLockToken) -> Result<usize> {
+        if block {
+            // timeout is one-time hit
+            let timeout = self.timeout_opt.lock(token.token()).take();
+            if let Some(timeout) = timeout {
+                return self.read_with_timeout(buf, timeout, token);
+            }
+        }
+
         self.queue
             .receive_into_user(buf, block, "EventQueue::read", token)
     }
 
+    pub fn read_with_timeout(
+        &self,
+        buf: UserSliceWo,
+        timeout: u128,
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        context::current().write(token.token()).wake = Some(timeout);
+        let r = self
+            .queue
+            .receive_into_user(buf, true, "EventQueue::read_with_timeout", token);
+        let old_wake = context::current().write(token.token()).wake.take();
+        // The scheduler clears `wake` on timeout
+        if old_wake.is_none() && r.is_err_and(|e| e.errno == EINTR) {
+            return Ok(0);
+        }
+        r
+    }
+
     pub fn write(&self, events: &[Event], token: &mut CleanLockToken) -> Result<usize> {
         for event in events {
+            if event.id == syscall::EVENT_TIMEOUT_ID {
+                if event.flags.is_empty() {
+                    self.timeout_opt.lock(token.token()).take();
+                } else {
+                    let mut time = crate::time::monotonic(token);
+                    time += (event.data * 1_000_000) as u128;
+                    *self.timeout_opt.lock(token.token()) = Some(time);
+                }
+
+                continue;
+            }
             let file = {
                 let context_ref = context::current();
                 let mut context = context_ref.read(token.token());
