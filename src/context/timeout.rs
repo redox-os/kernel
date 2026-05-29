@@ -44,7 +44,7 @@ pub fn register(
         scheme_id,
         event_id,
         clock,
-        time: (time.tv_sec as u128 * time::NANOS_PER_SEC) + (time.tv_nsec as u128),
+        time: time.to_nanos(),
     });
 }
 
