@@ -15,8 +15,10 @@ use crate::{
 use alloc::sync::Arc;
 use core::{
     cell::{Cell, RefCell},
-    hint, mem,
+    hint, matches, mem,
+    option::Option::{None, Some},
     sync::atomic::Ordering,
+    u64,
 };
 use smallvec::SmallVec;
 use syscall::PtraceFlags;
@@ -27,12 +29,17 @@ enum UpdateResult {
     Blocked,
 }
 
-// A simple geometric series where value[i] ~= value[i - 1] * 1.25
+// A simple geometric series where value[i] ~= value[i + 1] * 1.25
 const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
     3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
+
+const SCALE: u128 = 1 << 40;
+const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
+const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
+const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
@@ -97,7 +104,9 @@ pub fn tick(token: &mut CleanLockToken) {
     ticks_cell.set(new_ticks);
 
     // Trigger a context switch after every 3 ticks (approx. 6.75 ms).
-    if new_ticks >= 3 && arch::CONTEXT_SWITCH_LOCK.load(Ordering::Relaxed) == false {
+    if new_ticks >= TICK_INTERVAL as usize
+        && arch::CONTEXT_SWITCH_LOCK.load(Ordering::Relaxed) == false
+    {
         switch(token);
         crate::context::signal::signal_handler(token);
     }
@@ -181,8 +190,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     if wakeups_len > 0 {
         let mut run_contexts = run_contexts(token.token());
-        for (prio, context_lock) in wakeups {
-            run_contexts.set[prio].push_back(context_lock);
+        for context_ref in wakeups {
+            run_contexts.queue.push_back(context_ref);
         }
     }
 
@@ -215,6 +224,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         percpu,
         cpu_id,
         switch_time,
+        percpu_nanos,
         was_idle,
         &mut prev_context_guard,
     );
@@ -321,7 +331,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 fn wakeup_contexts(
     token: &mut CleanLockToken,
     switch_time: u128,
-) -> SmallVec<[(usize, WeakContextRef); 16]> {
+) -> SmallVec<[WeakContextRef; 16]> {
     // TODO: Optimise this somehow. Perhaps using a separate timer queue?
     let mut wakeups = SmallVec::new();
     let current_context = context::current();
@@ -349,9 +359,8 @@ fn wakeup_contexts(
         if guard.status.is_soft_blocked() {
             if let Some(wake) = guard.wake {
                 if switch_time >= wake {
-                    let prio = guard.prio;
                     drop(guard);
-                    wakeups.push((prio, context_ref));
+                    wakeups.push(context_ref);
                     continue;
                 }
             }
@@ -361,9 +370,8 @@ fn wakeup_contexts(
         }
 
         if guard.status.is_runnable() && !guard.running {
-            let prio = guard.prio;
             drop(guard);
-            wakeups.push((prio, context_ref));
+            wakeups.push(context_ref);
             continue;
         }
 
@@ -379,148 +387,249 @@ fn select_next_context(
     percpu: &PercpuBlock,
     cpu_id: LogicalCpuId,
     switch_time: u128,
+    elapsed_time: u64,
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)> {
     let contexts_data = run_contexts(token.token());
     let (mut contexts_data, mut token) = contexts_data.into_split();
     let idle_context = percpu.switch_internals.idle_context();
-    let mut balance = percpu.balance.get();
-    let mut i = percpu.last_queue.get() % 40;
 
     // Lock the previous context.
     let prev_context_lock = crate::context::current();
+    let is_idle = Arc::ptr_eq(&prev_context_lock, &idle_context);
+    let prev_runnable = !is_idle && prev_context_guard.status.is_runnable();
 
-    let mut empty_queues = 0;
-    let mut total_iters = 0;
-    let mut next_context_guard_opt = None;
+    let elapsed_ticks = elapsed_time as u128 * SCALE / NANOS_PER_TICK;
 
-    let total_contexts: usize = contexts_data.update_count();
-    let contexts_list = &mut contexts_data.set;
-    let mut skipped_contexts = 0;
+    if prev_runnable {
+        let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
+        prev_context_guard.rem_slice = prev_context_guard
+            .rem_slice
+            .saturating_sub((elapsed_ticks / SCALE) as u64);
+        let scaled_task = elapsed_ticks / weight as u128;
+        prev_context_guard.vtime += scaled_task as u64;
 
-    'priority: loop {
-        i = (i + 1) % 40;
-        total_iters += 1;
-
-        // The least prioritised queue takes <5000 iters to build up
-        // balance = sched_prio_to_weight[20], if we have already spent
-        // that many iters and not found any context, it is better to just
-        // skip for now
-        if total_iters >= 5000 {
-            break 'priority;
+        if prev_context_guard.vtime < contexts_data.v {
+            prev_context_guard.vtime = contexts_data.v;
         }
 
-        if skipped_contexts > total_contexts && total_contexts > 0 {
-            break 'priority;
+        if prev_context_guard.rem_slice == 0 {
+            prev_context_guard.rem_slice = BASE_SLICE_TICKS;
+            let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
+            prev_context_guard.vd = prev_context_guard.vtime + scaled_slice as u64;
         }
-
-        let contexts = contexts_list
-            .get_mut(i)
-            .expect("i should be between [0, 39]!");
-
-        if contexts.is_empty() {
-            empty_queues += 1;
-            if empty_queues >= 40 {
-                // If all queues are empty, just break out
-                break 'priority;
-            }
-            continue;
-        } else {
-            empty_queues = 0;
+    } else if !is_idle {
+        if prev_context_guard.is_active {
+            prev_context_guard.is_active = false;
+            let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
+            contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight);
         }
-
-        if balance[i] < SCHED_PRIO_TO_WEIGHT[20] {
-            // This queue does not have enough balance to run,
-            // increment the balance!
-            balance[i] += SCHED_PRIO_TO_WEIGHT[i];
-            continue;
-        }
-
-        let len = contexts.len();
-        for _ in 0..len {
-            let (next_context_ref, next_context_lock) = match contexts.pop_front() {
-                Some(lock) => match lock.upgrade() {
-                    Some(new_lock) => (lock, new_lock),
-                    None => {
-                        skipped_contexts += 1;
-                        continue; // Ghost Process, just continue
-                    }
-                },
-                None => break, // Empty Queue
-            };
-
-            if Arc::ptr_eq(&next_context_lock, &prev_context_lock) {
-                contexts.push_back(next_context_ref);
-                continue;
-            }
-            if Arc::ptr_eq(&next_context_lock, &idle_context) {
-                contexts.push_back(next_context_ref);
-                continue;
-            }
-            let (mut next_context_guard, addr_space) = unsafe {
-                let Some(next_context_guard) = next_context_lock.try_write_arc() else {
-                    contexts.push_back(next_context_ref);
-                    continue;
-                };
-
-                let mut addr_space_opt = None;
-
-                if let Some(addr_space) = &next_context_guard.addr_space {
-                    let mut token = CleanLockToken::new();
-                    let Some(addr) = addr_space.inner.try_read(token.token()) else {
-                        contexts.push_back(next_context_ref);
-                        continue;
-                    };
-                    addr_space_opt = Some(AddrSpaceSwitchReadGuard::new(addr))
-                }
-                (next_context_guard, addr_space_opt)
-            };
-
-            // Is this context runnable on this CPU?
-            let sw = unsafe { update_runnable(&mut next_context_guard, cpu_id, switch_time) };
-            if let UpdateResult::CanSwitch = sw {
-                next_context_guard_opt = Some((next_context_guard, addr_space));
-                balance[i] -= SCHED_PRIO_TO_WEIGHT[20];
-                break 'priority;
-            } else {
-                if matches!(sw, UpdateResult::Blocked) {
-                    idle_contexts(token.token()).push_back(next_context_ref);
-                } else {
-                    contexts.push_back(next_context_ref);
-                };
-                skipped_contexts += 1;
-
-                if skipped_contexts >= total_contexts {
-                    break 'priority;
-                }
-            }
-        }
-    }
-    percpu.balance.set(balance);
-    percpu.last_queue.set(i);
-
-    if !Arc::ptr_eq(&prev_context_lock, &idle_context) {
-        // Send the old process to the back of the line (if it is still runnable)
-        let prev_ctx = WeakContextRef(Arc::downgrade(&prev_context_lock));
-        if prev_context_guard.status.is_runnable() {
-            let prio = prev_context_guard.prio;
-            contexts_list[prio].push_back(prev_ctx);
-        } else {
-            idle_contexts(token.token()).push_back(prev_ctx);
-        }
+        prev_context_guard.rem_slice = 0;
     }
 
-    if let Some((next_context_guard, addr_space)) = next_context_guard_opt {
-        // We found a new process!
-        Some((next_context_guard, addr_space))
+    let mut min_active_vtime: u64 = if prev_runnable {
+        prev_context_guard.vtime
     } else {
-        if !was_idle && !Arc::ptr_eq(&prev_context_lock, &idle_context) {
-            // We switch into the idle context
-            Some(unsafe { (idle_context.write_arc(), None) })
+        u64::MAX
+    };
+
+    let mut eligible_best = None;
+    let mut eligible_min_vd = u64::MAX;
+    let mut eligible_best_rem = u64::MAX;
+    let mut eligible_found = false;
+
+    let mut ineligible_best = None;
+    let mut ineligible_min_vtime = u64::MAX;
+    let mut ineligible_min_vd = u64::MAX;
+    let mut ineligible_best_rem = u64::MAX;
+
+    if prev_runnable {
+        if prev_context_guard.vtime <= contexts_data.v {
+            eligible_found = true;
+            eligible_min_vd = prev_context_guard.vd;
+            eligible_best_rem = prev_context_guard.rem_slice;
         } else {
-            // We found no other process to run.
-            None
+            ineligible_min_vtime = prev_context_guard.vtime;
+            ineligible_min_vd = prev_context_guard.vd;
+            ineligible_best_rem = prev_context_guard.rem_slice;
+        }
+    }
+
+    let mut skipped_dead = 0;
+    let mut i = 0;
+
+    while i < contexts_data.queue.len() {
+        let context_ref = &contexts_data.queue[i];
+
+        let Some(context_lock) = context_ref.upgrade() else {
+            skipped_dead += 1;
+            contexts_data.queue.remove(i);
+            continue;
+        };
+
+        if Arc::ptr_eq(&context_lock, &idle_context)
+            || Arc::ptr_eq(&context_lock, &prev_context_lock)
+        {
+            i += 1;
+            continue;
+        }
+
+        let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
+            i += 1;
+            continue;
+        };
+
+        let sw = unsafe { update_runnable(&mut guard, cpu_id, switch_time) };
+
+        if matches!(sw, UpdateResult::Blocked) {
+            if guard.is_active {
+                guard.is_active = false;
+                let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
+                contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight);
+            }
+            guard.rem_slice = 0;
+            drop(guard);
+            let removed_ref = contexts_data.queue.remove(i).unwrap();
+            idle_contexts(token.token()).push_back(removed_ref);
+            continue;
+        }
+
+        if !matches!(sw, UpdateResult::CanSwitch) {
+            i += 1;
+            continue;
+        }
+
+        let mut best_addr_space = None;
+        if let Some(addr_space) = &guard.addr_space {
+            let mut t = unsafe { CleanLockToken::new() };
+            if let Some(addr) = addr_space.inner.try_read(t.token()) {
+                best_addr_space = Some(AddrSpaceSwitchReadGuard::new(addr));
+            } else {
+                i += 1;
+                continue;
+            }
+        }
+
+        let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
+
+        if !guard.is_active {
+            guard.is_active = true;
+            contexts_data.total_weight += weight;
+        }
+
+        if guard.vtime < min_active_vtime {
+            min_active_vtime = guard.vtime;
+        }
+
+        let vd = guard.vd;
+        let rem = guard.rem_slice;
+
+        if guard.vtime <= contexts_data.v {
+            // Eligible
+            if !eligible_found {
+                eligible_found = true;
+                eligible_min_vd = u64::MAX;
+                eligible_best_rem = u64::MAX;
+                eligible_best = None;
+            }
+            if vd < eligible_min_vd || (vd == eligible_min_vd && rem < eligible_best_rem) {
+                eligible_min_vd = vd;
+                eligible_best_rem = rem;
+                eligible_best = Some((i, guard, best_addr_space));
+            }
+        } else {
+            // Ineligible
+            if guard.vtime < ineligible_min_vtime
+                || (guard.vtime == ineligible_min_vtime
+                    && (vd < ineligible_min_vd
+                        || (vd == ineligible_min_vd && rem < ineligible_best_rem)))
+            {
+                ineligible_min_vtime = guard.vtime;
+                ineligible_min_vd = vd;
+                ineligible_best_rem = rem;
+                ineligible_best = Some((i, guard, best_addr_space));
+            }
+        }
+
+        i += 1;
+    }
+
+    if !eligible_found && min_active_vtime != u64::MAX {
+        contexts_data.v = min_active_vtime;
+
+        let prev_is_earliest = prev_runnable && prev_context_guard.vtime <= ineligible_min_vtime;
+
+        if prev_is_earliest {
+            eligible_found = true;
+            eligible_min_vd = prev_context_guard.vd;
+            eligible_best_rem = prev_context_guard.rem_slice;
+            eligible_best = None;
+        } else if ineligible_best.is_some() {
+            let prev_has_slice = prev_runnable && prev_context_guard.rem_slice > 0;
+
+            if prev_has_slice && prev_context_guard.vd <= ineligible_min_vd {
+                eligible_found = true;
+                eligible_best = None;
+            } else {
+                eligible_found = true;
+                eligible_min_vd = ineligible_min_vd;
+                eligible_best_rem = ineligible_best_rem;
+                eligible_best = ineligible_best.take();
+            }
+        }
+    }
+
+    let mut final_winner = None;
+
+    if let Some((idx, chosen_guard, addr_space)) = eligible_best {
+        contexts_data.queue.remove(idx).unwrap();
+        final_winner = Some((chosen_guard, addr_space));
+    }
+
+    if skipped_dead > 10 {
+        contexts_data.queue.retain(|x| x.upgrade().is_some());
+    }
+
+    if final_winner.is_some() || prev_runnable {
+        if contexts_data.total_weight > 0 {
+            let v_advance = elapsed_ticks as u128 / contexts_data.total_weight as u128;
+            contexts_data.v += v_advance as u64;
+        }
+
+        if let Some((chosen_guard, addr_space)) = final_winner {
+            let weight = SCHED_PRIO_TO_WEIGHT[chosen_guard.prio] as u64;
+
+            /*
+            chosen_guard.rem_slice = chosen_guard.rem_slice.saturating_sub(TICK_INTERVAL);
+            let scaled_task = elapsed / weight as u128;
+            chosen_guard.vtime += scaled_task as u64;
+            */
+
+            if prev_runnable {
+                contexts_data
+                    .queue
+                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+            } else if !is_idle {
+                idle_contexts(token.token())
+                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+            }
+
+            return Some((chosen_guard, addr_space));
+        } else {
+            return None;
+        }
+    } else {
+        if !is_idle {
+            idle_contexts(token.token())
+                .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+        }
+
+        let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
+        if (!was_idle || prev_is_dead) && !is_idle {
+            return Some(unsafe { (idle_context.write_arc(), None) });
+        } else {
+            return None;
         }
     }
 }

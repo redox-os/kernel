@@ -81,20 +81,26 @@ static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new(
 static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque::new());
 
 pub struct RunContextData {
-    set: [VecDeque<WeakContextRef>; 40],
+    queue: VecDeque<WeakContextRef>,
     count: usize,
+    v: u64,
+    total_weight: u64,
+    min_vtime: u64,
 }
 
 impl RunContextData {
     pub const fn new() -> Self {
         const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
-            set: [EMPTY_VEC; 40],
+            queue: VecDeque::new(),
             count: 0,
+            v: 0,
+            total_weight: 0,
+            min_vtime: 0,
         }
     }
     pub fn update_count(&mut self) -> usize {
-        self.count = self.set.iter().map(|q| q.len()).sum();
+        self.count = self.queue.len();
         self.count
     }
 }

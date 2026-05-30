@@ -143,6 +143,14 @@ pub struct Context {
     pub fmap_ret: Option<Frame>,
     /// Priority
     pub prio: usize,
+    /// Virtual Run Time
+    pub vtime: u64,
+    /// Virtual Deadline
+    pub vd: u64,
+    /// Remaining Slice of allocated time
+    pub rem_slice: u64,
+    /// Is currently active?
+    pub is_active: bool,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,
@@ -201,6 +209,10 @@ impl Context {
             userspace: false,
             fmap_ret: None,
             prio: 20,
+            vtime: 0,
+            vd: 0,
+            rem_slice: 0,
+            is_active: false,
             being_sigkilled: false,
             owner_proc_id,
 
