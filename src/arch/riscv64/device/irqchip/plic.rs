@@ -155,8 +155,8 @@ impl InterruptController for Plic {
                      parent,
                      parent_interrupt,
                  }| {
+                    // specify supervisor external irq to avoid off-by-one errors on SoCs with management cores
                     *parent == hlic_ic_idx && matches!(parent_interrupt, Some(IrqCell::L1(9)))
-                    // Supervisor external int
                 },
             )
             .expect("cannot find context for plic!");

@@ -74,6 +74,18 @@ pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
     res
 }
 
+// is there a better way to get these mappings?
+#[cfg(target_arch = "riscv64")]
+pub fn get_hart_mappings() -> Vec<(LogicalCpuId, usize)> {
+    let mut res = ALL_PERCPU_BLOCKS
+        .iter()
+        .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
+        .map(|block| (block.cpu_id, block.misc_arch_info.hart_id))
+        .collect::<Vec<_>>();
+    res.sort_unstable_by_key(|(id, _stats)| id.get());
+    res
+}
+
 // PercpuBlock::current() is implemented somewhere in the arch-specific modules
 
 pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {

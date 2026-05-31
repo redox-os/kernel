@@ -9,10 +9,10 @@ use crate::{
     arch::{
         device::{self},
         interrupt::exception_handler,
-        paging,
+        ipi, paging,
     },
     devices::graphical_debug,
-    dtb::serial::init_early,
+    dtb::serial::{self, init_early},
     kernel_executable_offsets::KERNEL_OFFSET,
     percpu::PercpuBlock,
     startup::KernelArgs,
@@ -87,38 +87,24 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
         let bootstrap = {
             let args = args_ptr.read();
 
-            let dtb_data = if args.hwdesc_base != 0 {
-                Some((
-                    crate::PHYS_OFFSET | args.hwdesc_base as usize,
-                    args.hwdesc_size as usize,
-                ))
-            } else {
-                None
-            };
-            let dtb = args.dtb();
+            let fdt = args.dtb().expect("Failed to parse devicetree!");
 
             graphical_debug::init(args.env());
-
-            if let Some(dtb) = &dtb {
-                init_early(dtb);
-            }
+            serial::init_early(&fdt);
 
             info!("Redox OS starting...");
             args.print();
 
-            if let Some(dtb) = &dtb {
-                device::dump_fdt(dtb);
-            }
+            device::dump_fdt(&fdt);
 
             // Initialize RMM
             crate::startup::memory::init(&args, None, None);
+            paging::init();
 
             let boot_hart_id =
                 get_boot_hart_id(args.env()).expect("Didn't get boot HART id from bootloader");
             info!("Booting on HART {}", boot_hart_id);
             BOOT_HART_ID.store(boot_hart_id, Ordering::Relaxed);
-
-            paging::init();
 
             crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0), boot_hart_id);
 
@@ -128,17 +114,18 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             // Activate memory logging
             crate::log::init();
 
-            crate::dtb::init(dtb_data);
+            crate::dtb::init(Some((
+                fdt.raw_data().as_ptr() as usize,
+                fdt.raw_data().len(),
+            )));
 
             // Initialize devices
-            device::init();
+            device::init(&fdt);
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization
-            device::init_noncore();
+            device::init_noncore(&fdt);
 
-            if let Some(dtb) = &dtb {
-                bring_up_aps(dtb, args.kernel_base as usize);
-            }
+            bring_up_aps(&fdt, args.kernel_base, boot_hart_id);
 
             args.bootstrap()
         };
@@ -149,11 +136,20 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
 static AP_SIGNAL: AtomicUsize = AtomicUsize::new(0);
 
-unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: usize) {
+/// Starts the secondary harts
+///
+/// global allocator has to be initialized
+unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
+    use alloc::alloc::{alloc_zeroed, dealloc};
     use core::alloc::{GlobalAlloc, Layout};
     use fdt::node::NodeProperty;
 
-    let boot_hart_id = BOOT_HART_ID.load(Ordering::Relaxed);
+    // for replicating the VA setup on the APs
+    let satp_bits;
+    unsafe {
+        asm!("csrr {0}, satp", out(reg) satp_bits);
+    }
+
     for cpu in fdt.cpus() {
         let hart_id = cpu.ids().first();
         if hart_id == boot_hart_id {
@@ -169,16 +165,14 @@ unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: usize) {
         }
 
         unsafe {
-            let satp_bits;
-            asm!("csrr {0}, satp", out(reg) satp_bits);
-
-            let ap_stack = crate::ALLOCATOR.alloc_zeroed(Layout::for_value(&STACK));
+            let ap_stack = alloc_zeroed(Layout::for_value(&STACK));
             AP_SIGNAL.store(ap_stack.expose_provenance(), Ordering::SeqCst);
-            let start_addr_phys = (kstart_ap_phys as usize - KERNEL_OFFSET()) + kernel_base;
+            let start_addr_phys = (kstart_ap_raw as usize - KERNEL_OFFSET()) + kernel_base as usize;
+
             info!("starting ap hart {}", hart_id);
             if let Err(e) = sbi_rt::hart_start(hart_id, start_addr_phys, satp_bits).into_result() {
                 println!("failed to start ap hart: {:?}", e);
-                crate::ALLOCATOR.dealloc(ap_stack, Layout::for_value(&STACK));
+                dealloc(ap_stack, Layout::for_value(&STACK));
                 continue;
             }
 
@@ -190,12 +184,20 @@ unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: usize) {
 
 #[unsafe(naked)]
 #[unsafe(no_mangle)]
-extern "C" fn kstart_ap_phys() {
+/// Entry point for APs
+///
+/// Sets up virtual addressing before jumping to the next stage, since
+/// unlike the bootloader with the main hart, SBI starts the AP in Bare mode.
+///
+/// The Satp bits of the boot hart are passed in the opaque value of the hart_start SBI call.
+extern "C" fn kstart_ap_raw() {
     naked_asm!("
-        la t0, {kstart_ap} // WARL=0 - direct mode combined handler
-        csrw stvec, t0
+        .balign 4
 
-        csrw satp, a1 // advanced exception gymnastics to avoid having to ident map
+        la t0, {kstart_ap} // WARL=0 - direct mode combined handler
+        csrw stvec, t0 // advanced exception gymnastics to avoid having to ident map
+
+        csrw satp, a1
         sfence.vma
 
         jr t0 // just in case
@@ -205,7 +207,6 @@ extern "C" fn kstart_ap_phys() {
 }
 
 #[unsafe(naked)]
-#[unsafe(no_mangle)]
 extern "C" fn kstart_ap() {
     naked_asm!("
         .balign 4
@@ -230,22 +231,18 @@ extern "C" fn kstart_ap() {
         start_ap = sym start_ap,
     );
 }
-
+/// The entry to Rust on the APs, all things must be initialized
 unsafe extern "C" fn start_ap(hart_id: usize) -> ! {
     AP_SIGNAL.store(hart_id, Ordering::Relaxed);
     let cpu_id = unsafe {
-        // Initialize paging
-        paging::init();
-
-        crate::profiling::init();
-
         let cpu_id = crate::cpu_set::LogicalCpuId::next();
 
         crate::arch::misc::init(cpu_id, hart_id);
+
+        crate::profiling::init();
+
         ipi::init(hart_id);
-
         device::irqchip::hlic::init();
-
         crate::arch::device::irqchip::init_clint_ap(hart_id);
 
         cpu_id

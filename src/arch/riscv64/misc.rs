@@ -36,10 +36,11 @@ pub unsafe fn init(cpu_id: LogicalCpuId, hart_id: usize) {
         let mut arch_per_cpu = ArchPercpu {
             tmp: 0,
             s_sp: 0,
-            percpu: PercpuBlock::init(cpu_id),
+            percpu: PercpuBlock {
+                misc_arch_info: ArchPercpuMisc { hart_id },
+                ..PercpuBlock::init(cpu_id)
+            },
         };
-
-        arch_per_cpu.percpu.misc_arch_info = ArchPercpuMisc { hart_id };
 
         virt.write(arch_per_cpu);
 
