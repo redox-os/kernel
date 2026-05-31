@@ -1,7 +1,7 @@
 use crate::{
-    context,
-    context::timeout,
+    context::{self, timeout},
     dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+    percpu::PercpuBlock,
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
@@ -38,7 +38,7 @@ impl InterruptHandler for ClintConnector {
         CLINT
             .lock()
             .as_mut()
-            .unwrap()
+            .expect("failed to lock CLINT")
             .irq_handler(self.hart_id, self.irq);
         if self.irq == IRQ_TIMER {
             // a bit of hack, but it is a really bad idea to call scheduler
@@ -70,7 +70,7 @@ impl Clint {
         };
         let mut interrupts = node
             .property("interrupts-extended")
-            .unwrap()
+            .expect("interrupts-extended property not found on CLINT node")
             .value
             .as_chunks::<4>()
             .0
@@ -115,7 +115,8 @@ impl Clint {
     pub(crate) fn irq_handler(self: &mut Self, hart_id: usize, irq: usize) {
         match irq {
             IRQ_IPI => {
-                println!("IPI interrupt at {}", hart_id);
+                // in case it was a tlb ipi; sbi doesn't support additional ipi info
+                PercpuBlock::current().maybe_handle_tlb_shootdown();
             }
             IRQ_TIMER => {
                 let mtime: usize;

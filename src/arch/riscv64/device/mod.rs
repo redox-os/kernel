@@ -68,11 +68,8 @@ unsafe fn init_intc(cpu: &FdtNode) {
     hlic::init(); // enable interrupts at HLIC level
 }
 
-pub unsafe fn init() {
+pub unsafe fn init(fdt: &Fdt) {
     unsafe {
-        let data = DTB_BINARY.get().unwrap();
-        let fdt = Fdt::new(data).unwrap();
-
         crate::dtb::irqchip::init(&fdt);
 
         let cpu = fdt.find_node(format!("/cpus/cpu@{}", 0).as_str()).unwrap();
@@ -91,20 +88,19 @@ fn init_time(fdt: &Fdt) {
     time::init(clock_freq);
 }
 
-pub unsafe fn init_noncore() {
+pub unsafe fn init_noncore(fdt: &Fdt) {
     unsafe {
-        let data = DTB_BINARY.get().unwrap();
-        let fdt = Fdt::new(data).unwrap();
-
         init_clint(&fdt);
         serial::init(&fdt);
     }
 }
 
-pub struct ArchPercpuMisc;
+pub struct ArchPercpuMisc {
+    pub hart_id: usize,
+}
 
 impl ArchPercpuMisc {
     pub const fn default() -> Self {
-        Self
+        Self { hart_id: 0 }
     }
 }

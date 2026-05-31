@@ -2,7 +2,9 @@ use crate::{
     arch::{device::irqchip::hlic, start::BOOT_HART_ID},
     dtb::{
         get_mmio_address,
-        irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        irqchip::{
+            InterruptController, InterruptHandler, IrqCell, IrqConnection, IrqDesc, IRQ_CHIP,
+        },
     },
     sync::CleanLockToken,
 };
@@ -147,8 +149,18 @@ impl InterruptController for Plic {
         self.context = desc
             .parents
             .iter()
-            .position(|x| x.parent_interrupt.is_some() && x.parent == hlic_ic_idx)
-            .unwrap();
+            .position(
+                |IrqConnection {
+                     parent_phandle: _,
+                     parent,
+                     parent_interrupt,
+                 }| {
+                    // specify supervisor external irq to avoid off-by-one errors on SoCs with management cores
+                    *parent == hlic_ic_idx && matches!(parent_interrupt, Some(IrqCell::L1(9)))
+                },
+            )
+            .expect("cannot find context for plic!");
+
         info!("PLIC: using context {}", self.context);
 
         let regs = unsafe { self.regs.as_mut().unwrap() };
