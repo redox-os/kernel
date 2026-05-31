@@ -8,6 +8,7 @@ use core::{
 use crate::{
     allocator::{self},
     arch::{
+        self,
         device::{self},
         interrupt::exception_handler,
         ipi, paging,
@@ -15,6 +16,7 @@ use crate::{
     devices::graphical_debug,
     dtb::serial::{self},
     kernel_executable_offsets::KERNEL_OFFSET,
+    memory::{allocate_p2frame, deallocate_p2frame},
     startup::KernelArgs,
 };
 
@@ -137,12 +139,9 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 static AP_SIGNAL: AtomicUsize = AtomicUsize::new(0);
 
 /// Starts the secondary harts
-///
-/// global allocator has to be initialized
 unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
-    use alloc::alloc::{alloc_zeroed, dealloc};
-    use core::alloc::Layout;
     use fdt::node::NodeProperty;
+    use rmm::Arch;
 
     // for replicating the VA setup on the APs
     let satp_bits;
@@ -165,19 +164,20 @@ unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
         }
 
         unsafe {
-            let ap_stack = alloc_zeroed(Layout::for_value(&STACK));
-            AP_SIGNAL.store(ap_stack.expose_provenance(), Ordering::SeqCst);
+            let ap_stack_frame = allocate_p2frame(4).expect("failed to allocate AP stack");
+            let ap_stack = arch::CurrentRmmArch::phys_to_virt(ap_stack_frame.base()).data();
+            AP_SIGNAL.store(ap_stack, Ordering::SeqCst);
             let start_addr_phys =
                 (kstart_ap_raw as *const () as usize - KERNEL_OFFSET()) + kernel_base as usize;
 
             info!("starting ap hart {}", hart_id);
             if let Err(e) = sbi_rt::hart_start(hart_id, start_addr_phys, satp_bits).into_result() {
                 println!("failed to start ap hart: {:?}", e);
-                dealloc(ap_stack, Layout::for_value(&STACK));
+                deallocate_p2frame(ap_stack_frame, 4);
                 continue;
             }
 
-            while AP_SIGNAL.load(Ordering::Relaxed) == ap_stack as usize {
+            while AP_SIGNAL.load(Ordering::Relaxed) == ap_stack {
                 hint::spin_loop();
             }
             info!("ap hart {} started!", hart_id);
@@ -190,7 +190,7 @@ unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
 /// Entry point for APs
 ///
 /// Sets up virtual addressing before jumping to the next stage, since
-/// unlike the bootloader with the main hart, SBI starts the AP in Bare mode.
+/// (unlike the bootloader with the main hart) SBI starts the AP in Bare mode.
 ///
 /// The Satp bits of the boot hart are passed in the opaque value of the hart_start SBI call.
 extern "C" fn kstart_ap_raw() {
