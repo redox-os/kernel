@@ -157,10 +157,7 @@ impl KernelScheme for TimeScheme {
                 (CLOCK_MONOTONIC, TimeSchemeKind::ClockGetres) => time::monotonic_resolution(),
                 _ => return Err(Error::new(EINVAL)),
             };
-            let time = TimeSpec {
-                tv_sec: (arch_time / time::NANOS_PER_SEC) as i64,
-                tv_nsec: (arch_time % time::NANOS_PER_SEC) as i32,
-            };
+            let time = TimeSpec::from_nanos(arch_time);
             current_chunk.copy_exactly(&time)?;
 
             bytes_read += size_of::<TimeSpec>();

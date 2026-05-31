@@ -18,10 +18,7 @@ pub fn clock_gettime(clock: usize, buf: UserSliceWo, token: &mut CleanLockToken)
         _ => return Err(Error::new(EINVAL)),
     };
 
-    buf.copy_exactly(&TimeSpec {
-        tv_sec: (arch_time / time::NANOS_PER_SEC) as i64,
-        tv_nsec: (arch_time % time::NANOS_PER_SEC) as i32,
-    })
+    buf.copy_exactly(&TimeSpec::from_nanos(arch_time))
 }
 
 /// Nanosleep will sleep by switching the current context
@@ -37,7 +34,7 @@ pub fn nanosleep(
     }
 
     let start = time::monotonic(token);
-    let end = start + (req.tv_sec as u128 * time::NANOS_PER_SEC) + (req.tv_nsec as u128);
+    let end = start + req.to_nanos();
 
     let current_context = context::current();
     {
@@ -64,15 +61,9 @@ pub fn nanosleep(
 
         rem_buf.copy_exactly(&if current < end {
             let diff = end - current;
-            TimeSpec {
-                tv_sec: (diff / time::NANOS_PER_SEC) as i64,
-                tv_nsec: (diff % time::NANOS_PER_SEC) as i32,
-            }
+            TimeSpec::from_nanos(diff)
         } else {
-            TimeSpec {
-                tv_sec: 0,
-                tv_nsec: 0,
-            }
+            TimeSpec::default()
         })?;
     }
 

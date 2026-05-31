@@ -19,7 +19,6 @@ use crate::{
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
     sync::{CleanLockToken, Mutex, L1},
-    time,
 };
 
 use crate::syscall::{
@@ -154,9 +153,7 @@ pub fn futex(
                 {
                     let mut context = context_lock.write(token.token());
 
-                    context.wake = timeout_opt.map(|TimeSpec { tv_sec, tv_nsec }| {
-                        tv_sec as u128 * time::NANOS_PER_SEC + tv_nsec as u128
-                    });
+                    context.wake = timeout_opt.map(|time| time.to_nanos());
                     if let Some((tctl, pctl, _)) = context.sigcontrol()
                         && tctl.currently_pending_unblocked(pctl) != 0
                     {
