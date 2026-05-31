@@ -310,7 +310,7 @@ fn call_normal(
         return Err(Error::new(EINVAL));
     }
 
-    let mut nums = Vec::new();
+    let mut nums = arrayvec::ArrayVec::<_, 2>::new();
 
     let current_lock = context::current();
     let consume = flags.contains(CallFlags::CONSUME);
