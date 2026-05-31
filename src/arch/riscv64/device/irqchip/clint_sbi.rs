@@ -38,7 +38,7 @@ impl InterruptHandler for ClintConnector {
         CLINT
             .lock()
             .as_mut()
-            .unwrap()
+            .expect("failed to lock CLINT")
             .irq_handler(self.hart_id, self.irq);
         if self.irq == IRQ_TIMER {
             // a bit of hack, but it is a really bad idea to call scheduler
@@ -70,7 +70,7 @@ impl Clint {
         };
         let mut interrupts = node
             .property("interrupts-extended")
-            .unwrap()
+            .expect("interrupts-extended property not found on CLINT node")
             .value
             .as_chunks::<4>()
             .0

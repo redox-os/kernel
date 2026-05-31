@@ -1,4 +1,4 @@
-use sbi_rt::{ColdReboot, NoReason, ResetType, Shutdown, SystemFailure};
+use sbi_rt::{ColdReboot, NoReason, Shutdown, SystemFailure};
 
 use crate::sync::CleanLockToken;
 

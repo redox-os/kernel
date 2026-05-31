@@ -33,7 +33,7 @@ pub unsafe fn init(cpu_id: LogicalCpuId, hart_id: usize) {
         let frame = crate::memory::allocate_frame().expect("failed to allocate percpu memory");
         let virt = RmmA::phys_to_virt(frame.base()).data() as *mut ArchPercpu;
 
-        let mut arch_per_cpu = ArchPercpu {
+        let arch_per_cpu = ArchPercpu {
             tmp: 0,
             s_sp: 0,
             percpu: PercpuBlock {

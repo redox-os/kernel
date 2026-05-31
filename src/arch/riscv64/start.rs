@@ -1,6 +1,7 @@
 use core::{
     arch::{asm, naked_asm},
     cell::SyncUnsafeCell,
+    hint,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -12,9 +13,8 @@ use crate::{
         ipi, paging,
     },
     devices::graphical_debug,
-    dtb::serial::{self, init_early},
+    dtb::serial::{self},
     kernel_executable_offsets::KERNEL_OFFSET,
-    percpu::PercpuBlock,
     startup::KernelArgs,
 };
 
@@ -141,7 +141,7 @@ static AP_SIGNAL: AtomicUsize = AtomicUsize::new(0);
 /// global allocator has to be initialized
 unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
     use alloc::alloc::{alloc_zeroed, dealloc};
-    use core::alloc::{GlobalAlloc, Layout};
+    use core::alloc::Layout;
     use fdt::node::NodeProperty;
 
     // for replicating the VA setup on the APs
@@ -167,7 +167,8 @@ unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
         unsafe {
             let ap_stack = alloc_zeroed(Layout::for_value(&STACK));
             AP_SIGNAL.store(ap_stack.expose_provenance(), Ordering::SeqCst);
-            let start_addr_phys = (kstart_ap_raw as usize - KERNEL_OFFSET()) + kernel_base as usize;
+            let start_addr_phys =
+                (kstart_ap_raw as *const () as usize - KERNEL_OFFSET()) + kernel_base as usize;
 
             info!("starting ap hart {}", hart_id);
             if let Err(e) = sbi_rt::hart_start(hart_id, start_addr_phys, satp_bits).into_result() {
@@ -176,7 +177,9 @@ unsafe fn bring_up_aps(fdt: &fdt::Fdt, kernel_base: u64, boot_hart_id: usize) {
                 continue;
             }
 
-            while AP_SIGNAL.load(Ordering::Relaxed) == ap_stack as usize {}
+            while AP_SIGNAL.load(Ordering::Relaxed) == ap_stack as usize {
+                hint::spin_loop();
+            }
             info!("ap hart {} started!", hart_id);
         }
     }
