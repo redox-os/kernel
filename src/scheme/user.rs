@@ -1468,21 +1468,6 @@ impl KernelScheme for UserScheme {
             .map(|o| o as u64)
     }
 
-    fn fchmod(&self, file: usize, mode: u16, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-        self.inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Fchmod,
-                [file, mode as usize],
-                &mut PageSpan::empty(),
-                token,
-            )?
-            .into_regular()?;
-        Ok(())
-    }
-
     fn fchown(&self, file: usize, uid: u32, gid: u32, token: &mut CleanLockToken) -> Result<()> {
         {
             let ctx = context::current();
@@ -1610,21 +1595,6 @@ impl KernelScheme for UserScheme {
                 Vec::new(),
                 Opcode::Fsync,
                 [file],
-                &mut PageSpan::empty(),
-                token,
-            )?
-            .into_regular()?;
-        Ok(())
-    }
-
-    fn ftruncate(&self, file: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-        self.inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Ftruncate,
-                [file, len],
                 &mut PageSpan::empty(),
                 token,
             )?
@@ -1794,61 +1764,18 @@ impl KernelScheme for UserScheme {
 
         result
     }
-    fn kfutimens(
-        &self,
-        file: usize,
-        buf: UserSliceRo,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-        let mut address = self.inner.capture_user(buf, token)?;
-        let result = self
-            .inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Futimens,
-                [file, address.base(), address.len()],
-                address.span(),
-                token,
-            )?
-            .into_regular();
-        address.release(token)?;
-        result
-    }
     fn getdents(
         &self,
-        file: usize,
-        buf: UserSliceWo,
-        header_size: u16,
-        opaque_id_start: u64,
-        token: &mut CleanLockToken,
+        _file: usize,
+        _buf: UserSliceWo,
+        _header_size: u16,
+        _opaque_id_start: u64,
+        _token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-        let mut address = self.inner.capture_user(buf, token)?;
-        // TODO: Support passing the 16-byte record_len of the last dent, to make it possible to
-        // iterate backwards without first interating forward? The last entry will contain the
-        // opaque id to pass to the next getdents. Since this field is small, this would fit in the
-        // extra_raw field of `Cqe`s.
-        let result = self
-            .inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Getdents,
-                [
-                    file,
-                    address.base(),
-                    address.len(),
-                    header_size.into(),
-                    opaque_id_start as usize,
-                ],
-                address.span(),
-                token,
-            )?
-            .into_regular();
-        address.release(token)?;
-        result
+        // SYS_FSTATVFS has been removed, so this should be unreachable for UserScheme which
+        // overrides translate_stdfscall
+        error!("getdents should be unreachable for UserScheme");
+        Err(Error::new(EBADFD))
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
@@ -1867,22 +1794,16 @@ impl KernelScheme for UserScheme {
         address.release(token)?;
         result.map(|_| ())
     }
-    fn kfstatvfs(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-        let mut address = self.inner.capture_user(stat, token)?;
-        let result = self
-            .inner
-            .call(
-                ctx,
-                Vec::new(),
-                Opcode::Fstatvfs,
-                [file, address.base(), address.len()],
-                address.span(),
-                token,
-            )?
-            .into_regular();
-        address.release(token)?;
-        result.map(|_| ())
+    fn kfstatvfs(
+        &self,
+        _file: usize,
+        _stat: UserSliceWo,
+        _token: &mut CleanLockToken,
+    ) -> Result<()> {
+        // SYS_FSTATVFS has been removed, so this should be unreachable for UserScheme which
+        // overrides translate_stdfscall
+        error!("kfstatvfs should be unreachable for UserScheme");
+        Err(Error::new(EBADFD))
     }
     fn kfmap(
         &self,

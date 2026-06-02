@@ -4,8 +4,6 @@
 
 extern crate syscall;
 
-use syscall::{dirent::DirentHeader, CallFlags, RwFlags, EINVAL};
-
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -15,8 +13,8 @@ pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_regi
 use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
-    error::{Error, Result, ENOSYS},
-    flag::{EventFlags, MapFlags},
+    error::{Error, Result, EINVAL, ENOSYS},
+    flag::{CallFlags, EventFlags, MapFlags, RwFlags},
     number::*,
     usercopy::UserSlice,
 };
@@ -105,22 +103,6 @@ pub fn syscall(
                     })
                 }
             }
-            SYS_GETDENTS => {
-                let header_size = u16::try_from(e).map_err(|_| Error::new(EINVAL))?;
-
-                if usize::from(header_size) != size_of::<DirentHeader>() {
-                    // TODO: allow? If so, zero_out must be implemented for UserSlice
-                    return Err(Error::new(EINVAL));
-                }
-
-                file_op_generic(fd, token, |scheme, number, token| {
-                    scheme.getdents(number, UserSlice::wo(c, d)?, header_size, f as u64, token)
-                })
-            }
-            SYS_FUTIMENS => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.kfutimens(number, UserSlice::ro(c, d)?, token)
-            }),
-
             SYS_READ2 => file_op_generic_ext(fd, token, |scheme, _, desc, token| {
                 let flags = if f == usize::MAX {
                     None
@@ -145,12 +127,10 @@ pub fn syscall(
             SYS_FPATH => file_op_generic(fd, token, |scheme, number, token| {
                 scheme.kfpath(number, UserSlice::wo(c, d)?, token)
             }),
+
+            // TODO: Can't replace yet with std_fs_call, as fstat overrides device ID, but that can
+            // be moved to UserScheme.
             SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
-            SYS_FSTATVFS => file_op_generic(fd, token, |scheme, number, token| {
-                scheme
-                    .kfstatvfs(number, UserSlice::wo(c, d)?, token)
-                    .map(|()| 0)
-            }),
 
             SYS_DUP => dup(fd, UserSlice::ro(c, d)?, token).map(FileHandle::into),
             SYS_DUP2 => {
@@ -170,9 +150,6 @@ pub fn syscall(
             SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64, token),
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
-            SYS_FCHMOD => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.fchmod(number, c as u16, token).map(|()| 0)
-            }),
             SYS_FCHOWN => file_op_generic(fd, token, |scheme, number, token| {
                 scheme.fchown(number, c as u32, d as u32, token).map(|()| 0)
             }),
@@ -186,13 +163,15 @@ pub fn syscall(
             SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
             SYS_FUNMAP => funmap(b, c, token),
 
-            SYS_FSYNC => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.fsync(number, token).map(|()| 0)
-            }),
-            // TODO: 64-bit lengths on 32-bit platforms
-            SYS_FTRUNCATE => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.ftruncate(number, c, token).map(|()| 0)
-            }),
+            // TODO: This can't be removed yet, since the pre-libredox softbuffer crate is a blocker.
+            SYS_FSYNC => {
+                //let ctxt_name = crate::context::current().read(token.token()).name;
+                //warn!("Context `{ctxt_name}` is using deprecated SYS_FSYNC");
+
+                file_op_generic(fd, token, |scheme, number, token| {
+                    scheme.fsync(number, token).map(|()| 0)
+                })
+            }
 
             SYS_CLOSE => close(fd, token).map(|()| 0),
             SYS_CALL => {
