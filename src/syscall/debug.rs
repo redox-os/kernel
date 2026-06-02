@@ -208,7 +208,7 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
         && crate::context::current()
             .read(token.token())
             .name
-            .contains("init")
+            .contains("acpid")
     {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false

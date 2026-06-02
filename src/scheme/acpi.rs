@@ -1,78 +1,59 @@
-use alloc::{boxed::Box, vec::Vec};
-use core::convert::TryInto;
+use alloc::boxed::Box;
+use core::sync::atomic::{AtomicBool, Ordering};
 
-use spin::{Mutex, Once};
-use syscall::{
-    data::GlobalSchemes,
-    dirent::{DirEntry, DirentBuf, DirentKind},
-    EIO,
-};
+use crate::sync::ordered::{Mutex, L4};
+use spin::Once;
+
+use syscall::data::GlobalSchemes;
 
 use crate::{
     acpi::{RxsdtEnum, RXSDT_ENUM},
     context::file::InternalFlags,
-    event,
-    sync::{CleanLockToken, RwLock, WaitCondition, L1},
+    scheme::{SchemeExt, StrOrBytes},
+    sync::CleanLockToken,
 };
 
 use crate::syscall::{
-    data::Stat,
-    error::{Error, Result, EACCES, EBADF, EBADFD, EINTR, EINVAL, EISDIR, ENOENT, ENOTDIR, EROFS},
-    flag::{
-        EventFlags, EVENT_READ, MODE_CHR, MODE_DIR, MODE_FILE, O_ACCMODE, O_CREAT, O_DIRECTORY,
-        O_EXCL, O_RDONLY, O_STAT, O_SYMLINK,
-    },
-    usercopy::UserSliceWo,
+    error::{Error, Result, EACCES, EBADFD, EINVAL, ENOENT},
+    flag::{AcpiVerb, CallFlags, EventFlags},
+    usercopy::UserSliceRw,
 };
 
-use super::{CallerCtx, HandleMap, KernelScheme, OpenResult, SchemeExt, StrOrBytes};
+use super::{CallerCtx, KernelScheme, OpenResult};
 
-/// A scheme used to access the RSDT or XSDT, which is needed for e.g. `acpid` to function.
+/// A scheme used to access the RSDT or XSDT, and listen for shutdown, which is needed for e.g. `acpid` to function.
 pub struct AcpiScheme;
 
-#[derive(Clone, Copy)]
-struct Handle {
-    kind: HandleKind,
-    stat: bool,
-}
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum HandleKind {
-    TopLevel,
-    Rxsdt,
-    ShutdownPipe,
-    SchemeRoot,
+bitflags! {
+    #[derive(PartialEq)]
+    struct HandleBits: usize {
+        const CAN_READ_RXSDT = 1;
+        const CAN_REGISTER_KSTOP = 2;
+
+        // mutually exclusive with the other flags
+        const KSTOP_HANDLE = 4;
+    }
 }
 
-static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
+static RXSDT_DATA: Once<Box<[u8]>> = Once::new();
 
-static DATA: Once<Box<[u8]>> = Once::new();
-
-static KSTOP_WAITCOND: WaitCondition = WaitCondition::new();
-static KSTOP_FLAG: Mutex<bool> = Mutex::new(false);
+static KSTOP_FLAG: Mutex<L4, bool> = Mutex::new(false);
+static EXISTS_KSTOP_HANDLE: AtomicBool = AtomicBool::new(false);
 
 pub fn register_kstop(token: &mut CleanLockToken) -> bool {
-    *KSTOP_FLAG.lock() = true;
-    let mut waiters_awoken = KSTOP_WAITCOND.notify(token);
+    *KSTOP_FLAG.lock(token.token()) = true;
 
-    let fds: Vec<usize> = {
-        HANDLES
-            .read(token.token())
-            .iter()
-            .filter(|(_, handle)| handle.kind == HandleKind::ShutdownPipe)
-            .map(|(fd, _)| *fd)
-            .collect()
-    };
-
-    for fd in fds {
-        event::trigger(GlobalSchemes::Acpi.scheme_id(), fd, EVENT_READ, token);
-        waiters_awoken += 1;
-    }
-
-    if waiters_awoken == 0 {
+    if !EXISTS_KSTOP_HANDLE.load(Ordering::Relaxed) {
         error!("No userspace ACPI handler was notified when trying to shutdown. This is bad.");
         // Let the kernel shutdown without ACPI.
         return false;
     }
+    crate::event::trigger(
+        GlobalSchemes::Acpi.scheme_id(),
+        HandleBits::KSTOP_HANDLE.bits(),
+        EventFlags::EVENT_READ,
+        token,
+    );
 
     // TODO: Context switch directly to the waiting context, to avoid annoying timeouts.
     true
@@ -86,7 +67,7 @@ impl AcpiScheme {
 
         let mut data_init = false;
 
-        DATA.call_once(|| {
+        RXSDT_DATA.call_once(|| {
             data_init = true;
 
             let table = match RXSDT_ENUM.get() {
@@ -108,229 +89,70 @@ impl AcpiScheme {
 }
 
 impl KernelScheme for AcpiScheme {
-    fn scheme_root(&self, token: &mut CleanLockToken) -> Result<usize> {
-        let fd = HANDLES.write(token.token()).insert(Handle {
-            kind: HandleKind::SchemeRoot,
-            stat: false,
-        });
-
-        Ok(fd)
+    fn scheme_root(&self, _token: &mut CleanLockToken) -> Result<usize> {
+        Ok((HandleBits::CAN_READ_RXSDT | HandleBits::CAN_REGISTER_KSTOP).bits())
     }
     fn kopenat(
         &self,
         id: usize,
-        user_buf: StrOrBytes,
-        flags: usize,
+        path: StrOrBytes,
+        _flags: usize,
         _fcntl_flags: u32,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
+        caller: CallerCtx,
+        _token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
-        if !matches!(
-            HANDLES.read(token.token()).get(id)?.kind,
-            HandleKind::SchemeRoot
-        ) {
-            return Err(Error::new(EACCES));
-        }
+        let bits = HandleBits::from_bits_retain(id);
 
-        let path = user_buf
-            .as_str()
-            .or(Err(Error::new(EINVAL)))?
-            .trim_start_matches('/');
-
-        if ctx.uid != 0 {
-            return Err(Error::new(EACCES));
-        }
-        if flags & O_CREAT == O_CREAT {
-            return Err(Error::new(EROFS));
-        }
-        if flags & O_EXCL == O_EXCL || flags & O_SYMLINK == O_SYMLINK {
-            return Err(Error::new(EINVAL));
-        }
-        if flags & O_ACCMODE != O_RDONLY && flags & O_STAT != O_STAT {
-            return Err(Error::new(EROFS));
-        }
-        let (handle_kind, int_flags) = match path {
-            "" => {
-                if flags & O_DIRECTORY != O_DIRECTORY && flags & O_STAT != O_STAT {
-                    return Err(Error::new(EISDIR));
+        let new_bits = match path.as_bytes() {
+            b"" | b"/" => bits,
+            b"kstop" | b"/kstop" => {
+                // TODO: can the uid check be removed?
+                if caller.uid != 0 || !bits.contains(HandleBits::CAN_REGISTER_KSTOP) {
+                    return Err(Error::new(EACCES));
                 }
-
-                (HandleKind::TopLevel, InternalFlags::POSITIONED)
-            }
-            "rxsdt" => {
-                if flags & O_DIRECTORY == O_DIRECTORY && flags & O_STAT != O_STAT {
-                    return Err(Error::new(ENOTDIR));
-                }
-                (HandleKind::Rxsdt, InternalFlags::POSITIONED)
-            }
-            "kstop" => {
-                if flags & O_DIRECTORY == O_DIRECTORY && flags & O_STAT != O_STAT {
-                    return Err(Error::new(ENOTDIR));
-                }
-                (HandleKind::ShutdownPipe, InternalFlags::empty())
+                EXISTS_KSTOP_HANDLE.store(true, Ordering::Relaxed);
+                HandleBits::KSTOP_HANDLE
             }
             _ => return Err(Error::new(ENOENT)),
         };
-
-        let fd = HANDLES.write(token.token()).insert(Handle {
-            kind: handle_kind,
-            // TODO: Redundant
-            stat: flags & O_STAT == O_STAT,
-        });
-
-        Ok(OpenResult::SchemeLocal(fd, int_flags))
+        Ok(OpenResult::SchemeLocal(
+            new_bits.bits(),
+            InternalFlags::empty(),
+        ))
     }
-    fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
-        let handles = HANDLES.read(token.token());
-        let handle = handles.get(id)?;
-
-        if handle.stat {
-            return Err(Error::new(EBADF));
-        }
-
-        Ok(match handle.kind {
-            HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?.len() as u64,
-            HandleKind::ShutdownPipe => 1,
-            HandleKind::TopLevel => 0,
-            HandleKind::SchemeRoot => return Err(Error::new(EBADF))?,
-        })
-    }
-    // TODO
-    fn fevent(
+    fn kcall(
         &self,
-        id: usize,
-        _flags: EventFlags,
-        token: &mut CleanLockToken,
-    ) -> Result<EventFlags> {
-        let handles = HANDLES.read(token.token());
-        let handle = handles.get(id)?;
-
-        if handle.stat {
-            return Err(Error::new(EBADF));
-        }
-
-        Ok(EventFlags::empty())
-    }
-    fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        HANDLES.write(token.token()).remove(id)?;
-        Ok(())
-    }
-    fn kreadoff(
-        &self,
-        id: usize,
-        dst_buf: UserSliceWo,
-        offset: u64,
-        _flags: u32,
-        _stored_flags: u32,
+        fds: &[usize],
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let Ok(offset) = usize::try_from(offset) else {
-            return Ok(0);
-        };
+        let [handle] = <&[usize; 1]>::try_from(fds)
+            .map_err(|_| Error::new(EINVAL))?
+            .map(HandleBits::from_bits_retain);
+        let verb = metadata
+            .get(0)
+            .copied()
+            .and_then(AcpiVerb::try_from_raw)
+            .ok_or(Error::new(EINVAL))?;
 
-        let handle = *HANDLES.read(token.token()).get(id)?;
-
-        if handle.stat {
-            return Err(Error::new(EBADF));
-        }
-
-        let data = match handle.kind {
-            HandleKind::ShutdownPipe => {
-                if dst_buf.is_empty() {
-                    return Ok(0);
+        match verb {
+            AcpiVerb::ReadRxsdt => {
+                if !handle.contains(HandleBits::CAN_READ_RXSDT) || !flags.contains(CallFlags::READ)
+                {
+                    return Err(Error::new(EINVAL));
                 }
-
-                loop {
-                    let flag_guard = KSTOP_FLAG.lock();
-                    let mut token = token.downgrade();
-
-                    if *flag_guard {
-                        break;
-                    } else if !KSTOP_WAITCOND.wait(flag_guard, "waiting for kstop", &mut token) {
-                        return Err(Error::new(EINTR));
-                    }
-                }
-
-                return dst_buf.copy_exactly(&[0x42]).map(|()| 1);
+                let src = RXSDT_DATA.get().ok_or(Error::new(EBADFD))?;
+                payload.copy_common_bytes_from_slice(src)?;
+                Ok(src.len())
             }
-            HandleKind::Rxsdt => DATA.get().ok_or(Error::new(EBADFD))?,
-            HandleKind::TopLevel => return Err(Error::new(EISDIR)),
-            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
-        };
-
-        let src_offset = core::cmp::min(offset, data.len());
-        let src_buf = data
-            .get(src_offset..)
-            .expect("expected data to be at least data.len() bytes long");
-
-        dst_buf.copy_common_bytes_from_slice(src_buf)
-    }
-    fn getdents(
-        &self,
-        id: usize,
-        buf: UserSliceWo,
-        header_size: u16,
-        opaque: u64,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        let Handle {
-            kind: HandleKind::TopLevel,
-            ..
-        } = HANDLES.read(token.token()).get(id)?
-        else {
-            return Err(Error::new(ENOTDIR));
-        };
-
-        let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
-        if opaque == 0 {
-            buf.entry(DirEntry {
-                kind: DirentKind::Regular,
-                name: "rxsdt",
-                inode: 0,
-                next_opaque_id: 1,
-            })?;
-        }
-        if opaque <= 1 {
-            buf.entry(DirEntry {
-                kind: DirentKind::Socket,
-                name: "kstop",
-                inode: 0,
-                next_opaque_id: u64::MAX,
-            })?;
-        }
-        Ok(buf.finalize())
-    }
-    fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
-        //TODO: construct useful path?
-        buf.copy_common_bytes_from_slice("/scheme/kernel.acpi/".as_bytes())
-    }
-    fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let handles = HANDLES.read(token.token());
-        let handle = handles.get(id)?;
-
-        buf.copy_exactly(&match handle.kind {
-            HandleKind::Rxsdt => {
-                let data = DATA.get().ok_or(Error::new(EBADFD))?;
-
-                Stat {
-                    st_mode: MODE_FILE,
-                    st_size: data.len().try_into().unwrap_or(u64::MAX),
-                    ..Default::default()
+            AcpiVerb::CheckShutdown => {
+                if handle != HandleBits::KSTOP_HANDLE {
+                    return Err(Error::new(EINVAL));
                 }
+                Ok(usize::from(*KSTOP_FLAG.lock(token.token())))
             }
-            HandleKind::TopLevel => Stat {
-                st_mode: MODE_DIR,
-                st_size: 0,
-                ..Default::default()
-            },
-            HandleKind::ShutdownPipe => Stat {
-                st_mode: MODE_CHR,
-                st_size: 1,
-                ..Default::default()
-            },
-            HandleKind::SchemeRoot => return Err(Error::new(EBADF)),
-        })?;
-
-        Ok(())
+        }
     }
 }

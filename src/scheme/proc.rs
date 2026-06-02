@@ -668,6 +668,7 @@ impl KernelScheme for ProcScheme {
             ProcSchemeVerb::Iopl => context::current()
                 .write(token.token())
                 .set_userspace_io_allowed(true),
+            _ => return Err(Error::new(EINVAL)),
         }
         Ok(0)
     }
