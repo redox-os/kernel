@@ -589,7 +589,9 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<usize> {
         Err(Error::new(EBADF))
     }
-    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize>;
+    fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
+        Err(Error::new(EOPNOTSUPP))
+    }
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
