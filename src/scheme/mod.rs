@@ -590,16 +590,16 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EBADF))
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize>;
-    fn kfutimens(&self, id: usize, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
-        Err(Error::new(EBADF))
-    }
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
+    // SYS_FSTATVFS is removed, this still exists as the memory scheme implements it to allow df to show memory usage.
     fn kfstatvfs(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
         Err(Error::new(EBADF))
     }
 
+    // SYS_GETDENTS is removed, but this is still used by the irq, acpi and sys schemes. TODO:
+    // outsource sys scheme to userspace and switch to a non-filesystem API for acpi and irq?
     fn getdents(
         &self,
         id: usize,
@@ -611,17 +611,14 @@ pub trait KernelScheme: Send + Sync + 'static {
         Err(Error::new(EOPNOTSUPP))
     }
 
+    // SYS_FSYNC is deprecated, but many schemes still implement the corresponding std_fs_call, so
+    // this should be kept for now.
     fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
     }
-    fn ftruncate(&self, id: usize, len: usize, token: &mut CleanLockToken) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
+
     fn fsize(&self, id: usize, token: &mut CleanLockToken) -> Result<u64> {
         Err(Error::new(ESPIPE))
-    }
-    fn fchmod(&self, id: usize, new_mode: u16, token: &mut CleanLockToken) -> Result<()> {
-        Err(Error::new(EBADF))
     }
     fn fchown(
         &self,
@@ -676,15 +673,6 @@ pub trait KernelScheme: Send + Sync + 'static {
         token: &mut CleanLockToken,
     ) -> Result<()> {
         Err(Error::new(ENOENT))
-    }
-    fn relpathat(
-        &self,
-        dirfd: usize,
-        fd: usize,
-        payload: UserSliceRo,
-        token: &mut CleanLockToken,
-    ) -> Result<usize> {
-        Err(Error::new(EOPNOTSUPP))
     }
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         Ok(())
@@ -753,19 +741,16 @@ pub trait KernelScheme: Send + Sync + 'static {
         let metadata = StdFsCallMeta::new(kind, arg1, arg2);
         use StdFsCallKind::*;
         match kind {
-            Relpathat => {
-                if fds.len() != 2 {
-                    return Err(Error::new(EINVAL));
-                }
-                self.relpathat(fds[0], fds[1], payload.into_ro()?, token)
-            }
+            // Seems unlikely any kernel scheme will implement this. If so, it can be added back to
+            // this trait.
+            Relpathat => Err(Error::new(EOPNOTSUPP)),
+
             _ => {
                 if fds.len() != 1 {
                     return Err(Error::new(EINVAL));
                 }
                 let id = fds[0];
                 match kind {
-                    Fchmod => self.fchmod(id, metadata.arg1 as u16, token).map(|_| 0),
                     Getdents => self.getdents(
                         id,
                         payload.into_wo()?,
@@ -776,8 +761,12 @@ pub trait KernelScheme: Send + Sync + 'static {
                     Fstat => self.kfstat(id, payload.into_wo()?, token).map(|_| 0),
                     Fstatvfs => self.kfstatvfs(id, payload.into_wo()?, token).map(|_| 0),
                     Fsync => self.fsync(id, token).map(|_| 0),
-                    Ftruncate => self.ftruncate(id, metadata.arg1 as usize, token).map(|_| 0),
-                    Futimens => self.kfutimens(id, payload.into_ro()?, token),
+
+                    // The syscalls for these have been replaced by std_fs_call, and the only
+                    // scheme that used to provide a non-default impl was UserScheme. Preserve the
+                    // old default behavior for all other schemes.
+                    Ftruncate | Futimens | Fchmod => Err(Error::new(EBADF)),
+
                     /* TODO: Support Fchown and Unlinkat using std_fs_call
                     Fchown => self.kstdfscall(fds, kind, desc, payload, flags, metadata, token),
                     Unlinkat => self.kstdfscall(fds, kind, payload, metadata, &caller).map(|_| 0)

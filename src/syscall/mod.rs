@@ -4,8 +4,6 @@
 
 extern crate syscall;
 
-use syscall::{dirent::DirentHeader, CallFlags, RwFlags, EINVAL};
-
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -15,8 +13,8 @@ pub use self::{fs::*, futex::futex, process::*, time::*, usercopy::validate_regi
 use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
-    error::{Error, Result, ENOSYS},
-    flag::{EventFlags, MapFlags},
+    error::{Error, Result, EINVAL, ENOSYS},
+    flag::{CallFlags, EventFlags, MapFlags, RwFlags},
     number::*,
     usercopy::UserSlice,
 };
