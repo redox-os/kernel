@@ -103,7 +103,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             },
             d
         ),
-        SYS_FCHMOD => format!("fchmod({}, {:#o})", b, c),
         SYS_FCHOWN => format!("fchown({}, {}, {})", b, c, d),
         SYS_FCNTL => format!(
             "fcntl({}, {} ({}), {:#X})",
@@ -134,22 +133,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             b,
             UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
         ),
-        SYS_FSTATVFS => format!("fstatvfs({}, {:#X}, {})", b, c, d),
         SYS_FSYNC => format!("fsync({})", b),
-        SYS_FTRUNCATE => format!("ftruncate({}, {})", b, c),
-        SYS_FUTIMENS => format!(
-            "futimens({}, {:?})",
-            b,
-            UserSlice::ro(c, d).and_then(|buf| {
-                let mut times = vec![unsafe { buf.read_exact::<TimeSpec>()? }];
-
-                // One or two timespecs
-                if let Some(second) = buf.advance(size_of::<TimeSpec>()) {
-                    times.push(unsafe { second.read_exact::<TimeSpec>()? });
-                }
-                Ok(times)
-            }),
-        ),
         SYS_CALL => format!(
             "call({b}, {c:x}+{d}, {:?}, {:0x?}",
             CallFlags::from_bits_retain(e & !0xff),
@@ -169,15 +153,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             d,
             e,
             f
-        ),
-        SYS_MKNS => format!(
-            "mkns({:p} len: {})",
-            // TODO: Print out all scheme names?
-
-            // Simply printing out simply the pointers and lengths may not provide that much useful
-            // debugging information, so only print the raw args.
-            b as *const u8,
-            c,
         ),
         SYS_MPROTECT => format!("mprotect({:#X}, {}, {:?})", b, c, MapFlags::from_bits(d)),
         SYS_MREMAP => format!("mremap({:#X}, {:#X}, {:#X}, {:#X}, {:#X})", b, c, d, e, f),
