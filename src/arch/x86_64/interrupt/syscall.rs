@@ -181,6 +181,8 @@ pub unsafe extern "C" fn syscall_instruction() {
     xor rcx, rcx
     xor r11, r11
     iretq
+    .globl __syscall_instruction_end
+__syscall_instruction_end:
     ",
 
     sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
@@ -192,4 +194,5 @@ pub unsafe extern "C" fn syscall_instruction() {
 unsafe extern "C" {
     // TODO: macro?
     pub fn enter_usermode();
+    pub fn __syscall_instruction_end();
 }
