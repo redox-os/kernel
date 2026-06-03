@@ -9,12 +9,12 @@ use rmm::Arch;
 
 #[cfg(feature = "profiling")]
 use crate::arch::{idt::Idt, interrupt::irq::aux_timer};
-#[cfg(target_arch = "x86_64")]
-use crate::arch::{
-    interrupt::{self, InterruptStack},
-    CurrentRmmArch,
-};
+
 use crate::{
+    arch::{
+        interrupt::{self, InterruptStack},
+        CurrentRmmArch,
+    },
     cpu_set::LogicalCpuId,
     memory::VirtualAddress,
     percpu::PercpuBlock,
@@ -203,6 +203,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
 
     let mut len = 4;
 
+    #[cfg(feature = "profiling")]
     if user_not_kernel {
         unsafe {
             walk_ustack(stack.preserved.rbp, &mut buf, &mut len);
@@ -220,6 +221,7 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
 
     let _ = unsafe { profiling.extend(&buf[..len]) };
 }
+#[cfg(feature = "profiling")]
 unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
     // Runs inside an NMI handler!
 
@@ -264,6 +266,7 @@ unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
         *len = i + 1;
     }
 }
+#[cfg(feature = "profiling")]
 unsafe fn walk_kstack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
     // Runs inside an NMI handler!
 
