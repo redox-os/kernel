@@ -16,6 +16,7 @@ use alloc::sync::Arc;
 use core::{
     cell::{Cell, RefCell},
     hint, matches, mem,
+    num::NonZeroU128,
     option::Option::{None, Some},
     sync::atomic::Ordering,
     u64,
@@ -57,7 +58,7 @@ const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
 unsafe fn update_runnable(
     context: &mut Context,
     cpu_id: LogicalCpuId,
-    switch_time: u128,
+    switch_time: NonZeroU128,
 ) -> UpdateResult {
     // Ignore contexts that are already running.
     if context.running {
@@ -153,6 +154,7 @@ pub enum SwitchResult {
 ///   to an idle context.
 pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let switch_time = crate::time::monotonic(token);
+    let switch_time_nonzero = NonZeroU128::try_from(switch_time).unwrap_or(NonZeroU128::MIN);
 
     let percpu = PercpuBlock::current();
     cpu_stats::add_context_switch();
@@ -185,7 +187,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    let wakeups = wakeup_contexts(token, switch_time);
+    let wakeups = wakeup_contexts(token, switch_time_nonzero);
     let wakeups_len = wakeups.len();
 
     if wakeups_len > 0 {
@@ -223,7 +225,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         token,
         percpu,
         cpu_id,
-        switch_time,
+        switch_time_nonzero,
         percpu_nanos,
         was_idle,
         &mut prev_context_guard,
@@ -330,7 +332,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
 fn wakeup_contexts(
     token: &mut CleanLockToken,
-    switch_time: u128,
+    switch_time: NonZeroU128,
 ) -> SmallVec<[WeakContextRef; 16]> {
     // TODO: Optimise this somehow. Perhaps using a separate timer queue?
     let mut wakeups = SmallVec::new();
@@ -386,7 +388,7 @@ fn select_next_context(
     token: &mut CleanLockToken,
     percpu: &PercpuBlock,
     cpu_id: LogicalCpuId,
-    switch_time: u128,
+    switch_time: NonZeroU128,
     elapsed_time: u64,
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
