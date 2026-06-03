@@ -16,6 +16,7 @@ use crate::arch::{
 };
 use crate::{
     cpu_set::LogicalCpuId,
+    memory::VirtualAddress,
     percpu::PercpuBlock,
     syscall::{error::*, usercopy::UserSliceWo},
 };
@@ -160,36 +161,114 @@ pub fn drain_buffer(cpu_num: LogicalCpuId, buf: UserSliceWo) -> Result<usize> {
 
 #[cfg(target_arch = "x86_64")]
 pub unsafe fn nmi_handler(stack: &InterruptStack) {
+    // Inside an NMI handler, so don't acquire any locks or trigger any page faults or other
+    // exceptions!
+
     if cfg!(not(feature = "profiling")) {
         return;
     }
 
-    let Some(profiling) = crate::percpu::PercpuBlock::current().profiling else {
+    let percpu = crate::percpu::PercpuBlock::current();
+    let Some(profiling) = percpu.profiling else {
         return;
     };
     if !IS_PROFILING.load(Ordering::Relaxed) {
         return;
     }
-    if stack.iret.cs & 0b11 == 0b11 {
+    let user_not_kernel = if stack.iret.cs & 0b11 == 0b11 {
         profiling.nmi_ucount.fetch_add(1, Ordering::Relaxed);
-        return;
+
+        true
     } else if stack.iret.rflags & (1 << 9) != 0 {
         // Interrupts were enabled, i.e. we were in kmain, so ignore.
         return;
     } else {
         profiling.nmi_kcount.fetch_add(1, Ordering::Relaxed);
+
+        false
     };
 
     let mut buf = [0_usize; 32];
-    buf[0] = stack.iret.rip & !(1 << 63);
-    buf[1] = unsafe { x86::time::rdtsc() } as usize;
+    buf[0] = 0xfedfac00; // allows 8-bit length
+    buf[1] = stack.iret.rip;
+    buf[2] = unsafe { x86::time::rdtsc() } as usize;
 
-    let mut bp = stack.preserved.rbp;
+    #[cfg(feature = "profiling")]
+    {
+        buf[3] = percpu
+            .switch_internals
+            .current_dbg_id
+            .load(Ordering::Relaxed) as usize;
+    }
 
-    let mut len = 2;
+    let mut len = 4;
+
+    if user_not_kernel {
+        unsafe {
+            walk_ustack(stack.preserved.rbp, &mut buf, &mut len);
+        }
+    } else {
+        // TODO: Support walking past a syscall boundary? If so, should be sufficient to check
+        // against syscall_instruction, then get registers from InterruptStack and call walk_ustack
+        // on the rest.
+        unsafe {
+            walk_kstack(stack.preserved.rbp, &mut buf, &mut len);
+        }
+    }
+
+    buf[0] |= len;
+
+    let _ = unsafe { profiling.extend(&buf[..len]) };
+}
+unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
+    // Runs inside an NMI handler!
+
+    // It's pretty unsafe to do this without locks, but we can pretend it's the CPU that is
+    // resolving the mappings. We already track logical CPU usage bits in each address space,
+    // forbidding any page table modifications until the kernel has switched away from this
+    // context, and any modifications will also need to wait for TLB shootdown, which this NMI will
+    // postpone due to disabled interrupts.
+    let mapper =
+        unsafe { rmm::PageMapper::<CurrentRmmArch, ()>::current(rmm::TableKind::User, ()) };
 
     #[expect(clippy::needless_range_loop)]
-    for i in 2..32 {
+    for i in *len..32 {
+        // Unlike in kernel mode, we don't know where the user executable starts or ends, but this
+        // can be post-processed later by profiled. However, some criteria can be applied such as
+        // the 16-byte alignedness of bp, and whether the next page is mapped at all.
+
+        if bp >= crate::USER_END_OFFSET
+            || bp % 16 > 0
+            || !CurrentRmmArch::virt_is_valid(VirtualAddress::new(bp))
+        {
+            break;
+        }
+        // Since we are reading 16 bytes and bp is aligned to 16 bytes, this can't span a page
+        // boundary!
+
+        let Some((bp_frame, bp_flags)) = mapper.translate(VirtualAddress::new(bp)) else {
+            break;
+        };
+        if !bp_flags.has_user() || !bp_flags.has_write() {
+            break;
+        }
+
+        let [next_bp, ip] =
+            unsafe { (CurrentRmmArch::phys_to_virt(bp_frame).data() as *const [usize; 2]).read() };
+        if ip >= crate::USER_END_OFFSET || !CurrentRmmArch::virt_is_valid(VirtualAddress::new(ip)) {
+            break;
+        }
+
+        buf[i] = ip;
+        bp = next_bp;
+        *len = i + 1;
+    }
+}
+unsafe fn walk_kstack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
+    // Runs inside an NMI handler!
+
+    #[expect(clippy::needless_range_loop)]
+    for i in *len..32 {
         if bp < CurrentRmmArch::PHYS_OFFSET
             || bp.saturating_add(16) >= CurrentRmmArch::PHYS_OFFSET + crate::PML4_SIZE
         {
@@ -205,10 +284,8 @@ pub unsafe fn nmi_handler(stack: &InterruptStack) {
         }
         buf[i] = ip;
 
-        len = i + 1;
+        *len = i + 1;
     }
-
-    let _ = unsafe { profiling.extend(&buf[..len]) };
 }
 
 static NUM_ORDINARY_CPUS: AtomicU32 = AtomicU32::new(u32::MAX);
@@ -328,4 +405,21 @@ pub fn maybe_setup_timer(idt: &mut Idt, cpu_id: LogicalCpuId) {
     }
     idt.entries[32].set_func(aux_timer);
     idt.set_reserved_mut(32, true);
+}
+#[cfg(feature = "profiling")]
+pub static DBG_ID_MAP: crate::sync::RwLock<
+    crate::sync::L1,
+    hashbrown::HashMap<u32, arrayvec::ArrayString<32>>,
+> = crate::sync::RwLock::new(hashbrown::HashMap::with_hasher(
+    hashbrown::hash_map::DefaultHashBuilder::new(),
+));
+
+#[cfg(feature = "profiling")]
+pub fn lookup_dbg_id(
+    id: u32,
+    token: &mut crate::sync::CleanLockToken,
+) -> Option<arrayvec::ArrayString<32>> {
+    // TODO: Map is necessary to track contexts that were removed afterwards. However, this
+    // function should also scan for contexts that currently exist.
+    DBG_ID_MAP.read(token.token()).get(&id).copied()
 }

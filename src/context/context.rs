@@ -76,7 +76,7 @@ pub enum HardBlockedReason {
     NotYetStarted,
 }
 
-const CONTEXT_NAME_CAPAC: usize = 32;
+pub const CONTEXT_NAME_CAPAC: usize = 32;
 
 #[derive(Debug)]
 pub enum SyscallFrame {

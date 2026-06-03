@@ -291,6 +291,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             prev_context.inside_syscall =
                 percpu.inside_syscall.replace(next_context.inside_syscall);
 
+            #[cfg(feature = "profiling")]
+            {
+                percpu
+                    .switch_internals
+                    .current_dbg_id
+                    .store(next_context.debug_id, Ordering::Relaxed);
+            }
+
             #[cfg(feature = "syscall_debug")]
             {
                 prev_context.syscall_debug_info = percpu
@@ -645,6 +653,10 @@ pub struct ContextSwitchPercpu {
 
     current_ctxt: RefCell<Option<Arc<ContextLock>>>,
 
+    // TODO: just access current_ctxt directly?
+    #[cfg(feature = "profiling")]
+    pub(crate) current_dbg_id: core::sync::atomic::AtomicU32,
+
     /// The idle process.
     idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
     pub(crate) being_sigkilled: Cell<bool>,
@@ -659,6 +671,9 @@ impl ContextSwitchPercpu {
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
+
+            #[cfg(feature = "profiling")]
+            current_dbg_id: core::sync::atomic::AtomicU32::new(!0),
         }
     }
 

@@ -1314,14 +1314,15 @@ impl ContextHandle {
             }
             ContextHandle::Attr => {
                 let info = unsafe { buf.read_exact::<ProcSchemeAttrs>()? };
-                let mut guard = context.write(token.token());
 
                 let len = info
                     .debug_name
                     .iter()
                     .position(|c| *c == 0)
                     .unwrap_or(info.debug_name.len())
-                    .min(guard.name.capacity());
+                    .min(crate::context::context::CONTEXT_NAME_CAPAC);
+
+                let mut guard = context.write(token.token());
                 let debug_name = core::str::from_utf8(&info.debug_name[..len])
                     .map_err(|_| Error::new(EINVAL))?;
                 guard.name.clear();
@@ -1331,6 +1332,16 @@ impl ContextHandle {
                 guard.euid = info.euid;
                 guard.egid = info.egid;
                 guard.prio = (info.prio as usize).min(39);
+
+                #[cfg(feature = "profiling")]
+                {
+                    let debug_id = guard.debug_id;
+                    let debug_name = guard.name;
+                    drop(guard);
+                    crate::profiling::DBG_ID_MAP
+                        .write(token.token())
+                        .insert(debug_id, debug_name);
+                }
                 Ok(size_of::<ProcSchemeAttrs>())
             }
             ContextHandle::OpenViaDup => {
