@@ -6,7 +6,10 @@ use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
 };
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::{
+    num::NonZeroU128,
+    sync::atomic::{AtomicU32, Ordering},
+};
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use rmm::Arch;
 use syscall::EINTR;
@@ -153,7 +156,9 @@ pub fn futex(
                 {
                     let mut context = context_lock.write(token.token());
 
-                    context.wake = timeout_opt.map(|time| time.to_nanos());
+                    context.wake = timeout_opt
+                        .map(|time| time.to_nanos())
+                        .and_then(|time| NonZeroU128::try_from(time).ok());
                     if let Some((tctl, pctl, _)) = context.sigcontrol()
                         && tctl.currently_pending_unblocked(pctl) != 0
                     {

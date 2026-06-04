@@ -2,7 +2,7 @@ use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of, ManuallyDrop},
-    num::NonZeroUsize,
+    num::{NonZeroU128, NonZeroUsize},
     sync::atomic::{AtomicU32, Ordering},
 };
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
@@ -120,7 +120,7 @@ pub struct Context {
     // TODO: Store in user memory?
     pub syscall_tail: SyscallFrame,
     /// Context should wake up at specified time
-    pub wake: Option<u128>,
+    pub wake: Option<NonZeroU128>,
     /// The architecture specific context
     pub arch: arch::Context,
     /// Kernel FX - used to store SIMD and FPU registers on context switch

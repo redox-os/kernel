@@ -1,6 +1,7 @@
 use alloc::sync::Arc;
 use core::{
     hash::{Hash, Hasher},
+    num::NonZeroU128,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
@@ -27,7 +28,7 @@ int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 pub struct EventQueue {
     id: EventQueueId,
     queue: WaitQueue<Event>,
-    timeout_opt: Mutex<L1, Option<u128>>,
+    timeout_opt: Mutex<L1, Option<NonZeroU128>>,
 }
 
 impl EventQueue {
@@ -59,7 +60,7 @@ impl EventQueue {
     pub fn read_with_timeout(
         &self,
         buf: UserSliceWo,
-        timeout: u128,
+        timeout: NonZeroU128,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         context::current().write(token.token()).wake = Some(timeout);
@@ -82,7 +83,7 @@ impl EventQueue {
                 } else {
                     let mut time = crate::time::monotonic(token);
                     time += (event.data * 1_000_000) as u128;
-                    *self.timeout_opt.lock(token.token()) = Some(time);
+                    *self.timeout_opt.lock(token.token()) = NonZeroU128::try_from(time).ok();
                 }
 
                 continue;
