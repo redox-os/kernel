@@ -57,7 +57,10 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         guard.status = context::Status::Dead { excp };
         // TODO: context should be dropped immediately but it's not the case.
         //       we drop kstack to prevent 32 memory pages (128K) leaking
-        drop(guard.kstack.take());
+        // TODO: can't drop the kstack here immediately, as this very function runs on that stack.
+        //       until the Arc leaks can be found, consider using a global "garbage collection
+        //       queue"
+        // drop(guard.kstack.take());
 
         guard.owner_proc_id
     };
