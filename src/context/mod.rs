@@ -138,6 +138,13 @@ pub fn init(token: &mut CleanLockToken) {
     context.name.clear();
     context.name.push_str("[kmain]");
 
+    #[cfg(feature = "profiling")]
+    {
+        crate::profiling::DBG_ID_MAP
+            .write(token.token())
+            .insert(context.debug_id, context.name);
+    }
+
     self::arch::EMPTY_CR3.call_once(|| RmmA::table(TableKind::User));
 
     context.status = Status::Runnable;

@@ -235,4 +235,25 @@ impl KernelScheme for DebugScheme {
 
         Ok(byte_count)
     }
+    #[cfg(feature = "profiling")]
+    fn kcall(
+        &self,
+        fds: &[usize],
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let &[fd] = <&[usize; 1]>::try_from(fds).map_err(|_| Error::new(EBADF))?;
+        // must be profiling pipe!
+        if HANDLES.read(token.token()).get(fd)?.num > u32::MAX as usize {
+            return Err(Error::new(EBADF));
+        }
+        let src = crate::profiling::lookup_dbg_id(
+            metadata.get(0).copied().unwrap_or(u64::MAX) as u32,
+            token,
+        )
+        .ok_or(Error::new(ENOENT))?;
+        payload.copy_common_bytes_from_slice(src.as_bytes())
+    }
 }
