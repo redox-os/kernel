@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::{CallerCtx, KernelSchemes, OpenResult};
-use ::syscall::{ProcSchemeAttrs, SigProcControl, Sigcontrol};
+use ::syscall::{CallFlags, ProcSchemeAttrs, SigProcControl, Sigcontrol};
 use alloc::{
     boxed::Box,
     string::String,
@@ -30,7 +30,7 @@ use alloc::{
 use core::{
     mem::size_of,
     num::NonZeroUsize,
-    slice, str,
+    str,
     sync::atomic::{AtomicUsize, Ordering},
 };
 use hashbrown::{
@@ -93,13 +93,7 @@ fn try_stop_context<T>(
     ret
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RegsKind {
-    Float,
-    Int,
-    Env,
-}
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 enum ContextHandle {
     // Opened by the process manager, after which it is locked. This capability is used to open
     // Attr handles, to set ens/euid/egid/pid.
@@ -110,9 +104,7 @@ enum ContextHandle {
         privileged: bool,
     }, // can write ContextVerb
 
-    Regs(RegsKind),
     Sighandler,
-    Start,
     NewFiletable {
         filetable: Arc<LockedFdTbl>,
         binary_format: bool,
@@ -144,9 +136,6 @@ enum ContextHandle {
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
     // directory.
     OpenViaDup,
-    SchedAffinity,
-
-    MmapMinAddr(Arc<AddrSpaceWrapper>),
 }
 #[derive(Clone)]
 struct Handle {
@@ -171,8 +160,7 @@ pub fn foreach_addrsp(
         let Handle {
             kind:
                 ContextHandle::AddrSpace { addrspace, .. }
-                | ContextHandle::AwaitingAddrSpaceChange { new: addrspace, .. }
-                | ContextHandle::MmapMinAddr(addrspace),
+                | ContextHandle::AwaitingAddrSpaceChange { new: addrspace, .. },
             ..
         } = handle
         else {
@@ -233,22 +221,8 @@ impl ProcScheme {
             ),
             "current-addrspace" => (ContextHandle::CurrentAddrSpace, false),
             "current-filetable" => (ContextHandle::CurrentFiletable, false),
-            "regs/float" => (ContextHandle::Regs(RegsKind::Float), false),
-            "regs/int" => (ContextHandle::Regs(RegsKind::Int), false),
-            "regs/env" => (ContextHandle::Regs(RegsKind::Env), false),
             "sighandler" => (ContextHandle::Sighandler, false),
-            "start" => (ContextHandle::Start, false),
             "open_via_dup" => (ContextHandle::OpenViaDup, false),
-            "mmap-min-addr" => (
-                ContextHandle::MmapMinAddr(Arc::clone(
-                    context
-                        .read(token.token())
-                        .addr_space()
-                        .map_err(|_| Error::new(ENOENT))?,
-                )),
-                false,
-            ),
-            "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status { privileged: false }, false),
             _ if path.starts_with("auth-") => {
                 let nonprefix = &path["auth-".len()..];
@@ -470,7 +444,7 @@ impl KernelScheme for ProcScheme {
                 );
             }
             Handle {
-                kind: ContextHandle::AddrSpace { addrspace } | ContextHandle::MmapMinAddr(addrspace),
+                kind: ContextHandle::AddrSpace { addrspace },
                 ..
             } => {
                 if let Some(addrspace) = Arc::into_inner(addrspace) {
@@ -655,12 +629,11 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
-        handle.kind.kcall(
-            fds,
+        handle.kind.specific_kcall(
             payload,
             flags,
             metadata,
-            Arc::clone(&handle.context.upgrade().ok_or(Error::new(ESRCH))?),
+            handle.context.upgrade().ok_or(Error::new(ESRCH))?,
             token,
         )
     }
@@ -821,7 +794,6 @@ impl KernelScheme for ProcScheme {
                         b"exclusive" => ContextHandle::AddrSpace {
                             addrspace: addrspace.try_clone(token)?,
                         },
-                        b"mmap-min-addr" => ContextHandle::MmapMinAddr(Arc::clone(addrspace)),
 
                         _ if buf.starts_with(GRANT_FD_PREFIX) => {
                             let string = core::str::from_utf8(&buf[GRANT_FD_PREFIX.len()..])
@@ -1021,45 +993,6 @@ impl ContextHandle {
                 }
                 Ok(words_read * size_of::<usize>())
             }
-            ContextHandle::Regs(kind) => match kind {
-                RegsKind::Float => {
-                    let regs = unsafe { buf.read_exact::<FloatRegisters>()? };
-
-                    try_stop_context(context, token, |context, _| {
-                        // NOTE: The kernel will never touch floats
-
-                        // Ignore the rare case of floating point
-                        // registers being uninitiated
-                        context.set_fx_regs(regs);
-
-                        Ok(size_of::<FloatRegisters>())
-                    })
-                }
-                RegsKind::Int => {
-                    let regs = unsafe { buf.read_exact::<IntRegisters>()? };
-
-                    try_stop_context(context, token, |context, _| match context.regs_mut() {
-                        None => {
-                            println!(
-                                "{}:{}: Couldn't read registers from stopped process",
-                                file!(),
-                                line!()
-                            );
-                            Err(Error::new(ENOTRECOVERABLE))
-                        }
-                        Some(stack) => {
-                            stack.load(&regs);
-
-                            Ok(size_of::<IntRegisters>())
-                        }
-                    })
-                }
-                RegsKind::Env => {
-                    let regs = unsafe { buf.read_exact::<EnvRegisters>()? };
-                    write_env_regs(context, regs, token)?;
-                    Ok(size_of::<EnvRegisters>())
-                }
-            },
             ContextHandle::Sighandler => {
                 let data = unsafe { buf.read_exact::<SetSighandlerData>()? };
 
@@ -1115,15 +1048,6 @@ impl ContextHandle {
 
                 Ok(size_of::<SetSighandlerData>())
             }
-            ContextHandle::Start => match context.write(token.token()).status {
-                ref mut status @ Status::HardBlocked {
-                    reason: HardBlockedReason::NotYetStarted,
-                } => {
-                    *status = Status::Runnable;
-                    Ok(buf.len())
-                }
-                _ => Err(Error::new(EINVAL)),
-            },
             ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } => {
                 Err(Error::new(EBADF))
             }
@@ -1209,25 +1133,6 @@ impl ContextHandle {
                 };
 
                 Ok(written)
-            }
-            Self::MmapMinAddr(ref addrspace) => {
-                let val = buf.read_usize()?;
-                if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
-                    return Err(Error::new(EINVAL));
-                }
-                let mut lock_token = token.token();
-                addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
-                Ok(size_of::<usize>())
-            }
-            Self::SchedAffinity => {
-                let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
-
-                context
-                    .write(token.token())
-                    .sched_affinity
-                    .override_from(&mask);
-
-                Ok(size_of_val(&mask))
             }
             ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
@@ -1397,56 +1302,6 @@ impl ContextHandle {
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self {
-            ContextHandle::Regs(kind) => {
-                union Output {
-                    float: FloatRegisters,
-                    int: IntRegisters,
-                    env: EnvRegisters,
-                }
-
-                let (output, size) = match kind {
-                    RegsKind::Float => {
-                        let context = context.read(token.token());
-                        // NOTE: The kernel will never touch floats
-
-                        (
-                            Output {
-                                float: context.get_fx_regs(),
-                            },
-                            size_of::<FloatRegisters>(),
-                        )
-                    }
-                    RegsKind::Int => {
-                        try_stop_context(context, token, |context, _| match context.regs() {
-                            None => {
-                                assert!(!context.running, "try_stop_context is broken, clearly");
-                                println!(
-                                    "{}:{}: Couldn't read registers from stopped process",
-                                    file!(),
-                                    line!()
-                                );
-                                Err(Error::new(ENOTRECOVERABLE))
-                            }
-                            Some(stack) => {
-                                let mut regs = IntRegisters::default();
-                                stack.save(&mut regs);
-                                Ok((Output { int: regs }, size_of::<IntRegisters>()))
-                            }
-                        })?
-                    }
-                    RegsKind::Env => (
-                        Output {
-                            env: read_env_regs(context, token)?,
-                        },
-                        size_of::<EnvRegisters>(),
-                    ),
-                };
-
-                let src_buf =
-                    unsafe { slice::from_raw_parts(&output as *const _ as *const u8, size) };
-
-                buf.copy_common_bytes_from_slice(src_buf)
-            }
             ContextHandle::AddrSpace { addrspace } => {
                 let Ok(offset) = usize::try_from(offset) else {
                     return Ok(0);
@@ -1487,18 +1342,6 @@ impl ContextHandle {
             }
 
             ContextHandle::Filetable { data, .. } => read_from(buf, data, offset),
-            ContextHandle::MmapMinAddr(addrspace) => {
-                let mut token = token.token();
-                let addr = addrspace.acquire_read(token.downgrade());
-                buf.write_usize(addr.mmap_min)?;
-                Ok(size_of::<usize>())
-            }
-            ContextHandle::SchedAffinity => {
-                let mask = context.read(token.token()).sched_affinity.to_raw();
-
-                buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
-                Ok(size_of_val(&mask))
-            } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
                 let status = {
                     let context = context.read(token.token());
@@ -1565,27 +1408,125 @@ impl ContextHandle {
             _ => Err(Error::new(EBADF)),
         }
     }
-    pub fn kcall(
+    pub fn specific_kcall(
         &self,
-        fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
         context: Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        let verb: u8 = metadata
+            .first()
+            .copied()
+            .and_then(|m| u8::try_from(m).ok())
+            .ok_or(Error::new(EINVAL))?;
+
         match self {
             ContextHandle::OpenViaDup => {
-                let verb: u8 = (*metadata.first().ok_or(Error::new(EINVAL))?)
-                    .try_into()
-                    .map_err(|_| Error::new(EINVAL))?;
                 let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
 
                 match verb {
-                    ProcSchemeVerb::Iopl => context::current()
-                        .write(token.token())
-                        .set_userspace_io_allowed(true),
-                    _ => return Err(Error::new(EINVAL)),
+                    ProcSchemeVerb::Iopl => {
+                        context.write(token.token()).set_userspace_io_allowed(true)
+                    }
+                    ProcSchemeVerb::Start => match context.write(token.token()).status {
+                        ref mut status @ Status::HardBlocked {
+                            reason: HardBlockedReason::NotYetStarted,
+                        } => {
+                            *status = Status::Runnable;
+                        }
+                        _ => return Err(Error::new(EINVAL)),
+                    },
+                    ProcSchemeVerb::SchedAffinity => {
+                        let requested_mask = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<crate::cpu_set::RawMask>()? })
+                        } else {
+                            None
+                        };
+
+                        if flags.contains(CallFlags::READ) {
+                            let mask = context.read(token.token()).sched_affinity.to_raw();
+
+                            payload.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
+                        }
+                        if let Some(new) = requested_mask {
+                            context
+                                .write(token.token())
+                                .sched_affinity
+                                .override_from(&new);
+                        }
+                    }
+                    ProcSchemeVerb::RegsInt => {
+                        let new_requested = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<IntRegisters>()? })
+                        } else {
+                            None
+                        };
+                        let mut old = IntRegisters::default();
+                        try_stop_context(context, token, |context, _| match context.regs_mut() {
+                            None => {
+                                println!(
+                                    "{}:{}: Couldn't read registers from stopped process",
+                                    file!(),
+                                    line!()
+                                );
+                                Err(Error::new(ENOTRECOVERABLE))
+                            }
+                            Some(stack) => {
+                                stack.save(&mut old);
+
+                                if let Some(regs) = new_requested {
+                                    stack.load(&regs);
+                                }
+
+                                Ok(size_of::<IntRegisters>())
+                            }
+                        })?;
+
+                        if flags.contains(CallFlags::READ) {
+                            payload.copy_exactly(&old)?;
+                        }
+                    }
+                    ProcSchemeVerb::RegsEnv => {
+                        let new_requested = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<EnvRegisters>()? })
+                        } else {
+                            None
+                        };
+
+                        if flags.contains(CallFlags::READ) {
+                            // TODO: avoid clone?
+                            let regs = read_env_regs(Arc::clone(&context), token)?;
+                            payload.copy_exactly(&regs)?;
+                        }
+                        if let Some(new) = new_requested {
+                            write_env_regs(context, new, token)?;
+                        }
+                    }
+                    ProcSchemeVerb::RegsFloat => {
+                        let new_requested = if flags.contains(CallFlags::WRITE) {
+                            Some(unsafe { payload.read_exact::<FloatRegisters>()? })
+                        } else {
+                            None
+                        };
+
+                        let old_regs = try_stop_context(context, token, |context, _| {
+                            // NOTE: The kernel will never touch floats
+
+                            // Ignore the rare case of floating point
+                            // registers being uninitiated
+                            let old = context.get_fx_regs();
+                            if let Some(new) = new_requested {
+                                context.set_fx_regs(new);
+                            }
+
+                            Ok(old)
+                        })?;
+                        if flags.contains(CallFlags::READ) {
+                            payload.copy_exactly(&old_regs)?;
+                        }
+                    }
                 }
                 Ok(0)
             }
@@ -1671,6 +1612,33 @@ impl ContextHandle {
                         Ok(0)
                     }
                 }
+            }
+            ContextHandle::AddrSpace { addrspace } => {
+                let verb = AddrSpaceVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
+
+                match verb {
+                    AddrSpaceVerb::MmapMin => {
+                        let requested_min = if flags.contains(CallFlags::WRITE) {
+                            let val = payload.read_usize()?;
+                            if val % PAGE_SIZE != 0 || val > crate::USER_END_OFFSET {
+                                return Err(Error::new(EINVAL));
+                            }
+                            Some(val)
+                        } else {
+                            None
+                        };
+                        if flags.contains(CallFlags::READ) {
+                            let mut token = token.token();
+                            let addr = addrspace.acquire_read(token.downgrade()).mmap_min;
+                            payload.write_usize(addr)?;
+                        }
+                        if let Some(val) = requested_min {
+                            let mut lock_token = token.token();
+                            addrspace.acquire_write(lock_token.downgrade()).mmap_min = val;
+                        }
+                    }
+                }
+                Ok(0)
             }
             _ => Err(Error::new(EBADF)),
         }
