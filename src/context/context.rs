@@ -497,6 +497,29 @@ impl Context {
     }
 }
 
+impl Ord for Context {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match other.wake.cmp(&self.wake) {
+            core::cmp::Ordering::Equal => self.pid.cmp(&other.pid),
+            other => other
+        }
+    }
+}
+
+impl PartialOrd for Context {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for Context {}
+
+impl PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        self.pid == other.pid
+    }
+}
+
 /// Wrapper struct for borrowing the syscall head or tail buf.
 #[derive(Debug)]
 pub struct BorrowedHtBuf {

@@ -3,7 +3,7 @@
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
 use alloc::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeSet, VecDeque, BinaryHeap},
     sync::{Arc, Weak},
 };
 use core::{num::NonZeroUsize, ops::Deref};
@@ -78,7 +78,7 @@ static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new())
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
 
 // Context that has been pushed out from RUN_CONTEXTS after being idle
-static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque::new());
+static IDLE_CONTEXTS: Mutex<L2, BinaryHeap<WeakContextRef>> = Mutex::new(BinaryHeap::new());
 
 pub struct RunContextData {
     queue: VecDeque<WeakContextRef>,
@@ -115,13 +115,13 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
     CONTEXTS.write(token)
 }
 
-pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<WeakContextRef>> {
+pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, BinaryHeap<WeakContextRef>> {
     IDLE_CONTEXTS.lock(token)
 }
 
 pub fn idle_contexts_try(
     token: LockToken<'_, L1>,
-) -> Option<MutexGuard<'_, L2, VecDeque<WeakContextRef>>> {
+) -> Option<MutexGuard<'_, L2, BinaryHeap<WeakContextRef>>> {
     IDLE_CONTEXTS.try_lock(token)
 }
 
@@ -254,7 +254,7 @@ pub fn spawn(
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
     let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
-    idle_contexts(token.downgrade()).push_back(run_ref);
+    idle_contexts(token.downgrade()).push(run_ref);
     contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)
