@@ -350,18 +350,18 @@ fn wakeup_contexts(
     let (mut idle_contexts, mut token) = idle_contexts.into_split();
     let len = idle_contexts.len();
     for _ in 0..len {
-        let Some(context_ref) = idle_contexts.pop_front() else {
+        let Some(context_ref) = idle_contexts.pop() else {
             break;
         };
         let Some(context) = context_ref.upgrade() else {
             continue;
         };
         if Arc::ptr_eq(&context, &current_context) {
-            idle_contexts.push_back(context_ref);
+            idle_contexts.push(context_ref);
             continue;
         }
         let Some(guard) = context.try_read(token.token()) else {
-            idle_contexts.push_back(context_ref);
+            idle_contexts.push(context_ref);
             continue;
         };
         if guard.status.is_soft_blocked() {
@@ -370,6 +370,8 @@ fn wakeup_contexts(
                     drop(guard);
                     wakeups.push(context_ref);
                     continue;
+                } else {
+                    break;
                 }
             }
         } else if guard.status.is_dead() {
@@ -384,7 +386,7 @@ fn wakeup_contexts(
         }
 
         drop(guard);
-        idle_contexts.push_back(context_ref);
+        idle_contexts.push(context_ref);
     }
     wakeups
 }
@@ -499,7 +501,7 @@ fn select_next_context(
             guard.rem_slice = 0;
             drop(guard);
             let removed_ref = contexts_data.queue.remove(i).unwrap();
-            idle_contexts(token.token()).push_back(removed_ref);
+            idle_contexts(token.token()).push(removed_ref);
             continue;
         }
 
@@ -620,7 +622,7 @@ fn select_next_context(
                     .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
             } else if !is_idle {
                 idle_contexts(token.token())
-                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+                    .push(WeakContextRef(Arc::downgrade(&prev_context_lock)));
             }
 
             return Some((chosen_guard, addr_space));
@@ -630,7 +632,7 @@ fn select_next_context(
     } else {
         if !is_idle {
             idle_contexts(token.token())
-                .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+                .push(WeakContextRef(Arc::downgrade(&prev_context_lock)));
         }
 
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
