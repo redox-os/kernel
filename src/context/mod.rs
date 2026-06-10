@@ -3,7 +3,7 @@
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
 use alloc::{
-    collections::{BTreeSet, VecDeque},
+    collections::{BTreeSet, VecDeque, BTreeMap},
     sync::{Arc, Weak},
 };
 use core::{num::NonZeroUsize, ops::Deref};
@@ -81,7 +81,8 @@ static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new(
 static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque::new());
 
 pub struct RunContextData {
-    queue: VecDeque<WeakContextRef>,
+    // queue: VecDeque<WeakContextRef>,
+    queue: BTreeMap<(u64, u64, u32), (u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, context))
     count: usize,
     v: u64,
     total_weight: u64,
@@ -92,7 +93,7 @@ impl RunContextData {
     pub const fn new() -> Self {
         const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
-            queue: VecDeque::new(),
+            queue: BTreeMap::new(),
             count: 0,
             v: 0,
             total_weight: 0,
@@ -250,6 +251,7 @@ pub fn spawn(
 
     context.kstack = Some(stack);
     context.userspace = userspace_allowed;
+    context.queue_key = Some((context.vd, context.rem_slice, context.debug_id));
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
