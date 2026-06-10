@@ -19,6 +19,7 @@ use core::{
     option::Option::{None, Some},
     sync::atomic::Ordering,
     u64,
+    cmp::Reverse,
 };
 use smallvec::SmallVec;
 use syscall::PtraceFlags;
@@ -187,11 +188,46 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     // Alarm (previously in update_runnable)
     let wakeups = wakeup_contexts(token, switch_time);
     let wakeups_len = wakeups.len();
+    let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
     if wakeups_len > 0 {
         let mut run_contexts = run_contexts(token.token());
+
         for context_ref in wakeups {
-            run_contexts.queue.push_back(context_ref);
+            let Some(context_lock) = context_ref.upgrade() else {
+                continue;
+            };
+
+            let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
+                push_idle.push(context_ref);
+                continue;
+            };
+
+            let new_vtime = guard.vtime.max(run_contexts.v);
+            guard.vtime = new_vtime;
+
+            let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
+            let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
+
+            if !guard.is_active {
+                guard.is_active = true;
+                run_contexts.total_weight += weight;
+            }
+
+            guard.vd = new_vtime + scaled_slice as u64;
+            guard.rem_slice = BASE_SLICE_TICKS * SCALE as u64;
+            let key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
+            guard.queue_key = Some(key);
+            drop(guard);
+
+            run_contexts.queue.insert(key, (new_vtime, weight, context_ref));
+        }
+    }
+
+    {
+        let mut idle_list = idle_contexts(token.downgrade());
+        for context_ref in push_idle {
+            idle_list.push_back(context_ref);
         }
     }
 
@@ -389,7 +425,7 @@ fn wakeup_contexts(
     wakeups
 }
 
-/// This is the scheduler function which currently utilises Deficit Weighted Round Robin Scheduler
+/// This is the scheduler function which currently utilises EEVDF Scheduler
 fn select_next_context(
     token: &mut CleanLockToken,
     percpu: &PercpuBlock,
@@ -414,7 +450,7 @@ fn select_next_context(
         let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
         prev_context_guard.rem_slice = prev_context_guard
             .rem_slice
-            .saturating_sub((elapsed_ticks / SCALE) as u64);
+            .saturating_sub((elapsed_ticks) as u64);
         let scaled_task = elapsed_ticks / weight as u128;
         prev_context_guard.vtime += scaled_task as u64;
 
@@ -422,8 +458,17 @@ fn select_next_context(
             prev_context_guard.vtime = contexts_data.v;
         }
 
+        let is_yield = (elapsed_time as u128) < (TICK_INTERVAL as u128 * NANOS_PER_TICK) / 2;
+
+        if is_yield {
+            let unconsumed = prev_context_guard.rem_slice as u128;
+            let penalty = unconsumed / weight as u128;
+            prev_context_guard.vtime += penalty as u64;
+            prev_context_guard.rem_slice = 0;
+        }
+
         if prev_context_guard.rem_slice == 0 {
-            prev_context_guard.rem_slice = BASE_SLICE_TICKS;
+            prev_context_guard.rem_slice = BASE_SLICE_TICKS * SCALE as u64;
             let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
             prev_context_guard.vd = prev_context_guard.vtime + scaled_slice as u64;
         }
@@ -436,55 +481,47 @@ fn select_next_context(
         prev_context_guard.rem_slice = 0;
     }
 
-    let mut min_active_vtime: u64 = if prev_runnable {
-        prev_context_guard.vtime
-    } else {
-        u64::MAX
-    };
-
     let mut eligible_best = None;
-    let mut eligible_min_vd = u64::MAX;
-    let mut eligible_best_rem = u64::MAX;
-    let mut eligible_found = false;
+    let mut prev_is_eligible = false;
 
     let mut ineligible_best = None;
     let mut ineligible_min_vtime = u64::MAX;
-    let mut ineligible_min_vd = u64::MAX;
-    let mut ineligible_best_rem = u64::MAX;
+    let mut ineligible_vd = u64::MAX;
 
     if prev_runnable {
         if prev_context_guard.vtime <= contexts_data.v {
-            eligible_found = true;
-            eligible_min_vd = prev_context_guard.vd;
-            eligible_best_rem = prev_context_guard.rem_slice;
+            prev_is_eligible = true;
         } else {
             ineligible_min_vtime = prev_context_guard.vtime;
-            ineligible_min_vd = prev_context_guard.vd;
-            ineligible_best_rem = prev_context_guard.rem_slice;
+            ineligible_vd = prev_context_guard.vd;
         }
     }
 
-    let mut skipped_dead = 0;
-    let mut i = 0;
-
-    while i < contexts_data.queue.len() {
-        let context_ref = &contexts_data.queue[i];
+    // New BTreeMap based walk
+    let mut weight_change: u64 = 0;
+    let mut contexts_to_remove: SmallVec<[(u64, Reverse<u64>, u32); 16]> = SmallVec::new();
+    for ((vd, rem_slice, ctxt_id), (vtime, context_weight, context_ref)) in
+        contexts_data.queue.iter()
+    {
+        if *vtime > ineligible_min_vtime && *vtime > contexts_data.v {
+            continue;
+        }
 
         let Some(context_lock) = context_ref.upgrade() else {
-            skipped_dead += 1;
-            contexts_data.queue.remove(i);
+            weight_change += *context_weight as u64;
+            contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             continue;
         };
 
         if Arc::ptr_eq(&context_lock, &idle_context)
             || Arc::ptr_eq(&context_lock, &prev_context_lock)
         {
-            i += 1;
+            //weight_change += *context_weight as u64;
+            //contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             continue;
         }
 
         let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
-            i += 1;
             continue;
         };
 
@@ -493,18 +530,19 @@ fn select_next_context(
         if matches!(sw, UpdateResult::Blocked) {
             if guard.is_active {
                 guard.is_active = false;
-                let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
-                contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight);
+                weight_change += context_weight;
             }
             guard.rem_slice = 0;
+            guard.queue_key = None;
+
+            contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             drop(guard);
-            let removed_ref = contexts_data.queue.remove(i).unwrap();
-            idle_contexts(token.token()).push_back(removed_ref);
+            // Reenqueue should be handled by unblock
+            idle_contexts(token.token()).push_back(context_ref.clone());
             continue;
         }
 
         if !matches!(sw, UpdateResult::CanSwitch) {
-            i += 1;
             continue;
         }
 
@@ -514,89 +552,66 @@ fn select_next_context(
             if let Some(addr) = addr_space.inner.try_read(t.token()) {
                 best_addr_space = Some(AddrSpaceSwitchReadGuard::new(addr));
             } else {
-                i += 1;
                 continue;
             }
         }
 
-        let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
-
-        if !guard.is_active {
-            guard.is_active = true;
-            contexts_data.total_weight += weight;
-        }
-
-        if guard.vtime < min_active_vtime {
-            min_active_vtime = guard.vtime;
-        }
-
-        let vd = guard.vd;
-        let rem = guard.rem_slice;
-
-        if guard.vtime <= contexts_data.v {
+        if *vtime <= contexts_data.v {
             // Eligible
-            if !eligible_found {
-                eligible_found = true;
-                eligible_min_vd = u64::MAX;
-                eligible_best_rem = u64::MAX;
-                eligible_best = None;
-            }
-            if vd < eligible_min_vd || (vd == eligible_min_vd && rem < eligible_best_rem) {
-                eligible_min_vd = vd;
-                eligible_best_rem = rem;
-                eligible_best = Some((i, guard, best_addr_space));
-            }
+            eligible_best = Some((guard, best_addr_space));
+            break;
         } else {
             // Ineligible
-            if guard.vtime < ineligible_min_vtime
-                || (guard.vtime == ineligible_min_vtime
-                    && (vd < ineligible_min_vd
-                        || (vd == ineligible_min_vd && rem < ineligible_best_rem)))
-            {
-                ineligible_min_vtime = guard.vtime;
-                ineligible_min_vd = vd;
-                ineligible_best_rem = rem;
-                ineligible_best = Some((i, guard, best_addr_space));
+            if *vtime < ineligible_min_vtime {
+                ineligible_min_vtime = *vtime;
+                ineligible_vd = *vd;
+                if let Some((old_guard, old_addr_space)) = ineligible_best {
+                    drop(old_guard);
+                    drop(old_addr_space);
+                }
+                ineligible_best = Some((guard, best_addr_space));
             }
         }
-
-        i += 1;
     }
 
-    if !eligible_found && min_active_vtime != u64::MAX {
-        contexts_data.v = min_active_vtime;
+    contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight_change);
+
+    for old_key in contexts_to_remove {
+        contexts_data.queue.remove(&old_key);
+    }
+
+    // No eligible context was found
+    if !(prev_is_eligible || eligible_best.is_some()) && ineligible_min_vtime != u64::MAX {
+        contexts_data.v = ineligible_min_vtime; // Advance V
 
         let prev_is_earliest = prev_runnable && prev_context_guard.vtime <= ineligible_min_vtime;
 
         if prev_is_earliest {
-            eligible_found = true;
-            eligible_min_vd = prev_context_guard.vd;
-            eligible_best_rem = prev_context_guard.rem_slice;
             eligible_best = None;
         } else if ineligible_best.is_some() {
             let prev_has_slice = prev_runnable && prev_context_guard.rem_slice > 0;
 
-            if prev_has_slice && prev_context_guard.vd <= ineligible_min_vd {
-                eligible_found = true;
+            if prev_has_slice && prev_context_guard.vd <= ineligible_vd {
                 eligible_best = None;
             } else {
-                eligible_found = true;
-                eligible_min_vd = ineligible_min_vd;
-                eligible_best_rem = ineligible_best_rem;
                 eligible_best = ineligible_best.take();
+            }
+        }
+    } else if prev_is_eligible && eligible_best.is_some() {
+        if let Some((ref guard, _)) = eligible_best {
+            if prev_context_guard.vd < guard.vd || (prev_context_guard.vd == guard.vd && prev_context_guard.rem_slice > guard.rem_slice) {
+                eligible_best = None;
             }
         }
     }
 
     let mut final_winner = None;
 
-    if let Some((idx, chosen_guard, addr_space)) = eligible_best {
-        contexts_data.queue.remove(idx).unwrap();
+    if let Some((mut chosen_guard, addr_space)) = eligible_best {
+        if let Some(key) = chosen_guard.queue_key.take() {
+            contexts_data.queue.remove(&key);
+        }
         final_winner = Some((chosen_guard, addr_space));
-    }
-
-    if skipped_dead > 10 {
-        contexts_data.queue.retain(|x| x.upgrade().is_some());
     }
 
     if final_winner.is_some() || prev_runnable {
@@ -606,18 +621,21 @@ fn select_next_context(
         }
 
         if let Some((chosen_guard, addr_space)) = final_winner {
-            let weight = SCHED_PRIO_TO_WEIGHT[chosen_guard.prio] as u64;
-
-            /*
-            chosen_guard.rem_slice = chosen_guard.rem_slice.saturating_sub(TICK_INTERVAL);
-            let scaled_task = elapsed / weight as u128;
-            chosen_guard.vtime += scaled_task as u64;
-            */
 
             if prev_runnable {
-                contexts_data
-                    .queue
-                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+                let (vd, rem_slice, ctxt_id, vtime) = (
+                    prev_context_guard.vd,
+                    prev_context_guard.rem_slice,
+                    prev_context_guard.debug_id,
+                    prev_context_guard.vtime,
+                );
+                prev_context_guard.queue_key = Some((vd, Reverse(rem_slice), ctxt_id));
+
+                let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
+                contexts_data.queue.insert(
+                    (vd, Reverse(rem_slice), ctxt_id),
+                    (vtime, weight, WeakContextRef(Arc::downgrade(&prev_context_lock))),
+                );
             } else if !is_idle {
                 idle_contexts(token.token())
                     .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));

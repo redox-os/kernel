@@ -4,6 +4,7 @@ use core::{
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
+    cmp::Reverse,
 };
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
@@ -151,6 +152,8 @@ pub struct Context {
     pub rem_slice: u64,
     /// Is currently active?
     pub is_active: bool,
+    /// Key for the RunQueue
+    pub queue_key: Option<(u64, Reverse<u64>, u32)>,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,
@@ -213,6 +216,7 @@ impl Context {
             vd: 0,
             rem_slice: 0,
             is_active: false,
+            queue_key: None,
             being_sigkilled: false,
             owner_proc_id,
 
