@@ -22,6 +22,7 @@ mod rxsdt;
 pub mod sdt;
 #[cfg(target_arch = "aarch64")]
 mod spcr;
+mod srat;
 mod xsdt;
 
 unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::memory::PageMapper) {
