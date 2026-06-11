@@ -68,6 +68,9 @@ mod log;
 /// Memory management
 mod memory;
 
+/// NUMA support
+mod numa;
+
 /// Panic
 mod panic;
 
