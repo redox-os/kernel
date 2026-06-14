@@ -13,9 +13,9 @@ fn to_usize(low: u32, high: u32) -> usize {
     #[cfg(target_pointer_width = "64")]
     {
         let mut low_and_high = [0u8; 8];
-        low_and_high[0..=3].copy_from_slice(low.to_ne_bytes().as_slice());
-        low_and_high[4..=7].copy_from_slice(high.to_ne_bytes().as_slice());
-        usize::from_ne_bytes(low_and_high)
+        low_and_high[0..=3].copy_from_slice(low.to_le_bytes().as_slice());
+        low_and_high[4..=7].copy_from_slice(high.to_le_bytes().as_slice());
+        usize::from_le_bytes(low_and_high)
     }
 }
 
@@ -24,7 +24,7 @@ fn to_single_int(high: &[u8; 3], low: u8) -> u32 {
     let mut high_and_low = [0u8; 4];
     high_and_low[0] = low;
     (high_and_low[1], high_and_low[2], high_and_low[3]) = (high[0], high[1], high[2]);
-    u32::from_ne_bytes(high_and_low)
+    u32::from_le_bytes(high_and_low)
 }
 
 pub fn init_srat(srat: &Srat) {

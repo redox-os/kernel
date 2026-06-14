@@ -50,8 +50,6 @@ pub struct PercpuBlock {
     pub misc_arch_info: crate::arch::device::ArchPercpuMisc,
 
     pub stats: CpuStats,
-
-    pub numa_node: Option<Weak<NumaNode>>,
 }
 
 static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
@@ -204,8 +202,6 @@ impl PercpuBlock {
             misc_arch_info: ArchPercpuMisc::default(),
 
             stats: CpuStats::default(),
-
-            numa_node: None,
         }
     }
 }

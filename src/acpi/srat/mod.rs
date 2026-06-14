@@ -76,12 +76,8 @@ impl<'a> Iterator for SratIter<'a> {
                     assert!(entry_len as usize == size_of::<GiccAffinity>() + 2);
                     *(entry.add(2) as *const GiccAffinity)
                 }),
-                4 => SratEntry::GicItsAffinity(unsafe {
-                    assert!(entry_len as usize == size_of::<GicItsAffinity>() + 2);
-                    *(entry.add(2) as *const GicItsAffinity)
-                }),
-                // ignore Generic Initiator Affinity
-                5 => {
+                // ignore ITS Affinity and Generic Initiator Affinity
+                4 | 5 => {
                     self.i += entry_len as u32;
                     continue;
                 }
@@ -100,7 +96,6 @@ pub enum SratEntry {
     MemoryAffinity(MemoryAffinity),
     ProcessorLocalAffinity(ProcessorLocalAffinity),
     GiccAffinity(GiccAffinity),
-    GicItsAffinity(GicItsAffinity),
     Unknown(u8), // unimplemented: Generic Initiator Affinity; our current focus is only on memory and cpus
 }
 
@@ -146,12 +141,4 @@ struct GiccAffinity {
     processor_uid: u32,
     flags: u32,
     clock_domain: u32,
-}
-
-#[repr(C, packed)]
-#[derive(Clone, Copy, Debug)]
-struct GicItsAffinity {
-    proximity_domain: u32,
-    _reserved: u16,
-    its_domain: u32,
 }
