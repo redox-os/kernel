@@ -7,10 +7,9 @@ use core::{
 
 use crate::{
     arch::interrupt,
-    context,
-    context::switch::SwitchResult,
+    context::{self, switch::SwitchResult},
     memory::{PhysicalAddress, RmmA, RmmArch},
-    profiling, scheme,
+    numa, profiling, scheme,
     sync::CleanLockToken,
 };
 
@@ -186,6 +185,8 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
             panic!("failed to spawn userspace_init: {:?}", err);
         }
     }
+
+    numa::init();
 
     run_userspace(&mut token)
 }
