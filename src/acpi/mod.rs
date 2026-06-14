@@ -20,9 +20,12 @@ mod rsdp;
 mod rsdt;
 mod rxsdt;
 pub mod sdt;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+pub mod slit;
 #[cfg(target_arch = "aarch64")]
 mod spcr;
-mod srat;
+#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+pub mod srat;
 mod xsdt;
 
 unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::memory::PageMapper) {
