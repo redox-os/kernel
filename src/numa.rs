@@ -39,6 +39,7 @@ pub struct NumaNode {
 
 pub fn init() {
     NUMA_NODES.call_once(|| HashMap::new());
+    let mut flag = false;
 
     #[cfg(all(
         feature = "acpi",
@@ -47,12 +48,14 @@ pub fn init() {
     {
         acpi::srat::init();
         acpi::slit::init();
-        return;
+        flag = true;
     }
 
     #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
     {
-        todo!()
+        if !flag {
+            todo!()
+        }
     }
 
     unsafe {
@@ -68,7 +71,6 @@ pub fn init() {
 pub unsafe fn add_cpu(id: u32, node_id: u32) {
     let numa_nodes = NUMA_NODES.get().unwrap();
 
-    /* 💀💀💀 HIGHLY UNSAFE 💀💀💀 */
     let numa_nodes = unsafe { &mut *(&raw const *numa_nodes as *mut HashMap<u32, NumaNode>) };
 
     if let Some(node) = numa_nodes.get_mut(&id) {
@@ -90,7 +92,6 @@ pub unsafe fn add_cpu(id: u32, node_id: u32) {
 pub unsafe fn add_memory(node_id: u32, start: usize, length: usize) {
     let numa_nodes = NUMA_NODES.get().unwrap();
 
-    /* 💀💀💀 HIGHLY UNSAFE 💀💀💀 */
     let numa_nodes = unsafe { &mut *(&raw const *numa_nodes as *mut HashMap<u32, NumaNode>) };
 
     if let Some(node) = numa_nodes.get_mut(&node_id) {
@@ -110,7 +111,6 @@ pub unsafe fn add_memory(node_id: u32, start: usize, length: usize) {
 }
 
 pub unsafe fn set_distance(src: u32, target: u32, distance: u8) {
-    /* 💀💀💀 HIGHLY UNSAFE 💀💀💀 */
     let nodes =
         unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
 
@@ -119,7 +119,6 @@ pub unsafe fn set_distance(src: u32, target: u32, distance: u8) {
 }
 
 unsafe fn shrink() {
-    /* 💀💀💀 HIGHLY UNSAFE 💀💀💀 */
     let nodes =
         unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
 
@@ -138,7 +137,6 @@ unsafe fn shrink() {
 ///
 /// See the comment above the definition of `NumaNode`.
 unsafe fn reorganise() {
-    /* 💀💀💀 HIGHLY UNSAFE 💀💀💀 */
     let nodes =
         unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
     let ids = nodes.keys().map(|e| *e).collect::<Vec<u32>>();
@@ -147,7 +145,10 @@ unsafe fn reorganise() {
         let node = nodes.remove(&id).unwrap();
 
         if node.cpus.len() == 0 {
-            put_for_adoption(nodes, node.distances, Some(node.memory), None);
+            assert!(node.memory.len() != 0);
+            put_for_adoption(nodes, node.distances, Some(node.memory), None, id);
+        } else if node.memory.len() == 0 {
+            put_for_adoption(nodes, node.distances, None, Some(node.cpus), id);
         } else {
             nodes.insert(id, node);
         }
@@ -159,22 +160,30 @@ fn put_for_adoption(
     distances: Vec<(u32, u8)>,
     memories: Option<Vec<NumaMemory>>,
     cpus: Option<Vec<NumaCpu>>,
+    orphan_node_id: u32,
 ) {
     if let Some(memories) = memories {
         assert!(cpus.is_none());
-        let (nearest_node_id, _) = distances.first().unwrap();
+        let (nearest_node_id, distance) = distances.first().unwrap();
         let nearest_node = nodes.get_mut(nearest_node_id).unwrap();
         nearest_node.memory.extend(memories);
     } else if let Some(cpus) = cpus {
         assert!(memories.is_none());
-        let (nearest_node_id, _) = distances.first().unwrap();
+        let (nearest_node_id, distance) = distances.first().unwrap();
         let nearest_node = nodes.get_mut(nearest_node_id).unwrap();
         nearest_node.cpus.extend(cpus);
+    } else {
+        panic!()
+    };
+
+    for (_, node) in nodes {
+        if let Some(idx) = node.distances.iter().position(|e| e.0 == orphan_node_id) {
+            let _ = node.distances.remove(idx);
+        }
     }
 }
 
 unsafe fn sort_by_distances() {
-    /* 💀💀💀 HIGHLY UNSAFE 💀💀💀 */
     let nodes =
         unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
 

@@ -27,14 +27,11 @@ impl Slit {
 
         for i in 0..ndom {
             for j in i..ndom {
+                // ignore distances from a domain to itself, since it is always 10
                 if i != j {
                     unsafe {
                         numa::set_distance(i, j, unsafe { *address.add((i + ndom * j) as usize) });
                         numa::set_distance(j, i, unsafe { *address.add((i + ndom * j) as usize) });
-                    }
-                } else {
-                    unsafe {
-                        numa::set_distance(i, j, 10);
                     }
                 }
             }

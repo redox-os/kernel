@@ -61,5 +61,4 @@ pub fn init_srat(srat: &Srat) {
             _ => continue,
         }
     }
-    println!("{:?}", NUMA_NODES.get().unwrap());
 }
