@@ -1,23 +1,9 @@
 use core::iter;
 
 use crate::{
-    acpi::srat::{Srat, SratEntry},
+    acpi::srat::{to_usize, Srat, SratEntry},
     numa::{self, NUMA_NODES},
 };
-
-#[inline(always)]
-fn to_usize(low: u32, high: u32) -> usize {
-    #[cfg(target_pointer_width = "32")]
-    return low as usize;
-
-    #[cfg(target_pointer_width = "64")]
-    {
-        let mut low_and_high = [0u8; 8];
-        low_and_high[0..=3].copy_from_slice(low.to_le_bytes().as_slice());
-        low_and_high[4..=7].copy_from_slice(high.to_le_bytes().as_slice());
-        usize::from_le_bytes(low_and_high)
-    }
-}
 
 #[inline(always)]
 fn to_single_int(high: &[u8; 3], low: u8) -> u32 {

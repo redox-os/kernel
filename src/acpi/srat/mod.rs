@@ -77,11 +77,10 @@ impl<'a> Iterator for SratIter<'a> {
                     *(entry.add(2) as *const GiccAffinity)
                 }),
                 // ignore GIC ITS Affinity and Generic Initiator Affinity
-                4 | 5 => {
+                _ => {
                     self.i += entry_len as u32;
                     continue;
                 }
-                _ => SratEntry::Unknown(unsafe { *entry }),
             });
             self.i += entry_len as u32;
             return entry;
@@ -97,8 +96,7 @@ pub enum SratEntry {
     ProcessorLocalAffinity(ProcessorLocalAffinity),
     GiccAffinity(GiccAffinity),
     // unimplemented: Gic Its Affinity and Generic Initiator Affinity
-    //  our current focus is only on memory and cpus
-    Unknown(u8),
+    // our current focus is only on memory and cpus
 }
 
 #[repr(C, packed)]
@@ -143,4 +141,18 @@ struct GiccAffinity {
     processor_uid: u32,
     flags: u32,
     clock_domain: u32,
+}
+
+#[inline(always)]
+pub(crate) fn to_usize(low: u32, high: u32) -> usize {
+    #[cfg(target_pointer_width = "32")]
+    return low as usize;
+
+    #[cfg(target_pointer_width = "64")]
+    {
+        let mut low_and_high = [0u8; 8];
+        low_and_high[0..=3].copy_from_slice(low.to_le_bytes().as_slice());
+        low_and_high[4..=7].copy_from_slice(high.to_le_bytes().as_slice());
+        usize::from_le_bytes(low_and_high)
+    }
 }

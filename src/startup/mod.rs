@@ -9,7 +9,8 @@ use crate::{
     arch::interrupt,
     context::{self, switch::SwitchResult},
     memory::{PhysicalAddress, RmmA, RmmArch},
-    numa, profiling, scheme,
+    numa::{self, NUMA_NODES},
+    profiling, scheme,
     sync::CleanLockToken,
 };
 

@@ -54,7 +54,8 @@ pub fn init() {
     #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
     {
         if !flag {
-            todo!()
+            // todo!()
+            return;
         }
     }
 
@@ -160,20 +161,42 @@ fn put_for_adoption(
     distances: Vec<(u32, u8)>,
     memories: Option<Vec<NumaMemory>>,
     cpus: Option<Vec<NumaCpu>>,
-    orphan_node_id: u32,
+    orphan_node_id: u32, // id of the node containing only memory / CPU (orphan)
 ) {
     if let Some(memories) = memories {
         assert!(cpus.is_none());
-        let (nearest_node_id, distance) = distances.first().unwrap();
-        let nearest_node = nodes.get_mut(nearest_node_id).unwrap();
-        nearest_node.memory.extend(memories);
+        let foster_node = if !distances.is_empty() {
+            let (nearest_node_id, distance) = distances.first().unwrap();
+            nodes.get_mut(nearest_node_id).unwrap()
+        } else {
+            let foster_node_id = {
+                let mut node_ids = nodes.keys();
+                let foster_node = node_ids
+                    .find(|node_id| **node_id != orphan_node_id)
+                    .unwrap();
+                *foster_node
+            };
+            nodes.get_mut(&foster_node_id).unwrap() // panic not possible since there must be atleast one other domain with a cpu
+        };
+        foster_node.memory.extend(memories);
     } else if let Some(cpus) = cpus {
         assert!(memories.is_none());
-        let (nearest_node_id, distance) = distances.first().unwrap();
-        let nearest_node = nodes.get_mut(nearest_node_id).unwrap();
-        nearest_node.cpus.extend(cpus);
+        let foster_node = if !distances.is_empty() {
+            let (nearest_node_id, distance) = distances.first().unwrap();
+            nodes.get_mut(nearest_node_id).unwrap()
+        } else {
+            let foster_node_id = {
+                let mut node_ids = nodes.keys();
+                let foster_node = node_ids
+                    .find(|node_id| **node_id != orphan_node_id)
+                    .unwrap();
+                *foster_node
+            };
+            nodes.get_mut(&foster_node_id).unwrap() // panic not possible since there must be atleast one other domain with memory
+        };
+        foster_node.cpus.extend(cpus);
     } else {
-        panic!()
+        unreachable!() // this should never happen
     };
 
     for (_, node) in nodes {
