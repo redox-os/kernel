@@ -9,10 +9,12 @@ use crate::{
     arch::interrupt,
     context::{self, switch::SwitchResult},
     memory::{PhysicalAddress, RmmA, RmmArch},
-    numa::{self, NUMA_NODES},
     profiling, scheme,
     sync::CleanLockToken,
 };
+
+#[cfg(feature = "numa")]
+use crate::numa;
 
 pub mod memory;
 
@@ -187,6 +189,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
         }
     }
 
+    #[cfg(feature = "numa")]
     numa::init();
 
     run_userspace(&mut token)

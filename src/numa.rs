@@ -1,9 +1,5 @@
-#[cfg(all(
-    feature = "acpi",
-    any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")
-))]
-use crate::acpi;
 use crate::{
+    acpi,
     cpu_set::LogicalCpuId,
     sync::{CleanLockToken, Mutex, L0},
 };
@@ -41,10 +37,7 @@ pub fn init() {
     NUMA_NODES.call_once(|| HashMap::new());
     let mut flag = false;
 
-    #[cfg(all(
-        feature = "acpi",
-        any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64")
-    ))]
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
     {
         acpi::srat::init();
         acpi::slit::init();

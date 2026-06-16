@@ -19,7 +19,6 @@ use crate::{
     },
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
-    numa::NumaNode,
     ptrace::Session,
     syscall::debug::SyscallDebugInfo,
 };
