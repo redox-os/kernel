@@ -133,6 +133,9 @@ pub fn syscall(
             SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
 
             SYS_DUP => dup(fd, UserSlice::ro(c, d)?, token).map(FileHandle::into),
+            SYS_DUP_INTO => {
+                dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
+            }
             SYS_DUP2 => {
                 dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?, token).map(FileHandle::into)
             }
@@ -217,6 +220,15 @@ pub fn syscall(
                 (e & syscall::O_FCNTL_MASK) as _,
                 f as _,
                 g as _,
+                token,
+            )
+            .map(FileHandle::into),
+            SYS_OPENAT_INTO => openat_into(
+                fd,
+                UserSlice::ro(c, d)?,
+                e,
+                f as _,
+                FileHandle::from(g),
                 token,
             )
             .map(FileHandle::into),

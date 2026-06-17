@@ -52,8 +52,32 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             f,
             g
         ),
+        SYS_OPENAT_WITH_FILTER => format!(
+            "openat_with_filter({} {:?}, {:#0x}, {}, {})",
+            b,
+            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
+            e,
+            f,
+            g
+        ),
+        SYS_OPENAT_INTO => format!(
+            "openat_into({} {:?}, {:#0x}, {}, out: {})",
+            b,
+            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
+            e,
+            f,
+            g
+        ),
         SYS_UNLINKAT => format!(
             "unlinkat({} {:?}, {:#0x}, {}, {})",
+            b,
+            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
+            e,
+            f,
+            g,
+        ),
+        SYS_UNLINKAT_WITH_FILTER => format!(
+            "unlinkat_with_filter({} {:?}, {:#0x}, {}, {})",
             b,
             debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
             e,
@@ -65,6 +89,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             "dup({}, {:?})",
             b,
             debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
+        ),
+        SYS_DUP_INTO => format!(
+            "dup_into({}, {:?}, out: {})",
+            b,
+            debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
+            e,
         ),
         SYS_DUP2 => format!(
             "dup2({}, {}, {:?})",
@@ -208,7 +238,7 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
         && crate::context::current()
             .read(token.token())
             .name
-            .contains("acpid")
+            .contains("init")
     {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
