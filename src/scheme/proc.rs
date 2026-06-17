@@ -640,6 +640,8 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
+        let ctx = handle.context.upgrade().ok_or(Error::new(EBADF))?;
+
         handle.kind.kcall(
             fds,
             payload,
@@ -857,11 +859,8 @@ impl KernelScheme for ProcScheme {
 
             let Handle { context, kind } = handle;
 
-            if let ContextHandle::Filetable {
-                filetable,
-                binary_format,
-                data,
-            } = &handle.kind
+            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
+                &handle.kind
             {
                 context.clone()
             } else {
@@ -1587,18 +1586,21 @@ impl ContextHandle {
 
                 match op {
                     FileTableVerb::Close => {
-                        let fd = payload.read_usize().map_err(|_| Error::new(EBADFD))?;
-                        let file = {
-                            let mut context = context.read(token.token());
-                            let (context, mut token) = context.token_split();
-                            context
-                                .remove_file(FileHandle(fd), &mut token.token())
-                                .ok_or(Error::new(EBADF))?
-                        };
-                        file.close(token)?;
-                        Ok(0)
+                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+                        let fds = payload_chunks
+                            .map(|chunk| {
+                                let fd = chunk.read_usize()?;
+                                Ok(FileHandle::from(fd))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        let num_fds = fds.len();
+                        let files_to_close = files.write(token.token()).bulk_remove_files(&fds)?;
+                        files_to_close.into_iter().for_each(|file| {
+                            let _ = file.close(token);
+                        });
+                        Ok(num_fds)
                     }
-
                     FileTableVerb::Dup2 => {
                         let mut it = payload.usizes();
                         let old = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
@@ -1655,6 +1657,16 @@ impl ContextHandle {
                             file.close(token)?;
                         }
                         Ok(0)
+                    }
+
+                    FileTableVerb::Reserve => {
+                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let Some(&[which, additional]) = metadata.get(1..3) else {
+                            return Err(Error::new(EINVAL));
+                        };
+                        files
+                            .write(token.token())
+                            .reserve(which as usize, additional as usize)
                     }
                 }
             }

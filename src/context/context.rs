@@ -308,6 +308,8 @@ impl Context {
         self.files.write(lock_token.token()).add_file_min(file, min)
     }
 
+    /// Add a file into the exact slot.
+    /// Return the file descriptor number or None if slot was occupied
     /// Bulk-add multiple files to the POSIX file table
     pub fn bulk_add_files_posix(
         &self,
@@ -655,6 +657,22 @@ impl FdTbl {
         }
     }
 
+    pub fn reserve(&mut self, which: usize, additional: usize) -> Result<usize> {
+        if which & UPPER_FDTBL_TAG == 0 {
+            if super::CONTEXT_MAX_FILES - self.posix_fdtbl.len() < additional {
+                return Err(Error::new(EMFILE));
+            }
+            self.posix_fdtbl.reserve(additional);
+            Ok(self.posix_fdtbl.len())
+        } else {
+            if super::CONTEXT_MAX_FILES - self.upper_fdtbl.len() < additional {
+                return Err(Error::new(EMFILE));
+            }
+            self.upper_fdtbl.reserve(additional);
+            Ok(self.upper_fdtbl.len())
+        }
+    }
+
     fn strip_tags(index: usize) -> usize {
         index & !UPPER_FDTBL_TAG
     }
@@ -912,7 +930,7 @@ impl FdTbl {
         removed_file_opt
     }
 
-    fn bulk_remove_files(&mut self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+    pub fn bulk_remove_files(&mut self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
         // Validate that all handles are valid before proceeding to avoid partial results.
         self.validate_handles(handles)?;
 
