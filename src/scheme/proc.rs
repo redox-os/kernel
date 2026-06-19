@@ -1618,7 +1618,8 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        let mut file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        file.cloexec = false;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;
