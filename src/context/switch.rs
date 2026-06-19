@@ -15,11 +15,11 @@ use crate::{
 use alloc::sync::Arc;
 use core::{
     cell::{Cell, RefCell},
+    cmp::Reverse,
     hint, matches, mem,
     option::Option::{None, Some},
     sync::atomic::Ordering,
     u64,
-    cmp::Reverse,
 };
 use smallvec::SmallVec;
 use syscall::PtraceFlags;
@@ -220,7 +220,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             guard.queue_key = Some(key);
             drop(guard);
 
-            run_contexts.queue.insert(key, (new_vtime, weight, context_ref));
+            run_contexts
+                .queue
+                .insert(key, (new_vtime, weight, context_ref));
         }
     }
 
@@ -599,7 +601,10 @@ fn select_next_context(
         }
     } else if prev_is_eligible && eligible_best.is_some() {
         if let Some((ref guard, _)) = eligible_best {
-            if prev_context_guard.vd < guard.vd || (prev_context_guard.vd == guard.vd && prev_context_guard.rem_slice > guard.rem_slice) {
+            if prev_context_guard.vd < guard.vd
+                || (prev_context_guard.vd == guard.vd
+                    && prev_context_guard.rem_slice > guard.rem_slice)
+            {
                 eligible_best = None;
             }
         }
@@ -621,7 +626,6 @@ fn select_next_context(
         }
 
         if let Some((chosen_guard, addr_space)) = final_winner {
-
             if prev_runnable {
                 let (vd, rem_slice, ctxt_id, vtime) = (
                     prev_context_guard.vd,
@@ -634,7 +638,11 @@ fn select_next_context(
                 let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
                 contexts_data.queue.insert(
                     (vd, Reverse(rem_slice), ctxt_id),
-                    (vtime, weight, WeakContextRef(Arc::downgrade(&prev_context_lock))),
+                    (
+                        vtime,
+                        weight,
+                        WeakContextRef(Arc::downgrade(&prev_context_lock)),
+                    ),
                 );
             } else if !is_idle {
                 idle_contexts(token.token())

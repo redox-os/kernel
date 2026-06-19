@@ -1,10 +1,10 @@
 use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
+    cmp::Reverse,
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
-    cmp::Reverse,
 };
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
