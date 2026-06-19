@@ -132,7 +132,6 @@ pub fn syscall(
             // be moved to UserScheme.
             SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
 
-            SYS_DUP => dup(fd, UserSlice::ro(c, d)?, token).map(FileHandle::into),
             SYS_DUP_INTO => {
                 dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
             }
@@ -210,19 +209,6 @@ pub fn syscall(
                     )
                 }
             }
-            SYS_OPENAT => {
-                openat(fd, UserSlice::ro(c, d)?, e, f as _, 0, 0, token).map(FileHandle::into)
-            }
-            SYS_OPENAT_WITH_FILTER => openat(
-                fd,
-                UserSlice::ro(c, d)?,
-                e,
-                (e & syscall::O_FCNTL_MASK) as _,
-                f as _,
-                g as _,
-                token,
-            )
-            .map(FileHandle::into),
             SYS_OPENAT_INTO => openat_into(
                 fd,
                 UserSlice::ro(c, d)?,
@@ -233,9 +219,6 @@ pub fn syscall(
             )
             .map(FileHandle::into),
             SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, 0, 0, token).map(|()| 0),
-            SYS_UNLINKAT_WITH_FILTER => {
-                unlinkat(fd, UserSlice::ro(c, d)?, e, f as _, g as _, token).map(|()| 0)
-            }
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, size_of::<TimeSpec>())?,

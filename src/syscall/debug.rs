@@ -44,22 +44,6 @@ unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
 //TODO: calling format_call with arguments from another process space will not work
 pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g: usize) -> String {
     match a {
-        SYS_OPENAT => format!(
-            "openat({} {:?}, {:#0x}, {}, {})",
-            b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
-            e,
-            f,
-            g
-        ),
-        SYS_OPENAT_WITH_FILTER => format!(
-            "openat_with_filter({} {:?}, {:#0x}, {}, {})",
-            b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
-            e,
-            f,
-            g
-        ),
         SYS_OPENAT_INTO => format!(
             "openat_into({} {:?}, {:#0x}, {}, out: {})",
             b,
@@ -76,20 +60,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             f,
             g,
         ),
-        SYS_UNLINKAT_WITH_FILTER => format!(
-            "unlinkat_with_filter({} {:?}, {:#0x}, {}, {})",
-            b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
-            e,
-            f,
-            g,
-        ),
         SYS_CLOSE => format!("close({})", b),
-        SYS_DUP => format!(
-            "dup({}, {:?})",
-            b,
-            debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
-        ),
         SYS_DUP_INTO => format!(
             "dup_into({}, {:?}, out: {})",
             b,
@@ -234,12 +205,11 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
 
     #[expect(clippy::overly_complex_bool_expr)]
     #[expect(clippy::needless_bool)]
-    let do_debug = if false
-        && crate::context::current()
-            .read(token.token())
-            .name
-            .contains("init")
-    {
+    let do_debug = if true && {
+        let ctx = crate::context::current();
+        let guard = ctx.read(token.token());
+        guard.name.contains("init") || guard.name.contains("bootstrap")
+    } {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

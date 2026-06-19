@@ -1634,7 +1634,7 @@ impl ContextHandle {
                             let files = filetable.upgrade().unwrap();
                             let mut files = files.read(token.token());
                             let (files, mut token) = files.token_split();
-                            for (i, f) in files.posix_fdtbl.iter().enumerate() {
+                            for (i, f) in files.lower_fdtbl.iter().enumerate() {
                                 if let Some(f) = f {
                                     let desc = f.description.clone();
                                     let desc = desc.read(token.token());

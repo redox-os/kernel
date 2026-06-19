@@ -20,7 +20,8 @@ use crate::{
     context::{self, context::FdTbl},
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
-        KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
+        FileHandle, KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES,
+        KERNEL_SCHEMES_COUNT,
     },
     startup::Bootstrap,
     syscall::{error::*, flag::MapFlags},
@@ -273,7 +274,18 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
     context
-        .add_file_min(
+        .files
+        .write(token.token())
+        .reserve(0, 64)
+        .expect("failed to reserve lower fdtbl");
+    context
+        .files
+        .write(token.token())
+        .reserve(syscall::flag::UPPER_FDTBL_TAG, 64)
+        .expect("failed to reserve upper fdtbl");
+    context
+        .insert_file(
+            FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | scheme.get()),
             FileDescriptor {
                 description: Arc::new(RwLock::new(FileDescription {
                     scheme,
@@ -284,7 +296,6 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
                 })),
                 cloexec,
             },
-            syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
             &mut token,
         )
         .expect("failed to insert fd to current context")

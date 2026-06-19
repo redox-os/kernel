@@ -287,53 +287,8 @@ impl Context {
         }
     }
 
-    /// Add a file to the lowest available slot.
-    /// Return the file descriptor number or None if no slot was found
-    pub fn add_file(
-        &self,
-        file: FileDescriptor,
-        lock_token: &mut LockToken<L4>,
-    ) -> Option<FileHandle> {
-        self.add_file_min(file, 0, lock_token)
-    }
-
-    /// Add a file to the lowest available slot greater than or equal to min.
-    /// Return the file descriptor number or None if no slot was found
-    pub fn add_file_min(
-        &self,
-        file: FileDescriptor,
-        min: usize,
-        lock_token: &mut LockToken<L4>,
-    ) -> Option<FileHandle> {
-        self.files.write(lock_token.token()).add_file_min(file, min)
-    }
-
-    /// Add a file into the exact slot.
-    /// Return the file descriptor number or None if slot was occupied
-    /// Bulk-add multiple files to the POSIX file table
-    pub fn bulk_add_files_posix(
-        &self,
-        files_to_add: Vec<FileDescriptor>,
-        lock_token: &mut LockToken<L4>,
-    ) -> Option<Vec<FileHandle>> {
-        self.files
-            .write(lock_token.token())
-            .bulk_add_files_posix(files_to_add)
-    }
-
-    /// Bulk-insert multiple files into to the upper file table contiguously
-    pub fn bulk_insert_files_upper(
-        &self,
-        files_to_insert: Vec<FileDescriptor>,
-        lock_token: &mut LockToken<L4>,
-    ) -> Option<Vec<FileHandle>> {
-        self.files
-            .write(lock_token.token())
-            .bulk_insert_files_upper(files_to_insert)
-    }
-
-    /// Bulk-insert multiple files into to the upper file table manually
-    pub fn bulk_insert_files_upper_manual(
+    /// Bulk-insert multiple files
+    pub fn bulk_insert_files(
         &self,
         files_to_insert: Vec<FileDescriptor>,
         handles: &[FileHandle],
@@ -341,7 +296,7 @@ impl Context {
     ) -> Result<()> {
         self.files
             .write(lock_token.token())
-            .bulk_insert_files_upper_manual(files_to_insert, handles)
+            .bulk_insert_files(files_to_insert, handles)
     }
 
     /// Get a file
@@ -639,11 +594,36 @@ impl core::fmt::Debug for Kstack {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct FdTbl {
-    pub posix_fdtbl: Vec<Option<FileDescriptor>>,
+    pub lower_fdtbl: Vec<Option<FileDescriptor>>,
     pub upper_fdtbl: Vec<Option<FileDescriptor>>,
     active_count: usize,
+}
+
+impl Clone for FdTbl {
+    fn clone(&self) -> Self {
+        let mut lower_fdtbl = self.lower_fdtbl.clone();
+        let mut upper_fdtbl = self.upper_fdtbl.clone();
+
+        let additional_lower = self
+            .lower_fdtbl
+            .capacity()
+            .saturating_sub(lower_fdtbl.len());
+        let additional_upper = self
+            .upper_fdtbl
+            .capacity()
+            .saturating_sub(upper_fdtbl.len());
+
+        lower_fdtbl.reserve(additional_lower);
+        upper_fdtbl.reserve(additional_upper);
+
+        Self {
+            lower_fdtbl,
+            upper_fdtbl,
+            active_count: self.active_count,
+        }
+    }
 }
 
 pub type LockedFdTbl = RwLock<L5, FdTbl>;
@@ -651,7 +631,7 @@ pub type LockedFdTbl = RwLock<L5, FdTbl>;
 impl FdTbl {
     pub fn new() -> Self {
         Self {
-            posix_fdtbl: Vec::new(),
+            lower_fdtbl: Vec::new(),
             upper_fdtbl: Vec::new(),
             active_count: 0,
         }
@@ -659,11 +639,11 @@ impl FdTbl {
 
     pub fn reserve(&mut self, which: usize, additional: usize) -> Result<usize> {
         if which & UPPER_FDTBL_TAG == 0 {
-            if super::CONTEXT_MAX_FILES - self.posix_fdtbl.len() < additional {
+            if super::CONTEXT_MAX_FILES - self.lower_fdtbl.len() < additional {
                 return Err(Error::new(EMFILE));
             }
-            self.posix_fdtbl.reserve(additional);
-            Ok(self.posix_fdtbl.len())
+            self.lower_fdtbl.reserve(additional);
+            Ok(self.lower_fdtbl.len())
         } else {
             if super::CONTEXT_MAX_FILES - self.upper_fdtbl.len() < additional {
                 return Err(Error::new(EMFILE));
@@ -679,7 +659,7 @@ impl FdTbl {
 
     fn select_fdtbl(&self, index: usize) -> (&Vec<Option<FileDescriptor>>, usize) {
         if index & UPPER_FDTBL_TAG == 0 {
-            (&self.posix_fdtbl, index)
+            (&self.lower_fdtbl, index)
         } else {
             (&self.upper_fdtbl, Self::strip_tags(index))
         }
@@ -687,7 +667,7 @@ impl FdTbl {
 
     fn select_fdtbl_mut(&mut self, index: usize) -> (&mut Vec<Option<FileDescriptor>>, usize) {
         if index & UPPER_FDTBL_TAG == 0 {
-            (&mut self.posix_fdtbl, index)
+            (&mut self.lower_fdtbl, index)
         } else {
             (&mut self.upper_fdtbl, Self::strip_tags(index))
         }
@@ -729,67 +709,6 @@ impl FdTbl {
         Ok(())
     }
 
-    pub fn add_file_min(&mut self, file: FileDescriptor, min: usize) -> Option<FileHandle> {
-        if self.active_count >= super::CONTEXT_MAX_FILES {
-            return None;
-        }
-
-        let tag = min & UPPER_FDTBL_TAG;
-
-        let (fdtbl, min) = self.select_fdtbl_mut(min);
-
-        // Find the first empty slot in the posix_fdtbl starting from `min`.
-        if let Some((pos, slot)) = fdtbl
-            .iter_mut()
-            .enumerate()
-            .skip(min)
-            .find(|(_, slot)| slot.is_none())
-        {
-            *slot = Some(file);
-            self.active_count += 1;
-            return Some(FileHandle::from(pos | tag));
-        };
-
-        let len = fdtbl.len();
-
-        // If no empty slot was found, we need to allocate a new slot.
-        if len >= min {
-            fdtbl.push(Some(file));
-            self.active_count += 1;
-            Some(FileHandle::from(len | tag))
-        } else {
-            self.insert_file(FileHandle::from(min | tag), file)
-        }
-    }
-
-    fn bulk_add_files_posix(
-        &mut self,
-        files_to_add: Vec<FileDescriptor>,
-    ) -> Option<Vec<FileHandle>> {
-        let count = files_to_add.len();
-        if count == 0 {
-            return Some(Vec::new());
-        }
-        if self.active_count + count > super::CONTEXT_MAX_FILES {
-            return None;
-        }
-
-        let handles = self.find_free_posix_slots(count);
-        let max_index = handles[count - 1].get();
-        if self.posix_fdtbl.len() <= max_index {
-            // Resize the posix_fdtbl to accommodate the new files.
-            self.posix_fdtbl.resize(max_index + 1, None);
-        }
-
-        for (&handle, file) in handles.iter().zip(files_to_add) {
-            let index = handle.get();
-            self.posix_fdtbl[index] = Some(file);
-        }
-
-        self.active_count += count;
-        Some(handles)
-    }
-
     fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
         if self.active_count >= super::CONTEXT_MAX_FILES {
             return None;
@@ -802,6 +721,10 @@ impl FdTbl {
         }
 
         if real_index >= fdtbl.len() {
+            if real_index >= fdtbl.capacity() {
+                return None;
+            }
+
             fdtbl.resize_with(real_index + 1, || None);
         }
 
@@ -814,31 +737,7 @@ impl FdTbl {
         }
     }
 
-    fn bulk_insert_files_upper(
-        &mut self,
-        files_to_insert: Vec<FileDescriptor>,
-    ) -> Option<Vec<FileHandle>> {
-        let count = files_to_insert.len();
-        if count == 0 {
-            return Some(Vec::new());
-        }
-        if self.active_count + count > super::CONTEXT_MAX_FILES {
-            return None;
-        }
-
-        let index = Self::strip_tags(self.find_free_upper_block(count).get());
-        let mut handles = Vec::with_capacity(count);
-        for (i, file) in files_to_insert.into_iter().enumerate() {
-            let current_index = index + i;
-            self.upper_fdtbl[current_index] = Some(file);
-            handles.push(FileHandle::from(current_index | UPPER_FDTBL_TAG));
-        }
-
-        self.active_count += count;
-        Some(handles)
-    }
-
-    fn bulk_insert_files_upper_manual(
+    fn bulk_insert_files(
         &mut self,
         files_to_insert: Vec<FileDescriptor>,
         handles: &[FileHandle],
@@ -855,20 +754,9 @@ impl FdTbl {
         }
         self.validate_free_slots(handles)?;
 
-        let max_index = handles
-            .iter()
-            .map(|h| Self::strip_tags(h.get()))
-            .max()
-            .unwrap_or(0);
-        if self.upper_fdtbl.len() <= max_index {
-            self.upper_fdtbl.resize_with(max_index + 1, || None);
-        }
         for (file, &handle) in files_to_insert.into_iter().zip(handles) {
-            let index = Self::strip_tags(handle.get());
-            self.upper_fdtbl[index] = Some(file);
+            self.insert_file(handle, file).ok_or(Error::new(EMFILE))?;
         }
-
-        self.active_count += count;
         Ok(())
     }
 
@@ -942,56 +830,6 @@ impl FdTbl {
         Ok(files)
     }
 
-    fn find_free_posix_slots(&self, count: usize) -> Vec<FileHandle> {
-        let mut free_slots = Vec::with_capacity(count);
-
-        for (i, slot) in self.posix_fdtbl.iter().enumerate() {
-            if slot.is_none() {
-                free_slots.push(FileHandle::from(i));
-                if free_slots.len() == count {
-                    return free_slots;
-                }
-            }
-        }
-
-        let mut current_len = self.posix_fdtbl.len();
-        while free_slots.len() < count {
-            free_slots.push(FileHandle::from(current_len));
-            current_len += 1;
-        }
-        free_slots
-    }
-
-    fn find_free_upper_block(&mut self, len: usize) -> FileHandle {
-        let mut start = 0;
-        let mut count = 0;
-
-        for (i, file_opt) in self.upper_fdtbl.iter().enumerate() {
-            if file_opt.is_none() {
-                if count == 0 {
-                    start = i;
-                }
-                count += 1;
-                if count == len {
-                    break;
-                }
-            } else {
-                count = 0;
-            }
-        }
-
-        if count < len {
-            if count == 0 {
-                start = self.upper_fdtbl.len();
-            }
-            let needed = len - count;
-            self.upper_fdtbl
-                .resize(self.upper_fdtbl.len() + needed, None);
-        }
-
-        FileHandle::from(start | UPPER_FDTBL_TAG)
-    }
-
     pub fn force_close_all(&mut self, token: &mut CleanLockToken) {
         for file_opt in self.iter_mut() {
             if let Some(file) = file_opt.take() {
@@ -1004,7 +842,7 @@ impl FdTbl {
 
 impl FdTbl {
     pub fn enumerate(&self) -> impl Iterator<Item = (usize, &Option<FileDescriptor>)> {
-        self.posix_fdtbl.iter().enumerate().chain(
+        self.lower_fdtbl.iter().enumerate().chain(
             self.upper_fdtbl
                 .iter()
                 .enumerate()
@@ -1013,48 +851,14 @@ impl FdTbl {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
-        self.posix_fdtbl.iter().chain(self.upper_fdtbl.iter())
+        self.lower_fdtbl.iter().chain(self.upper_fdtbl.iter())
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
-        self.posix_fdtbl
+        self.lower_fdtbl
             .iter_mut()
             .chain(self.upper_fdtbl.iter_mut())
     }
-}
-
-pub fn bulk_add_fds(
-    descriptions: Vec<Arc<LockedFileDescription>>,
-    payload: UserSliceRw,
-    cloexec: bool,
-    token: &mut LockToken<L1>,
-) -> Result<usize> {
-    let cnt = descriptions.len();
-    if payload.len() != cnt * size_of::<usize>() {
-        return Err(Error::new(EINVAL));
-    }
-    if descriptions.is_empty() {
-        return Ok(0);
-    }
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (current, mut token) = current.token_split();
-
-    let files: Vec<FileDescriptor> = descriptions
-        .into_iter()
-        .map(|description| FileDescriptor {
-            description,
-            cloexec,
-        })
-        .collect();
-    let handles = current
-        .bulk_add_files_posix(files, &mut token)
-        .ok_or(Error::new(EMFILE))?;
-    let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
-    for (handle, chunk) in handles.iter().zip(payload_chunks) {
-        chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
-    }
-    Ok(handles.len())
 }
 
 pub fn bulk_insert_fds(
@@ -1074,33 +878,15 @@ pub fn bulk_insert_fds(
         description,
         cloexec,
     });
-    let first_fd = payload
-        .in_exact_chunks(size_of::<usize>())
-        .next()
-        .ok_or(Error::new(EINVAL))?
-        .read_usize()?;
-
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();
 
-    if first_fd == usize::MAX {
-        let files = files_iter.collect::<Vec<_>>();
-        let handles = current
-            .bulk_insert_files_upper(files, &mut token)
-            .ok_or(Error::new(EMFILE))?;
-        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
-        for (handle, chunk) in handles.iter().zip(payload_chunks) {
-            chunk.copy_from_slice(&handle.get().to_ne_bytes())?;
-        }
-        Ok(handles.len())
-    } else {
-        let handles: Vec<FileHandle> = payload
-            .usizes()
-            .map(|res| res.map(|i| FileHandle::from(i | syscall::UPPER_FDTBL_TAG)))
-            .collect::<Result<_, _>>()?;
-        let files = files_iter.collect::<Vec<_>>();
-        current.bulk_insert_files_upper_manual(files, &handles, &mut token)?;
-        Ok(handles.len())
-    }
+    let handles: Vec<FileHandle> = payload
+        .usizes()
+        .map(|res| res.map(|i| FileHandle::from(i)))
+        .collect::<Result<_, _>>()?;
+    let files = files_iter.collect::<Vec<_>>();
+    current.bulk_insert_files(files, &handles, &mut token)?;
+    Ok(handles.len())
 }

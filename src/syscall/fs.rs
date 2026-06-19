@@ -64,70 +64,6 @@ pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<String>
 // TODO: Define elsewhere
 const PATH_MAX: usize = PAGE_SIZE;
 
-pub fn openat(
-    fh: FileHandle,
-    raw_path: UserSliceRo,
-    flags: usize,
-    fcntl_flags: u32,
-    euid: u32,
-    egid: u32,
-    token: &mut CleanLockToken,
-) -> Result<FileHandle> {
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let (scheme_id, number) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
-        let desc = pipe.description.read(token.token());
-        (desc.scheme, desc.number)
-    };
-
-    let caller_ctx = context::current()
-        .read(token.token())
-        .caller_ctx()
-        .filter_uid_gid(euid, egid);
-
-    let new_description = {
-        let scheme = scheme::get_scheme(token.token(), scheme_id)?;
-
-        let res = scheme.kopenat(
-            number,
-            StrOrBytes::from_str(&path_buf),
-            flags,
-            fcntl_flags,
-            caller_ctx,
-            token,
-        );
-
-        match res? {
-            OpenResult::SchemeLocal(number, internal_flags) => {
-                Arc::new(RwLock::new(FileDescription {
-                    offset: 0,
-                    internal_flags,
-                    scheme: scheme_id,
-                    number,
-                    flags: (flags & !O_CLOEXEC) as u32,
-                }))
-            }
-            OpenResult::External(desc) => desc,
-        }
-    };
-
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut token) = current.token_split();
-    context
-        .add_file(
-            FileDescriptor {
-                description: new_description,
-                cloexec: flags & O_CLOEXEC == O_CLOEXEC,
-            },
-            &mut token,
-        )
-        .ok_or(Error::new(EMFILE))
-}
 pub fn openat_into(
     fh: FileHandle,
     raw_path: UserSliceRo,
@@ -211,10 +147,7 @@ pub fn unlinkat(
 
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
-    let caller_ctx = context::current()
-        .read(token.token())
-        .caller_ctx()
-        .filter_uid_gid(euid, egid);
+    let caller_ctx = context::current().read(token.token()).caller_ctx();
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -283,17 +216,6 @@ fn duplicate_file(
             cloexec,
         })
     }
-}
-
-/// Duplicate file descriptor
-pub fn dup(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<FileHandle> {
-    let new_file = duplicate_file(fd, buf, false, token)?;
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut token) = current.token_split();
-    context
-        .add_file(new_file, &mut token)
-        .ok_or(Error::new(EMFILE))
 }
 
 /// Duplicate file descriptor
@@ -592,7 +514,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         let mut current = current_lock.read(token.token());
         let (context, mut token) = current.token_split();
         return context
-            .add_file_min(new_file, arg, &mut token)
+            .insert_file(FileHandle::from(arg), new_file, &mut token)
             .ok_or(Error::new(EMFILE))
             .map(FileHandle::into);
     }
