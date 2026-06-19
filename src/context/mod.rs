@@ -3,10 +3,10 @@
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
 use alloc::{
-    collections::{BTreeSet, VecDeque, BTreeMap},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Weak},
 };
-use core::{num::NonZeroUsize, ops::Deref, cmp::Reverse};
+use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
