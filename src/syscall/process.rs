@@ -45,8 +45,6 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     // Files must be closed while context is valid so that messages can be passed
     close_files.force_close_all(token);
     if let Some(addrspace) = addrspace_opt {
-        // TODO: addrspace utable should be dropped immediately but it's not the case.
-        //       the utable leaves us with 8 memory pages (32K) leak per context
         if let Ok(addrspace) = Arc::try_unwrap(addrspace) {
             addrspace.into_drop(token);
         }
@@ -55,12 +53,6 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     let owner = {
         let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
-        // TODO: context should be dropped immediately but it's not the case.
-        //       we drop kstack to prevent 32 memory pages (128K) leaking
-        // TODO: can't drop the kstack here immediately, as this very function runs on that stack.
-        //       until the Arc leaks can be found, consider using a global "garbage collection
-        //       queue"
-        // drop(guard.kstack.take());
 
         guard.owner_proc_id
     };
@@ -80,6 +72,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
             }
         }
     }
+    drop(close_files);
     context::switch(token);
     unreachable!();
 }

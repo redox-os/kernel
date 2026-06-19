@@ -351,6 +351,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 .being_sigkilled
                 .set(next_context.being_sigkilled);
 
+            // Anything implement Drop must be manually dropped now
+            drop(prev_context_lock);
+
             unsafe {
                 percpu.new_addrsp_guard.set(addr_space_guard);
                 arch::switch_to(prev_context, next_context);
