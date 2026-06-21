@@ -1,9 +1,11 @@
 //! See <https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html#system-resource-affinity-table-srat>
 
+use hashbrown::HashMap;
+
 use crate::{
     acpi::{find_sdt, sdt::Sdt, srat},
     find_one_sdt,
-    numa::{NUMA_NODES, NUMBER_OF_DOMAINS},
+    numa::{NumaNode, NUMA_NODES},
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -17,20 +19,19 @@ mod arch;
 #[repr(C, packed)]
 pub struct Srat {
     sdt: &'static Sdt,
-    entries: usize,
+    entries: *const u8,
 }
 
-pub fn init() {
+pub fn init(numa_nodes: &mut HashMap<u32, NumaNode>) {
     let srat = Srat::new(find_one_sdt!("SRAT"));
-    arch::init_srat(&srat);
-    NUMBER_OF_DOMAINS.call_once(|| NUMA_NODES.get().unwrap().len() as u32);
+    arch::init_srat(numa_nodes, &srat);
 }
 
 impl Srat {
     pub fn new(sdt: &'static Sdt) -> Self {
         Self {
             sdt,
-            entries: sdt.data_address() + 12,
+            entries: (sdt.data_address() + 12) as *const u8,
         }
     }
 }
@@ -55,8 +56,8 @@ impl<'a> Iterator for SratIter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.i < self.srat.sdt.data_len() as u32 {
-            let entry = (self.srat.entries + self.i as usize) as *const u8;
-            let entry_len = unsafe { *((self.srat.entries + self.i as usize + 1) as *const u8) };
+            let entry = unsafe { self.srat.entries.add(self.i as usize) };
+            let entry_len = unsafe { *self.srat.entries.add(self.i as usize + 1) };
 
             let entry = Some(match unsafe { *entry } {
                 0 => SratEntry::LegacyProcessorLocalAffinity(unsafe {

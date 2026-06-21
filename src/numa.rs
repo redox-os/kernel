@@ -8,7 +8,6 @@ use hashbrown::HashMap;
 use spin::once::Once;
 
 pub static NUMA_NODES: Once<HashMap<u32, NumaNode>> = Once::new();
-pub static NUMBER_OF_DOMAINS: Once<u32> = Once::new();
 
 #[derive(Debug)]
 pub struct NumaMemory {
@@ -34,39 +33,28 @@ pub struct NumaNode {
 }
 
 pub fn init() {
-    NUMA_NODES.call_once(|| HashMap::new());
-    let mut flag = false;
+    NUMA_NODES.call_once(|| {
+        let mut numa_nodes = HashMap::new();
+        #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            acpi::srat::init(&mut numa_nodes);
+            acpi::slit::init(&mut numa_nodes);
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
-    {
-        acpi::srat::init();
-        acpi::slit::init();
-        flag = true;
-    }
-
-    #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
-    {
-        if !flag {
-            // todo!()
-            return;
+            sort_by_distances(&mut numa_nodes);
+            reorganise(&mut numa_nodes);
+            shrink(&mut numa_nodes);
         }
-    }
 
-    unsafe {
-        sort_by_distances();
-        reorganise();
-        shrink();
-    }
+        #[cfg(any(target_arch = "riscv64", target_arch = "aarch64"))]
+        {
+            // todo!()
+        }
 
-    // From this point onwards, the global static `NUMA_NODES` or any of its elements
-    // MUST NOT be mutated by the usual unsafe magic that functions in this file use.
+        numa_nodes
+    });
 }
 
-pub unsafe fn add_cpu(id: u32, node_id: u32) {
-    let numa_nodes = NUMA_NODES.get().unwrap();
-
-    let numa_nodes = unsafe { &mut *(&raw const *numa_nodes as *mut HashMap<u32, NumaNode>) };
-
+pub fn add_cpu(numa_nodes: &mut HashMap<u32, NumaNode>, id: u32, node_id: u32) {
     if let Some(node) = numa_nodes.get_mut(&id) {
         node.cpus.push(NumaCpu { id });
     } else {
@@ -83,11 +71,12 @@ pub unsafe fn add_cpu(id: u32, node_id: u32) {
     }
 }
 
-pub unsafe fn add_memory(node_id: u32, start: usize, length: usize) {
-    let numa_nodes = NUMA_NODES.get().unwrap();
-
-    let numa_nodes = unsafe { &mut *(&raw const *numa_nodes as *mut HashMap<u32, NumaNode>) };
-
+pub fn add_memory(
+    numa_nodes: &mut HashMap<u32, NumaNode>,
+    node_id: u32,
+    start: usize,
+    length: usize,
+) {
     if let Some(node) = numa_nodes.get_mut(&node_id) {
         node.memory.push(NumaMemory { start, length });
     } else {
@@ -104,18 +93,12 @@ pub unsafe fn add_memory(node_id: u32, start: usize, length: usize) {
     }
 }
 
-pub unsafe fn set_distance(src: u32, target: u32, distance: u8) {
-    let nodes =
-        unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
-
+pub fn set_distance(nodes: &mut HashMap<u32, NumaNode>, src: u32, target: u32, distance: u8) {
     let src = nodes.get_mut(&src).unwrap();
     src.distances.push((target, distance));
 }
 
-unsafe fn shrink() {
-    let nodes =
-        unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
-
+fn shrink(nodes: &mut HashMap<u32, NumaNode>) {
     nodes.shrink_to_fit();
 
     for (id, node) in nodes {
@@ -130,9 +113,7 @@ unsafe fn shrink() {
 /// CPUs, the memory is put into a node that has a CPU that is nearest to it.
 ///
 /// See the comment above the definition of `NumaNode`.
-unsafe fn reorganise() {
-    let nodes =
-        unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
+fn reorganise(nodes: &mut HashMap<u32, NumaNode>) {
     let ids = nodes.keys().map(|e| *e).collect::<Vec<u32>>();
 
     for id in ids {
@@ -199,10 +180,7 @@ fn put_for_adoption(
     }
 }
 
-unsafe fn sort_by_distances() {
-    let nodes =
-        unsafe { &mut *(&raw const *(NUMA_NODES.get().unwrap()) as *mut HashMap<u32, NumaNode>) };
-
+fn sort_by_distances(nodes: &mut HashMap<u32, NumaNode>) {
     for (id, node) in nodes {
         node.distances.sort_by_key(|(_, e)| *e);
     }
