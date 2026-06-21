@@ -81,6 +81,7 @@ default = [
   "acpi",
   #"debugger",
   "multi_core",
+  # "numa",
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
@@ -95,6 +96,7 @@ self_modifying = []
 acpi = []
 lpss_debug = []
 multi_core = ["acpi"]
+numa = ["multi_core"]
 profiling = []
 #TODO: remove when threading issues are fixed
 pti = []
