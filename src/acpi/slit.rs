@@ -23,7 +23,7 @@ impl Slit {
     }
     pub fn init(&self, numa_nodes: &mut HashMap<u32, NumaNode>) {
         let address = self.address;
-        let ndom = NUMA_NODES.get().unwrap().len() as u32;
+        let ndom = numa_nodes.len() as u32;
 
         for i in 0..ndom {
             for j in i..ndom {
