@@ -276,13 +276,13 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
     context
         .files
         .write(token.token())
-        .reserve(0, 64)
-        .expect("failed to reserve lower fdtbl");
+        .resize(0, 64)
+        .expect("failed to resize lower fdtbl");
     context
         .files
         .write(token.token())
-        .reserve(syscall::flag::UPPER_FDTBL_TAG, 64)
-        .expect("failed to reserve upper fdtbl");
+        .resize(syscall::flag::UPPER_FDTBL_TAG, 64)
+        .expect("failed to resize upper fdtbl");
     context
         .insert_file(
             FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | scheme.get()),

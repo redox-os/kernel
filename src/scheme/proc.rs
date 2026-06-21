@@ -1659,14 +1659,14 @@ impl ContextHandle {
                         Ok(0)
                     }
 
-                    FileTableVerb::Reserve => {
+                    FileTableVerb::Resize => {
                         let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
-                        let Some(&[which, additional]) = metadata.get(1..3) else {
+                        let Some(&[which, size]) = metadata.get(1..3) else {
                             return Err(Error::new(EINVAL));
                         };
                         files
                             .write(token.token())
-                            .reserve(which as usize, additional as usize)
+                            .resize(which as usize, size as usize)
                     }
                 }
             }

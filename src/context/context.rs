@@ -603,24 +603,9 @@ pub struct FdTbl {
 
 impl Clone for FdTbl {
     fn clone(&self) -> Self {
-        let mut lower_fdtbl = self.lower_fdtbl.clone();
-        let mut upper_fdtbl = self.upper_fdtbl.clone();
-
-        let additional_lower = self
-            .lower_fdtbl
-            .capacity()
-            .saturating_sub(lower_fdtbl.len());
-        let additional_upper = self
-            .upper_fdtbl
-            .capacity()
-            .saturating_sub(upper_fdtbl.len());
-
-        lower_fdtbl.reserve(additional_lower);
-        upper_fdtbl.reserve(additional_upper);
-
         Self {
-            lower_fdtbl,
-            upper_fdtbl,
+            lower_fdtbl: self.lower_fdtbl.clone(),
+            upper_fdtbl: self.upper_fdtbl.clone(),
             active_count: self.active_count,
         }
     }
@@ -637,18 +622,18 @@ impl FdTbl {
         }
     }
 
-    pub fn reserve(&mut self, which: usize, additional: usize) -> Result<usize> {
+    pub fn resize(&mut self, which: usize, size: usize) -> Result<usize> {
         if which & UPPER_FDTBL_TAG == 0 {
-            if super::CONTEXT_MAX_FILES - self.lower_fdtbl.len() < additional {
+            if super::CONTEXT_MAX_FILES < size {
                 return Err(Error::new(EMFILE));
             }
-            self.lower_fdtbl.reserve(additional);
+            self.lower_fdtbl.resize(size, None);
             Ok(self.lower_fdtbl.len())
         } else {
-            if super::CONTEXT_MAX_FILES - self.upper_fdtbl.len() < additional {
+            if super::CONTEXT_MAX_FILES < size {
                 return Err(Error::new(EMFILE));
             }
-            self.upper_fdtbl.reserve(additional);
+            self.upper_fdtbl.resize(size, None);
             Ok(self.upper_fdtbl.len())
         }
     }
@@ -721,10 +706,6 @@ impl FdTbl {
         }
 
         if real_index >= fdtbl.len() {
-            if real_index >= fdtbl.capacity() {
-                return None;
-            }
-
             fdtbl.resize_with(real_index + 1, || None);
         }
 
