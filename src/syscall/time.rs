@@ -1,3 +1,5 @@
+use core::num::NonZeroU128;
+
 use crate::{
     context,
     sync::CleanLockToken,
@@ -35,6 +37,9 @@ pub fn nanosleep(
 
     let start = time::monotonic(token);
     let end = start + req.to_nanos();
+    let Ok(end_nonzero) = NonZeroU128::try_from(end) else {
+        return Err(Error::new(EINVAL));
+    };
 
     let current_context = context::current();
     {
@@ -46,7 +51,7 @@ pub fn nanosleep(
             return Err(Error::new(EINTR));
         }
         let mut context = context.upgrade();
-        context.wake = Some(end);
+        context.wake = Some(end_nonzero);
         context.block("nanosleep");
     }
 
