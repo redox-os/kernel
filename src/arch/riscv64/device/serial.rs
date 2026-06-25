@@ -27,7 +27,9 @@ impl InterruptHandler for Com1Irq {
 
 pub unsafe fn init(fdt: &Fdt) -> Option<()> {
     unsafe {
-        if let Some(node) = fdt.find_compatible(&["ns16550a", "snps,dw-apb-uart"]) {
+        if let Some(node) =
+            fdt.find_compatible(&["ns16550a", "snps,dw-apb-uart", "spacemit,k1-uart"])
+        {
             let intr = get_interrupt(fdt, &node, 0).unwrap();
             let interrupt_parent = interrupt_parent(fdt, &node)?;
             let phandle = interrupt_parent.property("phandle")?.as_usize()? as u32;

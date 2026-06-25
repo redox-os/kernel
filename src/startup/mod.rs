@@ -18,7 +18,7 @@ pub mod memory;
 
 #[repr(C, packed(8))]
 pub(crate) struct KernelArgs {
-    kernel_base: u64,
+    pub(crate) kernel_base: u64,
     kernel_size: u64,
 
     stack_base: u64,
