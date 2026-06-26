@@ -129,8 +129,6 @@ pub fn unlinkat(
     fh: FileHandle,
     raw_path: UserSliceRo,
     flags: usize,
-    euid: u32,
-    egid: u32,
     token: &mut CleanLockToken,
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
@@ -384,27 +382,13 @@ fn call_fdwrite(
 
     let len = fds.len();
 
-    fdwrite_inner(fd, fds, flags, metadata, token)?;
-
-    Ok(len)
-}
-
-fn fdwrite_inner(
-    socket: FileHandle,
-    target_fds: Vec<FileHandle>,
-    flags: CallFlags,
-    metadata: &[u64],
-    token: &mut CleanLockToken,
-) -> Result<usize> {
     // TODO: Ensure deadlocks can't happen
     let (scheme, number, descs_to_send) = {
         let (scheme, number) = {
             let current_lock = context::current();
             let mut current = current_lock.read(token.token());
             let (context, mut token) = current.token_split();
-            let file_descriptor = context
-                .get_file(socket, &mut token)
-                .ok_or(Error::new(EBADF))?;
+            let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
             let desc = &file_descriptor.description.read(token.token());
             (desc.scheme, desc.number)
         };
@@ -417,9 +401,9 @@ fn fdwrite_inner(
             scheme,
             number,
             if flags.contains(CallFlags::FD_CLONE) {
-                context.bulk_get_files(&target_fds, &mut token)
+                context.bulk_get_files(&fds, &mut token)
             } else {
-                context.bulk_remove_files(&target_fds, &mut token)
+                context.bulk_remove_files(&fds, &mut token)
             }?
             .into_iter()
             .map(|f| f.description)
@@ -442,7 +426,9 @@ fn fdwrite_inner(
         CallFlags::empty()
     };
 
-    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)
+    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)?;
+
+    Ok(len)
 }
 
 fn call_fdread(
@@ -467,24 +453,6 @@ fn call_fdread(
     };
 
     scheme.kfdread(number, payload, flags, metadata, token)
-}
-
-pub fn sendfd(
-    socket: FileHandle,
-    fd: FileHandle,
-    flags_raw: usize,
-    arg: u64,
-    token: &mut CleanLockToken,
-) -> Result<usize> {
-    let sendfd_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
-    let mut call_flags = CallFlags::FD | CallFlags::WRITE;
-    if sendfd_flags.contains(SendFdFlags::CLONE) {
-        call_flags |= CallFlags::FD_CLONE;
-    }
-    if sendfd_flags.contains(SendFdFlags::EXCLUSIVE) {
-        call_flags |= CallFlags::FD_EXCLUSIVE;
-    }
-    fdwrite_inner(socket, Vec::from([fd]), call_flags, &[arg], token)
 }
 
 /// File descriptor controls
