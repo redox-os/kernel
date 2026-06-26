@@ -66,8 +66,6 @@ impl InternalFlags {
 pub struct FileDescriptor {
     /// Corresponding file description
     pub description: Arc<LockedFileDescription>,
-    /// Cloexec flag
-    pub cloexec: bool,
 }
 
 impl FileDescription {

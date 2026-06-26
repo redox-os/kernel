@@ -824,10 +824,7 @@ impl UserInner {
                 let (context, mut token) = current.token_split();
                 context.insert_file(
                     FileHandle::from(dst_fd_or_ptr),
-                    FileDescriptor {
-                        description,
-                        cloexec: true,
-                    },
+                    FileDescriptor { description },
                     &mut token,
                 );
             }
@@ -1215,9 +1212,6 @@ impl UserInner {
                 if flags.contains(CallFlags::FD_EXCLUSIVE) {
                     obtainfd_flags |= FobtainFdFlags::EXCLUSIVE;
                 }
-                if flags.contains(CallFlags::FD_CLOEXEC) {
-                    obtainfd_flags |= FobtainFdFlags::CLOEXEC;
-                }
                 self.handle_obtainfd(payload, metadata[1] as usize, obtainfd_flags, token)
             }
             _ => Err(Error::new(EINVAL)),
@@ -1242,12 +1236,7 @@ impl UserInner {
         };
 
         let mut token = token.downgrade();
-        let num_fds = bulk_insert_fds(
-            descriptions,
-            payload,
-            flags.contains(FobtainFdFlags::CLOEXEC),
-            &mut token.token(),
-        )?;
+        let num_fds = bulk_insert_fds(descriptions, payload, &mut token.token())?;
 
         Ok(num_fds)
     }
@@ -1985,10 +1974,6 @@ impl KernelScheme for UserScheme {
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
-        if flags.contains(CallFlags::FD_CLOEXEC) {
-            recvfd_flags |= RecvFdFlags::CLOEXEC;
-        }
-
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / size_of::<usize>();
         let res = inner.call(
@@ -2019,12 +2004,7 @@ impl KernelScheme for UserScheme {
 
         let mut token = token.downgrade();
         let num_fds = if let Some(descriptions) = descriptions_opt {
-            bulk_insert_fds(
-                descriptions,
-                payload,
-                recvfd_flags.contains(RecvFdFlags::CLOEXEC),
-                &mut token,
-            )?
+            bulk_insert_fds(descriptions, payload, &mut token)?
         } else {
             0
         };

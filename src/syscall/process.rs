@@ -157,12 +157,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    insert_fd(
-                        scheme.scheme_id(),
-                        cap_fd,
-                        matches!(scheme, GlobalSchemes::Proc),
-                        token,
-                    )
+                    insert_fd(scheme.scheme_id(), cap_fd, token)
                 };
             }
         }
@@ -175,7 +170,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             };
             // Second, retrieve the scheme ID.
             let scheme_id = &SchemeList.id();
-            insert_fd(*scheme_id, cap_fd, false, token)
+            insert_fd(*scheme_id, cap_fd, token)
         };
 
         let mut lock_token = token.token();
@@ -269,7 +264,7 @@ unsafe fn bootstrap_mem(bootstrap: &crate::startup::Bootstrap) -> &'static [u8] 
     }
 }
 
-fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLockToken) -> usize {
+fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usize {
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
@@ -294,7 +289,6 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
                     flags: (O_CREAT | O_RDWR) as u32,
                     internal_flags: InternalFlags::empty(),
                 })),
-                cloexec,
             },
             &mut token,
         )

@@ -104,7 +104,7 @@ pub fn openat_into(
                     internal_flags,
                     scheme: scheme_id,
                     number,
-                    flags: (flags & !O_CLOEXEC) as u32,
+                    flags: flags as u32,
                 }))
             }
             OpenResult::External(desc) => desc,
@@ -119,7 +119,6 @@ pub fn openat_into(
             new_fd,
             FileDescriptor {
                 description: new_description,
-                cloexec: flags & O_CLOEXEC == O_CLOEXEC,
             },
             &mut token,
         )
@@ -173,7 +172,6 @@ pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
 fn duplicate_file(
     fd: FileHandle,
     user_buf: UserSliceRo,
-    cloexec: bool,
     token: &mut CleanLockToken,
 ) -> Result<FileDescriptor> {
     let (caller_ctx, file) = {
@@ -189,7 +187,6 @@ fn duplicate_file(
     if user_buf.is_empty() {
         Ok(FileDescriptor {
             description: Arc::clone(&file.description),
-            cloexec,
         })
     } else {
         let description = { *file.description.read(token.token()) };
@@ -213,7 +210,6 @@ fn duplicate_file(
 
         Ok(FileDescriptor {
             description: new_description,
-            cloexec,
         })
     }
 }
@@ -225,7 +221,7 @@ pub fn dup_into(
     buf: UserSliceRo,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
-    let new_file = duplicate_file(fd, buf, false, token)?;
+    let new_file = duplicate_file(fd, buf, token)?;
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
@@ -245,7 +241,7 @@ pub fn dup2(
         Ok(new_fd)
     } else {
         let _ = close(new_fd, token);
-        let new_file = duplicate_file(fd, buf, false, token)?;
+        let new_file = duplicate_file(fd, buf, token)?;
 
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
@@ -506,9 +502,9 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         (desc.scheme, desc.number, desc.flags)
     };
 
-    if cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC {
+    if cmd == F_DUPFD {
         // Not in match because 'files' cannot be locked
-        let new_file = duplicate_file(fd, UserSlice::empty(), cmd == F_DUPFD_CLOEXEC, token)?;
+        let new_file = duplicate_file(fd, UserSlice::empty(), token)?;
 
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
@@ -536,17 +532,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         let (files, mut token) = files.token_split();
         match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
-                F_GETFD => {
-                    if file.cloexec {
-                        Ok(O_CLOEXEC)
-                    } else {
-                        Ok(0)
-                    }
-                }
-                F_SETFD => {
-                    file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
-                    Ok(0)
-                }
+                F_GETFD => Ok(0),
+                F_SETFD => Ok(0),
                 F_GETFL => Ok(flags as usize),
                 F_SETFL => {
                     let new_flags = (flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);

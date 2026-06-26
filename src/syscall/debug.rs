@@ -114,7 +114,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
                 F_SETFD => "F_SETFD",
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
-                F_DUPFD_CLOEXEC => "F_DUPFD_CLOEXEC",
                 _ => "UNKNOWN",
             },
             c,
