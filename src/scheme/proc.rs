@@ -1631,7 +1631,8 @@ impl ContextHandle {
                         };
                         files
                             .write(token.token())
-                            .resize(which as usize, size as usize)
+                            .resize(which as usize, size as usize);
+                        Ok(size as usize)
                     }
                     _ => Err(Error::new(EOPNOTSUPP)),
                 }

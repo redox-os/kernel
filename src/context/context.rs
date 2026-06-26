@@ -622,20 +622,17 @@ impl FdTbl {
         }
     }
 
-    pub fn resize(&mut self, which: usize, size: usize) -> Result<usize> {
-        if which & UPPER_FDTBL_TAG == 0 {
-            if super::CONTEXT_MAX_FILES < size {
-                return Err(Error::new(EMFILE));
-            }
-            self.lower_fdtbl.resize(size, None);
-            Ok(self.lower_fdtbl.len())
-        } else {
-            if super::CONTEXT_MAX_FILES < size {
-                return Err(Error::new(EMFILE));
-            }
-            self.upper_fdtbl.resize(size, None);
-            Ok(self.upper_fdtbl.len())
+    pub fn resize(&mut self, which: usize, size: usize) -> Result<()> {
+        let (fdtbl, _) = self.select_fdtbl_mut(which);
+        if super::CONTEXT_MAX_FILES < size {
+            return Err(Error::new(EMFILE));
         }
+        if size < fdtbl.len() {
+            return Err(Error::new(EINVAL));
+        }
+
+        fdtbl.resize(size, None);
+        Ok(())
     }
 
     fn strip_tags(index: usize) -> usize {
