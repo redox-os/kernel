@@ -594,21 +594,11 @@ impl core::fmt::Debug for Kstack {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct FdTbl {
     pub lower_fdtbl: Vec<Option<FileDescriptor>>,
     pub upper_fdtbl: Vec<Option<FileDescriptor>>,
     active_count: usize,
-}
-
-impl Clone for FdTbl {
-    fn clone(&self) -> Self {
-        Self {
-            lower_fdtbl: self.lower_fdtbl.clone(),
-            upper_fdtbl: self.upper_fdtbl.clone(),
-            active_count: self.active_count,
-        }
-    }
 }
 
 pub type LockedFdTbl = RwLock<L5, FdTbl>;
