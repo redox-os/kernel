@@ -394,7 +394,11 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
     }
 }
 
-pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Option<usize>) {
+pub unsafe fn init(
+    args: &KernelArgs,
+    low_limit: Option<usize>,
+    high_limit: Option<usize>,
+) -> BumpAllocator<CurrentRmmArch> {
     register_memory_from_kernel_args(args);
 
     unsafe {
@@ -441,7 +445,6 @@ pub unsafe fn init(args: &KernelArgs, low_limit: Option<usize>, high_limit: Opti
         // Create the physical memory map
         let offset = bump_allocator.offset();
         info!("Permanently used: {} KB", offset.div_ceil(KILOBYTE));
-
-        crate::memory::init_mm(bump_allocator);
+        bump_allocator
     }
 }

@@ -102,12 +102,19 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 
             // Initialize RMM
             #[cfg(target_arch = "x86")]
-            crate::startup::memory::init(&args, Some(0x100000), Some(0x40000000));
+            let bump_allocator =
+                crate::startup::memory::init(&args, Some(0x100000), Some(0x40000000));
             #[cfg(target_arch = "x86_64")]
-            crate::startup::memory::init(&args, Some(0x100000), None);
+            let bump_allocator = crate::startup::memory::init(&args, Some(0x100000), None);
 
             // Initialize paging
             paging::init();
+
+            if cfg!(feature = "acpi") {
+                crate::acpi::init_before_mem(args.acpi_rsdp());
+            }
+
+            crate::memory::init_mm(bump_allocator);
 
             #[cfg(target_arch = "x86_64")]
             crate::arch::alternative::early_init(true);
@@ -130,7 +137,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 
             // Read ACPI tables, starts APs
             if cfg!(feature = "acpi") {
-                crate::acpi::init(args.acpi_rsdp());
+                crate::acpi::init_after_mem(args.acpi_rsdp());
                 device::init_after_acpi();
             }
             crate::profiling::init();
