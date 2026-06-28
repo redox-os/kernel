@@ -93,6 +93,10 @@ pub fn init_srat<A: Arch>(
     for affinity in srat {
         match affinity {
             SratEntry::LegacyProcessorLocalAffinity(legacy_processor_local_affinity) => {
+                if legacy_processor_local_affinity.flags & 1 == 0 {
+                    // processor disabled
+                    continue;
+                }
                 let dom = to_single_int(
                     &legacy_processor_local_affinity.proximity_domain_high,
                     legacy_processor_local_affinity.proximity_domain_low,
@@ -104,6 +108,10 @@ pub fn init_srat<A: Arch>(
                 cpus[legacy_processor_local_affinity.apic_id as usize] = dom_node_map[dom as usize];
             }
             SratEntry::MemoryAffinity(memory_affinity) => {
+                if memory_affinity.flags & 1 == 0 {
+                    // memory is not enabled
+                    continue;
+                }
                 let dom = memory_affinity.proximity_domain;
                 if memory_affinity.length_low == 0 {
                     continue;
@@ -125,6 +133,10 @@ pub fn init_srat<A: Arch>(
                 };
             }
             SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
+                if processor_local_affinity.flags & 1 == 0 {
+                    // processor disabled
+                    continue;
+                }
                 let dom = processor_local_affinity.proximity_domain;
                 if dom_node_map[dom as usize] == u32::MAX {
                     let node_id = numa::assign_node_id(true);
