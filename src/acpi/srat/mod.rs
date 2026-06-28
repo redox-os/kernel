@@ -1,11 +1,13 @@
 //! See <https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html#system-resource-affinity-table-srat>
 
 use hashbrown::HashMap;
+use rmm::{Arch, BumpAllocator};
+use spin::once::Once;
 
 use crate::{
-    acpi::{find_sdt, sdt::Sdt, srat},
-    find_one_sdt,
-    numa::{NumaNode, NUMA_NODES},
+    acpi::{find_sdt, get_sdt_signature, rxsdt::Rxsdt, sdt::Sdt, srat, RXSDT_ENUM},
+    find_one_sdt, memory,
+    numa::NumaMemory,
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -22,9 +24,26 @@ pub struct Srat {
     entries: *const u8,
 }
 
-pub fn init(numa_nodes: &mut HashMap<u32, NumaNode>) {
-    let srat = Srat::new(find_one_sdt!("SRAT"));
-    arch::init_srat(numa_nodes, &srat);
+pub fn init<A: Arch>(
+    allocator: &mut BumpAllocator<A>,
+    map: &Once<&'static [u32]>,
+    cpus: &Once<&'static [u32]>,
+    mem: &Once<&'static [NumaMemory]>,
+) {
+    if let Some(rxsdt) = RXSDT_ENUM.get() {
+        let srat = for sdt_addr in rxsdt.iter() {
+            let sdt = unsafe { &*(memory::RmmA::phys_to_virt(sdt_addr).data() as *const Sdt) };
+            let (sign, _, _) = get_sdt_signature(sdt);
+            if sign == "SRAT" {
+                let (a, b, c) = arch::init_srat(allocator, &Srat::new(sdt));
+                map.call_once(|| a);
+                cpus.call_once(|| b);
+                mem.call_once(|| c);
+            } else {
+                return;
+            }
+        };
+    }
 }
 
 impl Srat {
