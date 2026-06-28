@@ -8,7 +8,6 @@ use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator};
 use spin::once::Once;
 
-// pub static NUMA_NODES: Once<HashMap<u32, NumaNode>> = Once::new();
 pub const MAX_DOMAINS: usize = 128;
 
 static DOMAIN_NODE_MAP: Once<&'static [u32]> = Once::new();
@@ -142,4 +141,40 @@ pub fn cpu_belongs_to_which_node(cpu_id: usize) -> Option<u32> {
     Some(*NUMA_CPUS.get()?.get(cpu_id)?)
 }
 
-// pub fn memory_belongs_to_which_node(address: usize) -> Option<u32> {}
+/// A helper function that prints information about NUMA - available nodes, cpus and memory blocks in them
+/// their starts and lengths
+pub fn dump_info() {
+    if let Some(map) = DOMAIN_NODE_MAP.get()
+        && let Some(cpus) = NUMA_CPUS.get()
+        && let Some(memories) = NUMA_MEMORY.get()
+    {
+        println!(
+            "Number of proximity domains: {}",
+            map.iter()
+                .map(|e| if *e != u32::MAX { 1 } else { 0 })
+                .sum::<u32>()
+        );
+        println!(
+            "Number of NUMA nodes: {}",
+            memories
+                .iter()
+                .map(|m| m.dom)
+                .max()
+                .map_or(0, |e| e)
+                .max(cpus.iter().max().map_or(0, |e| *e))
+        );
+        for i in 0..cpus.len() {
+            println!("CPU {} : Node {}", i, cpus[i])
+        }
+        for i in 0..memories.len() {
+            println!(
+                "Memory Block starting at address {:#x} of size {} : Node {}",
+                memories[i].start, memories[i].length, memories[i].dom
+            );
+        }
+    } else {
+        println!(
+            "The system has either no support for NUMA or there was an error during initialisation"
+        );
+    }
+}

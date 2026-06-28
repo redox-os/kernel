@@ -188,7 +188,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
             panic!("failed to spawn userspace_init: {:?}", err);
         }
     }
-
+    numa::dump_info();
     run_userspace(&mut token)
 }
 
