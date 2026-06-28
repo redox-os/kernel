@@ -1,47 +1,44 @@
-// use crate::{
-//     acpi::sdt::Sdt,
-//     find_one_sdt,
-//     numa::{self, NumaNode, NUMA_NODES},
-// };
-// use core::ops::Add;
-// use hashbrown::HashMap;
+use crate::{
+    acpi::{rxsdt::Rxsdt, sdt::Sdt, RXSDT_ENUM},
+    find_one_sdt,
+    memory::{round_up_pages, PAGE_SIZE},
+    numa::{self},
+};
+use core::{ops::Add, slice};
+use hashbrown::HashMap;
+use rmm::{Arch, BumpAllocator, FrameAllocator, FrameCount};
+use spin::once::Once;
 
-// #[derive(Debug)]
-// pub struct Slit {
-//     sdt: &'static Sdt,
-//     no: u64,
-//     address: *const u8,
-// }
+#[derive(Debug)]
+pub struct Slit {
+    sdt: &'static Sdt,
+    no: u64,
+    address: *const u8,
+}
 
-// impl Slit {
-//     pub fn new(sdt: &'static Sdt) -> Self {
-//         Self {
-//             sdt,
-//             no: unsafe { *(sdt.data_address() as *const u64) },
-//             address: (sdt.data_address() + 8) as *const u8,
-//         }
-//     }
-//     pub fn init(&self, numa_nodes: &mut HashMap<u32, NumaNode>) {
-//         let address = self.address;
-//         let ndom = numa_nodes.len() as u32;
+impl Slit {
+    pub fn new(sdt: &'static Sdt) -> Self {
+        Self {
+            sdt,
+            no: unsafe { *(sdt.data_address() as *const u64) },
+            address: (sdt.data_address() + 8) as *const u8,
+        }
+    }
+    pub fn init<A: Arch>(&self, allocator: &mut BumpAllocator<A>) -> &'static mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.address as *mut u8, (self.no * self.no) as usize) }
+    }
+}
 
-//         for i in 0..ndom {
-//             for j in i..ndom {
-//                 // ignore distances from a domain to itself, since it is always 10
-//                 if i != j {
-//                     numa::set_distance(numa_nodes, i, j, unsafe {
-//                         *address.add((i + ndom * j) as usize)
-//                     });
-//                     numa::set_distance(numa_nodes, j, i, unsafe {
-//                         *address.add((i + ndom * j) as usize)
-//                     });
-//                 }
-//             }
-//         }
-//     }
-// }
-
-// pub fn init(numa_nodes: &mut HashMap<u32, NumaNode>) {
-//     let slit = Slit::new(find_one_sdt!("SLIT"));
-//     slit.init(numa_nodes);
-// }
+pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>, distances: &Once<&'static [u8]>) {
+    if let Some(rxsdt) = RXSDT_ENUM.get() {
+        for sdt_addr in rxsdt.iter() {
+            let sdt =
+                unsafe { &*(crate::memory::RmmA::phys_to_virt(sdt_addr).data() as *const Sdt) };
+            if &sdt.signature == b"SLIT" {
+                let slit = Slit::new(sdt);
+                distances.call_once(|| slit.init(allocator));
+                return;
+            }
+        }
+    }
+}
