@@ -38,10 +38,9 @@ pub fn init_srat<A: Arch>(
         va.data() as *mut u32
     };
     // Occupies 512 bytes (1/8th of a page)
-    let dom_node_map: &'static mut [u32] = unsafe {
-        slice::from_raw_parts_mut(dom_node_map_ptr, numa::MAX_DOMAINS * size_of::<u32>())
-    };
-    (*dom_node_map).fill(u32::MAX);
+    let dom_node_map: &'static mut [u32] =
+        unsafe { slice::from_raw_parts_mut(dom_node_map_ptr, numa::MAX_DOMAINS) };
+    dom_node_map.fill(u32::MAX);
 
     let mut cpu_count = 0;
     let mut memory_count = 0;
@@ -73,6 +72,8 @@ pub fn init_srat<A: Arch>(
         )
     };
 
+    cpus.fill(u32::MAX);
+
     // total occupied till now: 1024 bytes, remaining 3072 bytes, can accomodate 128 memory entries
 
     let memories: &'static mut [NumaMemory] = unsafe {
@@ -82,6 +83,13 @@ pub fn init_srat<A: Arch>(
         )
     };
 
+    memories.fill(NumaMemory {
+        start: 0,
+        length: 0,
+        dom: 0,
+        _pad: [0; 4],
+    });
+
     for affinity in srat {
         match affinity {
             SratEntry::LegacyProcessorLocalAffinity(legacy_processor_local_affinity) => {
@@ -90,7 +98,7 @@ pub fn init_srat<A: Arch>(
                     legacy_processor_local_affinity.proximity_domain_low,
                 );
                 if dom_node_map[dom as usize] == u32::MAX {
-                    let node_id = numa::assign_node_id();
+                    let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
                 cpus[legacy_processor_local_affinity.apic_id as usize] = dom_node_map[dom as usize];
@@ -106,7 +114,7 @@ pub fn init_srat<A: Arch>(
                 );
                 let length = to_usize(memory_affinity.length_low, memory_affinity.length_high);
                 if dom_node_map[dom as usize] == u32::MAX {
-                    let node_id = numa::assign_node_id();
+                    let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
                 memories[dom_node_map[dom as usize] as usize] = numa::NumaMemory {
@@ -119,7 +127,7 @@ pub fn init_srat<A: Arch>(
             SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
                 let dom = processor_local_affinity.proximity_domain;
                 if dom_node_map[dom as usize] == u32::MAX {
-                    let node_id = numa::assign_node_id();
+                    let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
                 cpus[dom_node_map[dom as usize] as usize] =

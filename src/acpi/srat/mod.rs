@@ -31,18 +31,16 @@ pub fn init<A: Arch>(
     mem: &Once<&'static [NumaMemory]>,
 ) {
     if let Some(rxsdt) = RXSDT_ENUM.get() {
-        let srat = for sdt_addr in rxsdt.iter() {
+        for sdt_addr in rxsdt.iter() {
             let sdt = unsafe { &*(memory::RmmA::phys_to_virt(sdt_addr).data() as *const Sdt) };
-            let (sign, _, _) = get_sdt_signature(sdt);
-            if sign == "SRAT" {
+            if &sdt.signature == b"SRAT" {
                 let (a, b, c) = arch::init_srat(allocator, &Srat::new(sdt));
                 map.call_once(|| a);
                 cpus.call_once(|| b);
                 mem.call_once(|| c);
-            } else {
                 return;
             }
-        };
+        }
     }
 }
 

@@ -14,7 +14,7 @@ static DOMAIN_NODE_MAP: Once<&'static [u32]> = Once::new();
 static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NumaMemory {
     pub start: usize,
     pub length: usize,
@@ -127,10 +127,19 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
 //     }
 // }
 
-pub fn assign_node_id() -> u8 {
-    static NODE_ID: u8 = 0;
-    NODE_ID.checked_add(1).unwrap();
-    NODE_ID - 1
+pub fn assign_node_id(modify: bool) -> u8 {
+    static mut NODE_ID: u8 = 0;
+    if unsafe { NODE_ID } >= 128 {
+        panic!("Maximum number of domains supported is 128");
+    }
+    unsafe {
+        NODE_ID += 1;
+        let return_value = NODE_ID - 1;
+        if !modify {
+            NODE_ID -= 1;
+        }
+        return_value
+    }
 }
 
 pub fn domain_to_node_id(domain_id: u32) -> Option<u32> {
@@ -154,21 +163,19 @@ pub fn dump_info() {
                 .map(|e| if *e != u32::MAX { 1 } else { 0 })
                 .sum::<u32>()
         );
-        println!(
-            "Number of NUMA nodes: {}",
-            memories
-                .iter()
-                .map(|m| m.dom)
-                .max()
-                .map_or(0, |e| e)
-                .max(cpus.iter().max().map_or(0, |e| *e))
-        );
+        println!("Number of NUMA nodes: {}", assign_node_id(false));
         for i in 0..cpus.len() {
+            if cpus[i] == u32::MAX {
+                continue;
+            }
             println!("CPU {} : Node {}", i, cpus[i])
         }
         for i in 0..memories.len() {
+            if memories[i].length == 0 {
+                continue;
+            }
             println!(
-                "Memory Block starting at address {:#x} of size {} : Node {}",
+                "Memory Block starting at address {:#x} of size {:#x} bytes : Node {}",
                 memories[i].start, memories[i].length, memories[i].dom
             );
         }

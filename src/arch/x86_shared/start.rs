@@ -9,6 +9,7 @@ use crate::{
     arch::{device, gdt, idt, interrupt, paging},
     cpu_set::LogicalCpuId,
     devices::graphical_debug,
+    numa,
     startup::KernelArgs,
 };
 
@@ -105,7 +106,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             let bump_allocator =
                 crate::startup::memory::init(&args, Some(0x100000), Some(0x40000000));
             #[cfg(target_arch = "x86_64")]
-            let bump_allocator = crate::startup::memory::init(&args, Some(0x100000), None);
+            let mut bump_allocator = crate::startup::memory::init(&args, Some(0x100000), None);
 
             // Initialize paging
             paging::init();
@@ -113,6 +114,8 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             if cfg!(feature = "acpi") {
                 crate::acpi::init_before_mem(args.acpi_rsdp());
             }
+
+            numa::init(&mut bump_allocator);
 
             crate::memory::init_mm(bump_allocator);
 
