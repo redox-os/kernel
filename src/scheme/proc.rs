@@ -640,8 +640,6 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
-        let ctx = handle.context.upgrade().ok_or(Error::new(EBADF))?;
-
         handle.kind.kcall(
             fds,
             payload,
@@ -1616,8 +1614,8 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let mut file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
-                        file.cloexec = false;
+                        let mut file =
+                            context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;
@@ -1631,7 +1629,7 @@ impl ContextHandle {
                         };
                         files
                             .write(token.token())
-                            .resize(which as usize, size as usize);
+                            .resize(which as usize, size as usize)?;
                         Ok(size as usize)
                     }
                     _ => Err(Error::new(EOPNOTSUPP)),
