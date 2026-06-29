@@ -6,6 +6,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Weak},
 };
+use smallvec::SmallVec;
 use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
@@ -83,6 +84,7 @@ static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque:
 pub struct RunContextData {
     // queue: VecDeque<WeakContextRef>,
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
+    timers: BTreeMap<u128, SmallVec<[WeakContextRef; 16]>>,
     count: usize,
     v: u64,
     total_weight: u64,
@@ -91,9 +93,9 @@ pub struct RunContextData {
 
 impl RunContextData {
     pub const fn new() -> Self {
-        const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
             queue: BTreeMap::new(),
+            timers: BTreeMap::new(),
             count: 0,
             v: 0,
             total_weight: 0,
