@@ -132,6 +132,10 @@ pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextDa
     RUN_CONTEXTS.lock(token)
 }
 
+pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, RunContextData>> {
+    RUN_CONTEXTS.try_lock(token)
+}
+
 pub fn init(token: &mut CleanLockToken) {
     let owner = None; // kmain not owned by any fd
     let mut context = Context::new(owner).expect("failed to create kmain context");

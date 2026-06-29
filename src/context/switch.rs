@@ -5,7 +5,8 @@
 use crate::{
     context::{
         self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef,
+        run_contexts, run_contexts_try, ArcContextLockWriteGuard, Context, ContextLock,
+        WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -189,18 +190,20 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let mut wakeups = wakeup_contexts(token, switch_time);
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
-    {
-        let mut run_contexts = run_contexts(token.token());
+    if let Some(mut run_contexts) = run_contexts_try(token.token()) {
         // Pop Timers
         while let Some((&wake, _)) = run_contexts.timers.first_key_value() {
             if wake > switch_time {
                 break;
             }
             if let Some((wake, context_ref_list)) = run_contexts.timers.pop_first() {
-                    wakeups.extend(context_ref_list);
+                wakeups.extend(context_ref_list);
             }
         }
+    }
 
+    if wakeups.len() > 0 {
+        let mut run_contexts = run_contexts(token.token());
         for context_ref in wakeups {
             let Some(context_lock) = context_ref.upgrade() else {
                 continue;
@@ -491,7 +494,9 @@ fn select_next_context(
                 .timers
                 .entry(wake)
                 .and_modify(|list| list.push(WeakContextRef(Arc::downgrade(&prev_context_lock))))
-                .or_insert(smallvec::smallvec![WeakContextRef(Arc::downgrade(&prev_context_lock))]);
+                .or_insert_with(|| smallvec::smallvec![WeakContextRef(Arc::downgrade(
+                    &prev_context_lock
+                ))]);
         }
     }
 
