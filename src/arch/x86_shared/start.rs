@@ -9,9 +9,11 @@ use crate::{
     arch::{device, gdt, idt, interrupt, paging},
     cpu_set::LogicalCpuId,
     devices::graphical_debug,
-    numa,
     startup::KernelArgs,
 };
+
+#[cfg(target_feature = "numa")]
+use crate::numa;
 
 /// Test of zero values in BSS.
 static BSS_TEST_ZERO: SyncUnsafeCell<usize> = SyncUnsafeCell::new(0);
@@ -115,6 +117,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
                 crate::acpi::init_before_mem(args.acpi_rsdp());
             }
 
+            #[cfg(target_feature = "numa")]
             numa::init(&mut bump_allocator);
 
             crate::memory::init_mm(bump_allocator);
