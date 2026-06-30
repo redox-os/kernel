@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::convert::TryFrom;
 use rmm::PhysicalAddress;
 
-use crate::acpi::rxsdt::RxsdtIter;
+use crate::acpi::{RxsdtEnum, rxsdt::RxsdtIter};
 
 use super::{rxsdt::Rxsdt, sdt::Sdt};
 
@@ -27,6 +27,6 @@ impl Xsdt {
 
 impl Rxsdt for Xsdt {
     fn iter(&self) -> RxsdtIter {
-        RxsdtIter { sdt: self.0, i: 0 }
+        RxsdtIter { sdt: self.0, i: 0, rxsdt_enum: RxsdtEnum::Xsdt(Xsdt(self.0)) }
     }
 }
