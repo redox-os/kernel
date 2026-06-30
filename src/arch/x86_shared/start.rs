@@ -12,7 +12,7 @@ use crate::{
     startup::KernelArgs,
 };
 
-#[cfg(target_feature = "numa")]
+#[cfg(feature = "numa")]
 use crate::numa;
 
 /// Test of zero values in BSS.
@@ -117,7 +117,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
                 crate::acpi::init_before_mem(args.acpi_rsdp());
             }
 
-            #[cfg(target_feature = "numa")]
+            #[cfg(feature = "numa")]
             numa::init(&mut bump_allocator);
 
             crate::memory::init_mm(bump_allocator);
