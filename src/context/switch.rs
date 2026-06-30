@@ -187,17 +187,18 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    let mut wakeups = wakeup_contexts(token, switch_time);
+    let mut wakeups = wakeup_contexts(token);
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
     if let Some(mut run_contexts) = run_contexts_try(token.token()) {
         // Pop Timers
-        while let Some((&wake, _)) = run_contexts.timers.first_key_value() {
-            if wake > switch_time {
+        while let Some((wake, _)) = run_contexts.timers.first() {
+            if *wake > switch_time {
                 break;
             }
-            if let Some((wake, context_ref_list)) = run_contexts.timers.pop_first() {
-                wakeups.extend(context_ref_list);
+
+            if let Some((_, context_ref)) = run_contexts.timers.pop_first() {
+                wakeups.push(context_ref);
             }
         }
     }
@@ -390,7 +391,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
 fn wakeup_contexts(
     token: &mut CleanLockToken,
-    switch_time: u128,
 ) -> SmallVec<[WeakContextRef; 16]> {
     // TODO: Optimise this somehow
     let mut wakeups = SmallVec::new();
@@ -492,11 +492,7 @@ fn select_next_context(
         if let Some(wake) = prev_context_guard.wake {
             contexts_data
                 .timers
-                .entry(wake)
-                .and_modify(|list| list.push(WeakContextRef(Arc::downgrade(&prev_context_lock))))
-                .or_insert_with(|| smallvec::smallvec![WeakContextRef(Arc::downgrade(
-                    &prev_context_lock
-                ))]);
+                .insert((wake, WeakContextRef(Arc::downgrade(&prev_context_lock))));
         }
     }
 
