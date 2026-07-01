@@ -44,8 +44,8 @@ unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
 //TODO: calling format_call with arguments from another process space will not work
 pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g: usize) -> String {
     match a {
-        SYS_OPENAT => format!(
-            "openat({} {:?}, {:#0x}, {}, {})",
+        SYS_OPENAT_INTO => format!(
+            "openat_into({} {:?}, {:#0x}, {}, out: {})",
             b,
             debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
             e,
@@ -61,10 +61,11 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             g,
         ),
         SYS_CLOSE => format!("close({})", b),
-        SYS_DUP => format!(
-            "dup({}, {:?})",
+        SYS_DUP_INTO => format!(
+            "dup_into({}, {:?}, out: {})",
             b,
             debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
+            e,
         ),
         SYS_DUP2 => format!(
             "dup2({}, {}, {:?})",
@@ -72,7 +73,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             c,
             debug_buf(d, e).as_ref().map(|b| ByteStr(b)),
         ),
-        SYS_SENDFD => format!("sendfd({}, {}, {:#0x} {:#0x} {:#0x})", b, c, d, e, f,),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
         SYS_READ2 => format!(
             "read2({}, {:#X}, {}, {}, {:?})",
@@ -113,7 +113,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
                 F_SETFD => "F_SETFD",
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
-                F_DUPFD_CLOEXEC => "F_DUPFD_CLOEXEC",
                 _ => "UNKNOWN",
             },
             c,
@@ -204,12 +203,11 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
 
     #[expect(clippy::overly_complex_bool_expr)]
     #[expect(clippy::needless_bool)]
-    let do_debug = if false
-        && crate::context::current()
-            .read(token.token())
-            .name
-            .contains("acpid")
-    {
+    let do_debug = if true && {
+        let ctx = crate::context::current();
+        let guard = ctx.read(token.token());
+        guard.name.contains("init") || guard.name.contains("bootstrap")
+    } {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
         } else if (a == SYS_WRITE || a == SYS_FSYNC) && (b == 1 || b == 2) {

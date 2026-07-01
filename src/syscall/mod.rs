@@ -132,22 +132,12 @@ pub fn syscall(
             // be moved to UserScheme.
             SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
 
-            SYS_DUP => dup(fd, UserSlice::ro(c, d)?, token).map(FileHandle::into),
+            SYS_DUP_INTO => {
+                dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
+            }
             SYS_DUP2 => {
                 dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?, token).map(FileHandle::into)
             }
-
-            #[cfg(target_pointer_width = "32")]
-            SYS_SENDFD => sendfd(
-                fd,
-                FileHandle::from(c),
-                d,
-                e as u64 | ((f as u64) << 32),
-                token,
-            ),
-
-            #[cfg(target_pointer_width = "64")]
-            SYS_SENDFD => sendfd(fd, FileHandle::from(c), d, e as u64, token),
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
             SYS_FCHOWN => file_op_generic(fd, token, |scheme, number, token| {
@@ -207,23 +197,16 @@ pub fn syscall(
                     )
                 }
             }
-            SYS_OPENAT => {
-                openat(fd, UserSlice::ro(c, d)?, e, f as _, 0, 0, token).map(FileHandle::into)
-            }
-            SYS_OPENAT_WITH_FILTER => openat(
+            SYS_OPENAT_INTO => openat_into(
                 fd,
                 UserSlice::ro(c, d)?,
                 e,
-                (e & syscall::O_FCNTL_MASK) as _,
                 f as _,
-                g as _,
+                FileHandle::from(g),
                 token,
             )
             .map(FileHandle::into),
-            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, 0, 0, token).map(|()| 0),
-            SYS_UNLINKAT_WITH_FILTER => {
-                unlinkat(fd, UserSlice::ro(c, d)?, e, f as _, g as _, token).map(|()| 0)
-            }
+            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, token).map(|()| 0),
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, size_of::<TimeSpec>())?,
