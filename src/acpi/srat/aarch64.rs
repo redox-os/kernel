@@ -35,7 +35,7 @@ pub fn init_srat(dom_node_map: &mut [u32], cpus: &mut [u32], mem: &mut [NumaMemo
     );
 
     assert!(
-        cpu_count <= cpu_set::MAX_CPU_COUNT,
+        cpu_count <= MAX_CPU_COUNT,
         "Found more number of CPUs than supported"
     );
 

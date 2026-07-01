@@ -4,6 +4,7 @@
 use core::{
     cell::SyncUnsafeCell,
     num::NonZeroUsize,
+    ops::AddAssign,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -11,6 +12,8 @@ pub use kernel_mapper::KernelMapper;
 use spin::Mutex;
 
 pub use crate::arch::CurrentRmmArch as RmmA;
+#[cfg(feature = "numa")]
+use crate::numa;
 use crate::{
     context::{
         self,
@@ -21,7 +24,7 @@ use crate::{
     syscall::error::{Error, ENOMEM},
 };
 pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
-use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage};
+use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea};
 
 mod kernel_mapper;
 pub mod page;
@@ -503,6 +506,17 @@ const _: () = {
 
 #[cold]
 fn init_sections(mut allocator: BumpAllocator<RmmA>) {
+    let number_of_memory_regions = {
+        #[cfg(feature = "numa")]
+        {
+            numa::number_of_memory_regions()
+        }
+        #[cfg(not(feature = "numa"))]
+        {
+            0
+        }
+    };
+
     let (free_areas, offset_into_first_free_area) = allocator.free_areas();
 
     let free_areas_iter = || {
@@ -528,6 +542,21 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
                     .next_multiple_of(MAX_SECTION_SIZE);
                 let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
+                #[cfg(feature = "numa")]
+                {
+                    if number_of_memory_regions > 0 {
+                        if let Some(next_memory_region) =
+                            numa::nearest_next_memory_region(area.base.data(), false)
+                            && next_memory_region.start < area.base.add(area.size).data()
+                            && next_memory_region.start + next_memory_region.length
+                                > area.base.add(area.size).data()
+                            && !next_memory_region.start.is_multiple_of(MAX_SECTION_SIZE)
+                        {
+                            return (aligned_end - aligned_start) / MAX_SECTION_SIZE + 1;
+                        }
+                    }
+                }
+
                 (aligned_end - aligned_start) / MAX_SECTION_SIZE
             })
             .sum();
@@ -547,76 +576,145 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 
     let mut iter = free_areas_iter().peekable();
 
-    let mut i = 0;
+    let mut sections_fill = |region: Option<MemoryArea>,
+                             i: &mut usize, // out parameter
+                             force: bool|
+     -> Option<MemoryArea> {
+        let mut iter = free_areas_iter().peekable();
 
-    while let Some(mut memory_map_area) = iter.next() {
-        // TODO: NonZeroUsize
-
-        // TODO: x86_32 fails without this check
-        if memory_map_area.size == 0 {
-            continue;
-        }
-
-        assert_ne!(
-            memory_map_area.size, 0,
-            "RMM should enforce areas are not of length 0"
-        );
-
-        // TODO: Should RMM do this?
-
-        while let Some(next_area) = iter.peek()
-            && next_area.base == memory_map_area.base.add(memory_map_area.size)
-        {
-            memory_map_area.size += next_area.size;
-            let _ = iter.next();
-        }
-
-        assert_eq!(
-            memory_map_area.base.data() % PAGE_SIZE,
-            0,
-            "RMM should enforce area alignment"
-        );
-        assert_eq!(
-            memory_map_area.size % PAGE_SIZE,
-            0,
-            "RMM should enforce area length alignment"
-        );
-
-        let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
-        let mut base = Frame::containing(memory_map_area.base);
-
-        while pages_left > 0 {
-            let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
-            let pages_to_next_section =
-                (MAX_SECTION_SIZE - (base.base().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
-            let page_info_count = core::cmp::min(page_info_max_count, pages_to_next_section);
-
-            let page_info_array_size_pages =
-                (page_info_count * size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
-            let page_info_array = unsafe {
-                let base = allocator
-                    .allocate(FrameCount::new(page_info_array_size_pages))
-                    .expect("failed to allocate page info array");
-                core::slice::from_raw_parts_mut(
-                    RmmA::phys_to_virt(base).data() as *mut PageInfo,
-                    page_info_count,
-                )
-            };
-            for p in &*page_info_array {
-                assert_eq!(p.next.load(Ordering::Relaxed), 0);
-                assert_eq!(p.refcount.load(Ordering::Relaxed), 0);
+        while let Some(mut memory_map_area) = iter.next() {
+            if !{
+                if let Some(region) = region
+                    && !force
+                {
+                    memory_map_area.base >= region.base
+                        && memory_map_area.base.data() < region.base.data() + region.size
+                } else {
+                    true
+                }
+            } {
+                continue;
             }
 
-            sections[i] = Section {
-                base,
-                frames: page_info_array,
-            };
-            i += 1;
+            // TODO: NonZeroUsize
 
-            pages_left -= page_info_count;
-            base = base.next_by(page_info_count);
+            // TODO: x86_32 fails without this check
+            if memory_map_area.size == 0 {
+                continue;
+            }
+
+            assert_ne!(
+                memory_map_area.size, 0,
+                "RMM should enforce areas are not of length 0"
+            );
+
+            // TODO: Should RMM do this?
+
+            while let Some(next_area) = iter.peek()
+                && next_area.base == memory_map_area.base.add(memory_map_area.size)
+                && if let Some(region) = region {
+                    next_area.base >= region.base
+                        && next_area.base.data() < region.base.data() + region.size
+                        && !force
+                } else {
+                    true
+                }
+            {
+                memory_map_area.size += next_area.size;
+                let _ = iter.next();
+            }
+
+            assert_eq!(
+                memory_map_area.base.data() % PAGE_SIZE,
+                0,
+                "RMM should enforce area alignment"
+            );
+            assert_eq!(
+                memory_map_area.size % PAGE_SIZE,
+                0,
+                "RMM should enforce area length alignment"
+            );
+
+            let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
+            let mut base = Frame::containing(memory_map_area.base);
+            let mut return_value = None;
+
+            while pages_left > 0 {
+                let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
+                let pages_to_next_section =
+                    (MAX_SECTION_SIZE - (base.base().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
+                let mut page_info_count =
+                    core::cmp::min(page_info_max_count, pages_to_next_section);
+
+                if !force
+                    && let Some(region) = region
+                    && base.base() >= region.base
+                    && base.base().data() < region.base.data() + region.size
+                    && (page_info_count * PAGE_SIZE
+                        > (region.base.data() + region.size - base.base().data()))
+                {
+                    page_info_count =
+                        (region.base.data() + region.size - base.base().data()) / PAGE_SIZE;
+                    return_value = Some(MemoryArea {
+                        base: PhysicalAddress::new(region.base.data() + region.size),
+                        size: (base.physaddr.get() + pages_left * PAGE_SIZE)
+                            - (region.base.data() + region.size),
+                    });
+                }
+
+                let page_info_array_size_pages =
+                    (page_info_count * size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
+                let page_info_array = unsafe {
+                    let base = allocator
+                        .allocate(FrameCount::new(page_info_array_size_pages))
+                        .expect("failed to allocate page info array");
+                    core::slice::from_raw_parts_mut(
+                        RmmA::phys_to_virt(base).data() as *mut PageInfo,
+                        page_info_count,
+                    )
+                };
+                for p in &*page_info_array {
+                    assert_eq!(p.next.load(Ordering::Relaxed), 0);
+                    assert_eq!(p.refcount.load(Ordering::Relaxed), 0);
+                }
+
+                sections[*i] = Section {
+                    base,
+                    frames: page_info_array,
+                };
+                i.add_assign(1);
+
+                pages_left -= page_info_count;
+                base = base.next_by(page_info_count);
+                if let Some(return_value) = return_value {
+                    return Some(return_value);
+                }
+            }
         }
+        return None;
+    };
+    let mut i = 0;
+
+    #[cfg(feature = "numa")]
+    if number_of_memory_regions > 0
+        && let Some(regions) = numa::memory_regions()
+    {
+        for region in regions {
+            let mut sections_fill_result = Some(region);
+            let mut force = false;
+
+            while let Some(mut region) = sections_fill_result {
+                sections_fill_result = sections_fill(Some(region), &mut i, force);
+                force = true;
+            }
+        }
+    } else {
+        sections_fill(None, &mut i, false);
     }
+
+    #[cfg(not(feature = "numa"))]
+    sections_fill(None, &mut i, false);
+
     let sections = &mut sections[..i];
 
     sections.sort_unstable_by_key(|s| s.base);

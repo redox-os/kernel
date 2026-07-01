@@ -7,7 +7,7 @@ use crate::{
 };
 use alloc::{sync::Arc, vec::Vec};
 use hashbrown::HashMap;
-use rmm::{Arch, BumpAllocator};
+use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
 
 pub const MAX_DOMAINS: usize = 128;
@@ -99,4 +99,85 @@ pub fn dump_info() {
             "The system has either no support for NUMA or there was an error during initialisation"
         );
     }
+}
+
+pub struct NumaMemoryIter {
+    i: usize,
+    mem: &'static [NumaMemory],
+}
+
+impl Iterator for NumaMemoryIter {
+    type Item = MemoryArea;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mem = self.mem.get(self.i)?;
+        self.i += 1;
+        Some(MemoryArea {
+            base: PhysicalAddress::new(mem.start),
+            size: mem.length,
+        })
+    }
+}
+
+impl NumaMemoryIter {
+    /// Skips an arbitrarily chosen `i`th element. Unlike `skip`, which skips the first `n` elements,
+    /// `iskip` can ignore non-consecutive elements
+    pub fn iskip(&self, addr: usize) -> Option<usize> {
+        let i = self.mem.binary_search_by_key(&addr, |e| e.start).ok()?;
+        Some(i)
+    }
+}
+
+pub fn number_of_memory_regions() -> usize {
+    if let Some(mem) = NUMA_MEMORY.get() {
+        mem.iter()
+            .map(|e| if e.length != 0 { 1 } else { 0 })
+            .sum::<usize>()
+    } else {
+        0 // TODO: or should 1 be returned?
+    }
+}
+
+pub fn memory_regions() -> Option<NumaMemoryIter> {
+    if let Some(mem) = NUMA_MEMORY.get() {
+        Some(NumaMemoryIter { i: 0, mem })
+    } else {
+        None
+    }
+}
+
+pub fn nearest_next_memory_region(addr: usize, overlap: bool) -> Option<&'static NumaMemory> {
+    NUMA_MEMORY
+        .get()?
+        .iter()
+        .filter_map(|e| {
+            if if overlap {
+                e.start >= addr
+            } else {
+                e.start > addr
+            } {
+                Some(e)
+            } else {
+                None
+            }
+        })
+        .min_by_key(|e| e.start)
+}
+
+pub fn nearest_preceding_memory_region(addr: usize, overlap: bool) -> Option<&'static NumaMemory> {
+    NUMA_MEMORY
+        .get()?
+        .iter()
+        .filter_map(|e| {
+            if if overlap {
+                e.start <= addr
+            } else {
+                e.start < addr
+            } {
+                Some(e)
+            } else {
+                None
+            }
+        })
+        .max_by_key(|e| e.start)
 }
