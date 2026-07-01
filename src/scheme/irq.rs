@@ -3,10 +3,13 @@
 
 use alloc::{borrow::ToOwned, string::String, vec::Vec};
 use core::{
+    num::{IntErrorKind, NonZeroUsize, ParseIntError},
+    ops::{Deref, DerefMut},
     str,
     str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
 };
+use hashbrown::{hash_map::DefaultHashBuilder, HashSet};
 
 use smallvec::SmallVec;
 use spin::{Mutex, Once};
@@ -36,8 +39,95 @@ use crate::{
 
 ///
 /// IRQ queues
-pub(super) static COUNTS: Mutex<[usize; 224]> = Mutex::new([0; 224]);
-static HANDLES: RwLock<L1, HandleMap<Handle>> = RwLock::new(HandleMap::new());
+pub static HANDLES: RwLock<L1, HandleWithIrqMap> = RwLock::new(HandleWithIrqMap::new());
+
+#[derive(Debug, PartialEq, PartialOrd, Clone, Copy)]
+pub struct Irq(u8);
+
+impl TryFrom<u8> for Irq {
+    type Error = u8;
+
+    fn try_from(value: u8) -> core::result::Result<Self, Self::Error> {
+        if value < IRQ_CAP as u8 {
+            Ok(Irq(value))
+        } else {
+            Err(value)
+        }
+    }
+}
+
+impl From<Irq> for usize {
+    fn from(value: Irq) -> Self {
+        value.0.into()
+    }
+}
+
+impl FromStr for Irq {
+    type Err = u8;
+
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        let i = u8::from_str(s).map_err(|s| u8::MAX)?;
+        Self::try_from(i)
+    }
+}
+
+impl Deref for Irq {
+    type Target = u8;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+struct HandleWithIrqMap {
+    handle: HandleMap<Handle>,
+    irq_to_handle: [HashSet<(usize)>; IRQ_CAP],
+    irq_to_count: [AtomicUsize; IRQ_CAP],
+}
+
+impl HandleWithIrqMap {
+    pub const fn new() -> Self {
+        Self {
+            handle: HandleMap::new(),
+            irq_to_handle: [const { HashSet::with_hasher(DefaultHashBuilder::new()) }; _],
+            irq_to_count: [const { AtomicUsize::new(0) }; _],
+        }
+    }
+    pub fn insert_irq(&mut self, irq: Irq, handle_id: usize) -> bool {
+        let irq: usize = irq.into();
+        self.irq_to_handle[irq].insert(handle_id)
+    }
+    pub fn remove_irq(&mut self, irq: Irq, handle_id: usize) -> bool {
+        let irq: usize = irq.into();
+        self.irq_to_handle[irq].remove(&handle_id)
+    }
+    pub fn get_irq_handle(&self, irq: Irq) -> &HashSet<(usize)> {
+        let irq: usize = irq.into();
+        &self.irq_to_handle[irq]
+    }
+    pub fn get_irq_count(&self, irq: Irq) -> &AtomicUsize {
+        let irq: usize = irq.into();
+        &self.irq_to_count[irq]
+    }
+    pub fn read_irq_count(&self, irq: Irq) -> usize {
+        let irq: usize = irq.into();
+        self.irq_to_count[irq].load(Ordering::Relaxed)
+    }
+}
+
+impl Deref for HandleWithIrqMap {
+    type Target = HandleMap<Handle>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.handle
+    }
+}
+
+impl DerefMut for HandleWithIrqMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.handle
+    }
+}
 
 /// These are IRQs 0..=15 (corresponding to interrupt vectors 32..=47). They are opened without the
 /// O_CREAT flag.
@@ -51,6 +141,9 @@ const BASE_IRQ_COUNT: u8 = 16;
 /// are only freed when the file descriptor is closed.
 const TOTAL_IRQ_COUNT: u8 = 224;
 
+/// Total of possible IRQ
+const IRQ_CAP: usize = 224;
+
 const INO_TOPLEVEL: u64 = 0x8002_0000_0000_0000;
 const INO_AVAIL: u64 = 0x8000_0000_0000_0000;
 const INO_BSP: u64 = 0x8001_0000_0000_0000;
@@ -58,35 +151,42 @@ const INO_PHANDLE: u64 = 0x8003_0000_0000_0000;
 
 /// Add to the input queue
 pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
-    COUNTS.lock()[irq as usize] += 1;
-    let fds: SmallVec<[usize; 8]> = {
-        HANDLES
-            .read(token.token())
-            .iter()
-            .filter_map(|(fd, handle)| Some((fd, handle.as_irq_handle()?)))
-            .filter(|&(_, (_, handle_irq))| handle_irq == irq)
-            .map(|(f, _)| *f)
-            .collect()
+    let Ok(irq) = Irq::try_from(irq) else {
+        // TODO: unwrap()?;
+        return;
     };
 
+    let handle = HANDLES.read(token.token());
+    handle.get_irq_count(irq).fetch_add(1, Ordering::Relaxed);
+    let fds: SmallVec<[usize; 16]> = handle.get_irq_handle(irq).iter().map(|fd| *fd).collect();
+    drop(handle);
     for fd in fds {
         event::trigger(GlobalSchemes::Irq.scheme_id(), fd, EVENT_READ, token);
     }
 }
 
+pub fn irq_stat(token: &mut CleanLockToken) -> [usize; IRQ_CAP] {
+    let handle = HANDLES.read(token.token());
+    let mut vec = [0; IRQ_CAP];
+    for i in 0..IRQ_CAP {
+        vec[i] = handle.read_irq_count(Irq(i as u8))
+    }
+    vec
+}
+
 #[allow(dead_code)]
 enum Handle {
     SchemeRoot,
-    Irq { ack: AtomicUsize, irq: u8 },
+    Irq { ack: AtomicUsize, irq: Irq },
     Avail(LogicalCpuId),
     TopLevel,
     Phandle(u8, Vec<u8>),
     Bsp,
 }
 impl Handle {
-    fn as_irq_handle(&self) -> Option<(&AtomicUsize, u8)> {
+    fn as_irq_handle(&self) -> Option<Irq> {
         match self {
-            &Self::Irq { ref ack, irq } => Some((ack, irq)),
+            Self::Irq { ack: _, irq } => Some(*irq),
             _ => None,
         }
     }
@@ -127,15 +227,17 @@ impl IrqScheme {
         flags: usize,
         cpu_id: LogicalCpuId,
         path_str: &str,
+        irq: &mut Option<Irq>,
     ) -> Result<(Handle, InternalFlags)> {
         let irq_number = u8::from_str(path_str).or(Err(Error::new(ENOENT)))?;
+        let irq_number = Irq::try_from(irq_number).unwrap();
 
         Ok(
-            if irq_number < BASE_IRQ_COUNT && cpu_id == LogicalCpuId::BSP {
+            if *irq_number < BASE_IRQ_COUNT && cpu_id == LogicalCpuId::BSP {
                 // Give legacy IRQs only to `irq:{0..15}` and `irq:cpu-<BSP>/{0..15}` (same handles).
                 //
                 // The only CPUs don't have the legacy IRQs in their IDTs.
-
+                *irq = Some(irq_number);
                 (
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
@@ -143,17 +245,18 @@ impl IrqScheme {
                     },
                     InternalFlags::empty(),
                 )
-            } else if irq_number < TOTAL_IRQ_COUNT {
+            } else if *irq_number < TOTAL_IRQ_COUNT {
                 if flags & O_CREAT == 0 && flags & O_STAT == 0 {
                     return Err(Error::new(EINVAL));
                 }
                 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 if flags & O_STAT == 0 {
-                    if is_reserved(cpu_id, irq_to_vector(irq_number)) {
+                    if is_reserved(cpu_id, irq_to_vector(*irq_number)) {
                         return Err(Error::new(EEXIST));
                     }
-                    set_reserved(cpu_id, irq_to_vector(irq_number), true);
+                    set_reserved(cpu_id, irq_to_vector(*irq_number), true);
                 }
+                *irq = Some(irq_number);
                 (
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
@@ -198,7 +301,7 @@ impl IrqScheme {
                 (
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
-                        irq: irq_number as u8,
+                        irq: Irq(irq_number as u8),
                     },
                     InternalFlags::empty(),
                 )
@@ -244,6 +347,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
         let path_str = path.trim_start_matches('/');
 
+        let mut irq = None;
         let (handle, int_flags) = if path_str.is_empty() {
             if flags & O_DIRECTORY == 0 && flags & O_STAT == 0 {
                 return Err(Error::new(EISDIR));
@@ -280,7 +384,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     InternalFlags::POSITIONED,
                 )
             } else if let Some(path_str) = path_str.strip_prefix('/') {
-                Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str)?
+                Self::open_ext_irq(flags, LogicalCpuId::new(cpu_id.into()), path_str, &mut irq)?
             } else {
                 return Err(Error::new(ENOENT));
             }
@@ -307,8 +411,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
             }
             #[cfg(not(dtb))]
             panic!("")
-        } else if let Ok(plain_irq_number) = u8::from_str(path_str) {
-            if plain_irq_number < BASE_IRQ_COUNT {
+        } else if let Ok(plain_irq_number) = Irq::from_str(path_str) {
+            if *plain_irq_number < BASE_IRQ_COUNT {
+                irq = Some(plain_irq_number);
                 (
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
@@ -322,7 +427,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
         } else {
             return Err(Error::new(ENOENT));
         };
-        let fd = HANDLES.write(token.token()).insert(handle);
+        let fd = {
+            let mut handle_guard = HANDLES.write(token.token());
+            let fd = handle_guard.insert(handle);
+            if let Some(irq) = irq {
+                handle_guard.insert_irq(irq, fd);
+            }
+            fd
+        };
         Ok(OpenResult::SchemeLocal(fd, int_flags))
     }
     fn getdents(
@@ -412,16 +524,18 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(id)?;
+        let mut handles_guard = HANDLES.write(token.token());
 
         if let &Handle::Irq {
             irq: handle_irq, ..
-        } = handle
-            && handle_irq > BASE_IRQ_COUNT
+        } = handles_guard.get(id)?
         {
-            set_reserved(LogicalCpuId::BSP, irq_to_vector(handle_irq), false);
+            if *handle_irq > BASE_IRQ_COUNT {
+                set_reserved(LogicalCpuId::BSP, irq_to_vector(*handle_irq), false);
+            }
+            handles_guard.remove_irq(handle_irq, id);
         }
+        handles_guard.remove(id)?;
         Ok(())
     }
     fn kwrite(
@@ -432,7 +546,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handles_guard = HANDLES.read(token.token());
+        let handles_guard = HANDLES.upgradeable_read(token.token());
         let handle = handles_guard.get(file)?;
 
         match handle {
@@ -444,14 +558,22 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     return Err(Error::new(EINVAL));
                 }
                 let ack = buffer.read_usize()?;
-                let current = COUNTS.lock()[handle_irq as usize];
-
-                if ack != current {
-                    return Ok(0);
+                let current = handles_guard.read_irq_count(handle_irq);
+                match ack {
+                    ack if ack == current => {}
+                    usize::MIN => {
+                        handles_guard.upgrade().insert_irq(handle_irq, file);
+                        return Ok(0);
+                    }
+                    usize::MAX => {
+                        handles_guard.upgrade().remove_irq(handle_irq, file);
+                        return Ok(0);
+                    }
+                    _ => return Ok(0),
                 }
                 handle_ack.store(ack, Ordering::SeqCst);
                 unsafe {
-                    acknowledge(handle_irq as usize);
+                    acknowledge(handle_irq.into());
                 }
                 Ok(size_of::<usize>())
             }
@@ -471,7 +593,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 st_size: size_of::<usize>() as u64,
                 st_blocks: 1,
                 st_blksize: size_of::<usize>() as u32,
-                st_ino: handle_irq.into(),
+                st_ino: (*handle_irq).into(),
                 st_nlink: 1,
                 ..Default::default()
             },
@@ -515,7 +637,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let handle = handles_guard.get(id)?;
 
         let scheme_path = match handle {
-            Handle::Irq { irq, .. } => format!("irq:{}", irq),
+            Handle::Irq { irq, .. } => format!("irq:{}", **irq),
             Handle::Bsp => "irq:bsp".to_owned(),
             Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
             Handle::Phandle(phandle, _) => format!("irq:phandle-{}", phandle),
@@ -547,7 +669,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
-                let current = COUNTS.lock()[handle_irq as usize];
+                let current = handles_guard.read_irq_count(handle_irq);
                 if handle_ack.load(Ordering::SeqCst) != current {
                     buffer.write_usize(current)?;
                     Ok(size_of::<usize>())
