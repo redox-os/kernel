@@ -16,7 +16,7 @@ use syscall::{
 use crate::{
     context::{
         self,
-        context::{bulk_add_fds, bulk_insert_fds, HardBlockedReason},
+        context::{bulk_insert_fds, HardBlockedReason},
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
@@ -819,33 +819,14 @@ impl UserInner {
                 };
 
                 // FIXME: Description can leak if there is no additional file table space.
-                if flags.contains(FobtainFdFlags::MANUAL_FD) {
-                    let current_lock = context::current();
-                    let mut current = current_lock.read(token.token());
-                    let (context, mut token) = current.token_split();
-                    context.insert_file(
-                        FileHandle::from(dst_fd_or_ptr),
-                        FileDescriptor {
-                            description,
-                            cloexec: true,
-                        },
-                        &mut token,
-                    );
-                } else {
-                    let current_lock = context::current();
-                    let mut current = current_lock.read(token.token());
-                    let (context, mut token) = current.token_split();
-                    let fd = context
-                        .add_file(
-                            FileDescriptor {
-                                description,
-                                cloexec: true,
-                            },
-                            &mut token,
-                        )
-                        .ok_or(Error::new(EMFILE))?;
-                    UserSlice::wo(dst_fd_or_ptr, size_of::<usize>())?.write_usize(fd.get())?;
-                }
+                let current_lock = context::current();
+                let mut current = current_lock.read(token.token());
+                let (context, mut token) = current.token_split();
+                context.insert_file(
+                    FileHandle::from(dst_fd_or_ptr),
+                    FileDescriptor { description },
+                    &mut token,
+                );
             }
             ParsedCqe::ProvideMmap {
                 tag,
@@ -1231,9 +1212,6 @@ impl UserInner {
                 if flags.contains(CallFlags::FD_EXCLUSIVE) {
                     obtainfd_flags |= FobtainFdFlags::EXCLUSIVE;
                 }
-                if flags.contains(CallFlags::FD_CLOEXEC) {
-                    obtainfd_flags |= FobtainFdFlags::CLOEXEC;
-                }
                 self.handle_obtainfd(payload, metadata[1] as usize, obtainfd_flags, token)
             }
             _ => Err(Error::new(EINVAL)),
@@ -1258,21 +1236,7 @@ impl UserInner {
         };
 
         let mut token = token.downgrade();
-        let num_fds = if flags.contains(FobtainFdFlags::UPPER_TBL) {
-            bulk_insert_fds(
-                descriptions,
-                payload,
-                flags.contains(FobtainFdFlags::CLOEXEC),
-                &mut token.token(),
-            )?
-        } else {
-            bulk_add_fds(
-                descriptions,
-                payload,
-                flags.contains(FobtainFdFlags::CLOEXEC),
-                &mut token.token(),
-            )?
-        };
+        let num_fds = bulk_insert_fds(descriptions, payload, &mut token.token())?;
 
         Ok(num_fds)
     }
@@ -2010,10 +1974,6 @@ impl KernelScheme for UserScheme {
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
-        if flags.contains(CallFlags::FD_CLOEXEC) {
-            recvfd_flags |= RecvFdFlags::CLOEXEC;
-        }
-
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / size_of::<usize>();
         let res = inner.call(
@@ -2044,21 +2004,7 @@ impl KernelScheme for UserScheme {
 
         let mut token = token.downgrade();
         let num_fds = if let Some(descriptions) = descriptions_opt {
-            if recvfd_flags.contains(RecvFdFlags::UPPER_TBL) {
-                bulk_insert_fds(
-                    descriptions,
-                    payload,
-                    recvfd_flags.contains(RecvFdFlags::CLOEXEC),
-                    &mut token,
-                )?
-            } else {
-                bulk_add_fds(
-                    descriptions,
-                    payload,
-                    recvfd_flags.contains(RecvFdFlags::CLOEXEC),
-                    &mut token,
-                )?
-            }
+            bulk_insert_fds(descriptions, payload, &mut token)?
         } else {
             0
         };
