@@ -64,13 +64,12 @@ pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<String>
 // TODO: Define elsewhere
 const PATH_MAX: usize = PAGE_SIZE;
 
-pub fn openat(
+pub fn openat_into(
     fh: FileHandle,
     raw_path: UserSliceRo,
     flags: usize,
     fcntl_flags: u32,
-    euid: u32,
-    egid: u32,
+    new_fd: FileHandle,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
@@ -84,10 +83,7 @@ pub fn openat(
         (desc.scheme, desc.number)
     };
 
-    let caller_ctx = context::current()
-        .read(token.token())
-        .caller_ctx()
-        .filter_uid_gid(euid, egid);
+    let caller_ctx = context::current().read(token.token()).caller_ctx();
 
     let new_description = {
         let scheme = scheme::get_scheme(token.token(), scheme_id)?;
@@ -108,7 +104,7 @@ pub fn openat(
                     internal_flags,
                     scheme: scheme_id,
                     number,
-                    flags: (flags & !O_CLOEXEC) as u32,
+                    flags: flags as u32,
                 }))
             }
             OpenResult::External(desc) => desc,
@@ -119,22 +115,20 @@ pub fn openat(
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
     context
-        .add_file(
+        .insert_file(
+            new_fd,
             FileDescriptor {
                 description: new_description,
-                cloexec: flags & O_CLOEXEC == O_CLOEXEC,
             },
             &mut token,
         )
-        .ok_or(Error::new(EMFILE))
+        .ok_or(Error::new(EEXIST))
 }
 /// Unlinkat syscall
 pub fn unlinkat(
     fh: FileHandle,
     raw_path: UserSliceRo,
     flags: usize,
-    euid: u32,
-    egid: u32,
     token: &mut CleanLockToken,
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
@@ -150,10 +144,7 @@ pub fn unlinkat(
 
     let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
-    let caller_ctx = context::current()
-        .read(token.token())
-        .caller_ctx()
-        .filter_uid_gid(euid, egid);
+    let caller_ctx = context::current().read(token.token()).caller_ctx();
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -179,7 +170,6 @@ pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
 fn duplicate_file(
     fd: FileHandle,
     user_buf: UserSliceRo,
-    cloexec: bool,
     token: &mut CleanLockToken,
 ) -> Result<FileDescriptor> {
     let (caller_ctx, file) = {
@@ -195,7 +185,6 @@ fn duplicate_file(
     if user_buf.is_empty() {
         Ok(FileDescriptor {
             description: Arc::clone(&file.description),
-            cloexec,
         })
     } else {
         let description = { *file.description.read(token.token()) };
@@ -219,20 +208,24 @@ fn duplicate_file(
 
         Ok(FileDescriptor {
             description: new_description,
-            cloexec,
         })
     }
 }
 
 /// Duplicate file descriptor
-pub fn dup(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<FileHandle> {
-    let new_file = duplicate_file(fd, buf, false, token)?;
+pub fn dup_into(
+    fd: FileHandle,
+    new_fd: FileHandle,
+    buf: UserSliceRo,
+    token: &mut CleanLockToken,
+) -> Result<FileHandle> {
+    let new_file = duplicate_file(fd, buf, token)?;
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
     context
-        .add_file(new_file, &mut token)
-        .ok_or(Error::new(EMFILE))
+        .insert_file(new_fd, new_file, &mut token)
+        .ok_or(Error::new(EEXIST))
 }
 
 /// Duplicate file descriptor, replacing another
@@ -246,7 +239,7 @@ pub fn dup2(
         Ok(new_fd)
     } else {
         let _ = close(new_fd, token);
-        let new_file = duplicate_file(fd, buf, false, token)?;
+        let new_file = duplicate_file(fd, buf, token)?;
 
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
@@ -389,27 +382,13 @@ fn call_fdwrite(
 
     let len = fds.len();
 
-    fdwrite_inner(fd, fds, flags, metadata, token)?;
-
-    Ok(len)
-}
-
-fn fdwrite_inner(
-    socket: FileHandle,
-    target_fds: Vec<FileHandle>,
-    flags: CallFlags,
-    metadata: &[u64],
-    token: &mut CleanLockToken,
-) -> Result<usize> {
     // TODO: Ensure deadlocks can't happen
     let (scheme, number, descs_to_send) = {
         let (scheme, number) = {
             let current_lock = context::current();
             let mut current = current_lock.read(token.token());
             let (context, mut token) = current.token_split();
-            let file_descriptor = context
-                .get_file(socket, &mut token)
-                .ok_or(Error::new(EBADF))?;
+            let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
             let desc = &file_descriptor.description.read(token.token());
             (desc.scheme, desc.number)
         };
@@ -422,9 +401,9 @@ fn fdwrite_inner(
             scheme,
             number,
             if flags.contains(CallFlags::FD_CLONE) {
-                context.bulk_get_files(&target_fds, &mut token)
+                context.bulk_get_files(&fds, &mut token)
             } else {
-                context.bulk_remove_files(&target_fds, &mut token)
+                context.bulk_remove_files(&fds, &mut token)
             }?
             .into_iter()
             .map(|f| f.description)
@@ -447,7 +426,9 @@ fn fdwrite_inner(
         CallFlags::empty()
     };
 
-    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)
+    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)?;
+
+    Ok(len)
 }
 
 fn call_fdread(
@@ -474,24 +455,6 @@ fn call_fdread(
     scheme.kfdread(number, payload, flags, metadata, token)
 }
 
-pub fn sendfd(
-    socket: FileHandle,
-    fd: FileHandle,
-    flags_raw: usize,
-    arg: u64,
-    token: &mut CleanLockToken,
-) -> Result<usize> {
-    let sendfd_flags = SendFdFlags::from_bits(flags_raw).ok_or(Error::new(EINVAL))?;
-    let mut call_flags = CallFlags::FD | CallFlags::WRITE;
-    if sendfd_flags.contains(SendFdFlags::CLONE) {
-        call_flags |= CallFlags::FD_CLONE;
-    }
-    if sendfd_flags.contains(SendFdFlags::EXCLUSIVE) {
-        call_flags |= CallFlags::FD_EXCLUSIVE;
-    }
-    fdwrite_inner(socket, Vec::from([fd]), call_flags, &[arg], token)
-}
-
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken) -> Result<usize> {
     let file = {
@@ -507,15 +470,15 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         (desc.scheme, desc.number, desc.flags)
     };
 
-    if cmd == F_DUPFD || cmd == F_DUPFD_CLOEXEC {
+    if cmd == F_DUPFD {
         // Not in match because 'files' cannot be locked
-        let new_file = duplicate_file(fd, UserSlice::empty(), cmd == F_DUPFD_CLOEXEC, token)?;
+        let new_file = duplicate_file(fd, UserSlice::empty(), token)?;
 
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
         let (context, mut token) = current.token_split();
         return context
-            .add_file_min(new_file, arg, &mut token)
+            .insert_file(FileHandle::from(arg), new_file, &mut token)
             .ok_or(Error::new(EMFILE))
             .map(FileHandle::into);
     }
@@ -537,17 +500,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         let (files, mut token) = files.token_split();
         match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
             Some(ref mut file) => match cmd {
-                F_GETFD => {
-                    if file.cloexec {
-                        Ok(O_CLOEXEC)
-                    } else {
-                        Ok(0)
-                    }
-                }
-                F_SETFD => {
-                    file.cloexec = arg & O_CLOEXEC == O_CLOEXEC;
-                    Ok(0)
-                }
+                F_GETFD => Ok(0),
+                F_SETFD => Ok(0),
                 F_GETFL => Ok(flags as usize),
                 F_SETFL => {
                     let new_flags = (flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);

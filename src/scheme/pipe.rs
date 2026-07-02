@@ -7,7 +7,7 @@ use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
 use crate::{
     context::{
-        context::{bulk_add_fds, bulk_insert_fds},
+        context::bulk_insert_fds,
         file::{InternalFlags, LockedFileDescription},
     },
     event,
@@ -478,21 +478,8 @@ impl KernelScheme for PipeScheme {
                 let fds_to_transfer: Vec<_> = vec.drain(..fds_to_read).collect();
 
                 if flags.contains(CallFlags::FD_UPPER) {
-                    bulk_insert_fds(
-                        fds_to_transfer,
-                        payload,
-                        flags.contains(CallFlags::FD_CLOEXEC),
-                        &mut token,
-                    )?;
-                } else {
-                    bulk_add_fds(
-                        fds_to_transfer,
-                        payload,
-                        flags.contains(CallFlags::FD_CLOEXEC),
-                        &mut token,
-                    )?;
+                    bulk_insert_fds(fds_to_transfer, payload, &mut token)?;
                 }
-
                 event::trigger_locked(
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,

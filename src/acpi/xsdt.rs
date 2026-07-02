@@ -2,6 +2,8 @@ use alloc::boxed::Box;
 use core::convert::TryFrom;
 use rmm::PhysicalAddress;
 
+use crate::acpi::{RxsdtEnum, rxsdt::RxsdtIter};
+
 use super::{rxsdt::Rxsdt, sdt::Sdt};
 
 #[derive(Debug)]
@@ -24,27 +26,7 @@ impl Xsdt {
 }
 
 impl Rxsdt for Xsdt {
-    fn iter(&self) -> Box<dyn Iterator<Item = PhysicalAddress>> {
-        Box::new(XsdtIter { sdt: self.0, i: 0 })
-    }
-}
-
-pub struct XsdtIter {
-    sdt: &'static Sdt,
-    i: usize,
-}
-
-impl Iterator for XsdtIter {
-    type Item = PhysicalAddress;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.i < self.sdt.data_len() / size_of::<u64>() {
-            let item = unsafe {
-                core::ptr::read_unaligned((self.sdt.data_address() as *const u64).add(self.i))
-            };
-            self.i += 1;
-            Some(PhysicalAddress::new(item as usize))
-        } else {
-            None
-        }
+    fn iter(&self) -> RxsdtIter {
+        RxsdtIter { sdt: self.0, i: 0, rxsdt_enum: RxsdtEnum::Xsdt(Xsdt(self.0)) }
     }
 }

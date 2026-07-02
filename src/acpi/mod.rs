@@ -8,7 +8,10 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 use hashbrown::HashMap;
 use spin::{Once, RwLock};
 
-use crate::memory::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch};
+use crate::{
+    acpi::rxsdt::RxsdtIter,
+    memory::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
+};
 
 use self::{hpet::Hpet, madt::Madt, rsdp::Rsdp, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
 
@@ -20,8 +23,12 @@ mod rsdp;
 mod rsdt;
 mod rxsdt;
 pub mod sdt;
+#[cfg(feature = "numa")]
+pub mod slit;
 #[cfg(target_arch = "aarch64")]
 mod spcr;
+#[cfg(feature = "numa")]
+pub mod srat;
 mod xsdt;
 
 unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::memory::PageMapper) {
@@ -74,24 +81,20 @@ pub enum RxsdtEnum {
     Xsdt(Xsdt),
 }
 impl Rxsdt for RxsdtEnum {
-    fn iter(&self) -> Box<dyn Iterator<Item = PhysicalAddress>> {
+    fn iter(&self) -> RxsdtIter {
         match self {
-            Self::Rsdt(rsdt) => <Rsdt as Rxsdt>::iter(rsdt),
-            Self::Xsdt(xsdt) => <Xsdt as Rxsdt>::iter(xsdt),
+            Self::Rsdt(rsdt) => rsdt.iter(),
+            Self::Xsdt(xsdt) => xsdt.iter(),
         }
     }
 }
 
 pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
-/// Parse the ACPI tables to gather CPU, interrupt, and timer information
-pub unsafe fn init(already_supplied_rsdp: Option<NonNull<u8>>) {
+/// Initialses the global `RXSDT_ENUM` if RSDT or XSDT was found and maps the SDT pages.
+/// It does not perform any allocations
+pub unsafe fn init_before_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
     unsafe {
-        {
-            let mut sdt_ptrs = SDT_POINTERS.write();
-            *sdt_ptrs = Some(HashMap::new());
-        }
-
         // Search for RSDP
         let rsdp_opt = Rsdp::get_rsdp(already_supplied_rsdp);
 
@@ -136,6 +139,22 @@ pub unsafe fn init(already_supplied_rsdp: Option<NonNull<u8>>) {
             for sdt in rxsdt.iter() {
                 get_sdt(sdt, &mut KernelMapper::lock_rw());
             }
+        } else {
+            error!("NO RSDP FOUND");
+            return;
+        }
+    }
+}
+
+/// Parse the ACPI tables to gather CPU, interrupt, and timer information. The code performs allocations, so
+/// it must be called only after the allocator is set up.
+pub unsafe fn init_after_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
+    if let Some(rxsdt) = RXSDT_ENUM.get() {
+        unsafe {
+            {
+                let mut sdt_ptrs = SDT_POINTERS.write();
+                *sdt_ptrs = Some(HashMap::new());
+            }
 
             for sdt_address in rxsdt.iter() {
                 let sdt = &*(RmmA::phys_to_virt(sdt_address).data() as *const Sdt);
@@ -158,8 +177,6 @@ pub unsafe fn init(already_supplied_rsdp: Option<NonNull<u8>>) {
             Hpet::init();
             #[cfg(target_arch = "aarch64")]
             gtdt::Gtdt::init();
-        } else {
-            error!("NO RSDP FOUND");
         }
     }
 }

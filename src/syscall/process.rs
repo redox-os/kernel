@@ -20,7 +20,8 @@ use crate::{
     context::{self, context::FdTbl},
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
-        KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
+        FileHandle, KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES,
+        KERNEL_SCHEMES_COUNT,
     },
     startup::Bootstrap,
     syscall::{error::*, flag::MapFlags},
@@ -45,8 +46,6 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     // Files must be closed while context is valid so that messages can be passed
     close_files.force_close_all(token);
     if let Some(addrspace) = addrspace_opt {
-        // TODO: addrspace utable should be dropped immediately but it's not the case.
-        //       the utable leaves us with 8 memory pages (32K) leak per context
         if let Ok(addrspace) = Arc::try_unwrap(addrspace) {
             addrspace.into_drop(token);
         }
@@ -55,12 +54,6 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     let owner = {
         let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
-        // TODO: context should be dropped immediately but it's not the case.
-        //       we drop kstack to prevent 32 memory pages (128K) leaking
-        // TODO: can't drop the kstack here immediately, as this very function runs on that stack.
-        //       until the Arc leaks can be found, consider using a global "garbage collection
-        //       queue"
-        // drop(guard.kstack.take());
 
         guard.owner_proc_id
     };
@@ -80,6 +73,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
             }
         }
     }
+    drop(close_files);
     context::switch(token);
     unreachable!();
 }
@@ -163,12 +157,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    insert_fd(
-                        scheme.scheme_id(),
-                        cap_fd,
-                        matches!(scheme, GlobalSchemes::Proc),
-                        token,
-                    )
+                    insert_fd(scheme.scheme_id(), cap_fd, token)
                 };
             }
         }
@@ -181,7 +170,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
             };
             // Second, retrieve the scheme ID.
             let scheme_id = &SchemeList.id();
-            insert_fd(*scheme_id, cap_fd, false, token)
+            insert_fd(*scheme_id, cap_fd, token)
         };
 
         let mut lock_token = token.token();
@@ -275,12 +264,23 @@ unsafe fn bootstrap_mem(bootstrap: &crate::startup::Bootstrap) -> &'static [u8] 
     }
 }
 
-fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLockToken) -> usize {
+fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usize {
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
     context
-        .add_file_min(
+        .files
+        .write(token.token())
+        .resize(0, 64)
+        .expect("failed to resize lower fdtbl");
+    context
+        .files
+        .write(token.token())
+        .resize(syscall::flag::UPPER_FDTBL_TAG, 64)
+        .expect("failed to resize upper fdtbl");
+    context
+        .insert_file(
+            FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | scheme.get()),
             FileDescriptor {
                 description: Arc::new(RwLock::new(FileDescription {
                     scheme,
@@ -289,9 +289,7 @@ fn insert_fd(scheme: SchemeId, number: usize, cloexec: bool, token: &mut CleanLo
                     flags: (O_CREAT | O_RDWR) as u32,
                     internal_flags: InternalFlags::empty(),
                 })),
-                cloexec,
             },
-            syscall::flag::UPPER_FDTBL_TAG + scheme.get(),
             &mut token,
         )
         .expect("failed to insert fd to current context")

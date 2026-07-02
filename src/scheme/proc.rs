@@ -8,7 +8,7 @@ use crate::{
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
-    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme},
+    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme, StrOrBytes},
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
         data::{GrantDesc, Map, SetSighandlerData, Stat},
@@ -150,7 +150,7 @@ enum ContextHandle {
 }
 #[derive(Clone)]
 struct Handle {
-    context: Weak<ContextLock>,
+    context: Arc<ContextLock>,
     kind: ContextHandle,
 }
 pub struct ProcScheme;
@@ -192,7 +192,7 @@ fn new_handle(
 }
 
 enum OpenTy {
-    Ctxt(Weak<ContextLock>),
+    Ctxt(Arc<ContextLock>),
     Auth,
 }
 
@@ -292,11 +292,7 @@ impl ProcScheme {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
             OpenTy::Ctxt(context) => {
-                match self.openat_context(
-                    operation_name,
-                    context.upgrade().ok_or(Error::new(ESRCH))?,
-                    token,
-                )? {
+                match self.openat_context(operation_name, Arc::clone(&context), token)? {
                     Some((kind, positioned)) => (Handle { context, kind }, positioned),
                     _ => {
                         return Err(Error::new(EINVAL));
@@ -313,7 +309,7 @@ impl ProcScheme {
                         HANDLES.write(token.token()).insert(
                             id.get(),
                             Handle {
-                                context: Arc::downgrade(&context),
+                                context,
                                 kind: ContextHandle::OpenViaDup,
                             },
                         );
@@ -325,7 +321,7 @@ impl ProcScheme {
 
                 (
                     Handle {
-                        context: Arc::downgrade(&context),
+                        context,
                         kind: ContextHandle::OpenViaDup,
                     },
                     false,
@@ -409,7 +405,7 @@ impl KernelScheme for ProcScheme {
             id,
             Handle {
                 // TODO: placeholder
-                context: Arc::downgrade(&context::current()),
+                context: context::current(),
                 kind: ContextHandle::Authority,
             },
         );
@@ -445,7 +441,6 @@ impl KernelScheme for ProcScheme {
                         arg1,
                     },
             } => {
-                let context = context.upgrade().ok_or(Error::new(ESRCH))?;
                 let old_ctx = try_stop_context(context, token, |context, token| {
                     let regs = context.regs_mut().ok_or(Error::new(EBADFD))?;
                     regs.set_instr_pointer(new_ip);
@@ -482,11 +477,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },
                 context,
             } => {
-                context
-                    .upgrade()
-                    .ok_or(Error::new(ESRCH))?
-                    .write(token.token())
-                    .files = new_ft;
+                context.write(token.token()).files = new_ft;
             }
             _ => (),
         }
@@ -506,7 +497,7 @@ impl KernelScheme for ProcScheme {
             .ok_or(Error::new(EBADF))?
             .clone();
         let Handle { kind, ref context } = handle;
-        let context = context.upgrade().ok_or(Error::new(ESRCH))?;
+
         match kind {
             ContextHandle::AddrSpace { ref addrspace } => {
                 if Arc::ptr_eq(addrspace, dst_addr_space) {
@@ -628,13 +619,7 @@ impl KernelScheme for ProcScheme {
         };
 
         let Handle { context, kind } = handle;
-        kind.kreadoff(
-            id,
-            context.upgrade().ok_or(Error::new(ESRCH))?,
-            buf,
-            offset,
-            token,
-        )
+        kind.kreadoff(id, context, buf, offset, token)
     }
     fn kcall(
         &self,
@@ -660,7 +645,7 @@ impl KernelScheme for ProcScheme {
             payload,
             flags,
             metadata,
-            Arc::clone(&handle.context.upgrade().ok_or(Error::new(ESRCH))?),
+            Arc::clone(&handle.context),
             token,
         )
     }
@@ -683,7 +668,7 @@ impl KernelScheme for ProcScheme {
         };
 
         let Handle { context, kind } = handle;
-        kind.kwriteoff(id, context.upgrade().ok_or(Error::new(ESRCH))?, buf, token)
+        kind.kwriteoff(id, context, buf, token)
     }
 
     fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
@@ -755,7 +740,7 @@ impl KernelScheme for ProcScheme {
                             OpenTy::Auth,
                             Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                                 .filter(|s| !s.is_empty()),
-                            O_RDWR | O_CLOEXEC,
+                            O_RDWR,
                             token,
                         )
                         .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
@@ -769,7 +754,7 @@ impl KernelScheme for ProcScheme {
                             OpenTy::Ctxt(context),
                             Some(core::str::from_utf8(buf).map_err(|_| Error::new(EINVAL))?)
                                 .filter(|s| !s.is_empty()),
-                            O_RDWR | O_CLOEXEC,
+                            O_RDWR,
                             token,
                         )
                         .map(|(r, fl)| OpenResult::SchemeLocal(r, fl));
@@ -872,13 +857,10 @@ impl KernelScheme for ProcScheme {
 
             let Handle { context, kind } = handle;
 
-            if let ContextHandle::Filetable {
-                filetable,
-                binary_format,
-                data,
-            } = &handle.kind
+            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
+                &handle.kind
             {
-                context.upgrade().unwrap().clone()
+                context.clone()
             } else {
                 return Err(Error::new(EBADF));
             }
@@ -902,10 +884,6 @@ impl KernelScheme for ProcScheme {
                 FileHandle(usize::try_from(*target_fd).map_err(|_| Error::new(EBADFD))?),
                 context::file::FileDescriptor {
                     description: file.clone(),
-                    cloexec: {
-                        let file = file.read(token.token());
-                        file.flags as usize & syscall::O_CLOEXEC == syscall::O_CLOEXEC
-                    },
                 },
                 &mut token,
             )
@@ -1158,7 +1136,7 @@ impl ContextHandle {
                                 binary_format,
                                 data: data.clone(),
                             },
-                            context: Arc::downgrade(&context),
+                            context: Arc::clone(&context),
                         };
                         ft
                     }
@@ -1168,7 +1146,7 @@ impl ContextHandle {
 
                 *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle {
                     kind: ContextHandle::AwaitingFiletableChange { new_ft: filetable },
-                    context: Arc::downgrade(&context),
+                    context,
                 };
 
                 Ok(size_of::<usize>())
@@ -1193,7 +1171,7 @@ impl ContextHandle {
                 };
 
                 *handles.get_mut(&id).ok_or(Error::new(EBADF))? = Handle {
-                    context: Arc::downgrade(&context),
+                    context,
                     kind: Self::AwaitingAddrSpaceChange {
                         new: Arc::clone(addrspace),
                         new_sp: sp,
@@ -1602,18 +1580,21 @@ impl ContextHandle {
 
                 match op {
                     FileTableVerb::Close => {
-                        let fd = payload.read_usize().map_err(|_| Error::new(EBADFD))?;
-                        let file = {
-                            let mut context = context.read(token.token());
-                            let (context, mut token) = context.token_split();
-                            context
-                                .remove_file(FileHandle(fd), &mut token.token())
-                                .ok_or(Error::new(EBADF))?
-                        };
-                        file.close(token)?;
-                        Ok(0)
+                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
+                        let fds = payload_chunks
+                            .map(|chunk| {
+                                let fd = chunk.read_usize()?;
+                                Ok(FileHandle::from(fd))
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+                        let num_fds = fds.len();
+                        let files_to_close = files.write(token.token()).bulk_remove_files(&fds)?;
+                        files_to_close.into_iter().for_each(|file| {
+                            let _ = file.close(token);
+                        });
+                        Ok(num_fds)
                     }
-
                     FileTableVerb::Dup2 => {
                         let mut it = payload.usizes();
                         let old = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
@@ -1633,43 +1614,25 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        let mut file =
+                            context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;
 
                         Ok(0)
                     }
-                    FileTableVerb::CloseCloExec => {
-                        let mut to_be_removed = Vec::new();
-                        {
-                            let files = filetable.upgrade().unwrap();
-                            let mut files = files.read(token.token());
-                            let (files, mut token) = files.token_split();
-                            for (i, f) in files.posix_fdtbl.iter().enumerate() {
-                                if let Some(f) = f {
-                                    let desc = f.description.clone();
-                                    let desc = desc.read(token.token());
-                                    let flags = desc.flags;
-                                    if flags as usize & syscall::flag::O_CLOEXEC
-                                        == syscall::flag::O_CLOEXEC
-                                    {
-                                        to_be_removed.push(i);
-                                    }
-                                }
-                            }
-                        }
-                        for i in to_be_removed {
-                            let file = {
-                                let mut context = context.read(token.token());
-                                let (context, mut token) = context.token_split();
-                                context.remove_file(FileHandle(i), &mut token)
-                            }
-                            .unwrap();
-                            file.close(token)?;
-                        }
-                        Ok(0)
+                    FileTableVerb::Resize => {
+                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let Some(&[which, size]) = metadata.get(1..3) else {
+                            return Err(Error::new(EINVAL));
+                        };
+                        files
+                            .write(token.token())
+                            .resize(which as usize, size as usize)?;
+                        Ok(size as usize)
                     }
+                    _ => Err(Error::new(EOPNOTSUPP)),
                 }
             }
             _ => Err(Error::new(EBADF)),

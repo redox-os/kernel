@@ -95,10 +95,18 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.print();
 
             // Initialize RMM
-            crate::startup::memory::init(&args, None, None);
+            let bump_allocator = crate::startup::memory::init(&args, None, None);
 
             // Initialize paging
             paging::init();
+
+            #[cfg(feature = "acpi")]
+            {
+                use crate::acpi;
+                acpi::init_before_mem(args.acpi_rsdp());
+            }
+
+            crate::memory::init_mm(bump_allocator);
 
             crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
@@ -120,7 +128,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
                     #[cfg(feature = "acpi")]
                     {
-                        crate::acpi::init(args.acpi_rsdp());
+                        crate::acpi::init_after_mem(args.acpi_rsdp());
                     }
                 }
             }
