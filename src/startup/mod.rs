@@ -190,8 +190,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
     }
 
     #[cfg(feature = "numa")]
-    numa::init();
-
+    numa::dump_info();
     run_userspace(&mut token)
 }
 
