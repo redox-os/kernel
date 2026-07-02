@@ -191,34 +191,30 @@ fn duplicate_file(
 }
 
 /// Duplicate file descriptor
-pub fn dup_into2(
+pub fn fdcntl(
     fd: FileHandle,
     new_fd: FileHandle,
     buf: UserSliceRo,
-    cmd: DupCmd,
+    cmd: FdCmd,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
     let (caller_ctx, file) = match cmd {
-        DupCmd::Dup => with_current_ctx(token, |context, token| {
-            Ok((
-                context.caller_ctx(),
-                context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-            ))
+        FdCmd::Dup => with_current_ctx(token, |context, token| {
+            let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+            Ok((context.caller_ctx(), file))
         })?,
-        DupCmd::DupOver | DupCmd::Move => {
+        FdCmd::DupOver | FdCmd::Move => {
             let _ = close(new_fd, token);
             with_current_ctx(token, |context, token| {
-                Ok((
-                    context.caller_ctx(),
-                    if matches!(cmd, DupCmd::Move) {
-                        context.remove_file(fd, token).ok_or(Error::new(EBADF))?
-                    } else {
-                        context.get_file(fd, token).ok_or(Error::new(EBADF))?
-                    },
-                ))
+                let file = if matches!(cmd, FdCmd::Move) {
+                    context.remove_file(fd, token).ok_or(Error::new(EBADF))?
+                } else {
+                    context.get_file(fd, token).ok_or(Error::new(EBADF))?
+                };
+                Ok((context.caller_ctx(), file))
             })?
         }
-        DupCmd::Swap => with_current_ctx(token, |context, mut token| {
+        FdCmd::Swap => with_current_ctx(token, |context, mut token| {
             let file = context.remove_file(fd, token).ok_or(Error::new(EBADF))?;
             let target_file = context
                 .remove_file(new_fd, &mut token)
@@ -478,10 +474,8 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
 pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
     let (caller_ctx, file) = with_current_ctx(token, |context, token| {
-        Ok((
-            context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-        ))
+        let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        Ok((context.caller_ctx(), file))
     })?;
 
     /*
@@ -511,10 +505,8 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
     let (caller_ctx, file) = with_current_ctx(token, |context, token| {
-        Ok((
-            context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-        ))
+        let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        Ok((context.caller_ctx(), file))
     })?;
 
     /*

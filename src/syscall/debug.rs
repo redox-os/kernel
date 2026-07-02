@@ -61,18 +61,18 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             g,
         ),
         SYS_CLOSE => format!("close({})", b),
-        SYS_DUP_INTO2 => format!(
-            "dup_into2({}, {:?}, {}, out: {})",
+        SYS_FDCNTL => format!(
+            "fdcntl({}, {:?}, {}, out: {})",
             b,
             debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
             {
-                use syscall::DupCmd;
-                if let Some(cmd) = DupCmd::try_from_raw(e) {
+                use syscall::FdCmd;
+                if let Some(cmd) = FdCmd::try_from_raw(e) {
                     match cmd {
-                        DupCmd::Dup => "Dup",
-                        DupCmd::DupOver => "DupOver",
-                        DupCmd::Move => "Move",
-                        DupCmd::Swap => "Swap",
+                        FdCmd::Dup => "Dup",
+                        FdCmd::DupOver => "DupOver",
+                        FdCmd::Move => "Move",
+                        FdCmd::Swap => "Swap",
                     }
                 } else {
                     "UNKNOWN"
