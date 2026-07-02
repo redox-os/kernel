@@ -61,17 +61,24 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             g,
         ),
         SYS_CLOSE => format!("close({})", b),
-        SYS_DUP_INTO => format!(
-            "dup_into({}, {:?}, out: {})",
+        SYS_FDCNTL => format!(
+            "fdcntl({}, {:?}, {}, out: {})",
             b,
             debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
-            e,
-        ),
-        SYS_DUP2 => format!(
-            "dup2({}, {}, {:?})",
-            b,
-            c,
-            debug_buf(d, e).as_ref().map(|b| ByteStr(b)),
+            {
+                use syscall::FdCmd;
+                if let Some(cmd) = FdCmd::try_from_raw(e) {
+                    match cmd {
+                        FdCmd::Dup => "Dup",
+                        FdCmd::DupOver => "DupOver",
+                        FdCmd::Move => "Move",
+                        FdCmd::Swap => "Swap",
+                    }
+                } else {
+                    "UNKNOWN"
+                }
+            },
+            f,
         ),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
         SYS_READ2 => format!(
@@ -108,9 +115,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             "fcntl({}, {} ({}), {:#X})",
             b,
             match c {
-                F_DUPFD => "F_DUPFD",
-                F_GETFD => "F_GETFD",
-                F_SETFD => "F_SETFD",
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
                 _ => "UNKNOWN",

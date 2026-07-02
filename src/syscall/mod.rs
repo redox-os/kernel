@@ -14,7 +14,7 @@ use self::{
     data::{Map, TimeSpec},
     debug::{debug_end, debug_start},
     error::{Error, Result, EINVAL, ENOSYS},
-    flag::{CallFlags, EventFlags, MapFlags, RwFlags},
+    flag::{CallFlags, EventFlags, FdCmd, MapFlags, RwFlags},
     number::*,
     usercopy::UserSlice,
 };
@@ -132,12 +132,14 @@ pub fn syscall(
             // be moved to UserScheme.
             SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
 
-            SYS_DUP_INTO => {
-                dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
-            }
-            SYS_DUP2 => {
-                dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?, token).map(FileHandle::into)
-            }
+            SYS_FDCNTL => fdcntl(
+                fd,
+                FileHandle::from(f),
+                UserSlice::ro(c, d)?,
+                FdCmd::try_from_raw(e).ok_or(Error::new(EINVAL))?,
+                token,
+            )
+            .map(FileHandle::into),
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
             SYS_FCHOWN => file_op_generic(fd, token, |scheme, number, token| {
