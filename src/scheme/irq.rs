@@ -412,10 +412,9 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(id)?;
+        let mut handle = HANDLES.write(token.token()).remove(id)?;
 
-        if let &Handle::Irq {
+        if let Handle::Irq {
             irq: handle_irq, ..
         } = handle
             && handle_irq > BASE_IRQ_COUNT
