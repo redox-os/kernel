@@ -798,7 +798,7 @@ impl UserInner {
             }
             ParsedCqe::ObtainFd {
                 tag,
-                flags,
+                flags: _,
                 dst_fd_or_ptr,
             } => {
                 let description = {
@@ -1222,7 +1222,7 @@ impl UserInner {
         &self,
         payload: UserSliceRw,
         request_id: usize,
-        flags: FobtainFdFlags,
+        _flags: FobtainFdFlags,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let descriptions = match self

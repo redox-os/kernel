@@ -8,7 +8,7 @@ use crate::{
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
-    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme, StrOrBytes},
+    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme},
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
         data::{GrantDesc, Map, SetSighandlerData, Stat},
@@ -846,20 +846,17 @@ impl KernelScheme for ProcScheme {
         &self,
         id: usize,
         descs: Vec<Arc<context::file::LockedFileDescription>>,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let context = {
-            let mut handles = HANDLES.read(token.token());
-            let (handles, mut token) = handles.token_split();
+            let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).unwrap();
 
             let Handle { context, kind } = handle;
 
-            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
-                &handle.kind
-            {
+            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } = &kind {
                 context.clone()
             } else {
                 return Err(Error::new(EBADF));
@@ -876,7 +873,7 @@ impl KernelScheme for ProcScheme {
             file.close(token)?;
         }
 
-        let mut file = descs.get(0).unwrap();
+        let file = descs.get(0).unwrap();
         let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
@@ -1545,9 +1542,9 @@ impl ContextHandle {
     }
     pub fn kcall(
         &self,
-        fds: &[usize],
+        _fds: &[usize],
         payload: UserSliceRw,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         context: Arc<ContextLock>,
         token: &mut CleanLockToken,
@@ -1614,8 +1611,7 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let mut file =
-                            context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;

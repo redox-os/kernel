@@ -19,7 +19,7 @@ use crate::{
     syscall::{data::Stat, error::*, flag::*},
 };
 
-use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
+use super::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo};
 
 fn with_current_ctx<T>(
     token: &mut CleanLockToken,
