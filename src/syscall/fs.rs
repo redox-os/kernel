@@ -13,12 +13,22 @@ use crate::{
         },
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, FileHandle, KernelScheme, OpenResult, StrOrBytes},
-    sync::{CleanLockToken, RwLock},
+    scheme::{self, CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
+    sync::{CleanLockToken, LockToken, RwLock, L4},
     syscall::{data::Stat, error::*, flag::*},
 };
 
-use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
+use super::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo};
+
+fn with_current_ctx<T>(
+    token: &mut CleanLockToken,
+    f: impl FnOnce(&crate::context::Context, &mut LockToken<L4>) -> Result<T>,
+) -> Result<T> {
+    let current_lock = context::current();
+    let mut current = current_lock.read(token.token());
+    let (context, mut split_token) = current.token_split();
+    f(context, &mut split_token)
+}
 
 pub fn file_op_generic<T>(
     fd: FileHandle,
@@ -37,15 +47,12 @@ pub fn file_op_generic_ext<T>(
         &mut CleanLockToken,
     ) -> Result<T>,
 ) -> Result<T> {
-    let (file, desc) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        let file = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
+    let (file, desc) = with_current_ctx(token, |context, token| {
+        let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
         // TODO: potential unnecessary clone
         let desc = file.description.read(token.token()).clone();
-        (file, desc)
-    };
+        Ok((file, desc))
+    })?;
 
     let scheme = desc.scheme_ref.upgrade()?;
 
@@ -64,6 +71,7 @@ pub fn copy_path_to_buf(raw_path: UserSliceRo, max_len: usize) -> Result<String>
 // TODO: Define elsewhere
 const PATH_MAX: usize = PAGE_SIZE;
 
+/// Open file descriptor to specified index
 pub fn openat_into(
     fh: FileHandle,
     raw_path: UserSliceRo,
@@ -74,16 +82,12 @@ pub fn openat_into(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (scheme, number) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
+    let (caller_ctx, scheme_id, number) = with_current_ctx(token, |context, token| {
+        let caller_ctx = context.caller_ctx();
+        let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
-        (desc.scheme_ref.upgrade()?, desc.number)
-    };
-
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
+        Ok((caller_ctx, desc.scheme, desc.number))
+    })?;
 
     let new_description = {
         let res = scheme.kopenat(
@@ -109,18 +113,17 @@ pub fn openat_into(
         }
     };
 
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut token) = current.token_split();
-    context
-        .insert_file(
-            new_fd,
-            FileDescriptor {
-                description: new_description,
-            },
-            &mut token,
-        )
-        .ok_or(Error::new(EEXIST))
+    with_current_ctx(token, |context, token| {
+        context
+            .insert_file(
+                new_fd,
+                FileDescriptor {
+                    description: new_description,
+                },
+                token,
+            )
+            .ok_or(Error::new(EEXIST))
+    })
 }
 /// Unlinkat syscall
 pub fn unlinkat(
@@ -131,16 +134,14 @@ pub fn unlinkat(
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (number, scheme) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
+    let (caller_ctx, number, scheme_id) = with_current_ctx(token, |context, token| {
+        let caller_ctx = context.caller_ctx();
+        let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
-        (desc.number, desc.scheme_ref.upgrade()?)
-    };
+        Ok((caller_ctx, desc.number, desc.scheme))
+    })?;
 
-    let caller_ctx = context::current().read(token.token()).caller_ctx();
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -151,118 +152,65 @@ pub fn unlinkat(
 
 /// Close syscall
 pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
-    let file = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        context
-            .remove_file(fd, &mut token)
-            .ok_or(Error::new(EBADF))?
-    };
+    let file = with_current_ctx(token, |context, token| {
+        context.remove_file(fd, token).ok_or(Error::new(EBADF))
+    })?;
 
     file.close(token)
 }
 
 fn duplicate_file(
-    fd: FileHandle,
+    file: FileDescriptor,
     user_buf: UserSliceRo,
+    caller_ctx: CallerCtx,
     token: &mut CleanLockToken,
 ) -> Result<FileDescriptor> {
-    let (caller_ctx, file) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        (
-            context.caller_ctx(),
-            context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?,
-        )
+    if user_buf.is_empty() {
+        return Ok(FileDescriptor {
+            description: Arc::clone(&file.description),
+        });
+    }
+
+    // TODO: potential unnecessary clone
+    let description = { file.description.read(token.token()).clone() };
+    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+
+    let new_description = match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
+        OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
+            offset: 0,
+            internal_flags,
+            scheme: description.scheme,
+            number,
+            flags: description.flags,
+        })),
+        OpenResult::External(desc) => desc,
     };
 
-    if user_buf.is_empty() {
-        Ok(FileDescriptor {
-            description: Arc::clone(&file.description),
-        })
-    } else {
-        // TODO: potential unnecessary clone
-        let description = { file.description.read(token.token()).clone() };
-
-        let new_description = {
-            let scheme = description.scheme_ref.upgrade()?;
-
-            match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
-                OpenResult::SchemeLocal(number, internal_flags) => {
-                    Arc::new(RwLock::new(FileDescription {
-                        offset: 0,
-                        internal_flags,
-                        scheme_ref: scheme.downgrade(),
-                        number,
-                        flags: description.flags,
-                    }))
-                }
-                OpenResult::External(desc) => desc,
-            }
-        };
-
-        Ok(FileDescriptor {
-            description: new_description,
-        })
-    }
+    Ok(FileDescriptor {
+        description: new_description,
+    })
 }
 
-/// Duplicate file descriptor
+/// Duplicate file descriptor to specified index
 pub fn dup_into(
     fd: FileHandle,
     new_fd: FileHandle,
     buf: UserSliceRo,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
-    let new_file = duplicate_file(fd, buf, token)?;
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut token) = current.token_split();
-    context
-        .insert_file(new_fd, new_file, &mut token)
-        .ok_or(Error::new(EEXIST))
+    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
+        let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        Ok((context.caller_ctx(), file))
+    })?;
+    let new_file = duplicate_file(file, buf, caller_ctx, token)?;
+
+    with_current_ctx(token, |context, token| {
+        context
+            .insert_file(new_fd, new_file, token)
+            .ok_or(Error::new(EEXIST))
+    })
 }
 
-/// Duplicate file descriptor, replacing another
-pub fn dup2(
-    fd: FileHandle,
-    new_fd: FileHandle,
-    buf: UserSliceRo,
-    token: &mut CleanLockToken,
-) -> Result<FileHandle> {
-    if fd == new_fd && buf.is_empty() {
-        return Ok(new_fd);
-    }
-
-    let new_file = duplicate_file(fd, buf, token)?;
-
-    let old_file = {
-        let current_lock = context::current();
-        let mut current = current_lock.write(token.token());
-        let (context, mut split_token) = current.token_split();
-
-        let old_file = context.remove_file(new_fd, &mut split_token.token());
-
-        if context
-            .insert_file(new_fd, new_file, &mut split_token.token())
-            .is_none()
-        {
-            if let Some(old) = old_file {
-                context.insert_file(new_fd, old, &mut split_token.token());
-            }
-            return Err(Error::new(EMFILE));
-        }
-        old_file
-    };
-
-    if let Some(old) = old_file {
-        let _ = old.close(token);
-    }
-
-    Ok(new_fd)
-}
 pub fn call(
     fds: &[usize],
     payload: UserSliceRw,
@@ -453,12 +401,14 @@ fn call_fdread(
     token: &mut CleanLockToken,
 ) -> Result<usize> {
     let (scheme, number) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
-        let desc = file_descriptor.description.read(token.token());
-        (desc.scheme_ref.upgrade()?, desc.number)
+        let (scheme, number) = with_current_ctx(token, |context, token| {
+            let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+            let desc = file_descriptor.description.read(token.token());
+            Ok((desc.scheme_ref.upgrade()?, desc.number))
+        })?;
+        let scheme = scheme::get_scheme(token.token(), scheme)?;
+
+        (scheme, number)
     };
 
     scheme.kfdread(number, payload, flags, metadata, token)
@@ -466,49 +416,26 @@ fn call_fdread(
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken) -> Result<usize> {
-    let file = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        context.get_file(fd, &mut token)
-    }
-    .ok_or(Error::new(EBADF))?;
+    let file = with_current_ctx(token, |context, token| {
+        context.get_file(fd, token).ok_or(Error::new(EBADF))
+    })?;
 
     let (scheme, number, flags) = {
         let desc = file.description.read(token.token());
         (desc.scheme_ref.upgrade()?, desc.number, desc.flags)
     };
 
-    if cmd == F_DUPFD {
-        // Not in match because 'files' cannot be locked
-        let new_file = duplicate_file(fd, UserSlice::empty(), token)?;
-
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        return context
-            .insert_file(FileHandle::from(arg), new_file, &mut token)
-            .ok_or(Error::new(EMFILE))
-            .map(FileHandle::into);
-    }
-
     // Communicate fcntl with scheme
-    if cmd != F_GETFD && cmd != F_SETFD {
-        scheme.fcntl(number, cmd, arg, token)?;
-    };
+    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
+
+    scheme.fcntl(number, cmd, arg, token)?;
 
     // Perform kernel operation if scheme agrees
-    {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-
+    with_current_ctx(token, |context, token| {
         let mut files = context.files.write(token.token());
         let (files, mut token) = files.token_split();
         match files.get_file_mut(fd) {
             Some(ref mut file) => match cmd {
-                F_GETFD => Ok(0),
-                F_SETFD => Ok(0),
                 F_GETFL => Ok(flags as usize),
                 F_SETFL => {
                     let new_flags = (flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
@@ -519,19 +446,14 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
             },
             None => Err(Error::new(EBADF)),
         }
-    }
+    })
 }
 
 pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, file) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        (
-            context.caller_ctx(),
-            context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?,
-        )
-    };
+    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
+        let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        Ok((context.caller_ctx(), file))
+    })?;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -548,15 +470,10 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, file) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        (
-            context.caller_ctx(),
-            context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?,
-        )
-    };
+    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
+        let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        Ok((context.caller_ctx(), file))
+    })?;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
