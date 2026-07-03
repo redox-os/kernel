@@ -18,11 +18,6 @@ pub fn dup_into(fd: usize, out: usize, buf: &[u8]) -> Result<usize> {
     unsafe { syscall4(SYS_DUP_INTO, fd, buf.as_ptr() as usize, buf.len(), out) }
 }
 
-/// Copy and transform a file descriptor
-pub fn dup2(fd: usize, newfd: usize, buf: &[u8]) -> Result<usize> {
-    unsafe { syscall4(SYS_DUP2, fd, newfd, buf.as_ptr() as usize, buf.len()) }
-}
-
 /// Change file ownership
 pub fn fchown(fd: usize, uid: u32, gid: u32) -> Result<usize> {
     unsafe { syscall3(SYS_FCHOWN, fd, uid as usize, gid as usize) }
