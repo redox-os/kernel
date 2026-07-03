@@ -12,7 +12,7 @@ use crate::{
     scheme::{
         self,
         memory::{MemoryScheme, MemoryType},
-        FileHandle, KernelScheme, StrOrBytes,
+        FileHandle, KernelScheme,
     },
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
@@ -886,20 +886,17 @@ impl KernelScheme for ProcScheme {
         &self,
         id: usize,
         descs: Vec<Arc<context::file::LockedFileDescription>>,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let context = {
-            let mut handles = HANDLES.read(token.token());
-            let (handles, mut token) = handles.token_split();
+            let handles = HANDLES.read(token.token());
             let handle = handles.get(&id).unwrap();
 
             let Handle { context, kind } = handle;
 
-            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
-                &handle.kind
-            {
+            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } = &kind {
                 context.clone()
             } else {
                 return Err(Error::new(EBADF));
@@ -916,7 +913,7 @@ impl KernelScheme for ProcScheme {
             file.close(token)?;
         }
 
-        let mut file = descs.get(0).unwrap();
+        let file = descs.get(0).unwrap();
         let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
@@ -1596,9 +1593,9 @@ impl ContextHandle {
     }
     pub fn kcall(
         &self,
-        fds: &[usize],
+        _fds: &[usize],
         payload: UserSliceRw,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
@@ -1646,10 +1643,13 @@ impl ContextHandle {
                         });
                         Ok(num_fds)
                     }
-                    FileTableVerb::Dup2 => {
+                    FileTableVerb::Dup2 | FileTableVerb::Move => {
                         let mut it = payload.usizes();
                         let old = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
                         let new = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        if it.next().is_some() {
+                            return Err(Error::new(EINVAL));
+                        }
 
                         if old == new {
                             return Ok(0);
@@ -1665,7 +1665,11 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        let file = match op {
+                            FileTableVerb::Move => context.remove_file(old, &mut token),
+                            _ => context.get_file(old, &mut token),
+                        }
+                        .ok_or(Error::new(EBADF))?;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;
@@ -1682,6 +1686,33 @@ impl ContextHandle {
                             .resize(which as usize, size as usize)?;
                         Ok(size as usize)
                     }
+                    FileTableVerb::Swap => {
+                        let mut it = payload.usizes();
+                        let fd1 = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        let fd2 = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        if it.next().is_some() {
+                            return Err(Error::new(EINVAL));
+                        }
+
+                        if fd1 == fd2 {
+                            return Ok(0);
+                        }
+                        let mut context = context.read(token.token());
+                        let (context, mut token) = context.token_split();
+                        let file1_opt = context.remove_file(fd1, &mut token);
+                        let file2_opt = context.remove_file(fd2, &mut token);
+                        let (Some(file1), Some(file2)) = (file1_opt, file2_opt) else {
+                            return Err(Error::new(EBADF));
+                        };
+                        context
+                            .insert_file(fd1, file2, &mut token)
+                            .expect("already removed, must succeed");
+                        context
+                            .insert_file(fd2, file1, &mut token)
+                            .expect("already removed, must succeed");
+                        Ok(0)
+                    }
+
                     _ => Err(Error::new(EOPNOTSUPP)),
                 }
             }

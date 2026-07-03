@@ -144,9 +144,6 @@ pub fn syscall(
             SYS_DUP_INTO => {
                 dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
             }
-            SYS_DUP2 => {
-                dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?, token).map(FileHandle::into)
-            }
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
             SYS_FCHOWN => file_op_generic(fd, token, |scheme, number, token| {
