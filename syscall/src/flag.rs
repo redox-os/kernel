@@ -283,10 +283,11 @@ impl ProcSchemeVerb {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileTableVerb {
-    Close = 1,
     Dup2 = 2,
     Reserved1 = 3,
     Resize = 4,
+    Move = 5,
+    Swap = 6,
 }
 impl FileTableVerb {
     pub fn try_from_raw(value: u8) -> Option<Self> {
@@ -295,6 +296,8 @@ impl FileTableVerb {
             2 => Self::Dup2,
             3 => Self::Reserved1,
             4 => Self::Resize,
+            5 => Self::Move,
+            6 => Self::Swap,
             _ => return None,
         })
     }
