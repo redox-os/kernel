@@ -1,13 +1,16 @@
 //! See <https://uefi.org/htmlspecs/ACPI_Spec_6_4_html/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html#system-resource-affinity-table-srat>
 
+use core::slice;
+
 use hashbrown::HashMap;
-use rmm::{Arch, BumpAllocator};
+use rmm::{Arch, BumpAllocator, FrameAllocator};
 use spin::once::Once;
 
 use crate::{
     acpi::{find_sdt, get_sdt_signature, rxsdt::Rxsdt, sdt::Sdt, srat, RXSDT_ENUM},
+    cpu_set::MAX_CPU_COUNT,
     find_one_sdt, memory,
-    numa::NumaMemory,
+    numa::{self, NumaMemory},
 };
 
 #[cfg(target_arch = "aarch64")]
@@ -27,17 +30,53 @@ pub struct Srat {
 pub fn init<A: Arch>(
     allocator: &mut BumpAllocator<A>,
     map: &Once<&'static [u32]>,
-    cpus: &Once<&'static [u32]>,
+    once_cpus: &Once<&'static [u32]>,
     mem: &Once<&'static [NumaMemory]>,
 ) {
+    let dom_node_map = allocator
+        .allocate(rmm::FrameCount::new(1))
+        .expect("Failed to allocate memory for storing NUMA info");
+
+    let dom_node_map_ptr =
+        unsafe { crate::memory::RmmA::phys_to_virt(dom_node_map).data() as *mut u32 };
+
+    // Occupies 512 bytes (1/8th of a page)
+    let dom_node_map: &'static mut [u32] =
+        unsafe { slice::from_raw_parts_mut(dom_node_map_ptr, numa::MAX_DOMAINS) };
+
+    // occupies 512 bytes (1/8th of a page)
+    let cpus: &'static mut [u32] = unsafe {
+        slice::from_raw_parts_mut(
+            dom_node_map_ptr.add(numa::MAX_DOMAINS) as *mut u32,
+            MAX_CPU_COUNT as usize,
+        )
+    };
+
+    // total occupied till now: 1024 bytes, remaining 3072 bytes, can accomodate 128 memory entries
+    let memories: &'static mut [NumaMemory] = unsafe {
+        slice::from_raw_parts_mut(
+            cpus.as_ptr().add(numa::MAX_DOMAINS) as *mut NumaMemory,
+            numa::MAX_DOMAINS,
+        )
+    };
+
+    dom_node_map.fill(u32::MAX);
+    cpus.fill(u32::MAX);
+    memories.fill(NumaMemory {
+        start: 0,
+        length: 0,
+        node_id: 0,
+        _pad: [0; 4],
+    });
+
     if let Some(rxsdt) = RXSDT_ENUM.get() {
         for sdt_addr in rxsdt.iter() {
             let sdt = unsafe { &*(memory::RmmA::phys_to_virt(sdt_addr).data() as *const Sdt) };
             if &sdt.signature == b"SRAT" {
-                let (a, b, c) = arch::init_srat(allocator, &Srat::new(sdt));
-                map.call_once(|| a);
-                cpus.call_once(|| b);
-                mem.call_once(|| c);
+                arch::init_srat(dom_node_map, cpus, memories, &Srat::new(sdt));
+                map.call_once(|| dom_node_map);
+                once_cpus.call_once(|| cpus);
+                mem.call_once(|| memories);
                 return;
             }
         }

@@ -9,49 +9,35 @@ use crate::{
     numa::{self, assign_memory_id, assign_node_id, NumaMemory},
 };
 
-pub fn init_srat<A: Arch>(
-    allocator: &mut BumpAllocator<A>,
-    srat: &Srat,
-) -> (&'static [u32], &'static [u32], &'static [NumaMemory]) {
-    let dom_node_map_ptr = allocator
-        .allocate(FrameCount::new(
-            round_up_pages(numa::MAX_DOMAINS * size_of::<u32>()) / PAGE_SIZE,
-        ))
-        .expect("Failed to allocate pages for domain-node-map")
-        .data();
+pub fn init_srat(dom_node_map: &mut [u32], cpus: &mut [u32], mem: &mut [NumaMemory], srat: &Srat) {
+    let mut cpu_count = 0;
+    let mut memory_count = 0;
 
-    let va = crate::memory::RmmA::phys_to_virt(PhysicalAddress::new(dom_node_map_ptr)).data();
-    let dom_node_map_ptr = va.data() as *mut u32;
-
-    // occupies 521 bytes
-    let dom_node_map = unsafe { slice::from_raw_parts_mut(dom_node_map_ptr, numa::MAX_DOMAINS) };
-
-    // occupies 512 bytes
-    let cpus = unsafe {
-        slice::from_raw_parts_mut(
-            dom_node_map_ptr.add(numa::MAX_DOMAINS as usize * size_of::<u32>()),
-            MAX_CPU_COUNT as usize,
-        )
-    };
-
-    // remaining 3072 bytes: can accomodate 128 Mem entries
-    let mem = unsafe {
-        slice::from_raw_parts_mut(
-            dom_node_map_ptr
-                .add(numa::MAX_DOMAINS)
-                .add(MAX_CPU_COUNT as usize) as *mut NumaMemory,
-            numa::MAX_DOMAINS * size_of::<NumaMemory>(),
-        )
-    };
-
-    cpus.fill(u32::MAX);
-    dom_node_map.fill(u32::MAX);
-    mem.fill(NumaMemory {
-        start: 0,
-        length: 0,
-        node_id: 0,
-        _pad: [0; 4],
+    srat.into_iter().for_each(|e| match e {
+        SratEntry::GiccAffinity(gicc_affinity) => {
+            if gicc_affinity.flags & 1 != 0 {
+                cpu_count += 1
+            }
+        }
+        SratEntry::MemoryAffinity(memory_affinity) => {
+            if memory_affinity.flags & 1 != 0 && memory_affinity.flags & (1 << 1) == 0 {
+                memory_count += 1
+            }
+        }
+        _ => (),
     });
+
+    assert!(
+        memory_count <= numa::MAX_DOMAINS,
+        "Found {} memory blocks while only a maximum of {} are supported",
+        memory_count,
+        numa::MAX_DOMAINS
+    );
+
+    assert!(
+        cpu_count <= cpu_set::MAX_CPU_COUNT,
+        "Found more number of CPUs than supported"
+    );
 
     for affinity in srat {
         match affinity {
@@ -100,6 +86,4 @@ pub fn init_srat<A: Arch>(
             _ => continue,
         }
     }
-
-    (dom_node_map, cpus, mem)
 }
