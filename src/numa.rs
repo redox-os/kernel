@@ -1,3 +1,5 @@
+use core::ops::Add;
+
 use crate::{
     acpi,
     cpu_set::LogicalCpuId,
@@ -19,7 +21,7 @@ static DISTANCES: Once<&'static [u8]> = Once::new();
 pub struct NumaMemory {
     pub start: usize,
     pub length: usize,
-    pub dom: u32,
+    pub node_id: u32,
     pub _pad: [u8; 4],
 }
 
@@ -51,6 +53,16 @@ pub fn assign_node_id(modify: bool) -> u8 {
     }
 }
 
+pub fn assign_memory_id() -> u8 {
+    static mut MEMORY_ID: u8 = 0;
+    if unsafe { MEMORY_ID } >= 128 {
+        panic!("Maximum number of memory regions supported is 128");
+    }
+    let old = unsafe { MEMORY_ID };
+    unsafe { MEMORY_ID = MEMORY_ID.add(1) };
+    old
+}
+
 pub fn domain_to_node_id(domain_id: u32) -> Option<u32> {
     Some(*DOMAIN_NODE_MAP.get()?.get(domain_id as usize)?)
 }
@@ -79,7 +91,7 @@ pub fn dump_info() {
             }
             println!(
                 "Memory Block starting at address {:#x} of size {:#x} bytes : Node {}",
-                memories[i].start, memories[i].length, memories[i].dom
+                memories[i].start, memories[i].length, memories[i].node_id
             );
         }
     } else {

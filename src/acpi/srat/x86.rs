@@ -1,13 +1,13 @@
 use core::{iter, slice};
 
 use hashbrown::HashMap;
-use rmm::{Arch, BumpAllocator, FrameAllocator};
+use rmm::{Arch, BumpAllocator, FrameAllocator, PhysicalAddress};
 
 use crate::{
     acpi::srat::{to_usize, Srat, SratEntry},
     cpu_set,
     memory::{self, PAGE_SIZE},
-    numa::{self, NumaMemory},
+    numa::{self, assign_memory_id, NumaMemory},
 };
 
 #[inline(always)]
@@ -27,16 +27,9 @@ pub fn init_srat<A: Arch>(
             memory::round_up_pages(numa::MAX_DOMAINS * size_of::<u32>()) / PAGE_SIZE,
         ))
         .expect("Failed to allocate memory for storing NUMA info");
-    let mut mapper = unsafe { rmm::PageMapper::current(rmm::TableKind::Kernel, allocator) };
-    let mut flags = rmm::PageFlags::<A>::new();
-    let flags = flags.write(true);
-    let dom_node_map_ptr = unsafe {
-        let (va, flush) = mapper
-            .map_linearly(dom_node_map, flags)
-            .expect("Failed to map NUMA info pages");
-        flush.flush();
-        va.data() as *mut u32
-    };
+
+    let dom_node_map_ptr =
+        unsafe { crate::memory::RmmA::phys_to_virt(dom_node_map).data() as *mut u32 };
     // Occupies 512 bytes (1/8th of a page)
     let dom_node_map: &'static mut [u32] =
         unsafe { slice::from_raw_parts_mut(dom_node_map_ptr, numa::MAX_DOMAINS) };
@@ -86,7 +79,7 @@ pub fn init_srat<A: Arch>(
     memories.fill(NumaMemory {
         start: 0,
         length: 0,
-        dom: 0,
+        node_id: 0,
         _pad: [0; 4],
     });
 
@@ -129,10 +122,11 @@ pub fn init_srat<A: Arch>(
                     let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
-                memories[dom_node_map[dom as usize] as usize] = numa::NumaMemory {
+                let mem_id = assign_memory_id() as u32;
+                memories[mem_id as usize] = numa::NumaMemory {
                     start,
                     length,
-                    dom: dom_node_map[dom as usize],
+                    node_id: dom_node_map[dom as usize],
                     _pad: [0u8; 4],
                 };
             }
@@ -146,19 +140,11 @@ pub fn init_srat<A: Arch>(
                     let node_id = numa::assign_node_id(true);
                     dom_node_map[dom as usize] = node_id as u32;
                 }
-                cpus[dom_node_map[dom as usize] as usize] =
-                    processor_local_affinity.proximity_domain;
+                cpus[processor_local_affinity.x2apic_id as usize] = dom_node_map[dom as usize];
             }
             _ => continue,
         }
     }
-    let mut flags = rmm::PageFlags::<A>::new();
-    let flags = flags.write(false);
-    let flush = unsafe {
-        mapper
-            .remap(rmm::VirtualAddress::new(dom_node_map_ptr.addr()), flags)
-            .expect("Unable to make NUMA info page read-only")
-    };
-    flush.flush();
+
     (dom_node_map, cpus, memories)
 }
