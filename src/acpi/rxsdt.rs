@@ -1,7 +1,7 @@
 use alloc::boxed::Box;
 use rmm::PhysicalAddress;
 
-use crate::acpi::{RxsdtEnum, sdt::Sdt};
+use crate::acpi::{sdt::Sdt, RxsdtEnum};
 
 pub trait Rxsdt {
     fn iter(&self) -> RxsdtIter;
@@ -18,10 +18,14 @@ impl Iterator for RxsdtIter {
     fn next(&mut self) -> Option<Self::Item> {
         if self.i < self.sdt.data_len() / size_of::<u64>() {
             let item = unsafe {
-                match self.rxsdt_enum{
-                    RxsdtEnum::Rsdt(_) => PhysicalAddress::new(core::ptr::read_unaligned((self.sdt.data_address() as *const u32).add(self.i)) as usize),
-                    RxsdtEnum::Xsdt(_) => PhysicalAddress::new(core::ptr::read_unaligned((self.sdt.data_address() as *const u64).add(self.i)) as usize),
-                } 
+                match self.rxsdt_enum {
+                    RxsdtEnum::Rsdt(_) => PhysicalAddress::new(core::ptr::read_unaligned(
+                        (self.sdt.data_address() as *const u32).add(self.i),
+                    ) as usize),
+                    RxsdtEnum::Xsdt(_) => PhysicalAddress::new(core::ptr::read_unaligned(
+                        (self.sdt.data_address() as *const u64).add(self.i),
+                    ) as usize),
+                }
             };
             self.i += 1;
             Some(item)

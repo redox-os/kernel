@@ -6,8 +6,6 @@
 //! The kernel validates paths and file descriptors before they are passed to schemes,
 //! also stripping the scheme identifier of paths if necessary.
 
-// TODO: Move handling of the global namespace to userspace.
-
 use alloc::{
     sync::{Arc, Weak},
     vec::Vec,
