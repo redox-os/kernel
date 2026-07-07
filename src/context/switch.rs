@@ -5,7 +5,8 @@
 use crate::{
     context::{
         self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef,
+        run_contexts, run_contexts_try, ArcContextLockWriteGuard, Context, ContextLock,
+        WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -186,13 +187,24 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    let wakeups = wakeup_contexts(token, switch_time);
-    let wakeups_len = wakeups.len();
+    let mut wakeups = wakeup_contexts(token);
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
-    if wakeups_len > 0 {
-        let mut run_contexts = run_contexts(token.token());
+    if let Some(mut run_contexts) = run_contexts_try(token.token()) {
+        // Pop Timers
+        while let Some((wake, _)) = run_contexts.timers.first() {
+            if *wake > switch_time {
+                break;
+            }
 
+            if let Some((_, context_ref)) = run_contexts.timers.pop_first() {
+                wakeups.push(context_ref);
+            }
+        }
+    }
+
+    if wakeups.len() > 0 {
+        let mut run_contexts = run_contexts(token.token());
         for context_ref in wakeups {
             let Some(context_lock) = context_ref.upgrade() else {
                 continue;
@@ -379,9 +391,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
 fn wakeup_contexts(
     token: &mut CleanLockToken,
-    switch_time: u128,
 ) -> SmallVec<[WeakContextRef; 16]> {
-    // TODO: Optimise this somehow. Perhaps using a separate timer queue?
+    // TODO: Optimise this somehow
     let mut wakeups = SmallVec::new();
     let current_context = context::current();
     let Some(idle_contexts) = idle_contexts_try(token.downgrade()) else {
@@ -405,15 +416,7 @@ fn wakeup_contexts(
             idle_contexts.push_back(context_ref);
             continue;
         };
-        if guard.status.is_soft_blocked() {
-            if let Some(wake) = guard.wake {
-                if switch_time >= wake {
-                    drop(guard);
-                    wakeups.push(context_ref);
-                    continue;
-                }
-            }
-        } else if guard.status.is_dead() {
+        if guard.status.is_dead() {
             // TODO: who hold this dead context?
             continue;
         }
@@ -448,6 +451,7 @@ fn select_next_context(
     let prev_context_lock = crate::context::current();
     let is_idle = Arc::ptr_eq(&prev_context_lock, &idle_context);
     let prev_runnable = !is_idle && prev_context_guard.status.is_runnable();
+    let is_timer = prev_context_guard.wake.is_some();
 
     let elapsed_ticks = elapsed_time as u128 * SCALE / NANOS_PER_TICK;
 
@@ -484,6 +488,12 @@ fn select_next_context(
             contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight);
         }
         prev_context_guard.rem_slice = 0;
+
+        if let Some(wake) = prev_context_guard.wake {
+            contexts_data
+                .timers
+                .insert((wake, WeakContextRef(Arc::downgrade(&prev_context_lock))));
+        }
     }
 
     let mut eligible_best = None;
@@ -647,7 +657,7 @@ fn select_next_context(
                         WeakContextRef(Arc::downgrade(&prev_context_lock)),
                     ),
                 );
-            } else if !is_idle {
+            } else if !is_idle && !is_timer {
                 idle_contexts(token.token())
                     .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
             }
@@ -657,7 +667,7 @@ fn select_next_context(
             return None;
         }
     } else {
-        if !is_idle {
+        if !is_idle && !is_timer {
             idle_contexts(token.token())
                 .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
         }
