@@ -80,7 +80,6 @@ default = [
   "acpi",
   #"debugger",
   "multi_core",
-  # "numa",
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",

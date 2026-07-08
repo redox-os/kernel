@@ -69,7 +69,6 @@ mod log;
 mod memory;
 
 /// NUMA support
-#[cfg(feature = "numa")]
 mod numa;
 
 /// Panic

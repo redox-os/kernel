@@ -23,11 +23,9 @@ mod rsdp;
 mod rsdt;
 mod rxsdt;
 pub mod sdt;
-#[cfg(feature = "numa")]
 pub mod slit;
 #[cfg(target_arch = "aarch64")]
 mod spcr;
-#[cfg(feature = "numa")]
 pub mod srat;
 mod xsdt;
 

@@ -111,6 +111,9 @@ impl Iterator for NumaMemoryIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mem = self.mem.get(self.i)?;
+        if mem.length == 0 {
+            return None;
+        }
         self.i += 1;
         Some(MemoryArea {
             base: PhysicalAddress::new(mem.start),
