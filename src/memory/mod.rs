@@ -93,12 +93,9 @@ pub fn allocate_frame() -> Option<Frame> {
 }
 
 fn get_round_robin_index() -> usize {
-    static CURRENT_INDEX: AtomicU8 = AtomicU8::new(0);
-    if CURRENT_INDEX.load(Ordering::Acquire) as usize == FREE_LISTS.get().unwrap().len() {
-        CURRENT_INDEX.store(1, Ordering::Release);
-        return 0;
-    }
-    CURRENT_INDEX.fetch_add(1, Ordering::AcqRel) as usize
+    static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
+    let len = FREE_LISTS.get().unwrap().len();
+    CURRENT_INDEX.fetch_add(1, Ordering::Relaxed) % len
 }
 
 // TODO: Flags, strategy
