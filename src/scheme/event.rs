@@ -8,7 +8,7 @@ use crate::{
     syscall::{
         data::Event,
         error::*,
-        usercopy::{UserSliceRo, UserSliceWo},
+        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -50,7 +50,54 @@ impl KernelScheme for EventScheme {
         }
         Ok(())
     }
+    fn kcall(
+        &self,
+        fds: &[usize],
+        payload: UserSliceRw,
+        flags: syscall::CallFlags,
+        _metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        if fds.len() != 1 {
+            return Err(Error::new(EINVAL));
+        }
+        let id = fds[0];
+        if id != SCHEME_ROOT_ID {
+            return Err(Error::new(EACCES));
+        }
+        let queue_id = next_queue_id();
+        queues_mut(token.token()).insert(queue_id, Arc::new(EventQueue::new(queue_id)));
 
+        let run_poll = |token: &mut CleanLockToken| -> Result<usize> {
+            let queue = {
+                let handles = queues(token.token());
+                let handle = handles.get(&queue_id).ok_or(Error::new(EBADF))?;
+                handle.clone()
+            };
+
+            let mut event_chunks = payload.in_exact_chunks(size_of::<Event>());
+            for chunk in event_chunks.by_ref() {
+                let event = unsafe { chunk.read_exact::<Event>()? };
+                if queue.write(&[event], token)? == 0 {
+                    break;
+                }
+            }
+
+            loop {
+                if !queue.is_currently_empty(token) {
+                    // TODO: nonblock?
+                    let bytes_read = queue.read(payload.into_wo()?, true, token)?;
+                    if bytes_read > 0 {
+                        return Ok(bytes_read);
+                    }
+                }
+            }
+        };
+
+        let result = run_poll(token);
+        self.close(queue_id.get(), token)?;
+        result
+    }
     fn kread(
         &self,
         id: usize,
