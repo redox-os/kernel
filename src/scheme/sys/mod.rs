@@ -78,6 +78,7 @@ const FILES: &[(&str, Kind)] = &[
     ("log", Rd(log::resource)),
     ("numa", Rd(crate::numa::get_numa_info)),
     ("numa_dist", Rd(crate::numa::get_numa_distance_info)),
+    ("numa_dom", Rd(crate::numa::get_numa_dom_info)),
     ("syscall", Rd(syscall::resource)),
     ("uname", Rd(uname::resource)),
     ("env", Rd(|_| Ok(Vec::from(crate::startup::init_env())))),

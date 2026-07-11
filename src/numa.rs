@@ -222,3 +222,13 @@ pub fn get_numa_distance_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         .map(|e| *e)
         .collect())
 }
+
+pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
+    Ok(DOMAIN_NODE_MAP
+        .get()
+        .ok_or(Error::new(EOPNOTSUPP))?
+        .iter()
+        .map(|e| e.to_ne_bytes())
+        .flatten()
+        .collect())
+}
