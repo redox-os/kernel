@@ -74,28 +74,34 @@ pub fn total_frames() -> usize {
 
 /// Allocate a range of frames
 pub fn allocate_p2frame(order: u32) -> Option<Frame> {
-    let initial_index = get_round_robin_index();
-    let mut index = initial_index;
+    static RR_INDEX: Mutex<u8> = Mutex::new(0);
+    let len = FREE_LISTS.get().unwrap().len();
 
-    loop {
-        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, index).map(|(f, _)| f)
-        {
-            return Some(frame);
-        }
-        index = get_round_robin_index();
-        if index == initial_index {
-            return None;
+    if len == 1 {
+        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+    }
+
+    let index = {
+        let mut lock = RR_INDEX.lock();
+        let index =
+            usize::try_from(*lock).expect("Maximum number of memory regions supported is 128");
+        *lock = u8::try_from((index + 1) % len).expect("Maximum number of memory regions is 128");
+        index
+    };
+    for i in index..len {
+        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
+            return Some(frame.0);
         }
     }
+    for i in 0..index {
+        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
+            return Some(frame.0);
+        }
+    }
+    None
 }
 pub fn allocate_frame() -> Option<Frame> {
     allocate_p2frame(0)
-}
-
-fn get_round_robin_index() -> usize {
-    static CURRENT_INDEX: AtomicUsize = AtomicUsize::new(0);
-    let len = FREE_LISTS.get().unwrap().len();
-    CURRENT_INDEX.fetch_add(1, Ordering::Relaxed) % len
 }
 
 // TODO: Flags, strategy
