@@ -1,7 +1,6 @@
 .PHONY: all check
 
 SOURCE:=$(dir $(realpath $(lastword $(MAKEFILE_LIST))))
-BUILD?=$(CURDIR)
 export RUST_TARGET_PATH=$(SOURCE)/targets
 
 ifeq ($(TARGET),)
@@ -9,6 +8,9 @@ ifeq ($(TARGET),)
 else
 	ARCH?=$(shell echo "$(TARGET)" | cut -d - -f1)
 endif
+
+BUILD?=$(CURDIR)/build/$(ARCH)
+DESTDIR?=./sysroot
 
 ifeq ($(ARCH),riscv64gc)
 	override ARCH:=riscv64
@@ -20,6 +22,7 @@ else
 	GNU_TARGET=$(ARCH)-unknown-redox
 endif
 
+OBJCOPY?=$(GNU_TARGET)-objcopy
 
 all: $(BUILD)/kernel $(BUILD)/kernel.sym
 
@@ -30,7 +33,10 @@ TARGET_SPEC=$(RUST_TARGET_PATH)/$(ARCH)-unknown-kernel.json
 
 KERNEL_CARGO_FEATURES?=
 
-$(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell find $(SOURCE) -name "*.rs" -type f)
+$(BUILD):
+	mkdir -p "$@"
+
+$(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell find $(SOURCE) -name "*.rs" -type f) | $(BUILD)
 	cargo rustc \
 		--bin kernel \
 		--manifest-path "$(MANIFEST)" \
@@ -45,13 +51,13 @@ $(BUILD)/kernel.all: $(LD_SCRIPT) $(LOCKFILE) $(MANIFEST) $(TARGET_SPEC) $(shell
 		--emit link="$(BUILD)/kernel.all"
 
 $(BUILD)/kernel.sym: $(BUILD)/kernel.all
-	$(GNU_TARGET)-objcopy \
+	$(OBJCOPY) \
 		--only-keep-debug \
 		"$(BUILD)/kernel.all" \
 		"$(BUILD)/kernel.sym"
 
 $(BUILD)/kernel: $(BUILD)/kernel.all
-	$(GNU_TARGET)-objcopy \
+	$(OBJCOPY) \
 		--strip-debug \
 		"$(BUILD)/kernel.all" \
 		"$(BUILD)/kernel"
@@ -66,3 +72,29 @@ check:
 		-Z build-std=core,alloc -Zbuild-std-features=compiler-builtins-mem \
 		-Z json-target-spec \
 		--features=$(KERNEL_CHECK_FEATURES)
+
+clean:
+	rm -rf build sysroot target config.toml
+
+install: all
+	@mkdir -pv "$(DESTDIR)/usr/lib/boot/"
+	cp -v $(BUILD)/kernel.all "$(DESTDIR)/usr/lib/boot/"
+	cp -v $(BUILD)/kernel.sym "$(DESTDIR)/usr/lib/boot/"
+	cp -v $(BUILD)/kernel "$(DESTDIR)/usr/lib/boot/"
+
+# test if booting
+# to ensure it's using this kernel, set COOKBOOK_SOURCE_IDENT env before build
+test: all
+	$(MAKE) install
+	REDOXER_SYSROOT=$(DESTDIR) redoxer exec uname -a
+
+# test with interactive gui
+test-gui: all
+	$(MAKE) install
+	REDOXER_SYSROOT=$(DESTDIR) redoxer exec --gui ion
+
+# test with relibc tests
+test-relibc: all
+	$(MAKE) install
+	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg relibc-tests-bins
+	REDOXER_SYSROOT=$(DESTDIR) redoxer exec relibc-tests-runner

@@ -83,7 +83,7 @@ static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque:
 pub struct RunContextData {
     // queue: VecDeque<WeakContextRef>,
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
-    timers: BTreeSet<(u128, WeakContextRef)>, // (wake, context)
+    timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
     count: usize,
     v: u64,
     total_weight: u64,

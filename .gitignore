@@ -1,3 +1,5 @@
 target
+/build
 /config.toml
+/sysroot
 .gitlab-ci-local/

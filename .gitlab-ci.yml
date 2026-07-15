@@ -1,8 +1,3 @@
-image: "redoxos/redoxer:latest"
-
-variables:
-  GIT_SUBMODULE_STRATEGY: recursive
-
 workflow:
   rules:
     - if: '$CI_PROJECT_NAMESPACE == "redox-os"'
@@ -12,14 +7,12 @@ stages:
   - build
   - cross-build
   - test
-  - other-features
   # TODO: benchmarks and profiling (maybe manually enabled for relevant MRs)?
 
 x86_64:
   stage: build
   script:
-    - mkdir -p target/${ARCH}
-    - redoxer env make BUILD=target/${ARCH}
+    - redoxer env make
   variables:
     ARCH: "x86_64"
 
@@ -27,64 +20,50 @@ aarch64:
   stage: cross-build
   image: "redoxos/redoxer:aarch64"
   script:
-    - mkdir -p target/${ARCH}
-    - redoxer env make BUILD=target/${ARCH}
+    - redoxer env make
   variables:
     ARCH: "aarch64"
 
 i586:
   stage: cross-build
   script:
-    - mkdir -p target/${ARCH}
-    - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
+    - TARGET=${ARCH}-unknown-redox redoxer env make
   variables:
     ARCH: "i586"
 
 riscv64gc:
   stage: cross-build
   script:
-    - mkdir -p target/${ARCH}
-    - TARGET=${ARCH}-unknown-redox redoxer env make BUILD=target/${ARCH}
+    - TARGET=${ARCH}-unknown-redox redoxer env make
   variables:
     ARCH: "riscv64gc"
 
 fmt:
   stage: build
   script:
-      - rustup component add rustfmt
-      - rustfmt --check
+      - redoxer env cargo fmt --check
 
 x86_64:boot:
   stage: test
   needs: [x86_64]
   script:
-    - mkdir -p target/${ARCH}
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - redoxer env make BUILD=target/${ARCH}
-    - timeout -s KILL 9m redoxer exec --folder target/${ARCH}/:/usr/lib/boot uname -a
-  variables:
-    ARCH: "x86_64"
+    - redoxer env make test
 
 x86_64:relibc:
   stage: test
   needs: [x86_64]
+  # TODO: remove
+  allow_failure: true
   script:
-    - redoxer pkg relibc-tests-bins
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - mkdir -p target/${TARGET}/sysroot/{usr/lib/boot,root} target/${TARGET}/root
-    - redoxer env make BUILD=target/${TARGET}/sysroot/usr/lib/boot
-    - (cd target/${TARGET}/sysroot && mv home/user/relibc-tests/* root/)
-    - timeout -s KILL 9m redoxer exec --folder target/${TARGET}/sysroot/:/ make run
-  # It is fine if failing sometimes
-  allow_failure: true
-  variables:
-    TARGET: "x86_64-unknown-redox"
+    - timeout -s KILL 9m redoxer env make test-relibc
 
-profiling-compile:
-  stage: other-features
-  allow_failure: true
+x86_64:profiling:
+  stage: build
+  needs: [x86_64]
   script:
-    make check
+  - make check
   variables:
     ARCH: "x86_64"
     KERNEL_CHECK_FEATURES: profiling
