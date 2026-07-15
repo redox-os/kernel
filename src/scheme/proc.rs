@@ -1,21 +1,8 @@
 use crate::{
     context::{
-        self,
-        context::{HardBlockedReason, LockedFdTbl, SignalState},
-        file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
-        Context, ContextLock, Status,
-    },
-    memory::{Page, VirtualAddress, PAGE_SIZE},
-    ptrace,
-    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme, StrOrBytes},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L4},
-    syscall::{
-        data::{GrantDesc, Map, SetSighandlerData, Stat},
-        error::*,
-        flag::*,
-        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
-        EnvRegisters, FloatRegisters, IntRegisters,
+        self, Context, ContextLock, Status, context::{HardBlockedReason, LockedFdTbl, SignalState}, file::InternalFlags, memory::{AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec, handle_notify_files}, unblock_context,
+    }, memory::{PAGE_SIZE, Page, VirtualAddress}, ptrace, scheme::{self, FileHandle, KernelScheme, StrOrBytes, memory::MemoryScheme}, sync::{CleanLockToken, L1, L4, LockToken, RwLock}, syscall::{
+        EnvRegisters, FloatRegisters, IntRegisters, data::{GrantDesc, Map, SetSighandlerData, Stat}, error::*, flag::*, usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -1248,8 +1235,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Interrupt => {
-                        let mut guard = context.write(token.token());
-                        guard.unblock();
+                        unblock_context(&context, &mut token.token().downgrade());
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::ForceKill => {
@@ -1278,13 +1264,16 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            let mut ctxt = context.write(token.token());
-                            //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
-                            if ctxt.status.is_dead() {
-                                return Ok(size_of::<usize>());
+                            {
+                                let mut ctxt = context.write(token.token());
+                                //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                                if ctxt.status.is_dead() {
+                                    return Ok(size_of::<usize>());
+                                }
+                                ctxt.status = context::Status::Runnable;
+                                ctxt.being_sigkilled = true;
                             }
-                            ctxt.status = context::Status::Runnable;
-                            ctxt.being_sigkilled = true;
+                            unblock_context(&context, &mut token.token().downgrade());
                             Ok(size_of::<usize>())
                         }
                     }

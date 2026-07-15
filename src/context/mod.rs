@@ -16,7 +16,7 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L4,
+        RwLockWriteGuard, L0, L1, L2, L3, L4,
     },
     syscall::error::Result,
 };
@@ -138,7 +138,7 @@ pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, R
 
 pub fn unblock_context(
     context_lock: &Arc<ContextLock>,
-    token: &mut LockToken<'_, L0>,
+    token: &mut LockToken<'_, L3>,
 ) -> bool {
     let was_blocked = {
         let mut guard = context_lock.write(token.token());
@@ -149,34 +149,12 @@ pub fn unblock_context(
         true
     };
 
+    let percpu: &PercpuBlock = PercpuBlock::current();
+
     let weak = WeakContextRef(Arc::downgrade(context_lock));
-    let cpu_id;
+    let cpu_id = context_lock.write(token.token()).cpu_id;
 
-    {
-        let mut run_queue = run_contexts(token.token());
-        let (mut run_queue, mut token) = run_queue.into_split();
-        let mut guard = context_lock.write(token.token());
-
-        let new_vtime = guard.vtime.max(run_queue.v);
-        guard.vtime = new_vtime;
-
-        let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
-        let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
-
-        if !guard.is_active {
-            guard.is_active = true;
-            run_queue.total_weight += weight;
-        }
-
-        guard.vd = new_vtime + scaled_slice as u64;
-        guard.rem_slice = BASE_SLICE_TICKS * SCALE as u64;
-        let key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
-        guard.queue_key = Some(key);
-
-        cpu_id = guard.cpu_id;
-
-        run_queue.queue.insert(key, (new_vtime, weight, weak));
-    }
+    percpu.switch_internals.wakeup_list.borrow_mut().push(weak);
 
     if let Some(cpu_id) = cpu_id
         && cpu_id != crate::cpu_id()
