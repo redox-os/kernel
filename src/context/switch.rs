@@ -389,9 +389,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
-fn wakeup_contexts(
-    token: &mut CleanLockToken,
-) -> SmallVec<[WeakContextRef; 16]> {
+fn wakeup_contexts(token: &mut CleanLockToken) -> SmallVec<[WeakContextRef; 16]> {
     // TODO: Optimise this somehow
     let mut wakeups = SmallVec::new();
     let current_context = context::current();
