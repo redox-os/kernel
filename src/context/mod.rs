@@ -9,11 +9,14 @@ use alloc::{
 use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
-    context::{memory::AddrSpaceWrapper, switch::{SCHED_PRIO_TO_WEIGHT, SCALE, TICK_INTERVAL, BASE_SLICE_TICKS, NANOS_PER_TICK}},
+    context::{
+        memory::AddrSpaceWrapper,
+        switch::{BASE_SLICE_TICKS, NANOS_PER_TICK, SCALE, SCHED_PRIO_TO_WEIGHT, TICK_INTERVAL},
+    },
     cpu_set::LogicalCpuSet,
+    ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
-    ipi::{ipi, IpiKind, IpiTarget},
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
         RwLockWriteGuard, L0, L1, L2, L3, L4,
@@ -136,10 +139,7 @@ pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, R
     RUN_CONTEXTS.try_lock(token)
 }
 
-pub fn unblock_context(
-    context_lock: &Arc<ContextLock>,
-    token: &mut LockToken<'_, L3>,
-) -> bool {
+pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
     let was_blocked = {
         let mut guard = context_lock.write(token.token());
         if !guard.unblock_no_ipi() {

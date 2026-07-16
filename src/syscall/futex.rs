@@ -13,8 +13,12 @@ use syscall::EINTR;
 
 use crate::{
     context::{
-        self, ContextLock, memory::{AddrSpace, AddrSpaceWrapper}, unblock_context,
-    }, memory::{Page, PhysicalAddress, VirtualAddress}, sync::{CleanLockToken, L1, Mutex},
+        self,
+        memory::{AddrSpace, AddrSpaceWrapper},
+        unblock_context, ContextLock,
+    },
+    memory::{Page, PhysicalAddress, VirtualAddress},
+    sync::{CleanLockToken, Mutex, L1},
 };
 
 use crate::syscall::{

@@ -6,7 +6,8 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, ContextLock, PreemptGuardL2, unblock_context}, sync::{CleanLockToken, L1, L2, L3, LockToken, Mutex},
+    context::{self, unblock_context, ContextLock, PreemptGuardL2},
+    sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
 #[derive(Debug)]
