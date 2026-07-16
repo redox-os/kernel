@@ -6,8 +6,7 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, ContextLock, PreemptGuardL2},
-    sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
+    context::{self, ContextLock, PreemptGuardL2, unblock_context}, sync::{CleanLockToken, L1, L2, L3, LockToken, Mutex},
 };
 
 #[derive(Debug)]
@@ -33,7 +32,7 @@ impl WaitCondition {
         let len = contexts.len();
         while let Some(context_weak) = contexts.pop() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write(token.token()).unblock();
+                unblock_context(&context_ref, &mut token.token());
             }
         }
         len
@@ -46,7 +45,7 @@ impl WaitCondition {
         let len = contexts.len();
         for context_weak in contexts.iter() {
             if let Some(context_ref) = context_weak.upgrade() {
-                context_ref.write(token.token()).unblock();
+                unblock_context(&context_ref, &mut token.token());
             }
         }
         len

@@ -15,24 +15,11 @@ use syscall::{
 
 use crate::{
     context::{
-        self,
-        context::{bulk_insert_fds, HardBlockedReason},
-        file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
-        memory::{
-            handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
-            GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
-        },
-        BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
-    },
-    event,
-    memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
-    scheme::SchemeId,
-    sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
-    syscall::{
-        data::{Map, StdFsCallMeta},
-        error::*,
-        flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
-        usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
+        self, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status, context::{HardBlockedReason, bulk_insert_fds}, file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription}, memory::{
+            AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, DANGLING, Grant, GrantFileRef, MmapMode, PageSpan, UnmapVec, handle_notify_files,
+        }, unblock_context,
+    }, event, memory::{Frame, PAGE_SIZE, Page, VirtualAddress}, scheme::SchemeId, sync::{CleanLockToken, L1, LockToken, Mutex, RwLock, WaitQueue}, syscall::{
+        data::{Map, StdFsCallMeta}, error::*, flag::{EVENT_READ, EventFlags, MapFlags, O_NONBLOCK, PROT_READ}, usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -956,7 +943,7 @@ impl UserInner {
                         match context.upgrade() {
                             Some(context) => {
                                 *o = State::Responded(response);
-                                context.write(lock_token.token()).unblock();
+                                unblock_context(&context, &mut lock_token.token().downgrade());
                             }
                             _ => {
                                 states.remove(tag as usize);

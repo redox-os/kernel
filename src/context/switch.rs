@@ -190,6 +190,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let mut wakeups = wakeup_contexts(token);
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
+    // These timers coukd have expired
+    let mut timers: SmallVec<[(u128, WeakContextRef); 16]> = SmallVec::new();
     if let Some(mut run_contexts) = run_contexts_try(token.token()) {
         // Pop Timers
         while let Some((wake, _)) = run_contexts.timers.first() {
@@ -197,9 +199,20 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 break;
             }
 
-            if let Some((_, context_ref)) = run_contexts.timers.pop_first() {
-                wakeups.push(context_ref);
+            if let Some(entry) = run_contexts.timers.pop_first() {
+                timers.push(entry);
             }
+        }
+    }
+
+    for (wake, context_ref) in timers {
+        let Some(context_lock) = context_ref.upgrade() else {
+            continue;
+        };
+
+        let guard = context_lock.read(token.token());
+        if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
+            wakeups.push(context_ref);
         }
     }
 
