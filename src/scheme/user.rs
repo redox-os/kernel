@@ -22,7 +22,7 @@ use crate::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
             GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
-        BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
+        unblock_context, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
@@ -956,7 +956,7 @@ impl UserInner {
                         match context.upgrade() {
                             Some(context) => {
                                 *o = State::Responded(response);
-                                context.write(lock_token.token()).unblock();
+                                unblock_context(&context, &mut lock_token.token().downgrade());
                             }
                             _ => {
                                 states.remove(tag as usize);

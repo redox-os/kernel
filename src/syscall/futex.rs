@@ -15,7 +15,7 @@ use crate::{
     context::{
         self,
         memory::{AddrSpace, AddrSpaceWrapper},
-        ContextLock,
+        unblock_context, ContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
     sync::{CleanLockToken, Mutex, L1},
@@ -214,7 +214,7 @@ pub fn futex(
                             continue;
                         }
                         if let Some(ctx) = futex.context_lock.upgrade() {
-                            ctx.write(token.token()).unblock();
+                            unblock_context(&ctx, &mut token.token().downgrade());
                         }
                         futexes.swap_remove(i);
                         woken += 1;
