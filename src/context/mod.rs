@@ -9,13 +9,17 @@ use alloc::{
 use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
-    context::memory::AddrSpaceWrapper,
+    context::{
+        memory::AddrSpaceWrapper,
+        switch::{BASE_SLICE_TICKS, NANOS_PER_TICK, SCALE, SCHED_PRIO_TO_WEIGHT, TICK_INTERVAL},
+    },
     cpu_set::LogicalCpuSet,
+    ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L4,
+        RwLockWriteGuard, L0, L1, L2, L3, L4,
     },
     syscall::error::Result,
 };
@@ -133,6 +137,32 @@ pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextDa
 
 pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, RunContextData>> {
     RUN_CONTEXTS.try_lock(token)
+}
+
+pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
+    let was_blocked = {
+        let mut guard = context_lock.write(token.token());
+        if !guard.unblock_no_ipi() {
+            return false;
+        }
+
+        true
+    };
+
+    let percpu: &PercpuBlock = PercpuBlock::current();
+
+    let weak = WeakContextRef(Arc::downgrade(context_lock));
+    let cpu_id = context_lock.write(token.token()).cpu_id;
+
+    percpu.switch_internals.wakeup_list.borrow_mut().push(weak);
+
+    if let Some(cpu_id) = cpu_id
+        && cpu_id != crate::cpu_id()
+    {
+        ipi(IpiKind::Wakeup, IpiTarget::Other);
+    }
+
+    true
 }
 
 pub fn init(token: &mut CleanLockToken) {

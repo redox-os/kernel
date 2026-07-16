@@ -279,7 +279,6 @@ impl Context {
     pub fn unblock_no_ipi(&mut self) -> bool {
         if self.status.is_soft_blocked() {
             self.status = Status::Runnable;
-            self.wake = None;
             self.status_reason = "";
 
             true
