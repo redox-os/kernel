@@ -5,7 +5,7 @@ use core::{
 };
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 use smallvec::SmallVec;
-use syscall::{data::GlobalSchemes, EINTR};
+use syscall::{data::GlobalSchemes, EAGAIN, EINTR};
 
 use crate::{
     context,
@@ -27,7 +27,7 @@ int_like!(EventQueueId, AtomicEventQueueId, usize, AtomicUsize);
 pub struct EventQueue {
     id: EventQueueId,
     queue: WaitQueue<Event>,
-    timeout_opt: Mutex<L1, Option<u128>>,
+    timeout_opt: Mutex<L1, Option<usize>>,
 }
 
 impl EventQueue {
@@ -59,19 +59,45 @@ impl EventQueue {
     pub fn read_with_timeout(
         &self,
         buf: UserSliceWo,
-        timeout: u128,
+        timeout: usize,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        context::current().write(token.token()).wake = Some(timeout);
+        // if zero, instant timeout
+        let block = timeout > 0;
+        if block {
+            let mut time = crate::time::monotonic(token);
+            time += timeout as u128 * 1_000_000;
+            context::current().write(token.token()).wake = Some(time);
+        }
         let r = self
             .queue
-            .receive_into_user(buf, true, "EventQueue::read_with_timeout", token);
-        let old_wake = context::current().write(token.token()).wake.take();
-        // The scheduler clears `wake` on timeout
-        if old_wake.is_none() && r.is_err_and(|e| e.errno == EINTR) {
-            return Ok(0);
-        }
-        r
+            .receive_into_user(buf, block, "EventQueue::read_with_timeout", token);
+        match (r, block) {
+            (Ok(r), _) => return Ok(r),
+            (err @ Err(Error { errno: EINTR }), true) => {
+                let old_wake = context::current().write(token.token()).wake.take();
+                // The scheduler clears `wake` on timeout
+                if !old_wake.is_none() {
+                    return err;
+                }
+                // proceed writing timeout
+            }
+            (Err(Error { errno: EAGAIN }), false) => {
+                // proceed writing timeout
+            }
+            (err, _) => return err,
+        };
+
+        // TODO: let the scheduler write this for us?
+        let event = Event {
+            id: syscall::EVENT_TIMEOUT_ID,
+            // TODO: it's undefined when flags is written to EVENT_TIMEOUT_ID
+            flags: EventFlags::EVENT_READ,
+            data: timeout,
+        };
+
+        let bytes_copied = buf.copy_common_bytes_from_slice(&event)?;
+        return Ok(bytes_copied);
     }
 
     pub fn write(&self, events: &[Event], token: &mut CleanLockToken) -> Result<usize> {
@@ -80,9 +106,7 @@ impl EventQueue {
                 if event.flags.is_empty() {
                     self.timeout_opt.lock(token.token()).take();
                 } else {
-                    let mut time = crate::time::monotonic(token);
-                    time += (event.data * 1_000_000) as u128;
-                    *self.timeout_opt.lock(token.token()) = Some(time);
+                    *self.timeout_opt.lock(token.token()) = Some(event.data);
                 }
 
                 continue;
