@@ -235,19 +235,36 @@ pub fn dup2(
     buf: UserSliceRo,
     token: &mut CleanLockToken,
 ) -> Result<FileHandle> {
-    if fd == new_fd {
-        Ok(new_fd)
-    } else {
-        let _ = close(new_fd, token);
-        let new_file = duplicate_file(fd, buf, token)?;
-
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        context
-            .insert_file(new_fd, new_file, &mut token)
-            .ok_or(Error::new(EMFILE))
+    if fd == new_fd && buf.is_empty() {
+        return Ok(new_fd);
     }
+
+    let new_file = duplicate_file(fd, buf, token)?;
+
+    let old_file = {
+        let current_lock = context::current();
+        let mut current = current_lock.write(token.token());
+        let (context, mut split_token) = current.token_split();
+
+        let old_file = context.remove_file(new_fd, &mut split_token.token());
+
+        if context
+            .insert_file(new_fd, new_file, &mut split_token.token())
+            .is_none()
+        {
+            if let Some(old) = old_file {
+                context.insert_file(new_fd, old, &mut split_token.token());
+            }
+            return Err(Error::new(EMFILE));
+        }
+        old_file
+    };
+
+    if let Some(old) = old_file {
+        let _ = old.close(token);
+    }
+
+    Ok(new_fd)
 }
 pub fn call(
     fds: &[usize],
