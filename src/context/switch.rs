@@ -13,7 +13,7 @@ use crate::{
     percpu::PercpuBlock,
     sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
-use alloc::{sync::Arc, vec::Vec};
+use alloc::sync::Arc;
 use core::{
     cell::{Cell, RefCell},
     cmp::Reverse,
@@ -32,16 +32,16 @@ enum UpdateResult {
 }
 
 // A simple geometric series where value[i] ~= value[i + 1] * 1.25
-pub const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
+const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
     3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
 
-pub const SCALE: u128 = 1 << 40;
-pub const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
-pub const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
-pub const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
+const SCALE: u128 = 1 << 40;
+const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
+const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
+const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
@@ -190,8 +190,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let mut wakeups = wakeup_contexts(token);
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
-    // These timers coukd have expired
-    let mut timers: SmallVec<[(u128, WeakContextRef); 16]> = SmallVec::new();
     if let Some(mut run_contexts) = run_contexts_try(token.token()) {
         // Pop Timers
         while let Some((wake, _)) = run_contexts.timers.first() {
@@ -199,28 +197,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 break;
             }
 
-            if let Some(entry) = run_contexts.timers.pop_first() {
-                timers.push(entry);
+            if let Some((_, context_ref)) = run_contexts.timers.pop_first() {
+                wakeups.push(context_ref);
             }
-        }
-    }
-
-    for (wake, context_ref) in timers {
-        let Some(context_lock) = context_ref.upgrade() else {
-            continue;
-        };
-
-        let guard = context_lock.read(token.token());
-        if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
-            wakeups.push(context_ref);
-        }
-    }
-
-    // Drain from percpu
-    let mut percpu_wake = percpu.switch_internals.wakeup_list.replace(Vec::new());
-    if percpu_wake.len() > 0 {
-        for context_ref in percpu_wake.iter() {
-            wakeups.push(context_ref.clone());
         }
     }
 
@@ -718,9 +697,6 @@ pub struct ContextSwitchPercpu {
     /// The idle process.
     idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
     pub(crate) being_sigkilled: Cell<bool>,
-
-    // wakeups
-    pub(crate) wakeup_list: RefCell<Vec<WeakContextRef>>,
 }
 
 impl ContextSwitchPercpu {
@@ -732,7 +708,6 @@ impl ContextSwitchPercpu {
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
-            wakeup_list: RefCell::new(Vec::new()),
 
             #[cfg(feature = "profiling")]
             current_dbg_id: core::sync::atomic::AtomicU32::new(!0),
