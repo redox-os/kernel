@@ -147,8 +147,61 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
     }
 }
 
-// FIXME return PhysicalAddress
-pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> Option<usize> {
+fn same_node(left: FdtNode<'_, '_>, right: FdtNode<'_, '_>) -> bool {
+    if left.name != right.name {
+        return false;
+    }
+    // FdtNode is reconstructed while walking the tree and has no identity
+    // operation. A property's value is a slice into the original DTB, so equal
+    // `reg` slice pointers identify the same node occurrence without relying
+    // on names that may repeat below different buses.
+    match (left.property("reg"), right.property("reg")) {
+        (Some(left_reg), Some(right_reg)) => core::ptr::eq(left_reg.value, right_reg.value),
+        _ => false,
+    }
+}
+
+fn translate_bus_address(bus: FdtNode<'_, '_>, address: usize, size: usize) -> Option<usize> {
+    let ranges_property = bus.property("ranges")?;
+    if ranges_property.value.is_empty() {
+        return Some(address);
+    }
+
+    let last_offset = size.saturating_sub(1);
+    let ranges = bus.ranges()?;
+    for range in ranges {
+        let Some(offset) = address.checked_sub(range.child_bus_address) else {
+            continue;
+        };
+        if offset < range.size && last_offset < range.size - offset {
+            return range.parent_bus_address.checked_add(offset);
+        }
+    }
+    None
+}
+
+fn translate_from_subtree(
+    bus_or_device: FdtNode<'_, '_>,
+    target: FdtNode<'_, '_>,
+    address: usize,
+    size: usize,
+) -> Option<usize> {
+    if same_node(bus_or_device, target) {
+        return Some(address);
+    }
+
+    for child in bus_or_device.children() {
+        if let Some(child_address) = translate_from_subtree(child, target, address, size) {
+            // `bus_or_device` is the bus parent of the subtree that matched.
+            return translate_bus_address(bus_or_device, child_address, size);
+        }
+    }
+    None
+}
+
+/// Translate a device's bus-relative `reg` address through every ancestor's
+/// `ranges` property until it reaches the CPU physical address space.
+pub fn translate_mmio_address(fdt: &Fdt, device: &FdtNode, region: &MemoryRegion) -> Option<usize> {
     /* DT spec 2.3.8 "ranges":
      * The ranges property provides a means of defining a mapping or translation between
      * the address space of the bus (the child address space) and the address space of the bus
@@ -159,15 +212,32 @@ pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> 
      * children of the node and the parent address space.
      */
 
-    // FIXME assumes all the devices are connected to CPUs via the /soc bus
+    let address = region.starting_address as usize;
+    let size = region.size.unwrap_or(1);
+    let root = fdt.find_node("/")?;
+
+    // The root is already the CPU address space, so only its children perform
+    // translations. This also supports devices that are not under `/soc`.
+    for child in root.children() {
+        if let Some(translated) = translate_from_subtree(child, *device, address, size) {
+            translated.checked_add(size.saturating_sub(1))?;
+            return Some(translated);
+        }
+    }
+    None
+}
+
+// FIXME return PhysicalAddress
+pub fn get_mmio_address(fdt: &Fdt, _device: &FdtNode, region: &MemoryRegion) -> Option<usize> {
     let mut mapped_addr = region.starting_address as usize;
     let size = region.size.unwrap_or(0).saturating_sub(1);
     let last_address = mapped_addr.saturating_add(size);
     if let Some(parent) = fdt.find_node("/soc") {
-        let mut ranges = parent.ranges().map(|f| f.peekable())?;
+        let mut ranges = parent.ranges().map(|ranges| ranges.peekable())?;
         if ranges.peek().is_some() {
-            let parent_range = ranges.find(|x| {
-                x.child_bus_address <= mapped_addr && last_address - x.child_bus_address <= x.size
+            let parent_range = ranges.find(|range| {
+                range.child_bus_address <= mapped_addr
+                    && last_address - range.child_bus_address <= range.size
             })?;
             mapped_addr = parent_range
                 .parent_bus_address
@@ -219,7 +289,7 @@ pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool
 
     let mut reg = uart_node.reg()?;
     let memory = reg.next()?;
-    let address = get_mmio_address(dtb, &uart_node, &memory)?;
+    let address = translate_mmio_address(dtb, &uart_node, &memory)?;
 
     Some((
         PhysicalAddress::new(address),
@@ -242,5 +312,40 @@ pub fn fill_env_data(dt: &Fdt, env_base: usize) -> usize {
         bootargs_len
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::translate_mmio_address;
+    use fdt::Fdt;
+
+    static MMIO_DTB: &[u8] = include_bytes!("testdata/mmio.dtb");
+
+    fn translated(path: &str) -> Option<usize> {
+        let fdt = Fdt::new(MMIO_DTB).unwrap();
+        let node = fdt.find_node(path).unwrap();
+        let region = node.reg().unwrap().next().unwrap();
+        translate_mmio_address(&fdt, &node, &region)
+    }
+
+    #[test]
+    fn translates_uart_through_nested_and_empty_ranges() {
+        assert_eq!(translated("/soc/bus@1000/serial@200"), Some(0x1200));
+    }
+
+    #[test]
+    fn accepts_region_ending_exactly_at_range_boundary() {
+        assert_eq!(translated("/soc/bus@1000/device@ff0"), Some(0x1ff0));
+    }
+
+    #[test]
+    fn rejects_region_crossing_range_boundary() {
+        assert_eq!(translated("/soc/bus@1000/device@ff1"), None);
+    }
+
+    #[test]
+    fn empty_ranges_is_identity_mapping() {
+        assert_eq!(translated("/identity-bus/device@3000"), Some(0x3000));
     }
 }
