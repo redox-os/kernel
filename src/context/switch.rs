@@ -5,8 +5,8 @@
 use crate::{
     context::{
         self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, run_contexts_try, ArcContextLockWriteGuard, Context, ContextLock,
-        WeakContextRef,
+        run_contexts, run_contexts_try, wakeup_context, ArcContextLockWriteGuard, Context,
+        ContextLock, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -18,6 +18,7 @@ use core::{
     cell::{Cell, RefCell},
     cmp::Reverse,
     hint, matches, mem,
+    ops::Deref,
     option::Option::{None, Some},
     sync::atomic::Ordering,
     u64,
@@ -207,6 +208,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     for (wake, context_ref) in timers {
         let Some(context_lock) = context_ref.upgrade() else {
+            push_idle.push(context_ref);
             continue;
         };
 
@@ -217,9 +219,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Drain from percpu
-    let mut percpu_wake = percpu.switch_internals.wakeup_list.replace(Vec::new());
-    if percpu_wake.len() > 0 {
-        for context_ref in percpu_wake.iter() {
+    {
+        let mut percpu_wake = percpu.switch_internals.wakeup_list.borrow_mut();
+        for context_ref in percpu_wake.drain(..) {
             wakeups.push(context_ref.clone());
         }
     }
@@ -260,24 +262,25 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     {
-        let mut idle_list = idle_contexts(token.downgrade());
+        let mut percpu_wake = percpu.switch_internals.wakeup_list.borrow_mut();
         for context_ref in push_idle {
-            idle_list.push_back(context_ref);
+            percpu_wake.push(context_ref);
         }
     }
 
     /* // uncomment to debug contexts count
     let cpu_count = crate::cpu_count() as usize;
-    let len_idle = idle_contexts(token.downgrade()).len();
+    let len_idle = percpu.switch_internals.wakeup_list.borrow().len();
+    let len_runnable = run_contexts(token.token()).queue.len();
     let all_contexts = context::contexts(token.downgrade())
         .len()
         .saturating_sub(cpu_count); // ignore kmain
     print!(
-        "\r TIME {}.{} IDLE {} WAKEUPS {} ALL {} ",
+        "\r TIME {}.{} WAKEUPS {} RUNNABLE {} ALL {} ",
         switch_time / 1000_000_000,
         (switch_time / 100_000_000) % 10,
         len_idle,
-        wakeups_len,
+        len_runnable,
         all_contexts
     );
     */
@@ -410,6 +413,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
+// TODO: solve idle_contexts remaining usage and remove
 fn wakeup_contexts(token: &mut CleanLockToken) -> SmallVec<[WeakContextRef; 16]> {
     // TODO: Optimise this somehow
     let mut wakeups = SmallVec::new();
@@ -677,8 +681,12 @@ fn select_next_context(
                     ),
                 );
             } else if !is_idle && !is_timer {
-                idle_contexts(token.token())
-                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+                if chosen_guard.status.is_runnable() {
+                    wakeup_context(ArcContextLockWriteGuard::rwlock(&chosen_guard));
+                } else {
+                    idle_contexts(token.token())
+                        .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+                }
             }
 
             return Some((chosen_guard, addr_space));
@@ -687,10 +695,13 @@ fn select_next_context(
         }
     } else {
         if !is_idle && !is_timer {
-            idle_contexts(token.token())
-                .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+            if prev_context_guard.status.is_runnable() {
+                wakeup_context(ArcContextLockWriteGuard::rwlock(&prev_context_guard));
+            } else {
+                idle_contexts(token.token())
+                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
+            }
         }
-
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
         if (!was_idle || prev_is_dead) && !is_idle {
             return Some(unsafe { (idle_context.write_arc(), None) });

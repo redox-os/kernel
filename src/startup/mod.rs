@@ -7,7 +7,7 @@ use core::{
 
 use crate::{
     arch::interrupt,
-    context::{self, switch::SwitchResult},
+    context::{self, switch::SwitchResult, wakeup_context, Status},
     memory::{PhysicalAddress, RmmA, RmmArch},
     profiling, scheme,
     sync::CleanLockToken,
@@ -175,13 +175,15 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
     match context::spawn(true, owner, userspace_init, &mut token) {
         Ok(context_lock) => {
             let mut context = context_lock.write(token.token());
-            context.status = context::Status::Runnable;
+            context.status = Status::Runnable;
             context.name.clear();
             context.name.push_str("[bootstrap]");
 
             // TODO: Remove these from kernel
             context.euid = 0;
             context.egid = 0;
+
+            wakeup_context(&context_lock);
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);

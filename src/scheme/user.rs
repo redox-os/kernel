@@ -22,10 +22,12 @@ use crate::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
             GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
-        unblock_context, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1, Status,
+        unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1,
+        Status, WeakContextRef,
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
+    percpu::PercpuBlock,
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{
@@ -873,7 +875,7 @@ impl UserInner {
                     }
                 };
 
-                let context = context.upgrade().ok_or(Error::new(ESRCH))?;
+                let context_lock = context.upgrade().ok_or(Error::new(ESRCH))?;
 
                 let mut lock_token = token.token();
                 let (frame, _) = AddrSpace::current()?
@@ -884,12 +886,13 @@ impl UserInner {
                     .ok_or(Error::new(EFAULT))?;
 
                 {
-                    let mut context = context.write(token.token());
+                    let mut context = context_lock.write(token.token());
                     if let Status::HardBlocked {
                         reason: HardBlockedReason::AwaitingMmap { .. },
                     } = context.status
                     {
-                        context.status = Status::Runnable
+                        context.status = Status::Runnable;
+                        wakeup_context(&context_lock);
                     }
                     context.fmap_ret = Some(Frame::containing(frame));
                 }
