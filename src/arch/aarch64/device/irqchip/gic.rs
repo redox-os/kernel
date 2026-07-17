@@ -1,8 +1,8 @@
 use super::InterruptController;
 use crate::{
     dtb::{
-        get_mmio_address,
         irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        translate_mmio_address,
     },
     sync::CleanLockToken,
 };
@@ -60,7 +60,7 @@ impl GenericInterruptController {
             if chunk.size.is_none() {
                 break;
             }
-            let addr = get_mmio_address(fdt, node, &chunk).unwrap();
+            let addr = translate_mmio_address(fdt, node, &chunk).unwrap();
             match idx {
                 0 => (regs.0, regs.1) = (addr, chunk.size.unwrap()),
                 2 => (regs.2, regs.3) = (addr, chunk.size.unwrap()),

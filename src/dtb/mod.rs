@@ -102,46 +102,85 @@ pub fn register_dev_memory_ranges(dt: &Fdt) {
         }
     }
 
-    let Some(soc_node) = dt.find_node("/soc") else {
-        warn!("failed to find /soc in devicetree");
-        return;
-    };
-    let Some(reg) = soc_node.ranges() else {
-        warn!("devicetree /soc has no ranges");
-        return;
-    };
-    for chunk in reg {
-        debug!(
-            "dev mem 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
-            chunk.child_bus_address_hi,
-            chunk.child_bus_address,
-            chunk.parent_bus_address,
-            chunk.size
-        );
+    if let Some(soc_node) = dt.find_node("/soc") {
+        if let Some(reg) = soc_node.ranges() {
+            for chunk in reg {
+                debug!(
+                    "dev mem 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
+                    chunk.child_bus_address_hi,
+                    chunk.child_bus_address,
+                    chunk.parent_bus_address,
+                    chunk.size
+                );
 
-        /*TODO: soc memory may contain all free memory!
-        register_memory_region(
-            chunk.parent_bus_address,
-            chunk.size,
-            BootloaderMemoryKind::Device,
-        );*/
-    }
+                /*TODO: soc memory may contain all free memory!
+                register_memory_region(
+                    chunk.parent_bus_address,
+                    chunk.size,
+                    BootloaderMemoryKind::Device,
+                );*/
+            }
+        } else {
+            warn!("devicetree /soc has no ranges");
+        }
 
-    // also add all soc-internal devices because they might not be shown in ranges
-    // (identity-mapped soc bus may have empty ranges)
-    for device in soc_node.children() {
-        if let Some(reg) = device.reg() {
-            for entry in reg {
-                if let Some(size) = entry.size {
-                    let addr = entry.starting_address as usize;
-                    if let Some(mapped_addr) = get_mmio_address(dt, &device, &entry) {
-                        debug!(
-                            "soc device {} 0x{:08x} -> 0x{:08x} size 0x{:08x}",
-                            device.name, addr, mapped_addr, size
-                        );
-                        register_memory_region(mapped_addr, size, BootloaderMemoryKind::Device);
+        // also add direct /soc children because they might not be shown in
+        // ranges (an identity-mapped bus may have empty ranges)
+        for device in soc_node.children() {
+            if let Some(reg) = device.reg() {
+                for entry in reg {
+                    if let Some(size) = entry.size {
+                        let addr = entry.starting_address as usize;
+                        if let Some(mapped_addr) = get_mmio_address(dt, &device, &entry) {
+                            debug!(
+                                "soc device {} 0x{:08x} -> 0x{:08x} size 0x{:08x}",
+                                device.name, addr, mapped_addr, size
+                            );
+                            register_memory_region(mapped_addr, size, BootloaderMemoryKind::Device);
+                        }
                     }
                 }
+            }
+        }
+    } else {
+        warn!("failed to find /soc in devicetree");
+    }
+
+    // The selected console may be below a nested bus whose own `reg` range
+    // does not cover all children. Register the exact translated range so it
+    // remains mapped after the boot-time identity map is replaced.
+    if let Some((address, size, _, _, _)) = diag_uart_range(dt) {
+        debug!(
+            "diagnostic UART 0x{:08x} size 0x{:08x}",
+            address.data(),
+            size
+        );
+        register_memory_region(address.data(), size, BootloaderMemoryKind::Device);
+    }
+
+    // Interrupt controllers are not required to live below /soc. Some
+    // devicetrees place the primary GIC directly below the root node, so its
+    // register ranges would otherwise be absent from the kernel physmap.
+    if let Some(root) = dt.find_node("/") {
+        for controller in root
+            .children()
+            .filter(|node| node.property("interrupt-controller").is_some())
+        {
+            let Some(regions) = controller.reg() else {
+                continue;
+            };
+            for region in regions {
+                let Some(size) = region.size else {
+                    continue;
+                };
+                let Some(address) = translate_mmio_address(dt, &controller, &region) else {
+                    continue;
+                };
+                debug!(
+                    "root interrupt controller {} 0x{:08x} size 0x{:08x}",
+                    controller.name, address, size
+                );
+                register_memory_region(address, size, BootloaderMemoryKind::Device);
             }
         }
     }

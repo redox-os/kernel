@@ -5,8 +5,8 @@ use fdt::{node::NodeProperty, Fdt};
 use super::{gic::GicDistIf, InterruptController};
 use crate::{
     dtb::{
-        get_mmio_address,
         irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        translate_mmio_address,
     },
     sync::CleanLockToken,
 };
@@ -53,7 +53,7 @@ impl GicV3 {
         // Read registers
         let mut chunks = node.reg().unwrap();
         if let Some(gicd) = chunks.next()
-            && let Some(addr) = get_mmio_address(fdt, &node, &gicd)
+            && let Some(addr) = translate_mmio_address(fdt, &node, &gicd)
         {
             unsafe {
                 self.gic_dist_if.init(crate::PHYS_OFFSET + addr);
@@ -62,7 +62,7 @@ impl GicV3 {
         for _ in 0..gicrs {
             if let Some(gicr) = chunks.next() {
                 self.gicrs.push((
-                    get_mmio_address(fdt, &node, &gicr).unwrap(),
+                    translate_mmio_address(fdt, &node, &gicr).unwrap(),
                     gicr.size.unwrap(),
                 ));
             }
