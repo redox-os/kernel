@@ -771,25 +771,59 @@ impl KernelScheme for ProcScheme {
                 } => {
                     // TODO: Maybe allow userspace to either copy or transfer recently dupped file
                     // descriptors between file tables.
-                    if buf != b"copy" {
-                        return Err(Error::new(EINVAL));
-                    }
-                    let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
+                    let new_handle = match buf {
+                        b"copy" => {
+                            let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
-                    let new_filetable =
-                        Arc::new(RwLock::new(filetable.read(token.token()).clone()));
+                            let new_filetable =
+                                Arc::new(RwLock::new(filetable.read(token.token()).clone()));
 
-                    handle(
-                        Handle {
-                            kind: ContextHandle::NewFiletable {
-                                filetable: new_filetable,
-                                binary_format,
-                                data: data.clone(),
-                            },
-                            context,
-                        },
-                        true,
-                    )
+                            Handle {
+                                kind: ContextHandle::NewFiletable {
+                                    filetable: new_filetable,
+                                    binary_format,
+                                    data: data.clone(),
+                                },
+                                context,
+                            }
+                        }
+                        b"refresh" => {
+                            let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
+
+                            let new_data = if binary_format {
+                                let mut data = Vec::new();
+                                for index in filetable
+                                    .read(token.token())
+                                    .enumerate()
+                                    .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                                {
+                                    data.extend((index as u64).to_le_bytes());
+                                }
+                                data.into_boxed_slice()
+                            } else {
+                                use core::fmt::Write;
+                                let mut data = String::new();
+                                for index in filetable
+                                    .read(token.token())
+                                    .enumerate()
+                                    .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                                {
+                                    writeln!(data, "{}", index).unwrap();
+                                }
+                                data.into_bytes().into_boxed_slice()
+                            };
+                            Handle {
+                                kind: ContextHandle::Filetable {
+                                    filetable: Arc::downgrade(&filetable),
+                                    binary_format,
+                                    data: new_data,
+                                },
+                                context,
+                            }
+                        }
+                        _ => return Err(Error::new(EINVAL)),
+                    };
+                    handle(new_handle, true)
                 }
                 Handle {
                     kind: ContextHandle::AddrSpace { ref addrspace },
