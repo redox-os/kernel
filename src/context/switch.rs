@@ -217,9 +217,9 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Drain from percpu
-    {
-        let mut percpu_wake = percpu.switch_internals.wakeup_list.borrow_mut();
-        for context_ref in percpu_wake.drain(..) {
+    let mut percpu_wake = percpu.switch_internals.wakeup_list.replace(Vec::new());
+    if percpu_wake.len() > 0 {
+        for context_ref in percpu_wake.iter() {
             wakeups.push(context_ref.clone());
         }
     }

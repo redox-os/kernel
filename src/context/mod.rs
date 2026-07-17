@@ -140,19 +140,21 @@ pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, R
 }
 
 pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
-    let cpu_id = {
+    let was_blocked = {
         let mut guard = context_lock.write(token.token());
         if !guard.unblock_no_ipi() {
-            if guard.status.is_runnable() {
-                // already set to runnable externally
-                wakeup_context(context_lock);
-            }
             return false;
         }
-        guard.cpu_id
+
+        true
     };
 
-    wakeup_context(context_lock);
+    let percpu: &PercpuBlock = PercpuBlock::current();
+
+    let weak = WeakContextRef(Arc::downgrade(context_lock));
+    let cpu_id = context_lock.write(token.token()).cpu_id;
+
+    percpu.switch_internals.wakeup_list.borrow_mut().push(weak);
 
     if let Some(cpu_id) = cpu_id
         && cpu_id != crate::cpu_id()
@@ -161,12 +163,6 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
     }
 
     true
-}
-
-pub fn wakeup_context(context_lock: &Arc<ContextLock>) {
-    let percpu: &PercpuBlock = PercpuBlock::current();
-    let weak = WeakContextRef(Arc::downgrade(context_lock));
-    percpu.switch_internals.wakeup_list.borrow_mut().push(weak);
 }
 
 pub fn init(token: &mut CleanLockToken) {
@@ -295,6 +291,7 @@ pub fn spawn(
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
     let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
+    idle_contexts(token.downgrade()).push_back(run_ref);
     contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)

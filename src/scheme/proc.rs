@@ -4,7 +4,7 @@ use crate::{
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
-        unblock_context, wakeup_context, Context, ContextLock, Status,
+        unblock_context, Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
@@ -1132,7 +1132,6 @@ impl ContextHandle {
                     reason: HardBlockedReason::NotYetStarted,
                 } => {
                     *status = Status::Runnable;
-                    wakeup_context(&context);
                     Ok(buf.len())
                 }
                 _ => Err(Error::new(EINVAL)),
@@ -1279,7 +1278,6 @@ impl ContextHandle {
                         } = guard.status
                         {
                             guard.status = Status::Runnable;
-                            wakeup_context(&context);
                         }
                         Ok(size_of::<usize>())
                     }
@@ -1322,7 +1320,7 @@ impl ContextHandle {
                                 ctxt.status = context::Status::Runnable;
                                 ctxt.being_sigkilled = true;
                             }
-                            wakeup_context(&context);
+                            unblock_context(&context, &mut token.token().downgrade());
                             Ok(size_of::<usize>())
                         }
                     }
