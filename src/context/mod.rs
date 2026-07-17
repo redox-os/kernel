@@ -83,7 +83,6 @@ static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque:
 pub struct RunContextData {
     // queue: VecDeque<WeakContextRef>,
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
-    timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
     count: usize,
     v: u64,
     total_weight: u64,
@@ -92,9 +91,9 @@ pub struct RunContextData {
 
 impl RunContextData {
     pub const fn new() -> Self {
+        const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
             queue: BTreeMap::new(),
-            timers: BTreeSet::new(),
             count: 0,
             v: 0,
             total_weight: 0,
@@ -129,10 +128,6 @@ pub fn idle_contexts_try(
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
     RUN_CONTEXTS.lock(token)
-}
-
-pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, RunContextData>> {
-    RUN_CONTEXTS.try_lock(token)
 }
 
 pub fn init(token: &mut CleanLockToken) {
