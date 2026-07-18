@@ -105,7 +105,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             }
 
             // Initialize RMM
-            let bump_allocator = crate::startup::memory::init(&args, None, None);
+            let mut bump_allocator = crate::startup::memory::init(&args, None, None);
 
             let boot_hart_id =
                 get_boot_hart_id(args.env()).expect("Didn't get boot HART id from bootloader");
@@ -114,7 +114,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             paging::init();
 
-            crate::memory::init_mm(bump_allocator);
+            crate::memory::init_mm(&mut bump_allocator);
 
             crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 

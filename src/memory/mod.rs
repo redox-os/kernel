@@ -549,7 +549,7 @@ const _: () = {
 };
 
 #[cold]
-fn init_sections(mut allocator: BumpAllocator<RmmA>) {
+fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
     let number_of_memory_regions = numa::number_of_memory_regions();
 
     let (free_areas, offset_into_first_free_area) = allocator.free_areas();
@@ -958,7 +958,7 @@ fn init_sections(mut allocator: BumpAllocator<RmmA>) {
 }
 
 #[cold]
-pub fn init_mm(allocator: BumpAllocator<RmmA>) {
+pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
     init_sections(allocator);
 
     unsafe {

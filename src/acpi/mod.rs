@@ -6,6 +6,7 @@ use core::ptr::NonNull;
 use alloc::{boxed::Box, string::String, vec::Vec};
 
 use hashbrown::HashMap;
+use rmm::{BumpAllocator, FrameAllocator, PageMapper};
 use spin::{Once, RwLock};
 
 use crate::{
@@ -31,7 +32,11 @@ mod spcr;
 pub mod srat;
 mod xsdt;
 
-unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::memory::PageMapper) {
+unsafe fn map_linearly(
+    addr: PhysicalAddress,
+    len: usize,
+    mapper: &mut PageMapper<RmmA, impl FrameAllocator>,
+) {
     unsafe {
         let base = PhysicalAddress::new(crate::memory::round_down_pages(addr.data()));
         let aligned_len = crate::memory::round_up_pages(len + (addr.data() - base.data()));
@@ -48,7 +53,10 @@ unsafe fn map_linearly(addr: PhysicalAddress, len: usize, mapper: &mut crate::me
     }
 }
 
-pub fn get_sdt(sdt_address: PhysicalAddress, mapper: &mut KernelMapper<true>) -> &'static Sdt {
+pub fn get_sdt(
+    sdt_address: PhysicalAddress,
+    mapper: &mut PageMapper<RmmA, impl FrameAllocator>,
+) -> &'static Sdt {
     let sdt;
 
     unsafe {
@@ -91,16 +99,20 @@ impl Rxsdt for RxsdtEnum {
 
 pub static RXSDT_ENUM: Once<RxsdtEnum> = Once::new();
 
-/// Initialses the global `RXSDT_ENUM` if RSDT or XSDT was found and maps the SDT pages.
-/// It does not perform any allocations
-pub unsafe fn init_before_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
+/// Initialises the global `RXSDT_ENUM` if RSDT or XSDT was found and maps the SDT pages.
+///
+/// It does not use `TheFrameAllocator` nor does it heap-allocate.
+pub unsafe fn init_before_mem(
+    already_supplied_rsdp: Option<NonNull<u8>>,
+    mapper: &mut PageMapper<RmmA, BumpAllocator<RmmA>>,
+) {
     unsafe {
         // Search for RSDP
         let rsdp_opt = Rsdp::get_rsdp(already_supplied_rsdp);
 
         if let Some(rsdp) = rsdp_opt {
             debug!("SDT address: {:#x}", rsdp.sdt_address().data());
-            let rxsdt = get_sdt(rsdp.sdt_address(), &mut KernelMapper::lock_rw());
+            let rxsdt = get_sdt(rsdp.sdt_address(), mapper);
 
             let rxsdt = if let Some(rsdt) = Rsdt::new(rxsdt) {
                 let mut initialized = false;
@@ -137,7 +149,7 @@ pub unsafe fn init_before_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
             // TODO: Don't touch ACPI tables in kernel?
 
             for sdt in rxsdt.iter() {
-                get_sdt(sdt, &mut KernelMapper::lock_rw());
+                get_sdt(sdt, mapper);
             }
         } else {
             error!("NO RSDP FOUND");

@@ -4,6 +4,8 @@
 //! defined in other files inside of the `arch` module
 use core::{arch::naked_asm, cell::SyncUnsafeCell, mem::offset_of};
 
+use rmm::PageMapper;
+
 use crate::{
     allocator,
     arch::{device, gdt, idt, interrupt, paging},
@@ -112,13 +114,14 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Initialize paging
             paging::init();
 
+            let mut mapper = PageMapper::current(rmm::TableKind::Kernel, bump_allocator);
             if cfg!(feature = "acpi") {
-                crate::acpi::init_before_mem(args.acpi_rsdp());
+                crate::acpi::init_before_mem(args.acpi_rsdp(), &mut mapper);
             }
 
-            numa::init(&mut bump_allocator);
+            numa::init(mapper.allocator_mut());
 
-            crate::memory::init_mm(bump_allocator);
+            crate::memory::init_mm(mapper.allocator_mut());
 
             #[cfg(target_arch = "x86_64")]
             crate::arch::alternative::early_init(true);
