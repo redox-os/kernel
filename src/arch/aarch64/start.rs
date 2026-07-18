@@ -100,13 +100,14 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             // Initialize paging
             paging::init();
 
+            let mut mapper = rmm::PageMapper::current(rmm::TableKind::Kernel, bump_allocator);
             #[cfg(feature = "acpi")]
             {
                 use crate::acpi;
-                acpi::init_before_mem(args.acpi_rsdp());
+                acpi::init_before_mem(args.acpi_rsdp(), &mut mapper);
             }
 
-            crate::memory::init_mm(bump_allocator);
+            crate::memory::init_mm(mapper.allocator_mut());
 
             crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0));
 
