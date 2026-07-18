@@ -21,6 +21,15 @@ pub enum SerialKind {
 
 impl SerialKind {
     #[cfg(target_arch = "aarch64")]
+    pub fn init_full(&mut self) -> Result<(), ()> {
+        match self {
+            Self::NotPresent => Err(()),
+            Self::Meson(inner) => inner.init_full(),
+            _ => Ok(()),
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
     pub fn enable_irq(&mut self) {
         //TODO: implement for NS16550
         match self {
@@ -29,7 +38,7 @@ impl SerialKind {
             Self::Ns16550Pio(_) => {}
             Self::Ns16550u8(_) => {}
             Self::Ns16550u32(_) => {}
-            Self::Meson(_) => {}
+            Self::Meson(inner) => inner.enable_irq(),
             Self::Pl011(inner) => inner.enable_irq(),
         }
     }
@@ -57,7 +66,7 @@ impl SerialKind {
                 }
                 debug_notify(token);
             }
-            Self::Meson(_) => {}
+            Self::Meson(inner) => inner.receive(token),
             Self::Pl011(inner) => inner.receive(token),
         }
     }

@@ -5,7 +5,7 @@ pub use crate::dtb::serial::COM1;
 use crate::{
     arch::device::irqchip::ic_for_chip,
     dtb::{
-        get_interrupt,
+        diag_uart_node, get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
     },
     scheme::irq::irq_trigger,
@@ -28,22 +28,37 @@ impl InterruptHandler for Com1Irq {
 
 pub unsafe fn init(fdt: &Fdt) {
     unsafe {
-        //TODO: find actual serial device, not just any PL011
-        if let Some(node) = fdt.find_compatible(&["arm,pl011"]) {
-            let irq = get_interrupt(fdt, &node, 0).unwrap();
-            if let Some(ic_idx) = ic_for_chip(&fdt, &node) {
-                let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                    .ic
-                    .irq_xlate(irq)
-                    .unwrap();
-                info!("serial_port virq = {}", virq);
-                register_irq(virq as u32, Box::new(Com1Irq {}));
-                IRQ_CHIP.irq_enable(virq as u32);
-            } else {
-                error!("serial port irq parent not found");
-            }
+        let Some(node) = diag_uart_node(fdt) else {
+            error!("diagnostic serial port not found in devicetree");
+            return;
+        };
+        let Some(irq) = get_interrupt(fdt, &node, 0) else {
+            error!("diagnostic serial port interrupt not found");
+            return;
+        };
+        let Some(ic_idx) = ic_for_chip(&fdt, &node) else {
+            error!("serial port irq parent not found");
+            return;
+        };
+
+        if let Err(err) = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_configure(irq) {
+            error!("serial port interrupt configuration failed: {:?}", err);
+            return;
         }
+
+        let Ok(virq) = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq) else {
+            error!("serial port interrupt translation failed");
+            return;
+        };
+        if COM1.lock().init_full().is_err() {
+            error!("failed to initialize diagnostic serial port");
+            return;
+        }
+
+        info!("serial_port virq = {}", virq);
+        register_irq(virq as u32, Box::new(Com1Irq {}));
         COM1.lock().enable_irq();
+        IRQ_CHIP.irq_enable(virq as u32);
     }
 }
 
@@ -53,7 +68,7 @@ pub unsafe fn init_acpi(irq: u32) {
         let virq = IRQ_CHIP.irq_chip_list.chips[0].ic.irq_to_virq(irq).unwrap();
         info!("serial_port virq = {}", virq);
         register_irq(virq as u32, Box::new(Com1Irq {}));
-        IRQ_CHIP.irq_enable(virq as u32);
         COM1.lock().enable_irq();
+        IRQ_CHIP.irq_enable(virq as u32);
     }
 }
