@@ -3,7 +3,7 @@ use syscall::Mmio;
 use syscall::Pio;
 
 use crate::{
-    devices::{uart_16550, uart_pl011},
+    devices::{uart_16550, uart_meson, uart_pl011},
     scheme::debug::{debug_input, debug_notify},
     sync::CleanLockToken,
 };
@@ -15,6 +15,7 @@ pub enum SerialKind {
     Ns16550Pio(uart_16550::SerialPort<Pio<u8>>),
     Ns16550u8(&'static mut uart_16550::SerialPort<Mmio<u8>>),
     Ns16550u32(&'static mut uart_16550::SerialPort<Mmio<u32>>),
+    Meson(uart_meson::SerialPort),
     Pl011(uart_pl011::SerialPort),
 }
 
@@ -28,6 +29,7 @@ impl SerialKind {
             Self::Ns16550Pio(_) => {}
             Self::Ns16550u8(_) => {}
             Self::Ns16550u32(_) => {}
+            Self::Meson(_) => {}
             Self::Pl011(inner) => inner.enable_irq(),
         }
     }
@@ -55,6 +57,7 @@ impl SerialKind {
                 }
                 debug_notify(token);
             }
+            Self::Meson(_) => {}
             Self::Pl011(inner) => inner.receive(token),
         }
     }
@@ -66,6 +69,7 @@ impl SerialKind {
             Self::Ns16550Pio(inner) => inner.write(buf),
             Self::Ns16550u8(inner) => inner.write(buf),
             Self::Ns16550u32(inner) => inner.write(buf),
+            Self::Meson(inner) => inner.write(buf),
             Self::Pl011(inner) => inner.write(buf),
         }
     }

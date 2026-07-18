@@ -317,9 +317,16 @@ pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
     }
 }
 
+pub fn diag_uart_node<'a>(dtb: &'a Fdt) -> Option<FdtNode<'a, 'a>> {
+    Some(dtb.chosen().stdout()?.node())
+}
+
+pub fn diag_uart_params<'a>(dtb: &'a Fdt<'a>) -> Option<&'a str> {
+    dtb.chosen().stdout()?.params()
+}
+
 pub fn diag_uart_range<'a>(dtb: &'a Fdt) -> Option<(PhysicalAddress, usize, bool, bool, &'a str)> {
-    let stdout_path = dtb.chosen().stdout()?;
-    let uart_node = stdout_path.node();
+    let uart_node = diag_uart_node(dtb)?;
     let skip_init = uart_node.property("skip-init").is_some();
     let cts_event_walkaround = uart_node.property("cts-event-walkaround").is_some();
     let compatible = uart_node
