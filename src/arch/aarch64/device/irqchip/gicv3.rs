@@ -130,6 +130,14 @@ impl InterruptController for GicV3 {
     fn irq_disable(&mut self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
     }
+    fn irq_configure(&mut self, irq_data: IrqCell) -> Result<()> {
+        let (irq, flags) = match irq_data {
+            IrqCell::L3(0, irq, flags) => (irq, flags), // SPI
+            _ => return Err(Error::new(EINVAL)),
+        };
+        let hwirq = irq.checked_add(32).ok_or_else(|| Error::new(EINVAL))?;
+        unsafe { self.gic_dist_if.irq_configure(hwirq, flags) }
+    }
     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize> {
         let off = match irq_data {
             IrqCell::L3(0, irq, _flags) => irq as usize + 32, // SPI
