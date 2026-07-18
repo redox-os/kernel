@@ -1,0 +1,48 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	chosen {
+		stdout-path = "/soc/bus@1000/serial@200:115200n8";
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		bus@1000 {
+			compatible = "simple-bus";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0x0 0x1000 0x0 0x1000>;
+			ranges = <0x0 0x0 0x1000 0x1000>;
+
+			serial@200 {
+				reg = <0x200 0x18>;
+			};
+
+			device@ff0 {
+				reg = <0xff0 0x10>;
+			};
+
+			device@ff1 {
+				reg = <0xff1 0x10>;
+			};
+		};
+	};
+
+	identity-bus {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		device@3000 {
+			reg = <0x0 0x3000 0x0 0x20>;
+		};
+	};
+};
