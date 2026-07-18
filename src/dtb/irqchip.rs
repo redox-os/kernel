@@ -32,6 +32,12 @@ pub trait InterruptController: InterruptHandler {
     fn irq_enable(&mut self, irq_num: u32);
     #[allow(unused)]
     fn irq_disable(&mut self, irq_num: u32);
+    /// Configure the interrupt trigger mode from the devicetree specifier
+    /// before enabling the interrupt. Controllers without configurable
+    /// trigger modes may keep the default implementation.
+    fn irq_configure(&mut self, _irq_data: IrqCell) -> Result<()> {
+        Ok(())
+    }
     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize>;
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize>;
 }
