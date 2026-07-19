@@ -14,7 +14,7 @@ use syscall::EINTR;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, AddrSpace, AddrSpaceWrapper},
+        memory::{AccessMode, AddrSpace, AddrSpaceWrapper, Provider},
         unblock_context, ContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
@@ -34,16 +34,8 @@ use super::usercopy::UserSlice;
 type FutexList = HashMap<PhysicalAddress, Vec<FutexEntry>>;
 
 pub struct FutexEntry {
-    // Virtual address, required if synchronizing across the same address space, if the memory is
-    // CoW.
-    // TODO: FUTEX_REQUEUE
-    target_virtaddr: VirtualAddress,
     // Context to wake up, and compare address spaces.
     context_lock: Weak<ContextLock>,
-    // address space to check against if virt matches but not phys
-    addr_space: Weak<AddrSpaceWrapper>,
-    // Whether this futex entry is on shared memory.
-    is_shared_futex: bool,
 }
 
 // TODO: Process-private futexes? In that case, put the futex table in each AddrSpace, or just
@@ -94,9 +86,9 @@ pub fn futex(
     // Keep the address space locked so we can safely read from the physical address. Unlock it
     // before context switching.
     let addr_space_guard = current_addrsp.acquire_read(token.downgrade());
-    let (needs_correction, is_shared_futex) = match addr_space_guard.grants.contains(page) {
-        Some((_, info)) => (info.provider.may_cow(), info.provider.is_shared()),
-        None => (false, false),
+    let needs_correction = match addr_space_guard.grants.contains(page) {
+        Some((_, info)) => matches!(info.provider, Provider::Allocated { .. }),
+        None => false,
     };
 
     let addr_space_guard = if needs_correction {
@@ -188,10 +180,7 @@ pub fn futex(
                     .entry(target_physaddr)
                     .or_insert_with(Vec::new)
                     .push(FutexEntry {
-                        target_virtaddr,
                         context_lock: Arc::downgrade(&context_lock),
-                        addr_space: Arc::downgrade(&current_addrsp),
-                        is_shared_futex,
                     });
             }
 
@@ -219,25 +208,10 @@ pub fn futex(
 
                 let is_empty = if let Some(futexes) = futexes_map.get_mut(&target_physaddr) {
                     let mut i = 0;
-                    let current_addrsp_weak = Arc::downgrade(&current_addrsp);
-
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                     while i < futexes.len() && woken < val {
                         // SAFETY: already verified index is less than length
                         let futex = unsafe { futexes.get_unchecked_mut(i) };
-                        // For private futexes, require both virtual address and address space
-                        // to match. For shared futexes, physical address match is sufficient.
-                        if !futex.is_shared_futex
-                            && (futex.target_virtaddr != target_virtaddr
-                                || !current_addrsp_weak.ptr_eq(&futex.addr_space))
-                        {
-                            if futex.addr_space.strong_count() == 0 {
-                                futexes.swap_remove(i);
-                            } else {
-                                i += 1;
-                            }
-                            continue;
-                        }
                         if let Some(ctx) = futex.context_lock.upgrade() {
                             unblock_context(&ctx, &mut token.token().downgrade());
                         }
