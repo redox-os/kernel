@@ -245,10 +245,7 @@ impl SerialPort {
         const RX_IRQ_THRESHOLD: u32 = 1;
 
         let tx_irq_threshold = self.fifo_size / 2;
-        self.write_reg(
-            self.misc_reg,
-            RX_IRQ_THRESHOLD | (tx_irq_threshold << 8),
-        );
+        self.write_reg(self.misc_reg, RX_IRQ_THRESHOLD | (tx_irq_threshold << 8));
 
         let mut control = self.read_reg(self.control_reg);
         control &= !(control::STOP_BIT_LEN_MASK
