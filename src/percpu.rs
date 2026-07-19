@@ -51,7 +51,7 @@ pub struct PercpuBlock {
     pub stats: CpuStats,
 }
 
-static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
+pub static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
     [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_CPU_COUNT as usize];
 
 #[allow(unused)]

@@ -13,7 +13,7 @@ use crate::{
         memory::AddrSpaceWrapper,
         switch::{BASE_SLICE_TICKS, NANOS_PER_TICK, SCALE, SCHED_PRIO_TO_WEIGHT, TICK_INTERVAL},
     },
-    cpu_set::LogicalCpuSet,
+    cpu_set::{LogicalCpuId, LogicalCpuSet},
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
@@ -22,7 +22,10 @@ use crate::{
         RwLockWriteGuard, L0, L1, L2, L3, L4,
     },
     syscall::error::Result,
+    Ordering,
 };
+
+use crate::percpu::ALL_PERCPU_BLOCKS;
 
 use self::context::Kstack;
 pub use self::{
@@ -145,14 +148,14 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
         if !guard.unblock_no_ipi() {
             if guard.status.is_runnable() {
                 // already set to runnable externally
-                wakeup_context(context_lock);
+                wakeup_context(context_lock, guard.cpu_id);
             }
             return false;
         }
         guard.cpu_id
     };
 
-    wakeup_context(context_lock);
+    wakeup_context(context_lock, cpu_id);
 
     if let Some(cpu_id) = cpu_id
         && cpu_id != crate::cpu_id()
@@ -163,10 +166,28 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
     true
 }
 
-pub fn wakeup_context(context_lock: &Arc<ContextLock>) {
-    let percpu: &PercpuBlock = PercpuBlock::current();
+pub fn wakeup_context(context_lock: &Arc<ContextLock>, cpu_id: Option<LogicalCpuId>) {
     let weak = WeakContextRef(Arc::downgrade(context_lock));
-    percpu.switch_internals.wakeup_list.borrow_mut().push(weak);
+    let curr_cpu = crate::cpu_id();
+
+    if let Some(target) = cpu_id
+        && target != curr_cpu
+    {
+        if let Some(percpu) = unsafe {
+            ALL_PERCPU_BLOCKS[target.get() as usize]
+                .load(Ordering::Acquire)
+                .as_ref()
+        } {
+            percpu.switch_internals.wakeup_list.lock().push(weak);
+            return;
+        }
+    }
+
+    PercpuBlock::current()
+        .switch_internals
+        .wakeup_list
+        .lock()
+        .push(weak);
 }
 
 pub fn init(token: &mut CleanLockToken) {

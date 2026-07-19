@@ -892,7 +892,7 @@ impl UserInner {
                     } = context.status
                     {
                         context.status = Status::Runnable;
-                        wakeup_context(&context_lock);
+                        wakeup_context(&context_lock, context.cpu_id);
                     }
                     context.fmap_ret = Some(Frame::containing(frame));
                 }

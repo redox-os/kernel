@@ -23,6 +23,7 @@ use core::{
     u64,
 };
 use smallvec::SmallVec;
+use spin::mutex::SpinMutex;
 use syscall::PtraceFlags;
 
 enum UpdateResult {
@@ -218,9 +219,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     // Drain from percpu
     {
-        let mut percpu_wake = percpu.switch_internals.wakeup_list.borrow_mut();
-        for context_ref in percpu_wake.drain(..) {
-            wakeups.push(context_ref.clone());
+        if let Some(mut percpu_wake) = percpu.switch_internals.wakeup_list.try_lock() {
+            wakeups.extend(percpu_wake.drain(..));
         }
     }
 
@@ -245,6 +245,10 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             if !guard.is_active {
                 guard.is_active = true;
                 run_contexts.total_weight += weight;
+            }
+
+            if let Some(old_key) = guard.queue_key.take() {
+                run_contexts.queue.remove(&old_key);
             }
 
             guard.vd = new_vtime + scaled_slice as u64;
@@ -720,7 +724,7 @@ pub struct ContextSwitchPercpu {
     pub(crate) being_sigkilled: Cell<bool>,
 
     // wakeups
-    pub(crate) wakeup_list: RefCell<Vec<WeakContextRef>>,
+    pub(crate) wakeup_list: SpinMutex<Vec<WeakContextRef>>,
 }
 
 impl ContextSwitchPercpu {
@@ -732,7 +736,7 @@ impl ContextSwitchPercpu {
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
-            wakeup_list: RefCell::new(Vec::new()),
+            wakeup_list: SpinMutex::new(Vec::new()),
 
             #[cfg(feature = "profiling")]
             current_dbg_id: core::sync::atomic::AtomicU32::new(!0),

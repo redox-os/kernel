@@ -183,7 +183,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
             context.euid = 0;
             context.egid = 0;
 
-            wakeup_context(&context_lock);
+            wakeup_context(&context_lock, context.cpu_id);
         }
         Err(err) => {
             panic!("failed to spawn userspace_init: {:?}", err);
