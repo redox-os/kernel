@@ -14,7 +14,7 @@ use syscall::EINTR;
 use crate::{
     context::{
         self,
-        memory::{AddrSpace, AddrSpaceWrapper},
+        memory::{AccessMode, AddrSpace, AddrSpaceWrapper, Provider},
         unblock_context, ContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
@@ -23,7 +23,7 @@ use crate::{
 
 use crate::syscall::{
     data::TimeSpec,
-    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ETIMEDOUT},
+    error::{Error, Result, EAGAIN, EFAULT, EINVAL, ENOMEM, ETIMEDOUT},
     flag::{FUTEX_WAIT, FUTEX_WAIT64, FUTEX_WAKE},
 };
 
@@ -34,14 +34,8 @@ use super::usercopy::UserSlice;
 type FutexList = HashMap<PhysicalAddress, Vec<FutexEntry>>;
 
 pub struct FutexEntry {
-    // Virtual address, required if synchronizing across the same address space, if the memory is
-    // CoW.
-    // TODO: FUTEX_REQUEUE
-    target_virtaddr: VirtualAddress,
     // Context to wake up, and compare address spaces.
     context_lock: Weak<ContextLock>,
-    // address space to check against if virt matches but not phys
-    addr_space: Weak<AddrSpaceWrapper>,
 }
 
 // TODO: Process-private futexes? In that case, put the futex table in each AddrSpace, or just
@@ -84,13 +78,32 @@ pub fn futex(
     _addr2: usize,
     token: &mut CleanLockToken,
 ) -> Result<usize> {
+    let target_virtaddr = VirtualAddress::new(addr);
+    let page = Page::containing_address(target_virtaddr);
+
     let current_addrsp = AddrSpace::current()?;
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
     // before context switching.
     let addr_space_guard = current_addrsp.acquire_read(token.downgrade());
+    let needs_correction = match addr_space_guard.grants.contains(page) {
+        Some((_, info)) => matches!(info.provider, Provider::Allocated { .. }),
+        None => false,
+    };
 
-    let target_virtaddr = VirtualAddress::new(addr);
+    let addr_space_guard = if needs_correction {
+        drop(addr_space_guard);
+        crate::context::memory::try_correcting_page_tables(page, AccessMode::Write, token)
+            .map_err(|err| match err {
+                crate::context::memory::PfError::Oom => Error::new(ENOMEM),
+                crate::context::memory::PfError::Segv => Error::new(EFAULT),
+                _ => Error::new(EFAULT),
+            })?;
+        current_addrsp.acquire_read(token.downgrade())
+    } else {
+        addr_space_guard
+    };
+
     let target_physaddr = validate_and_translate_virt(&addr_space_guard, target_virtaddr)
         .ok_or(Error::new(EFAULT))?;
 
@@ -167,9 +180,7 @@ pub fn futex(
                     .entry(target_physaddr)
                     .or_insert_with(Vec::new)
                     .push(FutexEntry {
-                        target_virtaddr,
                         context_lock: Arc::downgrade(&context_lock),
-                        addr_space: Arc::downgrade(&current_addrsp),
                     });
             }
 
@@ -197,22 +208,10 @@ pub fn futex(
 
                 let is_empty = if let Some(futexes) = futexes_map.get_mut(&target_physaddr) {
                     let mut i = 0;
-                    let current_addrsp_weak = Arc::downgrade(&current_addrsp);
-
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                     while i < futexes.len() && woken < val {
                         // SAFETY: already verified index is less than length
                         let futex = unsafe { futexes.get_unchecked_mut(i) };
-                        if futex.target_virtaddr != target_virtaddr
-                            || !current_addrsp_weak.ptr_eq(&futex.addr_space)
-                        {
-                            if futex.addr_space.strong_count() == 0 {
-                                futexes.swap_remove(i);
-                            } else {
-                                i += 1;
-                            }
-                            continue;
-                        }
                         if let Some(ctx) = futex.context_lock.upgrade() {
                             unblock_context(&ctx, &mut token.token().downgrade());
                         }
