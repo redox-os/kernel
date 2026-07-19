@@ -42,6 +42,7 @@ pub(super) fn init(madt: Madt) {
     info!("{:#x?}", gic_dist_if);
     match gicd.gic_version {
         1 | 2 => {
+            #[allow(clippy::never_loop)]
             for gicc in giccs {
                 let mut gic_cpu_if = GicCpuIf::default();
                 unsafe {
@@ -67,6 +68,7 @@ pub(super) fn init(madt: Madt) {
             }
         }
         3 => {
+            #[allow(clippy::never_loop)]
             for gicc in giccs {
                 let mut gic_cpu_if = GicV3CpuIf;
                 unsafe { gic_cpu_if.init() };

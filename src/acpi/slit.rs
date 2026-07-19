@@ -25,7 +25,7 @@ impl Slit {
         }
     }
     pub fn init<A: Arch>(&self, allocator: &mut BumpAllocator<A>) -> &'static mut [u8] {
-        unsafe { slice::from_raw_parts_mut(self.address as *mut u8, (self.no * self.no) as usize) }
+        unsafe { slice::from_raw_parts_mut(self.address.cast_mut(), (self.no * self.no) as usize) }
     }
 }
 

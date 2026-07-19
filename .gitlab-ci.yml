@@ -21,6 +21,8 @@ aarch64:
   image: "redoxos/redoxer:aarch64"
   script:
     - redoxer env make
+    # TODO: the image is outdated
+    - redoxer env cargo clippy --target ${ARCH}-unknown-redox
   variables:
     ARCH: "aarch64"
 
@@ -28,6 +30,7 @@ i586:
   stage: cross-build
   script:
     - TARGET=${ARCH}-unknown-redox redoxer env make
+    - TARGET=${ARCH}-unknown-redox redoxer clippy
   variables:
     ARCH: "i586"
 
@@ -35,6 +38,7 @@ riscv64gc:
   stage: cross-build
   script:
     - TARGET=${ARCH}-unknown-redox redoxer env make
+    - TARGET=${ARCH}-unknown-redox redoxer clippy
   variables:
     ARCH: "riscv64gc"
 
@@ -58,6 +62,14 @@ x86_64:relibc:
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
     - timeout -s KILL 9m redoxer env make test-relibc
+
+x86_64:clippy:
+  stage: build
+  needs: [x86_64]
+  script:
+  - redoxer clippy
+  variables:
+    ARCH: "x86_64"
 
 x86_64:profiling:
   stage: build
