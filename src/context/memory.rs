@@ -1213,6 +1213,18 @@ pub enum Provider {
     },
 }
 
+impl Provider {
+    pub fn may_cow(&self) -> bool {
+        matches!(self, Provider::Allocated { .. })
+    }
+    pub fn is_shared(&self) -> bool {
+        matches!(
+            self,
+            Provider::AllocatedShared { .. } | Provider::FmapBorrowed { .. }
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct Grant {
     pub(crate) base: Page,
