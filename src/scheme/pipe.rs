@@ -213,7 +213,7 @@ impl KernelScheme for PipeScheme {
                 let pipe = Arc::clone(pipe_arc);
                 drop(guard);
 
-                if user_buf.as_bytes() == b"write" {
+                if user_buf.as_bytes() != b"write" {
                     return Err(Error::new(EINVAL));
                 }
 
@@ -231,9 +231,15 @@ impl KernelScheme for PipeScheme {
         }
 
         let path = user_buf.as_str().or(Err(Error::new(EINVAL)))?;
-        if !path.trim_start_matches('/').is_empty() {
-            return Err(Error::new(ENOENT));
-        }
+        match path.trim_start_matches('/') {
+            "" => (),
+            "scheme-root" => {
+                let id = PIPE_NEXT_ID.fetch_add(2, Ordering::Relaxed);
+                PIPES.write(token.token()).insert(id, Handle::SchemeRoot);
+                return Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()));
+            }
+            _ => return Err(Error::new(ENOENT)),
+        };
 
         let (read_id, _) = pipe(token)?;
 
