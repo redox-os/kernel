@@ -9,17 +9,13 @@ use alloc::{
 use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
-    context::{
-        memory::AddrSpaceWrapper,
-        switch::{BASE_SLICE_TICKS, NANOS_PER_TICK, SCALE, SCHED_PRIO_TO_WEIGHT, TICK_INTERVAL},
-    },
+    context::memory::AddrSpaceWrapper,
     cpu_set::LogicalCpuSet,
-    ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::PercpuBlock,
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L3, L4,
+        RwLockWriteGuard, L0, L1, L2, L4,
     },
     syscall::error::Result,
 };
@@ -87,7 +83,6 @@ static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque:
 pub struct RunContextData {
     // queue: VecDeque<WeakContextRef>,
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
-    timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
     count: usize,
     v: u64,
     total_weight: u64,
@@ -96,9 +91,9 @@ pub struct RunContextData {
 
 impl RunContextData {
     pub const fn new() -> Self {
+        const EMPTY_VEC: VecDeque<WeakContextRef> = VecDeque::new();
         Self {
             queue: BTreeMap::new(),
-            timers: BTreeSet::new(),
             count: 0,
             v: 0,
             total_weight: 0,
@@ -133,40 +128,6 @@ pub fn idle_contexts_try(
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
     RUN_CONTEXTS.lock(token)
-}
-
-pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, RunContextData>> {
-    RUN_CONTEXTS.try_lock(token)
-}
-
-pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
-    let cpu_id = {
-        let mut guard = context_lock.write(token.token());
-        if !guard.unblock_no_ipi() {
-            if guard.status.is_runnable() {
-                // already set to runnable externally
-                wakeup_context(context_lock);
-            }
-            return false;
-        }
-        guard.cpu_id
-    };
-
-    wakeup_context(context_lock);
-
-    if let Some(cpu_id) = cpu_id
-        && cpu_id != crate::cpu_id()
-    {
-        ipi(IpiKind::Wakeup, IpiTarget::Other);
-    }
-
-    true
-}
-
-pub fn wakeup_context(context_lock: &Arc<ContextLock>) {
-    let percpu: &PercpuBlock = PercpuBlock::current();
-    let weak = WeakContextRef(Arc::downgrade(context_lock));
-    percpu.switch_internals.wakeup_list.borrow_mut().push(weak);
 }
 
 pub fn init(token: &mut CleanLockToken) {
@@ -295,6 +256,7 @@ pub fn spawn(
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
     let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
+    idle_contexts(token.downgrade()).push_back(run_ref);
     contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)

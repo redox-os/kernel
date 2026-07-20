@@ -4,7 +4,7 @@ use crate::{
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
-        unblock_context, wakeup_context, Context, ContextLock, Status,
+        Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
@@ -1132,7 +1132,6 @@ impl ContextHandle {
                     reason: HardBlockedReason::NotYetStarted,
                 } => {
                     *status = Status::Runnable;
-                    wakeup_context(&context);
                     Ok(buf.len())
                 }
                 _ => Err(Error::new(EINVAL)),
@@ -1279,12 +1278,12 @@ impl ContextHandle {
                         } = guard.status
                         {
                             guard.status = Status::Runnable;
-                            wakeup_context(&context);
                         }
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Interrupt => {
-                        unblock_context(&context, &mut token.token().downgrade());
+                        let mut guard = context.write(token.token());
+                        guard.unblock();
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::ForceKill => {
@@ -1313,16 +1312,13 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            {
-                                let mut ctxt = context.write(token.token());
-                                //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
-                                if ctxt.status.is_dead() {
-                                    return Ok(size_of::<usize>());
-                                }
-                                ctxt.status = context::Status::Runnable;
-                                ctxt.being_sigkilled = true;
+                            let mut ctxt = context.write(token.token());
+                            //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                            if ctxt.status.is_dead() {
+                                return Ok(size_of::<usize>());
                             }
-                            wakeup_context(&context);
+                            ctxt.status = context::Status::Runnable;
+                            ctxt.being_sigkilled = true;
                             Ok(size_of::<usize>())
                         }
                     }
