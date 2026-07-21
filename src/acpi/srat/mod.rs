@@ -62,12 +62,7 @@ pub fn init<A: Arch>(
 
     dom_node_map.fill(u32::MAX);
     cpus.fill(u32::MAX);
-    memories.fill(NumaMemory {
-        start: 0,
-        length: 0,
-        node_id: 0,
-        _pad: [0; 4],
-    });
+    memories.fill(NumaMemory::default());
 
     if let Some(rxsdt) = RXSDT_ENUM.get() {
         for sdt_addr in rxsdt.iter() {

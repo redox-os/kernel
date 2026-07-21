@@ -98,12 +98,8 @@ pub fn init_srat(
                     dom_node_map[dom as usize] = node_id as u32;
                 }
                 let mem_id = assign_memory_id() as u32;
-                memories[mem_id as usize] = numa::NumaMemory {
-                    start,
-                    length,
-                    node_id: dom_node_map[dom as usize],
-                    _pad: [0u8; 4],
-                };
+                memories[mem_id as usize] =
+                    numa::NumaMemory::new(start, length, dom_node_map[dom as usize]);
             }
             SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
                 if processor_local_affinity.flags & 1 == 0 {

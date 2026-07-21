@@ -63,12 +63,11 @@ pub fn init_srat(dom_node_map: &mut [u32], cpus: &mut [u32], mem: &mut [NumaMemo
                     dom_node_map[memory_affinity.proximity_domain as usize] = node as u32;
                 }
                 let mem_id = assign_memory_id() as u32;
-                mem[mem_id as usize] = NumaMemory {
+                mem[mem_id as usize] = NumaMemory::new(
                     start,
                     length,
-                    node_id: dom_node_map[memory_affinity.proximity_domain as usize],
-                    _pad: [0u8; 4],
-                };
+                    dom_node_map[memory_affinity.proximity_domain as usize],
+                );
             }
             SratEntry::GiccAffinity(gicc_affinity) => {
                 if gicc_affinity.flags & 1 == 0 {
