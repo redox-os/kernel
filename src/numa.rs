@@ -18,12 +18,32 @@ static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NumaMemory {
     pub start: usize,
     pub length: usize,
     pub node_id: u32,
+    #[cfg(target_pointer_width = "64")]
     pub _pad: [u8; 4],
+    #[cfg(target_pointer_width = "32")]
+    pub _pad: [u8; 12],
+}
+
+impl NumaMemory {
+    pub fn new(start: usize, length: usize, node_id: u32) -> Self {
+        #[cfg(target_pointer_width = "64")]
+        let _pad = [0u8; 4];
+
+        #[cfg(target_pointer_width = "32")]
+        let _pad = [0u8; 12];
+
+        Self {
+            start,
+            length,
+            node_id,
+            _pad,
+        }
+    }
 }
 
 #[derive(Debug)]
