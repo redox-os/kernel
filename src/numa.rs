@@ -2,7 +2,7 @@ use core::{ops::Add, slice};
 
 use crate::{
     acpi,
-    cpu_set::LogicalCpuId,
+    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -18,6 +18,7 @@ static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
 static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
+pub static LOGICAL_CPU_ID_MAP: Once<Vec<u32>> = Once::new();
 
 #[repr(C)]
 #[derive(Debug, Clone)]
