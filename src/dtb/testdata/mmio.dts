@@ -1,11 +1,47 @@
 /dts-v1/;
 
+/memreserve/ 0x1000 0x100;
+
 / {
 	#address-cells = <2>;
 	#size-cells = <2>;
 
 	chosen {
 		stdout-path = "/soc/bus@1000/serial@200:115200n8";
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		firmware@2000 {
+			reg = <0x0 0x2000 0x0 0x100>;
+		};
+
+		buffers@3000 {
+			reg = <0x0 0x3000 0x0 0x80>,
+			      <0x0 0x4000 0x0 0x40>;
+		};
+
+		disabled@5000 {
+			reg = <0x0 0x5000 0x0 0x100>;
+			status = "disabled";
+		};
+
+		dynamic {
+			size = <0x0 0x200>;
+		};
+
+		exact-dynamic {
+			size = <0x0 0x200>;
+			alloc-ranges = <0x0 0x6000 0x0 0x200>;
+		};
+
+		ambiguous-dynamic {
+			size = <0x0 0x200>;
+			alloc-ranges = <0x0 0x7000 0x0 0x400>;
+		};
 	};
 
 	soc {
