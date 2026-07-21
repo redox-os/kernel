@@ -34,7 +34,7 @@ pub fn init<A: Arch>(
     mem: &Once<&'static [NumaMemory]>,
 ) {
     let dom_node_map = allocator
-        .allocate(rmm::FrameCount::new(1))
+        .allocate(rmm::FrameCount::new(2))
         .expect("Failed to allocate memory for storing NUMA info");
 
     let dom_node_map_ptr =
@@ -52,7 +52,10 @@ pub fn init<A: Arch>(
         )
     };
 
-    // total occupied till now: 1024 bytes, remaining 3072 bytes, can accomodate 128 memory entries
+    // total occupied till now: 1024 bytes, remaining 7168 bytes, can accomodate 224 memory entries
+    // but currently we limit it to 128, remaining 3072 bytes unused
+    //
+    // TODO: make use of the remaining bytes
     let memories: &'static mut [NumaMemory] = unsafe {
         slice::from_raw_parts_mut(
             cpus.as_ptr().add(numa::MAX_DOMAINS) as *mut NumaMemory,

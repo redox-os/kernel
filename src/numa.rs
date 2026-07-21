@@ -1,4 +1,4 @@
-use core::ops::Add;
+use core::{ops::Add, slice};
 
 use crate::{
     acpi,
@@ -17,6 +17,14 @@ static DOMAIN_NODE_MAP: Once<&'static [u32]> = Once::new();
 static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
+static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct NumaNode {
+    pub cpus: u128,
+    pub memories: u128,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct NumaMemory {
@@ -56,6 +64,35 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
         acpi::slit::init(allocator, &DISTANCES);
+    }
+
+    if let Some(cpus) = NUMA_CPUS.get()
+        && let Some(memories) = NUMA_MEMORY.get()
+    {
+        let numa_nodes = unsafe {
+            slice::from_raw_parts_mut(
+                memories.as_ptr().add(MAX_DOMAINS).addr() as *mut NumaNode,
+                MAX_DOMAINS,
+            )
+        };
+        numa_nodes.fill(NumaNode {
+            cpus: 0,
+            memories: 0,
+        });
+
+        for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
+            numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
+        }
+
+        for (i, memory) in memories
+            .iter()
+            .enumerate()
+            .filter(|(i, memory)| memory.length != 0)
+        {
+            numa_nodes[memory.node_id as usize].memories |= 1u128 << i;
+        }
+
+        NUMA_NODES.call_once(|| numa_nodes);
     }
 }
 

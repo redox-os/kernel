@@ -33,11 +33,6 @@ pub fn init_srat(
                 cpu_count += 1
             }
         }
-        SratEntry::MemoryAffinity(memory_affinity) => {
-            if memory_affinity.flags & 1 != 0 && memory_affinity.flags & (1 << 1) == 0 {
-                memory_count += 1
-            }
-        }
         SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
             if processor_local_affinity.flags & 1 != 0 {
                 cpu_count += 1
@@ -45,13 +40,6 @@ pub fn init_srat(
         }
         _ => (),
     });
-
-    assert!(
-        memory_count <= numa::MAX_DOMAINS,
-        "Found {} memory blocks while only a maximum of {} are supported",
-        memory_count,
-        numa::MAX_DOMAINS
-    );
 
     assert!(
         cpu_count <= cpu_set::MAX_CPU_COUNT,
