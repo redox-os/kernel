@@ -73,7 +73,12 @@ impl EventQueue {
             .queue
             .receive_into_user(buf, block, "EventQueue::read_with_timeout", token);
         match (r, block) {
-            (Ok(r), _) => return Ok(r),
+            (Ok(r), _) => {
+                if block {
+                    context::current().write(token.token()).wake = None;
+                }
+                return Ok(r);
+            }
             (err @ Err(Error { errno: EINTR }), true) => {
                 let old_wake = context::current().write(token.token()).wake.take();
                 // The scheduler clears `wake` on timeout
