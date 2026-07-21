@@ -19,20 +19,8 @@ pub fn init_srat(dom_node_map: &mut [u32], cpus: &mut [u32], mem: &mut [NumaMemo
                 cpu_count += 1
             }
         }
-        SratEntry::MemoryAffinity(memory_affinity) => {
-            if memory_affinity.flags & 1 != 0 && memory_affinity.flags & (1 << 1) == 0 {
-                memory_count += 1
-            }
-        }
         _ => (),
     });
-
-    assert!(
-        memory_count <= numa::MAX_DOMAINS,
-        "Found {} memory blocks while only a maximum of {} are supported",
-        memory_count,
-        numa::MAX_DOMAINS
-    );
 
     assert!(
         cpu_count <= MAX_CPU_COUNT,
