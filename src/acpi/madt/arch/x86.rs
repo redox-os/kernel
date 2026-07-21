@@ -1,5 +1,5 @@
 use core::{
-    hint,
+    hint, slice,
     sync::atomic::{AtomicU8, Ordering},
 };
 
@@ -8,11 +8,12 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
-    cpu_set::LogicalCpuId,
+    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,
     },
+    numa::LOGICAL_CPU_ID_MAP,
     startup::AP_READY,
 };
 
@@ -65,7 +66,7 @@ pub(super) fn init(madt: Madt) {
         let preliminary_cpu_count = madt.iter().filter(|e| matches!(e, MadtEntry::LocalApic(entry) if u32::from(entry.id) == me.get() || entry.flags & 1 == 1)).count();
         crate::profiling::allocate(preliminary_cpu_count as u32);
     }
-
+    let mut map = [u32::MAX; MAX_CPU_COUNT as usize];
     for madt_entry in madt.iter() {
         debug!("      {:x?}", madt_entry);
         if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
@@ -73,6 +74,7 @@ pub(super) fn init(madt: Madt) {
                 debug!("        This is my local APIC");
             } else if ap_local_apic.flags & 1 == 1 {
                 let cpu_id = LogicalCpuId::next();
+                map[cpu_id.get() as usize] = ap_local_apic.id as u32;
 
                 // Allocate a stack
                 let stack_start = RmmA::phys_to_virt(
@@ -149,6 +151,7 @@ pub(super) fn init(madt: Madt) {
             }
         }
     }
+    LOGICAL_CPU_ID_MAP.call_once(|| map.to_vec());
 
     // Unmap trampoline
     let (_frame, _, flush) = unsafe {
