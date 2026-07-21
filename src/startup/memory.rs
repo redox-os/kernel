@@ -81,9 +81,6 @@ struct MemoryMap {
 
 impl MemoryMap {
     fn register(&mut self, base: usize, size: usize, kind: BootloaderMemoryKind) {
-        if self.size >= self.entries.len() {
-            panic!("Early memory map overflow!");
-        }
         let start = if kind == BootloaderMemoryKind::Free {
             align_up(base)
         } else {
@@ -95,10 +92,30 @@ impl MemoryMap {
         } else {
             align_up(end)
         };
-        if start < end
-            && let Some(entry) = self.entries.get_mut(self.size)
-        {
-            *entry = MemoryEntry { start, end, kind };
+        if start >= end {
+            return;
+        }
+
+        let mut entry = MemoryEntry { start, end, kind };
+        let mut index = 0;
+        while index < self.size {
+            let existing = self.entries[index];
+            if existing.kind == kind
+                && let Some(combined) = entry.combine(&existing)
+            {
+                entry = combined;
+                self.size -= 1;
+                self.entries[index] = self.entries[self.size];
+            } else {
+                index += 1;
+            }
+        }
+
+        if self.size >= self.entries.len() {
+            panic!("Early memory map overflow after combining adjacent regions!");
+        }
+        if let Some(destination) = self.entries.get_mut(self.size) {
+            *destination = entry;
             self.size += 1;
         }
     }
@@ -149,6 +166,7 @@ fn align_down(x: usize) -> usize {
 fn register_memory_from_kernel_args(args: &KernelArgs) {
     register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
     if let Some(dt) = args.dtb() {
+        crate::dtb::register_fixed_reserved_memory_ranges(&dt);
         crate::dtb::register_dev_memory_ranges(&dt);
     }
     register_memory_region(
@@ -447,5 +465,45 @@ pub unsafe fn init(
         let offset = bump_allocator.offset();
         info!("Permanently used: {} KB", offset.div_ceil(KILOBYTE));
         bump_allocator
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BootloaderMemoryKind, MemoryEntry, MemoryMap};
+
+    fn empty_memory_map() -> MemoryMap {
+        MemoryMap {
+            entries: [MemoryEntry {
+                start: 0,
+                end: 0,
+                kind: BootloaderMemoryKind::Null,
+            }; 512],
+            size: 0,
+        }
+    }
+
+    #[test]
+    fn combines_duplicate_overlapping_and_adjacent_regions() {
+        let mut map = empty_memory_map();
+
+        map.register(0x1000, 0x1000, BootloaderMemoryKind::Reserved);
+        map.register(0x1000, 0x1000, BootloaderMemoryKind::Reserved);
+        map.register(0x1800, 0x1000, BootloaderMemoryKind::Reserved);
+        map.register(0x3000, 0x1000, BootloaderMemoryKind::Reserved);
+
+        assert_eq!(map.size, 1);
+        assert_eq!(map.entries[0].start, 0x1000);
+        assert_eq!(map.entries[0].end, 0x4000);
+    }
+
+    #[test]
+    fn keeps_overlapping_regions_of_different_kinds_separate() {
+        let mut map = empty_memory_map();
+
+        map.register(0x1000, 0x1000, BootloaderMemoryKind::Reserved);
+        map.register(0x1000, 0x1000, BootloaderMemoryKind::Device);
+
+        assert_eq!(map.size, 2);
     }
 }

@@ -7,7 +7,7 @@ use crate::dtb::irqchip::IrqCell;
 use crate::startup::memory::{register_memory_region, BootloaderMemoryKind};
 use core::slice;
 use fdt::{
-    node::{FdtNode, NodeProperty},
+    node::{CellSizes, FdtNode, NodeProperty},
     standard_nodes::MemoryRegion,
     Fdt,
 };
@@ -86,6 +86,312 @@ pub fn travel_interrupt_ctrl(fdt: &Fdt) {
             }
         }
     }
+}
+
+fn cells_to_usize(bytes: &[u8], cells: usize) -> Option<usize> {
+    let value = match cells {
+        1 => u32::from_be_bytes(bytes.get(..4)?.try_into().ok()?) as u64,
+        2 => u64::from_be_bytes(bytes.get(..8)?.try_into().ok()?),
+        _ => return None,
+    };
+
+    usize::try_from(value).ok()
+}
+
+fn explicit_cell_sizes(node: FdtNode<'_, '_>) -> Option<CellSizes> {
+    fn cell_count(property: NodeProperty<'_>) -> Option<usize> {
+        let bytes: [u8; 4] = property.value.try_into().ok()?;
+        usize::try_from(u32::from_be_bytes(bytes)).ok()
+    }
+
+    Some(CellSizes {
+        address_cells: cell_count(node.property("#address-cells")?)?,
+        size_cells: cell_count(node.property("#size-cells")?)?,
+    })
+}
+
+fn visit_address_size_pairs(
+    property: NodeProperty<'_>,
+    cell_sizes: CellSizes,
+    node_name: &str,
+    visit: &mut impl FnMut(usize, usize),
+) {
+    let Some(stride_cells) = cell_sizes.address_cells.checked_add(cell_sizes.size_cells) else {
+        warn!("invalid reserved-memory reg property for {node_name}");
+        return;
+    };
+    let Some(stride) = stride_cells.checked_mul(size_of::<u32>()) else {
+        warn!("invalid reserved-memory reg property for {node_name}");
+        return;
+    };
+    let Some(address_bytes) = cell_sizes.address_cells.checked_mul(size_of::<u32>()) else {
+        warn!("invalid reserved-memory reg property for {node_name}");
+        return;
+    };
+
+    if stride == 0 || property.value.is_empty() || property.value.len() % stride != 0 {
+        warn!("invalid reserved-memory reg property for {node_name}");
+        return;
+    }
+
+    for pair in property.value.chunks_exact(stride) {
+        let Some(address) = cells_to_usize(pair, cell_sizes.address_cells) else {
+            warn!("unsupported reserved-memory address for {node_name}");
+            continue;
+        };
+        let Some(size) = cells_to_usize(&pair[address_bytes..], cell_sizes.size_cells) else {
+            warn!("unsupported reserved-memory size for {node_name}");
+            continue;
+        };
+
+        if address.checked_add(size).is_none() {
+            warn!("reserved-memory range overflows for {node_name}");
+        } else if size != 0 {
+            debug!(
+                "reserved-memory {} 0x{:08x} size 0x{:08x}",
+                node_name, address, size
+            );
+            visit(address, size);
+        }
+    }
+}
+
+fn visit_fdt_memory_reservations(dt: &Fdt, visit: &mut impl FnMut(usize, usize)) {
+    const FDT_HEADER_SIZE: usize = 10 * size_of::<u32>();
+    const STRUCTURE_BLOCK_OFFSET_FIELD: usize = 8;
+    const RESERVATION_MAP_OFFSET_FIELD: usize = 16;
+    const RESERVATION_ENTRY_SIZE: usize = 2 * size_of::<u64>();
+
+    let data = &dt.raw_data()[..dt.total_size()];
+    let read_offset = |field: usize| -> Option<usize> {
+        let bytes: [u8; 4] = data
+            .get(field..field.checked_add(size_of::<u32>())?)?
+            .try_into()
+            .ok()?;
+        usize::try_from(u32::from_be_bytes(bytes)).ok()
+    };
+    let Some(mut offset) = read_offset(RESERVATION_MAP_OFFSET_FIELD) else {
+        warn!("invalid FDT memory reservation map offset");
+        return;
+    };
+    let Some(structure_offset) = read_offset(STRUCTURE_BLOCK_OFFSET_FIELD) else {
+        warn!("invalid FDT structure block offset");
+        return;
+    };
+
+    // Parse this directly instead of using `Fdt::memory_reservations()`: the
+    // pinned fdt implementation slices at `off_mem_rsvmap` without first
+    // checking that the offset is within the DTB buffer.
+    if offset < FDT_HEADER_SIZE
+        || offset % size_of::<u64>() != 0
+        || structure_offset > data.len()
+        || offset > structure_offset
+    {
+        warn!("invalid FDT memory reservation map bounds");
+        return;
+    }
+    let Some(reservations) = data.get(offset..structure_offset) else {
+        warn!("invalid FDT memory reservation map bounds");
+        return;
+    };
+    offset = 0;
+
+    loop {
+        let Some(end) = offset.checked_add(RESERVATION_ENTRY_SIZE) else {
+            warn!("invalid FDT memory reservation map");
+            return;
+        };
+        let Some(entry) = reservations.get(offset..end) else {
+            warn!("unterminated FDT memory reservation map");
+            return;
+        };
+        let address = u64::from_be_bytes(entry[..8].try_into().unwrap());
+        let size = u64::from_be_bytes(entry[8..].try_into().unwrap());
+
+        if address == 0 && size == 0 {
+            return;
+        }
+
+        match (usize::try_from(address), usize::try_from(size)) {
+            (Ok(address), Ok(size)) if address.checked_add(size).is_some() => {
+                if size != 0 {
+                    visit(address, size);
+                }
+            }
+            _ => {
+                warn!(
+                    "unsupported FDT memory reservation 0x{:016x} size 0x{:016x}",
+                    address, size
+                );
+            }
+        }
+
+        offset = end;
+    }
+}
+
+fn reserved_memory_node_is_available(node: FdtNode<'_, '_>) -> bool {
+    match node.property("status") {
+        None => true,
+        Some(status) => matches!(status.as_str(), Some("ok" | "okay")),
+    }
+}
+
+/// Visit a dynamically declared region whose allocation is nevertheless fully
+/// determined by its `alloc-ranges` property.
+///
+/// A `size` property normally describes a pool that the operating system must
+/// allocate at run time, so reserving an arbitrary part of `alloc-ranges` would
+/// be wrong. A single range with precisely that size is different: there is
+/// only one possible allocation, making it a fixed firmware carve-out in
+/// practice. This is used by Amlogic's `linux,secmon` DT nodes.
+fn visit_exact_dynamic_reserved_memory_range(
+    node: FdtNode<'_, '_>,
+    cell_sizes: CellSizes,
+    visit: &mut impl FnMut(usize, usize),
+) -> bool {
+    let Some(size_property) = node.property("size") else {
+        return false;
+    };
+    let Some(size_bytes) = cell_sizes.size_cells.checked_mul(size_of::<u32>()) else {
+        warn!("invalid reserved-memory size property for {}", node.name);
+        return false;
+    };
+    if size_property.value.len() != size_bytes {
+        warn!("invalid reserved-memory size property for {}", node.name);
+        return false;
+    }
+    let Some(size) = cells_to_usize(size_property.value, cell_sizes.size_cells) else {
+        warn!("unsupported reserved-memory size for {}", node.name);
+        return false;
+    };
+
+    let Some(alloc_ranges) = node.property("alloc-ranges") else {
+        return false;
+    };
+    let Some(stride_cells) = cell_sizes.address_cells.checked_add(cell_sizes.size_cells) else {
+        warn!(
+            "invalid reserved-memory alloc-ranges property for {}",
+            node.name
+        );
+        return false;
+    };
+    let Some(stride) = stride_cells.checked_mul(size_of::<u32>()) else {
+        warn!(
+            "invalid reserved-memory alloc-ranges property for {}",
+            node.name
+        );
+        return false;
+    };
+    let Some(address_bytes) = cell_sizes.address_cells.checked_mul(size_of::<u32>()) else {
+        warn!(
+            "invalid reserved-memory alloc-ranges property for {}",
+            node.name
+        );
+        return false;
+    };
+
+    // Multiple ranges, or a range larger than `size`, leave the allocation
+    // address unspecified and must remain available to a future CMA allocator.
+    if stride == 0 || alloc_ranges.value.len() != stride {
+        return false;
+    }
+    let Some(address) = cells_to_usize(
+        &alloc_ranges.value[..address_bytes],
+        cell_sizes.address_cells,
+    ) else {
+        warn!(
+            "unsupported reserved-memory allocation address for {}",
+            node.name
+        );
+        return false;
+    };
+    let Some(range_size) =
+        cells_to_usize(&alloc_ranges.value[address_bytes..], cell_sizes.size_cells)
+    else {
+        warn!(
+            "unsupported reserved-memory allocation size for {}",
+            node.name
+        );
+        return false;
+    };
+
+    if size == 0 || range_size != size || address.checked_add(size).is_none() {
+        return false;
+    }
+
+    debug!(
+        "reserving exact dynamic memory {} 0x{:08x} size 0x{:08x}",
+        node.name, address, size
+    );
+    visit(address, size);
+    true
+}
+
+/// Remove firmware and device-tree carve-outs from the physical allocator.
+///
+/// The FDT reservation map and `reg` properties below `/reserved-memory`
+/// describe fixed allocations. Dynamic nodes are left for a future CMA
+/// allocator, except when a single exact `alloc-ranges` makes their address
+/// unambiguous.
+fn visit_fixed_reserved_memory_ranges(dt: &Fdt, mut visit: impl FnMut(usize, usize)) {
+    visit_fdt_memory_reservations(dt, &mut visit);
+
+    let Some(reserved_memory) = dt.find_node("/reserved-memory") else {
+        return;
+    };
+    let Some(cell_sizes) = explicit_cell_sizes(reserved_memory) else {
+        warn!("invalid /reserved-memory cell sizes; ignoring its children");
+        return;
+    };
+    let Some(root) = dt.find_node("/") else {
+        warn!("missing root node; ignoring /reserved-memory children");
+        return;
+    };
+    let Some(root_cell_sizes) = explicit_cell_sizes(root) else {
+        warn!("invalid root cell sizes; ignoring /reserved-memory children");
+        return;
+    };
+    let valid_cell_sizes = cell_sizes.address_cells == root_cell_sizes.address_cells
+        && cell_sizes.size_cells == root_cell_sizes.size_cells;
+    let valid_ranges = reserved_memory
+        .property("ranges")
+        .is_some_and(|ranges| ranges.value.is_empty());
+
+    if !valid_cell_sizes || !valid_ranges {
+        warn!("invalid /reserved-memory node format; ignoring its children");
+        return;
+    }
+
+    for child in reserved_memory.children() {
+        if !reserved_memory_node_is_available(child) {
+            continue;
+        }
+
+        if let Some(regions) = child.property("reg") {
+            visit_address_size_pairs(regions, cell_sizes, child.name, &mut visit);
+        } else if child.property("size").is_some() {
+            if !visit_exact_dynamic_reserved_memory_range(child, cell_sizes, &mut visit) {
+                // TODO: register dynamic reserved-memory pools once a CMA allocator exists.
+                debug!(
+                    "dynamic reserved-memory node {}; ignoring it until allocation is supported",
+                    child.name
+                );
+            }
+        } else {
+            warn!(
+                "reserved-memory node {} has neither reg nor size; ignoring it",
+                child.name
+            );
+        }
+    }
+}
+
+/// Remove fixed firmware and device-tree carve-outs from the physical allocator.
+pub fn register_fixed_reserved_memory_ranges(dt: &Fdt) {
+    visit_fixed_reserved_memory_ranges(dt, |address, size| {
+        register_memory_region(address, size, BootloaderMemoryKind::Reserved);
+    });
 }
 
 pub fn register_dev_memory_ranges(dt: &Fdt) {
@@ -363,10 +669,18 @@ pub fn fill_env_data(dt: &Fdt, env_base: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::translate_mmio_address;
-    use fdt::Fdt;
+    use super::{
+        explicit_cell_sizes, translate_mmio_address, visit_address_size_pairs,
+        visit_fdt_memory_reservations, visit_fixed_reserved_memory_ranges,
+    };
+    use fdt::{
+        node::{CellSizes, NodeProperty},
+        Fdt,
+    };
 
     static MMIO_DTB: &[u8] = include_bytes!("testdata/mmio.dtb");
+    static INVALID_RESERVED_MEMORY_DTB: &[u8] =
+        include_bytes!("testdata/invalid-reserved-memory.dtb");
 
     fn translated(path: &str) -> Option<usize> {
         let fdt = Fdt::new(MMIO_DTB).unwrap();
@@ -393,5 +707,174 @@ mod tests {
     #[test]
     fn empty_ranges_is_identity_mapping() {
         assert_eq!(translated("/identity-bus/device@3000"), Some(0x3000));
+    }
+
+    #[test]
+    fn visits_fdt_and_static_reserved_memory_ranges() {
+        let fdt = Fdt::new(MMIO_DTB).unwrap();
+        let mut ranges = Vec::new();
+
+        visit_fixed_reserved_memory_ranges(&fdt, |address, size| ranges.push((address, size)));
+
+        assert_eq!(
+            ranges,
+            vec![
+                (0x1000, 0x100),
+                (0x2000, 0x100),
+                (0x3000, 0x80),
+                (0x4000, 0x40),
+                (0x6000, 0x200),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_fdt_reservation_map_bounds() {
+        const RESERVATION_MAP_OFFSET_FIELD: usize = 16;
+
+        for offset in [0, u32::MAX.wrapping_sub(7)] {
+            let mut data = MMIO_DTB.to_vec();
+            data[RESERVATION_MAP_OFFSET_FIELD..RESERVATION_MAP_OFFSET_FIELD + 4]
+                .copy_from_slice(&offset.to_be_bytes());
+            let fdt = Fdt::new(&data).unwrap();
+            let mut ranges = Vec::new();
+
+            visit_fdt_memory_reservations(&fdt, &mut |address, size| {
+                ranges.push((address, size));
+            });
+
+            assert!(ranges.is_empty());
+        }
+    }
+
+    #[test]
+    fn rejects_an_unterminated_fdt_reservation_map() {
+        const STRUCTURE_BLOCK_OFFSET_FIELD: usize = 8;
+        const RESERVATION_MAP_OFFSET_FIELD: usize = 16;
+
+        let mut data = MMIO_DTB.to_vec();
+        let off_mem_rsvmap = u32::from_be_bytes(
+            data[RESERVATION_MAP_OFFSET_FIELD..RESERVATION_MAP_OFFSET_FIELD + 4]
+                .try_into()
+                .unwrap(),
+        );
+        // Point off_dt_struct one entry past off_mem_rsvmap, cutting the
+        // reservation map off before its terminating {0, 0} entry.
+        let truncated_structure_offset = off_mem_rsvmap + 16;
+        data[STRUCTURE_BLOCK_OFFSET_FIELD..STRUCTURE_BLOCK_OFFSET_FIELD + 4]
+            .copy_from_slice(&truncated_structure_offset.to_be_bytes());
+        let fdt = Fdt::new(&data).unwrap();
+        let mut ranges = Vec::new();
+
+        visit_fdt_memory_reservations(&fdt, &mut |address, size| ranges.push((address, size)));
+
+        // The one real entry that fit before the truncation is still
+        // reported; parsing stops instead of reading past the map.
+        assert_eq!(ranges, vec![(0x1000, 0x100)]);
+    }
+
+    #[test]
+    fn parses_32_and_64_bit_address_size_pairs() {
+        let cells32 = CellSizes {
+            address_cells: 1,
+            size_cells: 1,
+        };
+        let cells64 = CellSizes {
+            address_cells: 2,
+            size_cells: 2,
+        };
+        let property32 = NodeProperty {
+            name: "reg",
+            value: &[0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01, 0x00],
+        };
+        let property64 = NodeProperty {
+            name: "reg",
+            value: &[
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x02, 0x00,
+            ],
+        };
+        let mut ranges = Vec::new();
+
+        visit_address_size_pairs(property32, cells32, "test32", &mut |address, size| {
+            ranges.push((address, size));
+        });
+        visit_address_size_pairs(property64, cells64, "test64", &mut |address, size| {
+            ranges.push((address, size));
+        });
+
+        assert_eq!(ranges, vec![(0x2000, 0x100), (0x3000, 0x200)]);
+    }
+
+    #[test]
+    fn rejects_a_partial_address_size_pair() {
+        let property = NodeProperty {
+            name: "reg",
+            value: &[0; 12],
+        };
+        let mut ranges = Vec::new();
+
+        visit_address_size_pairs(
+            property,
+            CellSizes {
+                address_cells: 2,
+                size_cells: 2,
+            },
+            "partial",
+            &mut |address, size| ranges.push((address, size)),
+        );
+
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn rejects_an_overflowing_address_size_pair() {
+        let address = usize::MAX - 0x10;
+        let size = 0x20_usize;
+        let mut value = Vec::new();
+        let cell_sizes = if usize::BITS == 64 {
+            value.extend_from_slice(&(address as u64).to_be_bytes());
+            value.extend_from_slice(&(size as u64).to_be_bytes());
+            CellSizes {
+                address_cells: 2,
+                size_cells: 2,
+            }
+        } else {
+            value.extend_from_slice(&(address as u32).to_be_bytes());
+            value.extend_from_slice(&(size as u32).to_be_bytes());
+            CellSizes {
+                address_cells: 1,
+                size_cells: 1,
+            }
+        };
+        let property = NodeProperty {
+            name: "reg",
+            value: &value,
+        };
+        let mut ranges = Vec::new();
+
+        visit_address_size_pairs(property, cell_sizes, "overflow", &mut |address, size| {
+            ranges.push((address, size));
+        });
+
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn explicit_cell_sizes_is_none_when_properties_are_missing() {
+        let fdt = Fdt::new(MMIO_DTB).unwrap();
+        let node = fdt.find_node("/reserved-memory/firmware@2000").unwrap();
+
+        assert!(explicit_cell_sizes(node).is_none());
+    }
+
+    #[test]
+    fn ignores_reserved_memory_children_with_nonempty_ranges() {
+        let fdt = Fdt::new(INVALID_RESERVED_MEMORY_DTB).unwrap();
+        let mut ranges = Vec::new();
+
+        visit_fixed_reserved_memory_ranges(&fdt, |address, size| ranges.push((address, size)));
+
+        assert_eq!(ranges, vec![(0x1000, 0x100)]);
     }
 }

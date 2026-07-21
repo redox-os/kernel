@@ -1,0 +1,19 @@
+/dts-v1/;
+
+/memreserve/ 0x1000 0x100;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		/* A nonempty ranges property makes the child addresses ambiguous. */
+		ranges = <0x0 0x0 0x0 0x0 0x0 0x10000>;
+
+		firmware@2000 {
+			reg = <0x0 0x2000 0x0 0x100>;
+		};
+	};
+};
