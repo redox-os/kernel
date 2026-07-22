@@ -157,11 +157,6 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
 
     wakeup_context(context_lock, cpu_id);
 
-    if let Some(cpu_id) = cpu_id
-        && cpu_id != crate::cpu_id()
-    {
-        ipi(IpiKind::Wakeup, IpiTarget::Other);
-    }
 
     true
 }
@@ -179,6 +174,7 @@ pub fn wakeup_context(context_lock: &Arc<ContextLock>, cpu_id: Option<LogicalCpu
                 .as_ref()
         } {
             percpu.switch_internals.wakeup_list.lock().push(weak);
+            ipi(IpiKind::Wakeup, IpiTarget::Other);
             return;
         }
     }

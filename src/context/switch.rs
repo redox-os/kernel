@@ -4,14 +4,8 @@
 
 use crate::{
     context::{
-        self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, run_contexts_try, ArcContextLockWriteGuard, Context, ContextLock,
-        WeakContextRef,
-    },
-    cpu_set::LogicalCpuId,
-    cpu_stats::{self, CpuState},
-    percpu::PercpuBlock,
-    sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
+        self, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard, run_contexts, run_contexts_try, wakeup_context,
+    }, cpu_set::LogicalCpuId, cpu_stats::{self, CpuState}, percpu::PercpuBlock, sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::{
