@@ -4,8 +4,14 @@
 
 use crate::{
     context::{
-        self, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard, run_contexts, run_contexts_try, wakeup_context,
-    }, cpu_set::LogicalCpuId, cpu_stats::{self, CpuState}, percpu::PercpuBlock, sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
+        self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
+        run_contexts, run_contexts_try, wakeup_context, ArcContextLockWriteGuard, Context,
+        ContextLock, WeakContextRef,
+    },
+    cpu_set::LogicalCpuId,
+    cpu_stats::{self, CpuState},
+    percpu::PercpuBlock,
+    sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::{
@@ -182,7 +188,10 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    let mut wakeups = wakeup_contexts(token);
+    let mut wakeups: SmallVec<[(Option<u128>, WeakContextRef); 16]> = wakeup_contexts(token)
+        .into_iter()
+        .map(|ctxt| (None, ctxt))
+        .collect();
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
     // These timers coukd have expired
@@ -207,28 +216,43 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
         let guard = context_lock.read(token.token());
         if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
-            wakeups.push(context_ref);
+            wakeups.push((Some(wake), context_ref));
         }
     }
 
     // Drain from percpu
     {
         if let Some(mut percpu_wake) = percpu.switch_internals.wakeup_list.try_lock() {
-            wakeups.extend(percpu_wake.drain(..));
+            wakeups.extend(percpu_wake.drain(..).map(|ctx| (None, ctx)));
         }
     }
 
     if wakeups.len() > 0 {
         let mut run_contexts = run_contexts(token.token());
-        for context_ref in wakeups {
+        for (wake_opt, context_ref) in wakeups {
             let Some(context_lock) = context_ref.upgrade() else {
                 continue;
             };
 
             let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
-                push_idle.push(context_ref);
+                if let Some(wake) = wake_opt {
+                    run_contexts.timers.insert((wake, context_ref));
+                } else {
+                    push_idle.push(context_ref);
+                }
                 continue;
             };
+
+            if let Some(wake) = wake_opt {
+                if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
+                    guard.wake = None;
+                    guard.unblock_no_ipi();
+                }
+            }
+
+            if guard.running || !guard.status.is_runnable() {
+                continue;
+            }
 
             let new_vtime = guard.vtime.max(run_contexts.v);
             guard.vtime = new_vtime;
@@ -569,7 +593,7 @@ fn select_next_context(
 
             contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             drop(guard);
-            // Reenqueue should be handled by unblock
+            // TODO: Reenqueue should be handled by unblock
             idle_contexts(token.token()).push_back(context_ref.clone());
             continue;
         }
@@ -663,6 +687,11 @@ fn select_next_context(
                     prev_context_guard.debug_id,
                     prev_context_guard.vtime,
                 );
+
+                if let Some(old_key) = prev_context_guard.queue_key.take() {
+                    contexts_data.queue.remove(&old_key);
+                }
+
                 prev_context_guard.queue_key = Some((vd, Reverse(rem_slice), ctxt_id));
 
                 let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;

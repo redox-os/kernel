@@ -157,7 +157,6 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
 
     wakeup_context(context_lock, cpu_id);
 
-
     true
 }
 
