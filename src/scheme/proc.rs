@@ -4,7 +4,7 @@ use crate::{
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
-        Context, ContextLock, Status,
+        unblock_context, Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
@@ -1287,8 +1287,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Interrupt => {
-                        let mut guard = context.write(token.token());
-                        guard.unblock();
+                        unblock_context(&context, &mut token.token().downgrade());
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::ForceKill => {
@@ -1317,13 +1316,16 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            let mut ctxt = context.write(token.token());
-                            //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
-                            if ctxt.status.is_dead() {
-                                return Ok(size_of::<usize>());
+                            {
+                                let mut ctxt = context.write(token.token());
+                                //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                                if ctxt.status.is_dead() {
+                                    return Ok(size_of::<usize>());
+                                }
+                                ctxt.status = context::Status::Runnable;
+                                ctxt.being_sigkilled = true;
                             }
-                            ctxt.status = context::Status::Runnable;
-                            ctxt.being_sigkilled = true;
+                            unblock_context(&context, &mut token.token().downgrade());
                             Ok(size_of::<usize>())
                         }
                     }
