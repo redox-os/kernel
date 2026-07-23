@@ -3,7 +3,7 @@ use syscall::{EventFlags, O_NONBLOCK};
 
 use crate::{
     context::file::InternalFlags,
-    event::{next_queue_id, unregister_queue, queues, queues_mut, EventQueue, EventQueueId},
+    event::{next_queue_id, queues, queues_mut, unregister_queue, EventQueue, EventQueueId},
     sync::CleanLockToken,
     syscall::{
         data::Event,
