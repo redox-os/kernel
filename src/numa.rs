@@ -306,12 +306,7 @@ pub fn free_list_mask() -> Option<u128> {
                 None
             }
         })?;
-        for (i, memory) in memory_regions()?.enumerate() {
-            if node.memories & (1 << i) != 0 {
-                mask |= 1 << i;
-            }
-        }
-        return Some(mask);
+        return Some(node.memories);
     }
 
     None

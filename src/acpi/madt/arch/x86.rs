@@ -71,6 +71,7 @@ pub(super) fn init(madt: Madt) {
         debug!("      {:x?}", madt_entry);
         if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
             if u32::from(ap_local_apic.id) == me.get() {
+                map[0] = ap_local_apic.id as u32;
                 debug!("        This is my local APIC");
             } else if ap_local_apic.flags & 1 == 1 {
                 let cpu_id = LogicalCpuId::next();
