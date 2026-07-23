@@ -3,7 +3,7 @@ use syscall::{EventFlags, O_NONBLOCK};
 
 use crate::{
     context::file::InternalFlags,
-    event::{next_queue_id, queues, queues_mut, EventQueue, EventQueueId},
+    event::{next_queue_id, unregister_queue, queues, queues_mut, EventQueue, EventQueueId},
     sync::CleanLockToken,
     syscall::{
         data::Event,
@@ -42,6 +42,7 @@ impl KernelScheme for EventScheme {
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let id = EventQueueId::from(id);
+        unregister_queue(id, token);
         let queue = queues_mut(token.token())
             .remove(&id)
             .ok_or(Error::new(EBADF))?;

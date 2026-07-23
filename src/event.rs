@@ -270,10 +270,15 @@ pub fn get_event_stat(token: &mut CleanLockToken) -> (usize, usize) {
     (regc, regl)
 }
 
-//TODO: Implement unregister_queue
-// pub fn unregister_queue(scheme: SchemeId, number: usize) {
-//
-// }
+pub fn unregister_queue(queue: EventQueueId, token: &mut CleanLockToken) {
+    let mut registry = REGISTRY.write(token.token());
+
+    for (_, queue_list) in registry.iter_mut() {
+        queue_list.retain(|queue_key, _| queue_key.queue != queue);
+    }
+
+    registry.retain(|_, queue_list| !queue_list.is_empty());
+}
 
 const MAX_EVENT: usize = 8;
 
