@@ -95,6 +95,12 @@ fn try_stop_context<T>(
 
     context.status = prev_status;
 
+    if context.status.is_runnable() {
+        let cpu_id = context.cpu_id;
+        drop(context);
+        wakeup_context(&context_ref, cpu_id);
+    }
+
     ret
 }
 

@@ -4,9 +4,8 @@
 
 use crate::{
     context::{
-        self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, run_contexts_try, wakeup_context, ArcContextLockWriteGuard, Context,
-        ContextLock, WeakContextRef,
+        self, arch, memory::AddrSpaceSwitchReadGuard, run_contexts, run_contexts_try,
+        wakeup_context, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -188,11 +187,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    let mut wakeups: SmallVec<[(Option<u128>, WeakContextRef); 16]> = wakeup_contexts(token)
-        .into_iter()
-        .map(|ctxt| (None, ctxt))
-        .collect();
-    let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
+    let mut wakeups: SmallVec<[(Option<u128>, WeakContextRef); 16]> = SmallVec::new();
 
     // These timers coukd have expired
     let mut timers: SmallVec<[(u128, WeakContextRef); 16]> = SmallVec::new();
@@ -222,9 +217,12 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
     // Drain from percpu
     {
-        if let Some(mut percpu_wake) = percpu.switch_internals.wakeup_list.try_lock() {
-            wakeups.extend(percpu_wake.drain(..).map(|ctx| (None, ctx)));
-        }
+        let mut cross_cpu_wake = percpu.switch_internals.cross_core_wakeup_list.lock();
+        wakeups.extend(cross_cpu_wake.drain(..).map(|ctx| (None, ctx)));
+    }
+    {
+        let mut local_wake = percpu.switch_internals.local_wakeup_list.borrow_mut();
+        wakeups.extend(local_wake.drain(..).map(|ctx| (None, ctx)));
     }
 
     if wakeups.len() > 0 {
@@ -238,7 +236,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 if let Some(wake) = wake_opt {
                     run_contexts.timers.insert((wake, context_ref));
                 } else {
-                    push_idle.push(context_ref);
+                    percpu
+                        .switch_internals
+                        .local_wakeup_list
+                        .borrow_mut()
+                        .push(context_ref);
                 }
                 continue;
             };
@@ -278,13 +280,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             run_contexts
                 .queue
                 .insert(key, (new_vtime, weight, context_ref));
-        }
-    }
-
-    {
-        let mut idle_list = idle_contexts(token.downgrade());
-        for context_ref in push_idle {
-            idle_list.push_back(context_ref);
         }
     }
 
@@ -432,48 +427,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
-fn wakeup_contexts(token: &mut CleanLockToken) -> SmallVec<[WeakContextRef; 16]> {
-    // TODO: Optimise this somehow
-    let mut wakeups = SmallVec::new();
-    let current_context = context::current();
-    let Some(idle_contexts) = idle_contexts_try(token.downgrade()) else {
-        // other cpus may spawning or killing contexts so let's skip wakeups to avoid contention
-        return wakeups;
-    };
-    let (mut idle_contexts, mut token) = idle_contexts.into_split();
-    let len = idle_contexts.len();
-    for _ in 0..len {
-        let Some(context_ref) = idle_contexts.pop_front() else {
-            break;
-        };
-        let Some(context) = context_ref.upgrade() else {
-            continue;
-        };
-        if Arc::ptr_eq(&context, &current_context) {
-            idle_contexts.push_back(context_ref);
-            continue;
-        }
-        let Some(guard) = context.try_read(token.token()) else {
-            idle_contexts.push_back(context_ref);
-            continue;
-        };
-        if guard.status.is_dead() {
-            // TODO: who hold this dead context?
-            continue;
-        }
-
-        if guard.status.is_runnable() && !guard.running {
-            drop(guard);
-            wakeups.push(context_ref);
-            continue;
-        }
-
-        drop(guard);
-        idle_contexts.push_back(context_ref);
-    }
-    wakeups
-}
-
 /// This is the scheduler function which currently utilises EEVDF Scheduler
 fn select_next_context(
     token: &mut CleanLockToken,
@@ -593,8 +546,6 @@ fn select_next_context(
 
             contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             drop(guard);
-            // TODO: Reenqueue should be handled by unblock
-            idle_contexts(token.token()).push_back(context_ref.clone());
             continue;
         }
 
@@ -703,9 +654,6 @@ fn select_next_context(
                         WeakContextRef(Arc::downgrade(&prev_context_lock)),
                     ),
                 );
-            } else if !is_idle && !is_timer {
-                idle_contexts(token.token())
-                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
             }
 
             return Some((chosen_guard, addr_space));
@@ -713,11 +661,6 @@ fn select_next_context(
             return None;
         }
     } else {
-        if !is_idle && !is_timer {
-            idle_contexts(token.token())
-                .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
-        }
-
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
         if (!was_idle || prev_is_dead) && !is_idle {
             return Some(unsafe { (idle_context.write_arc(), None) });
@@ -747,7 +690,8 @@ pub struct ContextSwitchPercpu {
     pub(crate) being_sigkilled: Cell<bool>,
 
     // wakeups
-    pub(crate) wakeup_list: SpinMutex<Vec<WeakContextRef>>,
+    pub(crate) cross_core_wakeup_list: SpinMutex<Vec<WeakContextRef>>,
+    pub(crate) local_wakeup_list: RefCell<Vec<WeakContextRef>>,
 }
 
 impl ContextSwitchPercpu {
@@ -759,7 +703,8 @@ impl ContextSwitchPercpu {
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
-            wakeup_list: SpinMutex::new(Vec::new()),
+            cross_core_wakeup_list: SpinMutex::new(Vec::new()),
+            local_wakeup_list: RefCell::new(Vec::new()),
 
             #[cfg(feature = "profiling")]
             current_dbg_id: core::sync::atomic::AtomicU32::new(!0),
