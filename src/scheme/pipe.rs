@@ -103,7 +103,7 @@ impl KernelScheme for PipeScheme {
 
         if is_writer_not_reader
             && flags.contains(EVENT_WRITE)
-            && (pipe.queue.lock(token.token()).len() <= MAX_QUEUE_SIZE
+            && (pipe.queue.lock(token.token()).len() < MAX_QUEUE_SIZE
                 || !pipe.reader_is_alive.load(Ordering::Acquire))
         {
             ready |= EventFlags::EVENT_WRITE;
