@@ -1,8 +1,15 @@
+//! NUMA Subsystem
+//!
+//! COPYRIGHT 2026 R Aadarsh (a.k.a EuclidDivisionLemma)
+//!
+//! Licensed under the MIT licence
+
 use core::{ops::Add, slice};
 
 use crate::{
     acpi,
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    percpu,
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -181,15 +188,6 @@ impl Iterator for NumaMemoryIter {
     }
 }
 
-impl NumaMemoryIter {
-    /// Skips an arbitrarily chosen `i`th element. Unlike `skip`, which skips the first `n` elements,
-    /// `iskip` can ignore non-consecutive elements
-    pub fn iskip(&self, addr: usize) -> Option<usize> {
-        let i = self.mem.binary_search_by_key(&addr, |e| e.start).ok()?;
-        Some(i)
-    }
-}
-
 pub fn number_of_memory_regions() -> usize {
     if let Some(mem) = NUMA_MEMORY.get() {
         mem.iter()
@@ -289,4 +287,32 @@ pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         .map(|e| e.to_ne_bytes())
         .flatten()
         .collect())
+}
+
+pub fn free_list_mask() -> Option<u128> {
+    let cpu = percpu::PercpuBlock::current();
+    let cpu_id = if let Some(map) = LOGICAL_CPU_ID_MAP.get() {
+        *map.get(cpu.cpu_id.get() as usize).unwrap()
+    } else {
+        cpu.cpu_id.get()
+    };
+
+    let mut mask = 0;
+    if let Some(nodes) = NUMA_NODES.get() {
+        let node = nodes.iter().find_map(|node| {
+            if node.cpus & 1u128 << cpu_id != 0 {
+                Some(node)
+            } else {
+                None
+            }
+        })?;
+        for (i, memory) in memory_regions()?.enumerate() {
+            if node.memories & (1 << i) != 0 {
+                mask |= 1 << i;
+            }
+        }
+        return Some(mask);
+    }
+
+    None
 }
