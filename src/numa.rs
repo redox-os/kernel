@@ -1,9 +1,3 @@
-//! NUMA Subsystem
-//!
-//! COPYRIGHT 2026 R Aadarsh (a.k.a EuclidDivisionLemma)
-//!
-//! Licensed under the MIT licence
-
 use core::{ops::Add, slice};
 
 use crate::{
