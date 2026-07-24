@@ -5,14 +5,15 @@
 use crate::{
     context::{
         self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef,
+        run_contexts, run_contexts_try, wakeup_context, ArcContextLockWriteGuard, Context,
+        ContextLock, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
     percpu::PercpuBlock,
     sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
 };
-use alloc::sync::Arc;
+use alloc::{sync::Arc, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
     cmp::Reverse,
@@ -22,6 +23,7 @@ use core::{
     u64,
 };
 use smallvec::SmallVec;
+use spin::mutex::SpinMutex;
 use syscall::PtraceFlags;
 
 enum UpdateResult {
@@ -31,16 +33,16 @@ enum UpdateResult {
 }
 
 // A simple geometric series where value[i] ~= value[i + 1] * 1.25
-const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
+pub const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
     88761, 71755, 56483, 46273, 36291, 29154, 23254, 18705, 14949, 11916, 9548, 7620, 6100, 4904,
     3906, 3121, 2501, 1991, 1586, 1277, 1024, 820, 655, 526, 423, 335, 272, 215, 172, 137, 110, 87,
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
 
-const SCALE: u128 = 1 << 40;
-const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
-const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
-const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
+pub const SCALE: u128 = 1 << 40;
+pub const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
+pub const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
+pub const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
@@ -186,22 +188,71 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Alarm (previously in update_runnable)
-    let wakeups = wakeup_contexts(token, switch_time);
-    let wakeups_len = wakeups.len();
+    let mut wakeups: SmallVec<[(Option<u128>, WeakContextRef); 16]> = wakeup_contexts(token)
+        .into_iter()
+        .map(|ctxt| (None, ctxt))
+        .collect();
     let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
 
-    if wakeups_len > 0 {
-        let mut run_contexts = run_contexts(token.token());
+    // These timers coukd have expired
+    let mut timers: SmallVec<[(u128, WeakContextRef); 16]> = SmallVec::new();
+    if let Some(mut run_contexts) = run_contexts_try(token.token()) {
+        // Pop Timers
+        while let Some((wake, _)) = run_contexts.timers.first() {
+            if *wake > switch_time {
+                break;
+            }
 
-        for context_ref in wakeups {
+            if let Some(entry) = run_contexts.timers.pop_first() {
+                timers.push(entry);
+            }
+        }
+    }
+
+    for (wake, context_ref) in timers {
+        let Some(context_lock) = context_ref.upgrade() else {
+            continue;
+        };
+
+        let guard = context_lock.read(token.token());
+        if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
+            wakeups.push((Some(wake), context_ref));
+        }
+    }
+
+    // Drain from percpu
+    {
+        if let Some(mut percpu_wake) = percpu.switch_internals.wakeup_list.try_lock() {
+            wakeups.extend(percpu_wake.drain(..).map(|ctx| (None, ctx)));
+        }
+    }
+
+    if wakeups.len() > 0 {
+        let mut run_contexts = run_contexts(token.token());
+        for (wake_opt, context_ref) in wakeups {
             let Some(context_lock) = context_ref.upgrade() else {
                 continue;
             };
 
             let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
-                push_idle.push(context_ref);
+                if let Some(wake) = wake_opt {
+                    run_contexts.timers.insert((wake, context_ref));
+                } else {
+                    push_idle.push(context_ref);
+                }
                 continue;
             };
+
+            if let Some(wake) = wake_opt {
+                if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
+                    guard.wake = None;
+                    guard.unblock_no_ipi();
+                }
+            }
+
+            if guard.running || !guard.status.is_runnable() {
+                continue;
+            }
 
             let new_vtime = guard.vtime.max(run_contexts.v);
             guard.vtime = new_vtime;
@@ -212,6 +263,10 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             if !guard.is_active {
                 guard.is_active = true;
                 run_contexts.total_weight += weight;
+            }
+
+            if let Some(old_key) = guard.queue_key.take() {
+                run_contexts.queue.remove(&old_key);
             }
 
             guard.vd = new_vtime + scaled_slice as u64;
@@ -377,11 +432,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
-fn wakeup_contexts(
-    token: &mut CleanLockToken,
-    switch_time: u128,
-) -> SmallVec<[WeakContextRef; 16]> {
-    // TODO: Optimise this somehow. Perhaps using a separate timer queue?
+fn wakeup_contexts(token: &mut CleanLockToken) -> SmallVec<[WeakContextRef; 16]> {
+    // TODO: Optimise this somehow
     let mut wakeups = SmallVec::new();
     let current_context = context::current();
     let Some(idle_contexts) = idle_contexts_try(token.downgrade()) else {
@@ -405,15 +457,7 @@ fn wakeup_contexts(
             idle_contexts.push_back(context_ref);
             continue;
         };
-        if guard.status.is_soft_blocked() {
-            if let Some(wake) = guard.wake {
-                if switch_time >= wake {
-                    drop(guard);
-                    wakeups.push(context_ref);
-                    continue;
-                }
-            }
-        } else if guard.status.is_dead() {
+        if guard.status.is_dead() {
             // TODO: who hold this dead context?
             continue;
         }
@@ -448,6 +492,7 @@ fn select_next_context(
     let prev_context_lock = crate::context::current();
     let is_idle = Arc::ptr_eq(&prev_context_lock, &idle_context);
     let prev_runnable = !is_idle && prev_context_guard.status.is_runnable();
+    let is_timer = prev_context_guard.wake.is_some();
 
     let elapsed_ticks = elapsed_time as u128 * SCALE / NANOS_PER_TICK;
 
@@ -484,6 +529,12 @@ fn select_next_context(
             contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight);
         }
         prev_context_guard.rem_slice = 0;
+
+        if let Some(wake) = prev_context_guard.wake {
+            contexts_data
+                .timers
+                .insert((wake, WeakContextRef(Arc::downgrade(&prev_context_lock))));
+        }
     }
 
     let mut eligible_best = None;
@@ -542,7 +593,7 @@ fn select_next_context(
 
             contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             drop(guard);
-            // Reenqueue should be handled by unblock
+            // TODO: Reenqueue should be handled by unblock
             idle_contexts(token.token()).push_back(context_ref.clone());
             continue;
         }
@@ -636,6 +687,11 @@ fn select_next_context(
                     prev_context_guard.debug_id,
                     prev_context_guard.vtime,
                 );
+
+                if let Some(old_key) = prev_context_guard.queue_key.take() {
+                    contexts_data.queue.remove(&old_key);
+                }
+
                 prev_context_guard.queue_key = Some((vd, Reverse(rem_slice), ctxt_id));
 
                 let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
@@ -647,7 +703,7 @@ fn select_next_context(
                         WeakContextRef(Arc::downgrade(&prev_context_lock)),
                     ),
                 );
-            } else if !is_idle {
+            } else if !is_idle && !is_timer {
                 idle_contexts(token.token())
                     .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
             }
@@ -657,7 +713,7 @@ fn select_next_context(
             return None;
         }
     } else {
-        if !is_idle {
+        if !is_idle && !is_timer {
             idle_contexts(token.token())
                 .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
         }
@@ -689,6 +745,9 @@ pub struct ContextSwitchPercpu {
     /// The idle process.
     idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
     pub(crate) being_sigkilled: Cell<bool>,
+
+    // wakeups
+    pub(crate) wakeup_list: SpinMutex<Vec<WeakContextRef>>,
 }
 
 impl ContextSwitchPercpu {
@@ -700,6 +759,7 @@ impl ContextSwitchPercpu {
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
+            wakeup_list: SpinMutex::new(Vec::new()),
 
             #[cfg(feature = "profiling")]
             current_dbg_id: core::sync::atomic::AtomicU32::new(!0),

@@ -4,8 +4,9 @@ use crate::{
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
-        Context, ContextLock, Status,
+        unblock_context, wakeup_context, Context, ContextLock, Status,
     },
+    cpu_id,
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
     scheme::{
@@ -1132,15 +1133,23 @@ impl ContextHandle {
 
                 Ok(size_of::<SetSighandlerData>())
             }
-            ContextHandle::Start => match context.write(token.token()).status {
-                ref mut status @ Status::HardBlocked {
-                    reason: HardBlockedReason::NotYetStarted,
-                } => {
-                    *status = Status::Runnable;
-                    Ok(buf.len())
-                }
-                _ => Err(Error::new(EINVAL)),
-            },
+            ContextHandle::Start => {
+                let cpu_id = {
+                    let mut guard = context.write(token.token());
+                    match guard.status {
+                        ref mut status @ Status::HardBlocked {
+                            reason: HardBlockedReason::NotYetStarted,
+                        } => {
+                            *status = Status::Runnable;
+                            guard.cpu_id
+                        }
+                        _ => return Err(Error::new(EINVAL)),
+                    }
+                };
+
+                wakeup_context(&context, cpu_id);
+                Ok(buf.len())
+            }
             ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } => {
                 Err(Error::new(EBADF))
             }
@@ -1283,12 +1292,12 @@ impl ContextHandle {
                         } = guard.status
                         {
                             guard.status = Status::Runnable;
+                            wakeup_context(&context, guard.cpu_id);
                         }
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Interrupt => {
-                        let mut guard = context.write(token.token());
-                        guard.unblock();
+                        unblock_context(&context, &mut token.token().downgrade());
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::ForceKill => {
@@ -1317,13 +1326,17 @@ impl ContextHandle {
                             }
                             crate::syscall::exit_this_context(None, token);
                         } else {
-                            let mut ctxt = context.write(token.token());
-                            //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
-                            if ctxt.status.is_dead() {
-                                return Ok(size_of::<usize>());
-                            }
-                            ctxt.status = context::Status::Runnable;
-                            ctxt.being_sigkilled = true;
+                            let cpu_id = {
+                                let mut ctxt = context.write(token.token());
+                                //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
+                                if ctxt.status.is_dead() {
+                                    return Ok(size_of::<usize>());
+                                }
+                                ctxt.status = context::Status::Runnable;
+                                ctxt.being_sigkilled = true;
+                                ctxt.cpu_id
+                            };
+                            wakeup_context(&context, cpu_id);
                             Ok(size_of::<usize>())
                         }
                     }
