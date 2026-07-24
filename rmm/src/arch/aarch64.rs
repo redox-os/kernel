@@ -16,6 +16,7 @@ impl Arch for AArch64Arch {
     const ENTRY_ADDRESS_WIDTH: usize = 40;
     const ENTRY_FLAG_DEFAULT_PAGE: usize = Self::ENTRY_FLAG_PRESENT
         | 1 << 1 // Page flag
+        | 0b11 << 8 // SH[1:0]: Inner Shareable
         | 1 << 10 // Access flag
         | Self::ENTRY_FLAG_NO_GLOBAL;
     const ENTRY_FLAG_DEFAULT_TABLE: usize
@@ -148,6 +149,7 @@ const _: () = {
     assert!(AArch64Arch::ENTRY_ADDRESS_SIZE == 0x0000_0100_0000_0000);
     assert!(AArch64Arch::ENTRY_ADDRESS_MASK == 0x0000_00FF_FFFF_FFFF);
     assert!(AArch64Arch::ENTRY_FLAGS_MASK == 0xFFF0_0000_0000_0FFF);
+    assert!(AArch64Arch::ENTRY_FLAG_DEFAULT_PAGE & (0b11 << 8) == 0b11 << 8);
 
     assert!(AArch64Arch::PHYS_OFFSET == 0xFFFF_8000_0000_0000);
 };

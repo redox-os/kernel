@@ -22,7 +22,10 @@ use self::{
 use crate::{
     context::memory::AddrSpace,
     percpu::PercpuBlock,
-    scheme::{memory::MemoryScheme, FileHandle},
+    scheme::{
+        memory::{MemoryScheme, MemoryType},
+        FileHandle,
+    },
     sync::CleanLockToken,
 };
 
@@ -96,7 +99,13 @@ pub fn syscall(
                 let addrspace = AddrSpace::current()?;
                 let map = unsafe { UserSlice::ro(c, d)?.read_exact::<Map>()? };
                 if b == !0 {
-                    MemoryScheme::fmap_anonymous(&addrspace, &map, false, token)
+                    MemoryScheme::fmap_anonymous(
+                        &addrspace,
+                        &map,
+                        false,
+                        MemoryType::Writeback,
+                        token,
+                    )
                 } else {
                     file_op_generic(fd, token, |scheme, number, token| {
                         scheme.kfmap(number, &addrspace, &map, false, token)

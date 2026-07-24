@@ -603,11 +603,8 @@ pub fn interrupt_parent<'a>(fdt: &'a Fdt, node: &'a FdtNode) -> Option<FdtNode<'
 
 #[cfg(dtb)]
 pub fn get_interrupt(fdt: &Fdt, node: &FdtNode, idx: usize) -> Option<IrqCell> {
-    let interrupts = node.property("interrupts").unwrap();
-    let parent_interrupt_cells = interrupt_parent(fdt, node)
-        .unwrap()
-        .interrupt_cells()
-        .unwrap();
+    let interrupts = node.property("interrupts")?;
+    let parent_interrupt_cells = interrupt_parent(fdt, node)?.interrupt_cells()?;
     let mut intr = interrupts
         .value
         .as_chunks::<4>()
