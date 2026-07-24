@@ -8,7 +8,11 @@ use crate::{
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     ptrace,
-    scheme::{self, memory::MemoryScheme, FileHandle, KernelScheme, StrOrBytes},
+    scheme::{
+        self,
+        memory::{MemoryScheme, MemoryType},
+        FileHandle, KernelScheme, StrOrBytes,
+    },
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
         data::{GrantDesc, Map, SetSighandlerData, Stat},
@@ -994,6 +998,7 @@ impl ContextHandle {
                                     flags,
                                 },
                                 false,
+                                MemoryType::Writeback,
                                 token,
                             );
                         } else {

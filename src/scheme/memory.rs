@@ -72,6 +72,7 @@ impl MemoryScheme {
         addr_space: &Arc<AddrSpaceWrapper>,
         map: &Map,
         is_phys_contiguous: bool,
+        memory_type: MemoryType,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size)
@@ -95,7 +96,17 @@ impl MemoryScheme {
             page_count,
             map.flags,
             Some(&mut notify_files),
-            |dst_page, flags, mapper, flusher| {
+            |dst_page, mut flags, mapper, flusher| {
+                // The memory type suffix is part of the allocation contract,
+                // not only of physical borrows. Drivers request
+                // `zeroed@uc?phys_contiguous` specifically so CPU mappings of
+                // DMA buffers are coherent with non-snooping devices.
+                match memory_type {
+                    MemoryType::Writeback => (),
+                    MemoryType::WriteCombining => flags = flags.write_combining(true),
+                    MemoryType::Uncacheable => flags = flags.uncacheable(true),
+                    MemoryType::DeviceMemory => flags = flags.device_memory(true),
+                }
                 let span = PageSpan::new(dst_page, page_count.get());
                 if is_phys_contiguous {
                     Ok(Grant::zeroed_phys_contiguous(span, flags, mapper, flusher)?)
@@ -304,6 +315,7 @@ impl KernelScheme for MemoryScheme {
                 addr_space,
                 map,
                 flags.contains(HandleFlags::PHYS_CONTIGUOUS),
+                mem_ty,
                 token,
             ),
             HandleTy::PhysBorrow => Self::physmap(map.offset, map.size, map.flags, mem_ty, token),
