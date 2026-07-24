@@ -227,13 +227,14 @@ unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
         "stp q30, q31, [{3}, {0} + 16 * 30]",
         "mrs x9, fpcr",
         "add {3}, {3}, {1}",
-        "str x9, [{3}]",
+        "str w9, [{3}]",
         "mrs x9, fpsr",
-        "str x9, [{3}, {2} - {1}]",
+        "str w9, [{3}, {2} - {1}]",
         const offset_of!(FloatRegisters, fp_simd_regs),
         const offset_of!(FloatRegisters, fpcr),
         const offset_of!(FloatRegisters, fpsr),
         inout(reg) float_regs => _,
+        lateout("x9") _,
         );
     }
 }
@@ -259,14 +260,15 @@ unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
         "ldp q28, q29, [{3}, {0} + 16 * 28]",
         "ldp q30, q31, [{3}, {0} + 16 * 30]",
         "add {3}, {3}, {1}",
-        "ldr x9, [{3}]",
+        "ldr w9, [{3}]",
         "msr fpcr, x9",
-        "ldr x9, [{3}, {2} - {1}]",
+        "ldr w9, [{3}, {2} - {1}]",
         "msr fpsr, x9",
         const offset_of!(FloatRegisters, fp_simd_regs),
         const offset_of!(FloatRegisters, fpcr),
         const offset_of!(FloatRegisters, fpsr),
         inout(reg) float_regs => _,
+        lateout("x9") _,
         );
     }
 }
