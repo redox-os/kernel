@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::{
-    Arch, FrameAllocator, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress, TableKind,
-    VirtualAddress,
+    Arch, FrameAllocator, FrameCount, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress,
+    TableKind, VirtualAddress,
 };
 
 pub struct PageMapper<A, F> {
@@ -155,11 +155,12 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         }
     }
 
-    pub unsafe fn map_phys(
+    pub unsafe fn map_phys_inner(
         &mut self,
         virt: VirtualAddress,
         phys: PhysicalAddress,
         flags: PageFlags<A>,
+        mask: u128,
     ) -> Option<PageFlush<A>> {
         unsafe {
             //TODO: verify virt and phys are aligned
@@ -177,7 +178,12 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
                 let next = match table.next(i) {
                     Some(some) => some,
                     None => {
-                        let next_phys = self.allocator.allocate_one()?;
+                        let next_phys = if mask != u128::MAX {
+                            self.allocator
+                                .allocate_with_mask(FrameCount::new(1), mask)?
+                        } else {
+                            self.allocator.allocate_one()?
+                        };
                         //TODO: correct flags?
                         let flags = A::ENTRY_FLAG_DEFAULT_TABLE
                             | if virt.kind() == TableKind::User {
@@ -192,6 +198,25 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
                 table = next;
             }
         }
+    }
+
+    pub unsafe fn map_phys_with_mask(
+        &mut self,
+        virt: VirtualAddress,
+        phys: PhysicalAddress,
+        flags: PageFlags<A>,
+        mask: u128,
+    ) -> Option<PageFlush<A>> {
+        unsafe { self.map_phys_inner(virt, phys, flags, mask) }
+    }
+
+    pub unsafe fn map_phys(
+        &mut self,
+        virt: VirtualAddress,
+        phys: PhysicalAddress,
+        flags: PageFlags<A>,
+    ) -> Option<PageFlush<A>> {
+        unsafe { self.map_phys_inner(virt, phys, flags, u128::MAX) }
     }
 
     pub unsafe fn map_linearly(

@@ -1,8 +1,9 @@
-use core::ops::Add;
+use core::{ops::Add, slice};
 
 use crate::{
     acpi,
-    cpu_set::LogicalCpuId,
+    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    percpu,
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -17,6 +18,15 @@ static DOMAIN_NODE_MAP: Once<&'static [u32]> = Once::new();
 static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
+static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
+pub static LOGICAL_CPU_ID_MAP: Once<Vec<u32>> = Once::new();
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct NumaNode {
+    pub cpus: u128,
+    pub memories: u128,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct NumaMemory {
@@ -56,6 +66,35 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
         acpi::slit::init(allocator, &DISTANCES);
+    }
+
+    if let Some(cpus) = NUMA_CPUS.get()
+        && let Some(memories) = NUMA_MEMORY.get()
+    {
+        let numa_nodes = unsafe {
+            slice::from_raw_parts_mut(
+                memories.as_ptr().add(MAX_DOMAINS).addr() as *mut NumaNode,
+                MAX_DOMAINS,
+            )
+        };
+        numa_nodes.fill(NumaNode {
+            cpus: 0,
+            memories: 0,
+        });
+
+        for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
+            numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
+        }
+
+        for (i, memory) in memories
+            .iter()
+            .enumerate()
+            .filter(|(i, memory)| memory.length != 0)
+        {
+            numa_nodes[memory.node_id as usize].memories |= 1u128 << i;
+        }
+
+        NUMA_NODES.call_once(|| numa_nodes);
     }
 }
 
@@ -140,15 +179,6 @@ impl Iterator for NumaMemoryIter {
             base: PhysicalAddress::new(mem.start),
             size: mem.length,
         })
-    }
-}
-
-impl NumaMemoryIter {
-    /// Skips an arbitrarily chosen `i`th element. Unlike `skip`, which skips the first `n` elements,
-    /// `iskip` can ignore non-consecutive elements
-    pub fn iskip(&self, addr: usize) -> Option<usize> {
-        let i = self.mem.binary_search_by_key(&addr, |e| e.start).ok()?;
-        Some(i)
     }
 }
 
@@ -251,4 +281,27 @@ pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         .map(|e| e.to_ne_bytes())
         .flatten()
         .collect())
+}
+
+pub fn free_list_mask() -> Option<u128> {
+    let cpu = percpu::PercpuBlock::current();
+    let cpu_id = if let Some(map) = LOGICAL_CPU_ID_MAP.get() {
+        *map.get(cpu.cpu_id.get() as usize).unwrap()
+    } else {
+        cpu.cpu_id.get()
+    };
+
+    let mut mask = 0;
+    if let Some(nodes) = NUMA_NODES.get() {
+        let node = nodes.iter().find_map(|node| {
+            if node.cpus & 1u128 << cpu_id != 0 {
+                Some(node)
+            } else {
+                None
+            }
+        })?;
+        return Some(node.memories);
+    }
+
+    None
 }

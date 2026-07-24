@@ -24,6 +24,7 @@ use crate::{
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
         VirtualAddress, PAGE_SIZE,
     },
+    numa,
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
     sync::{
@@ -1339,9 +1340,10 @@ impl Grant {
         if !span.count.is_power_of_two() {
             warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
         }
+        let mask = numa::free_list_mask().unwrap_or(u128::MAX);
 
         let alloc_order = span.count.next_power_of_two().trailing_zeros();
-        let base = crate::memory::allocate_p2frame(alloc_order).ok_or(Enomem)?;
+        let base = crate::memory::allocate_p2frame_with_mask(mask, alloc_order).ok_or(Enomem)?;
 
         for (i, page) in span.pages().enumerate() {
             let frame = base.next_by(i);
@@ -1353,7 +1355,7 @@ impl Grant {
 
             unsafe {
                 let result = mapper
-                    .map_phys(page.start_address(), frame.base(), flags)
+                    .map_phys_with_mask(page.start_address(), frame.base(), flags, mask)
                     .expect("TODO: page table OOM");
                 result.ignore();
 
@@ -1381,6 +1383,7 @@ impl Grant {
         flusher: &mut Flusher,
         shared: bool,
     ) -> Result<Grant, Enomem> {
+        let mask = numa::free_list_mask().unwrap_or(u128::MAX);
         const MAX_EAGER_PAGES: usize = 16;
 
         let (the_frame, the_frame_info) = the_zeroed_frame();
@@ -1395,9 +1398,12 @@ impl Grant {
                     .add_ref(RefKind::Cow)
                     .expect("the static zeroed frame cannot be shared!");
 
-                let Some(result) =
-                    mapper.map_phys(page.start_address(), the_frame.base(), flags.write(false))
-                else {
+                let Some(result) = mapper.map_phys_with_mask(
+                    page.start_address(),
+                    the_frame.base(),
+                    flags.write(false),
+                    mask,
+                ) else {
                     break;
                 };
                 result.ignore();

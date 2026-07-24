@@ -52,6 +52,10 @@ pub unsafe trait FrameAllocator {
         self.allocate(FrameCount::new(1))
     }
 
+    fn allocate_with_mask(&mut self, count: FrameCount, _: u128) -> Option<PhysicalAddress> {
+        self.allocate(count)
+    }
+
     unsafe fn free_one(&mut self, address: PhysicalAddress) {
         unsafe {
             self.free(address, FrameCount::new(1));
