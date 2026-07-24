@@ -14,8 +14,8 @@ use syscall::EINTR;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, AddrSpace, Provider},
-        ContextLock,
+        memory::{AccessMode, AddrSpace, AddrSpaceWrapper, Provider},
+        unblock_context, ContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
     sync::{CleanLockToken, Mutex, L1},
@@ -213,7 +213,7 @@ pub fn futex(
                         // SAFETY: already verified index is less than length
                         let futex = unsafe { futexes.get_unchecked_mut(i) };
                         if let Some(ctx) = futex.context_lock.upgrade() {
-                            ctx.write(token.token()).unblock();
+                            unblock_context(&ctx, &mut token.token().downgrade());
                         }
                         futexes.swap_remove(i);
                         woken += 1;
