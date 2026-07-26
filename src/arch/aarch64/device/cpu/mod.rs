@@ -3,6 +3,7 @@ use core::fmt::{Result, Write};
 use crate::arch::device::cpu::registers::{control_regs, id_regs};
 
 pub mod registers;
+mod topology;
 
 bitfield::bitfield! {
     pub struct MachineId(u32);
@@ -35,12 +36,6 @@ const IMPLEMENTERS: [&'static str; 14] = [
     "AMCC", "Qualcomm", "Marvell", "Intel", "Ampere",
 ];
 
-enum VariantID {
-    Unknown,
-}
-
-const VARIANTS: [&'static str; 1] = ["Unknown"];
-
 enum ArchitectureID {
     Unknown,
     V4,
@@ -50,10 +45,20 @@ enum ArchitectureID {
     V5TE,
     V5TEJ,
     V6,
+    FeatureRegisters,
 }
 
-const ARCHITECTURES: [&'static str; 8] =
-    ["Unknown", "v4", "v4T", "v5", "v5T", "v5TE", "v5TEJ", "v6"];
+const ARCHITECTURES: [&'static str; 9] = [
+    "Unknown",
+    "v4",
+    "v4T",
+    "v5",
+    "v5T",
+    "v5TE",
+    "v5TEJ",
+    "v6",
+    "v8+ (feature registers)",
+];
 
 enum PartNumberID {
     Unknown,
@@ -81,28 +86,21 @@ const PART_NUMBERS: [&'static str; 10] = [
     "Cortex-A75",
 ];
 
-enum RevisionID {
-    Unknown,
-    Thunder1_0,
-    Thunder1_1,
-}
-
-const REVISIONS: [&'static str; 3] = ["Unknown", "Thunder-1.0", "Thunder-1.1"];
-
 struct CpuInfo {
+    midr: u32,
     implementer: &'static str,
-    variant: &'static str,
+    variant: u32,
     architecture: &'static str,
     part_number: &'static str,
-    revision: &'static str,
+    revision: u32,
     aa64isar0: id_regs::AA64Isar0,
     aa64isar1: id_regs::AA64Isar1,
 }
 
 impl CpuInfo {
     fn new() -> CpuInfo {
-        let midr = unsafe { control_regs::midr() };
-        let midr = MachineId(midr);
+        let midr_raw = unsafe { control_regs::midr() };
+        let midr = MachineId(midr_raw);
 
         let implementer = match midr.get_implementer() {
             0x41 => IMPLEMENTERS[ImplementerID::Arm as usize],
@@ -121,9 +119,7 @@ impl CpuInfo {
             _ => IMPLEMENTERS[ImplementerID::Unknown as usize],
         };
 
-        let variant = match midr.get_variant() {
-            _ => VARIANTS[VariantID::Unknown as usize],
-        };
+        let variant = midr.get_variant();
 
         let architecture = match midr.get_architecture() {
             0b0001 => ARCHITECTURES[ArchitectureID::V4 as usize],
@@ -133,6 +129,10 @@ impl CpuInfo {
             0b0101 => ARCHITECTURES[ArchitectureID::V5TE as usize],
             0b0110 => ARCHITECTURES[ArchitectureID::V5TEJ as usize],
             0b0111 => ARCHITECTURES[ArchitectureID::V6 as usize],
+            // Arm reserves 0xf to mean that the architectural version is
+            // described by the feature ID registers. On AArch64 this is the
+            // normal ARMv8-or-later encoding, not an unknown architecture.
+            0b1111 => ARCHITECTURES[ArchitectureID::FeatureRegisters as usize],
             _ => ARCHITECTURES[ArchitectureID::Unknown as usize],
         };
 
@@ -149,22 +149,13 @@ impl CpuInfo {
             _ => PART_NUMBERS[PartNumberID::Unknown as usize],
         };
 
-        let revision = match part_number {
-            "Thunder" => {
-                let val = match midr.get_revision() {
-                    0x00 => REVISIONS[RevisionID::Thunder1_0 as usize],
-                    0x01 => REVISIONS[RevisionID::Thunder1_1 as usize],
-                    _ => REVISIONS[RevisionID::Unknown as usize],
-                };
-                val
-            }
-            _ => REVISIONS[RevisionID::Unknown as usize],
-        };
+        let revision = midr.get_revision();
 
         let aa64isar0 = id_regs::aa64isar0();
         let aa64isar1 = id_regs::aa64isar1();
 
         CpuInfo {
+            midr: midr_raw,
             implementer,
             variant,
             architecture,
@@ -179,11 +170,19 @@ impl CpuInfo {
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     let cpuinfo = CpuInfo::new();
 
+    if let Some((described, psci_secondaries)) = topology::summary() {
+        writeln!(
+            w,
+            "DT CPUs: {} ({} PSCI secondaries)",
+            described, psci_secondaries
+        )?;
+    }
+    writeln!(w, "MIDR_EL1: 0x{:08x}", cpuinfo.midr)?;
     writeln!(w, "Implementer: {}", cpuinfo.implementer)?;
-    writeln!(w, "Variant: {}", cpuinfo.variant)?;
+    writeln!(w, "Variant: 0x{:x}", cpuinfo.variant)?;
     writeln!(w, "Architecture version: {}", cpuinfo.architecture)?;
     writeln!(w, "Part Number: {}", cpuinfo.part_number)?;
-    writeln!(w, "Revision: {}", cpuinfo.revision)?;
+    writeln!(w, "Revision: 0x{:x}", cpuinfo.revision)?;
 
     // Print detected CPU features.
     // Follow the naming convention estabilished by `std::arch::is_aarch64_feature_detected`.
