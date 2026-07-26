@@ -6,7 +6,10 @@ use crate::{
     },
     sync::CleanLockToken,
 };
-use core::ptr::{read_volatile, write_volatile};
+use core::{
+    ptr::{read_volatile, write_volatile},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use fdt::{node::FdtNode, Fdt};
 use syscall::{
     error::{Error, EINVAL},
@@ -17,14 +20,124 @@ static GICD_CTLR: u32 = 0x000;
 static GICD_TYPER: u32 = 0x004;
 static GICD_ISENABLER: u32 = 0x100;
 static GICD_ICENABLER: u32 = 0x180;
+static GICD_ICPENDR: u32 = 0x280;
+static GICD_ICACTIVER: u32 = 0x380;
 static GICD_IPRIORITY: u32 = 0x400;
 static GICD_ITARGETSR: u32 = 0x800;
 static GICD_ICFGR: u32 = 0xc00;
+static GICD_SGIR: u32 = 0xf00;
 
 static GICC_EOIR: u32 = 0x0010;
 static GICC_IAR: u32 = 0x000c;
 static GICC_CTLR: u32 = 0x0000;
 static GICC_PMR: u32 = 0x0004;
+static GICC_BPR: u32 = 0x0008;
+
+static GICD_BASE: AtomicUsize = AtomicUsize::new(0);
+static GICC_BASE: AtomicUsize = AtomicUsize::new(0);
+static GIC_IRQ_BASE: AtomicUsize = AtomicUsize::new(0);
+static GIC_CPU_CAPACITY: AtomicUsize = AtomicUsize::new(0);
+
+fn read32(base: usize, offset: u32) -> u32 {
+    unsafe { read_volatile((base + offset as usize) as *const u32) }
+}
+
+fn write32(base: usize, offset: u32, value: u32) {
+    unsafe { write_volatile((base + offset as usize) as *mut u32, value) }
+}
+
+pub(crate) fn active() -> bool {
+    GICD_BASE.load(Ordering::Acquire) != 0 && GICC_BASE.load(Ordering::Acquire) != 0
+}
+
+pub(crate) fn cpu_capacity() -> Option<usize> {
+    let count = GIC_CPU_CAPACITY.load(Ordering::Acquire);
+    (count != 0).then_some(count)
+}
+
+pub(crate) fn init_current_cpu() -> Result<()> {
+    let dist = GICD_BASE.load(Ordering::Acquire);
+    let cpu = GICC_BASE.load(Ordering::Acquire);
+    if dist == 0 || cpu == 0 {
+        return Err(Error::new(EINVAL));
+    }
+
+    write32(cpu, GICC_CTLR, 0);
+    write32(cpu, GICC_BPR, 0);
+    // Match Linux gic_cpu_config(): reset the banked SGI/PPI state before
+    // enabling the local CPU interface. Firmware can leave a private
+    // interrupt pending or active across CPU_ON, which would otherwise make
+    // the first timer/SGI delivery unreliable.
+    write32(dist, GICD_ICENABLER, 0xffff_ffff);
+    write32(dist, GICD_ICPENDR, 0xffff_ffff);
+    write32(dist, GICD_ICACTIVER, 0xffff_ffff);
+    for irq in (0..32).step_by(4) {
+        write32(dist, GICD_IPRIORITY + irq, 0xa0a0_a0a0);
+    }
+    write32(cpu, GICC_PMR, 0xff);
+    unsafe { core::arch::asm!("dsb sy", options(nostack, preserves_flags)) };
+    write32(cpu, GICC_CTLR, 1);
+
+    // ITARGETSR0 is banked for SGIs/PPIs and exposes the target bit assigned
+    // to the current GICv2 CPU interface.
+    let target_mask = (read32(dist, GICD_ITARGETSR) & 0xff) as u8;
+    if target_mask == 0 {
+        return Err(Error::new(EINVAL));
+    }
+    crate::percpu::PercpuBlock::current()
+        .misc_arch_info
+        .gic_target_mask
+        .store(target_mask, Ordering::Release);
+    Ok(())
+}
+
+pub(crate) fn enable_local_irq(hwirq: u32) -> Result<()> {
+    let dist = GICD_BASE.load(Ordering::Acquire);
+    if dist == 0 || hwirq >= 32 {
+        return Err(Error::new(EINVAL));
+    }
+    write32(dist, GICD_ISENABLER + 4 * (hwirq / 32), 1 << (hwirq % 32));
+    Ok(())
+}
+
+pub(crate) fn acknowledge_local() -> Option<u32> {
+    let cpu = GICC_BASE.load(Ordering::Acquire);
+    (cpu != 0).then(|| read32(cpu, GICC_IAR))
+}
+
+pub(crate) fn end_local(raw_iar: u32) -> bool {
+    let cpu = GICC_BASE.load(Ordering::Acquire);
+    if cpu == 0 {
+        return false;
+    }
+    write32(cpu, GICC_EOIR, raw_iar);
+    true
+}
+
+pub(crate) fn virq_for(raw_iar: u32) -> Option<usize> {
+    let hwirq = raw_iar & 0x3ff;
+    (hwirq < 1020).then(|| GIC_IRQ_BASE.load(Ordering::Acquire) + hwirq as usize)
+}
+
+pub(crate) fn send_sgi(sgi: u8, target_mask: Option<u8>) -> Result<()> {
+    if sgi >= 16 {
+        return Err(Error::new(EINVAL));
+    }
+    let dist = GICD_BASE.load(Ordering::Acquire);
+    if dist == 0 {
+        return Err(Error::new(EINVAL));
+    }
+
+    let value = match target_mask {
+        Some(0) => return Err(Error::new(EINVAL)),
+        Some(mask) => u32::from(mask) << 16,
+        // Target list filter 1 sends to all CPU interfaces except this one.
+        None => 1 << 24,
+    } | u32::from(sgi);
+    unsafe { core::arch::asm!("dsb ishst", options(nostack, preserves_flags)) };
+    write32(dist, GICD_SGIR, value);
+    Ok(())
+}
 
 pub struct GenericInterruptController {
     pub gic_dist_if: GicDistIf,
@@ -119,7 +232,9 @@ impl InterruptController for GenericInterruptController {
 
         info!("gic irq_range = ({}, {})", idx, idx + cnt);
         self.irq_range = (idx, idx + cnt);
+        GIC_IRQ_BASE.store(idx, Ordering::Release);
         *irq_idx = idx + cnt;
+        init_current_cpu()?;
         Ok(())
     }
     fn irq_ack(&mut self) -> u32 {
@@ -151,6 +266,7 @@ impl InterruptController for GenericInterruptController {
         return Ok(off + self.irq_range.0);
     }
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize> {
+        let hwirq = hwirq & 0x3ff;
         if hwirq >= self.gic_dist_if.nirqs {
             None
         } else {
@@ -170,12 +286,14 @@ impl GicDistIf {
     pub unsafe fn init(&mut self, addr: usize) {
         unsafe {
             self.address = addr;
+            GICD_BASE.store(addr, Ordering::Release);
 
             // Disable IRQ Distribution
             self.write(GICD_CTLR, 0);
 
             let typer = self.read(GICD_TYPER);
             self.ncpus = ((typer & (0x7 << 5)) >> 5) + 1;
+            GIC_CPU_CAPACITY.store(self.ncpus as usize, Ordering::Release);
             self.nirqs = ((typer & 0x1f) + 1) * 32;
             info!(
                 "gic: Distributor supports {:?} CPUs and {:?} IRQs",
@@ -283,6 +401,7 @@ impl GicCpuIf {
     pub unsafe fn init(&mut self, addr: usize) {
         unsafe {
             self.address = addr;
+            GICC_BASE.store(addr, Ordering::Release);
 
             // Enable CPU0's GIC interface
             self.write(GICC_CTLR, 1);
@@ -293,8 +412,8 @@ impl GicCpuIf {
 
     unsafe fn irq_ack(&mut self) -> u32 {
         unsafe {
-            let irq = self.read(GICC_IAR) & 0x1ff;
-            if irq == 1023 {
+            let irq = self.read(GICC_IAR);
+            if irq & 0x3ff == 1023 {
                 panic!("irq_ack: got ID 1023!!!");
             }
             irq
