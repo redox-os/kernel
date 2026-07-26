@@ -5,6 +5,7 @@ use fdt::Fdt;
 pub mod cpu;
 pub mod generic_timer;
 pub mod irqchip;
+pub mod psci;
 pub mod rtc;
 pub mod serial;
 
@@ -39,6 +40,8 @@ unsafe fn init_root_ic(fdt: &Fdt) {
 
 pub unsafe fn init_devicetree(fdt: &Fdt) {
     unsafe {
+        info!("PSCI INIT");
+        psci::init(fdt);
         info!("IRQCHIP INIT");
         crate::dtb::irqchip::init(&fdt);
         init_root_ic(&fdt);
