@@ -1,8 +1,12 @@
+use core::sync::atomic::Ordering;
+
+use crate::percpu::PercpuBlock;
+
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum IpiKind {
-    Wakeup = 0x40,
-    Tlb = 0x41,
+    Wakeup = 0,
+    Tlb = 1,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -12,19 +16,60 @@ pub enum IpiTarget {
 }
 
 #[inline(always)]
-pub fn ipi(_kind: IpiKind, _target: IpiTarget) {
-    if cfg!(not(feature = "multi_core")) {
+pub fn ipi(kind: IpiKind, target: IpiTarget) {
+    if cfg!(not(feature = "multi_core")) || crate::cpu_count() <= 1 {
         return;
     }
 
-    // FIXME implement
+    match target {
+        IpiTarget::Other => {
+            if let Err(error) = crate::arch::device::irqchip::send_sgi(kind as u8, None) {
+                warn!("failed to send {:?} IPI: {:?}", kind, error);
+            }
+        }
+    }
 }
 
 #[inline(always)]
-pub fn ipi_single(_kind: IpiKind, _target: &crate::percpu::PercpuBlock) {
+pub fn ipi_single(kind: IpiKind, target: &PercpuBlock) {
     if cfg!(not(feature = "multi_core")) {
         return;
     }
 
-    // FIXME implement
+    let target_mask = target
+        .misc_arch_info
+        .gic_target_mask
+        .load(Ordering::Acquire);
+    if let Err(error) = crate::arch::device::irqchip::send_sgi(kind as u8, Some(target_mask)) {
+        warn!(
+            "failed to send {:?} IPI to logical {}: {:?}",
+            kind, target.cpu_id, error
+        );
+    }
+}
+
+pub(crate) fn handle(hwirq: u32, raw_iar: u32) -> bool {
+    let handled = match hwirq {
+        x if x == IpiKind::Wakeup as u32 => true,
+        x if x == IpiKind::Tlb as u32 => {
+            unsafe { core::arch::asm!("dmb ish", options(nostack, preserves_flags)) };
+            PercpuBlock::current().maybe_handle_tlb_shootdown();
+            true
+        }
+        _ => false,
+    };
+
+    if handled {
+        let cpu_id = crate::cpu_id();
+        if cpu_id != crate::cpu_set::LogicalCpuId::BSP
+            && !PercpuBlock::current()
+                .misc_arch_info
+                .sgi_irq_seen
+                .swap(true, Ordering::AcqRel)
+        {
+            info!("CPU logical {}: SGI IRQ path active", cpu_id);
+        }
+        crate::arch::device::irqchip::end_root(raw_iar);
+    }
+    handled
 }
