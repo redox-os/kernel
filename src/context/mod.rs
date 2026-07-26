@@ -7,6 +7,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
+use syscall::NumaMemoryPolicy;
 
 use crate::{
     context::{
@@ -209,6 +210,16 @@ pub fn current() -> Arc<ContextLock> {
     PercpuBlock::current()
         .switch_internals
         .with_context(Arc::clone)
+}
+/// Gets the current process's memory policy
+///
+/// SAFETY: Do not call this while holding locks
+pub unsafe fn current_mem_policy() -> Option<NumaMemoryPolicy> {
+    let mut token = unsafe { CleanLockToken::new() };
+    let context = try_current()?;
+    let mut context = context.read(token.token());
+    let (context, mut token) = context.token_split();
+    Some(*context.addr_space.as_ref()?.mem_policy.read(token))
 }
 pub fn try_current() -> Option<Arc<ContextLock>> {
     PercpuBlock::current()

@@ -5,10 +5,13 @@ use rmm::PhysicalAddress;
 
 use crate::{
     context::{
+        self,
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
     },
     memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
+    numa::{self, LOGICAL_CPU_ID_MAP},
+    percpu,
     sync::CleanLockToken,
     syscall::{
         data::{Map, StatVfs},

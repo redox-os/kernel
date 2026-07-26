@@ -6,7 +6,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
-use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
+use syscall::{NumaMemoryPolicy, SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
     arch::interrupt::InterruptStack,

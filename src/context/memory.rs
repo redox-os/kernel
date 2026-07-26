@@ -12,9 +12,9 @@ use core::{
     ops::{Bound, Deref},
     sync::atomic::{AtomicU32, Ordering},
 };
-use rmm::{Arch as _, PageFlush};
+use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush};
 use smallvec::SmallVec;
-use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags};
+use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags, NumaMemoryPolicy};
 
 use crate::{
     context::file::LockedFileDescription,
@@ -22,8 +22,9 @@ use crate::{
     memory::{
         deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
-        VirtualAddress, PAGE_SIZE,
+        TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
+    numa,
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
     sync::{
@@ -97,6 +98,7 @@ pub struct AddrSpaceWrapper {
     pub inner: RwLock<L5, AddrSpace>,
     pub tlb_ack: AtomicU32,
     pub used_by: LogicalCpuSet,
+    pub mem_policy: RwLock<L5, NumaMemoryPolicy>,
 }
 impl AddrSpaceWrapper {
     pub fn new() -> Result<Arc<Self>> {
@@ -104,6 +106,7 @@ impl AddrSpaceWrapper {
             inner: RwLock::new(AddrSpace::new()?),
             tlb_ack: AtomicU32::new(0),
             used_by: LogicalCpuSet::empty(),
+            mem_policy: RwLock::new(NumaMemoryPolicy::NodeLocalLeniant),
         }))
     }
     pub fn acquire_read<'a>(
@@ -1340,8 +1343,13 @@ impl Grant {
             warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
         }
 
-        let alloc_order = span.count.next_power_of_two().trailing_zeros();
-        let base = crate::memory::allocate_p2frame(alloc_order).ok_or(Enomem)?;
+        let count = span.count.next_power_of_two();
+        let mut frame_allocator = TheFrameAllocator;
+        let base = Frame::containing(
+            frame_allocator
+                .allocate(FrameCount::new(count))
+                .ok_or(Enomem)?,
+        );
 
         for (i, page) in span.pages().enumerate() {
             let frame = base.next_by(i);

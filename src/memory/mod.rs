@@ -9,8 +9,10 @@ use core::{
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
+use bitfield::Bit;
 pub use kernel_mapper::KernelMapper;
 use spin::{once::Once, Mutex};
+use syscall::NumaMemoryPolicy;
 
 pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
@@ -70,6 +72,32 @@ pub fn used_frames() -> usize {
 pub fn total_frames() -> usize {
     // TODO: Include bump allocator static pages?
     sections().iter().map(|section| section.frames.len()).sum()
+}
+
+pub fn allocate_p2frame_with_mask(mask: u128, order: u32, fallback: bool) -> Option<Frame> {
+    for i in 0..128 {
+        if mask.bit(i) == true
+            && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+        {
+            if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+                return Some(frame);
+            }
+        }
+    }
+
+    if fallback {
+        for i in 0..128 {
+            if mask.bit(i) == false
+                && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+            {
+                if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+                    return Some(frame);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Allocate a range of frames
@@ -527,6 +555,8 @@ struct FreeList {
     for_orders: [Option<Frame>; ORDER_COUNT as usize],
     used_frames: usize,
 }
+
+/// Each free list in this array corresponds to a discrete memory region found in the SRAT.
 static FREE_LISTS: Once<&'static [Mutex<FreeList>]> = Once::new();
 
 pub struct Section {
@@ -965,6 +995,7 @@ pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
         THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
     }
 }
+
 #[derive(Debug, PartialEq)]
 pub enum AddRefError {
     CowToShared,
@@ -1275,8 +1306,24 @@ pub struct TheFrameAllocator;
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let order = count.data().next_power_of_two().trailing_zeros();
-        allocate_p2frame(order).map(|f| f.base())
+        if let Some(mask) = numa::free_list_mask()
+            && let Some(mem_policy) = unsafe { context::current_mem_policy() }
+        {
+            allocate_p2frame_with_mask(
+                mask,
+                order,
+                if let NumaMemoryPolicy::NodeLocalLeniant = mem_policy {
+                    true
+                } else {
+                    false
+                },
+            )
+            .map(|f| f.base())
+        } else {
+            allocate_p2frame(order).map(|f| f.base())
+        }
     }
+
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
         unsafe {
             let order = count.data().next_power_of_two().trailing_zeros();
