@@ -579,6 +579,9 @@ impl Kstack {
     pub fn initial_top(&self) -> *mut u8 {
         unsafe { (RmmA::phys_to_virt(self.base.base()).data() as *mut u8).add(PAGE_SIZE << 4) }
     }
+    pub fn initial_top_phys(&self) -> usize {
+        self.base.base().data() + self.len()
+    }
     pub fn len(&self) -> usize {
         PAGE_SIZE << 4
     }
