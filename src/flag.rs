@@ -322,6 +322,21 @@ impl AcpiVerb {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NumaVerb {
+    SetMemPolicy = 1,
+    GetMemPolicy = 2,
+}
+impl NumaVerb {
+    pub fn try_from_raw(value: u64) -> Option<Self> {
+        Some(match value {
+            1 => Self::SetMemPolicy,
+            2 => Self::GetMemPolicy,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(usize)]
 pub enum SchemeSocketCall {
     ObtainFd = 0,

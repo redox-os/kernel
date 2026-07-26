@@ -4,7 +4,10 @@ use core::{
     slice,
 };
 
-use crate::flag::{EventFlags, MapFlags, PtraceFlags, StdFsCallKind};
+use crate::{
+    flag::{EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
+    Error, EINVAL,
+};
 
 #[derive(Copy, Clone, Debug, Default)]
 #[repr(C)]
@@ -498,4 +501,26 @@ impl GlobalSchemes {
 pub struct KernelSchemeInfo {
     pub scheme_id: u8,
     pub fd: usize,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub enum NumaMemoryPolicy {
+    /// Allocates from local node; fails if no memory is available in local node
+    NodeLocalStrict = 1,
+
+    /// Allocates from local node; falls back to allocating from other nodes in the increasing order of distance from the current node
+    NodeLocalLeniant = 2,
+}
+
+impl TryFrom<u64> for NumaMemoryPolicy {
+    type Error = Error;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(NumaMemoryPolicy::NodeLocalStrict),
+            2 => Ok(NumaMemoryPolicy::NodeLocalLeniant),
+            _ => Err(Error::new(EINVAL)),
+        }
+    }
 }
