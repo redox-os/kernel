@@ -2988,8 +2988,20 @@ impl<'a, 'addrsp> Flusher<'a, 'addrsp> {
             rmm::PageFlushAll::<RmmA>::new().flush();
         }
 
+        #[cfg(target_arch = "aarch64")]
+        let mut stall_watch = crate::arch::misc::StallWatch::start(2);
+
         while self.state.ackword.load(Ordering::SeqCst) < affected_cpu_count {
             PercpuBlock::current().maybe_handle_tlb_shootdown();
+            #[cfg(target_arch = "aarch64")]
+            if stall_watch.stalled() {
+                error!(
+                    "TLB shootdown stalled on CPU {}: acknowledgements {}/{}",
+                    current_cpu_id,
+                    self.state.ackword.load(Ordering::SeqCst),
+                    affected_cpu_count
+                );
+            }
             core::hint::spin_loop();
         }
 
