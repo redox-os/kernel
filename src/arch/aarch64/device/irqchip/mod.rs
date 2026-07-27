@@ -42,7 +42,10 @@ pub(crate) fn ic_for_chip(fdt: &Fdt, node: &FdtNode) -> Option<usize> {
 
 pub(crate) fn init_ap() -> syscall::Result<()> {
     if gic::active() {
-        gic::init_current_cpu()
+        gic::init_current_cpu()?;
+        gic::current_cpu_target_mask()
+            .map(|_| ())
+            .ok_or_else(|| syscall::Error::new(syscall::error::EINVAL))
     } else {
         Err(syscall::Error::new(syscall::error::ENODEV))
     }
@@ -50,6 +53,10 @@ pub(crate) fn init_ap() -> syscall::Result<()> {
 
 pub(crate) fn cpu_capacity() -> Option<usize> {
     gic::cpu_capacity()
+}
+
+pub(crate) fn current_cpu_target_mask() -> Option<u8> {
+    gic::active().then(gic::current_cpu_target_mask).flatten()
 }
 
 pub(crate) fn enable_local_irq(hwirq: u32) -> syscall::Result<()> {
