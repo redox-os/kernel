@@ -13,7 +13,27 @@ use super::registers::control_regs;
 // CPU reg value. This is MPIDR_HWID_BITMASK in Linux arm64.
 pub(super) const MPIDR_HWID_MASK: u64 = 0x0000_00ff_00ff_ffff;
 
-static TOPOLOGY: Once<Vec<CpuDescription>> = Once::new();
+static TOPOLOGY: Once<CpuTopology> = Once::new();
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TopologySource {
+    DeviceTree,
+    Acpi,
+}
+
+impl TopologySource {
+    pub(super) const fn name(self) -> &'static str {
+        match self {
+            Self::DeviceTree => "DT",
+            Self::Acpi => "ACPI",
+        }
+    }
+}
+
+struct CpuTopology {
+    source: TopologySource,
+    cpus: Vec<CpuDescription>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum EnableMethod {
@@ -55,6 +75,8 @@ enum TopologyError<'a> {
     MissingReg(&'a str),
     InvalidReg(&'a str),
     InvalidMpidr { node: &'a str, mpidr: u64 },
+    InvalidAcpiMpidr(u64),
+    InvalidGicc(usize),
     DuplicateMpidr(u64),
     BootCpuMissing(u64),
 }
@@ -78,6 +100,12 @@ impl fmt::Display for TopologyError<'_> {
             Self::InvalidReg(node) => write!(f, "CPU node {:?} has invalid reg property", node),
             Self::InvalidMpidr { node, mpidr } => {
                 write!(f, "CPU node {:?} has invalid MPIDR {:#x}", node, mpidr)
+            }
+            Self::InvalidAcpiMpidr(mpidr) => {
+                write!(f, "MADT GICC has invalid MPIDR {:#x}", mpidr)
+            }
+            Self::InvalidGicc(length) => {
+                write!(f, "MADT has malformed GICC entry of length {}", length)
             }
             Self::DuplicateMpidr(mpidr) => write!(f, "duplicate CPU MPIDR {:#x}", mpidr),
             Self::BootCpuMissing(mpidr) => {
@@ -194,6 +222,104 @@ fn discover<'b, 'a: 'b>(
     Ok(DiscoveredTopology { cpus, disabled })
 }
 
+fn discover_acpi(
+    madt: &crate::acpi::madt::Madt,
+    boot_mpidr: u64,
+    psci_available: bool,
+) -> Result<DiscoveredTopology, TopologyError<'static>> {
+    use crate::acpi::madt::MadtEntry;
+
+    const GICC_ENABLED: u32 = 1 << 0;
+
+    let mut cpus = Vec::new();
+    let mut disabled = 0;
+    for entry in madt.iter() {
+        let gicc = match entry {
+            MadtEntry::Gicc(gicc) => gicc,
+            MadtEntry::InvalidGicc(length) => return Err(TopologyError::InvalidGicc(length)),
+            _ => continue,
+        };
+        let flags = gicc.flags;
+        if flags & GICC_ENABLED == 0 {
+            disabled += 1;
+            continue;
+        }
+
+        let mpidr = gicc.mpidr;
+        if mpidr & !MPIDR_HWID_MASK != 0 {
+            return Err(TopologyError::InvalidAcpiMpidr(mpidr));
+        }
+        if cpus.iter().any(|cpu: &CpuDescription| cpu.mpidr == mpidr) {
+            return Err(TopologyError::DuplicateMpidr(mpidr));
+        }
+        if cpus.len() >= MAX_CPU_COUNT as usize {
+            return Err(TopologyError::TooManyCpus(cpus.len() + 1));
+        }
+
+        let parking_protocol_version = gicc.parking_protocol_version;
+        let enable_method = if psci_available {
+            EnableMethod::Psci
+        } else if parking_protocol_version != 0 {
+            EnableMethod::Unsupported
+        } else {
+            EnableMethod::None
+        };
+        cpus.push(CpuDescription {
+            mpidr,
+            boot_cpu: mpidr == boot_mpidr,
+            enable_method,
+        });
+    }
+
+    if cpus.is_empty() {
+        return Err(TopologyError::NoEnabledCpus);
+    }
+    let boot_index = cpus
+        .iter()
+        .position(|cpu| cpu.boot_cpu)
+        .ok_or(TopologyError::BootCpuMissing(boot_mpidr))?;
+    cpus.swap(0, boot_index);
+
+    Ok(DiscoveredTopology { cpus, disabled })
+}
+
+fn install(
+    source: TopologySource,
+    discovered: DiscoveredTopology,
+    boot_mpidr: u64,
+) -> &'static [CpuDescription] {
+    let disabled = discovered.disabled;
+    let topology = TOPOLOGY.call_once(|| CpuTopology {
+        source,
+        cpus: discovered.cpus,
+    });
+    let psci_secondaries = topology
+        .cpus
+        .iter()
+        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method == EnableMethod::Psci)
+        .count();
+
+    info!(
+        "{} CPU topology: {} enabled, {} disabled, BSP MPIDR={:#x}, {} PSCI secondaries",
+        topology.source.name(),
+        topology.cpus.len(),
+        disabled,
+        boot_mpidr,
+        psci_secondaries
+    );
+    for (logical_id, cpu) in topology.cpus.iter().enumerate() {
+        debug!(
+            "CPU topology logical #{}: MPIDR={:#x} boot={} enable-method={}",
+            logical_id,
+            cpu.mpidr,
+            cpu.boot_cpu,
+            cpu.enable_method.name()
+        );
+    }
+
+    topology.cpus.as_slice()
+}
+
 pub(super) fn init(fdt: &Fdt<'_>) -> Option<&'static [CpuDescription]> {
     let boot_mpidr = unsafe { control_regs::mpidr() } & MPIDR_HWID_MASK;
     let discovered = match discover(fdt, boot_mpidr) {
@@ -204,40 +330,33 @@ pub(super) fn init(fdt: &Fdt<'_>) -> Option<&'static [CpuDescription]> {
         }
     };
 
-    let disabled = discovered.disabled;
-    let topology = TOPOLOGY.call_once(|| discovered.cpus);
-    let psci_secondaries = topology
-        .iter()
-        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method == EnableMethod::Psci)
-        .count();
-
-    info!(
-        "CPU topology: {} enabled, {} disabled, BSP MPIDR={:#x}, {} PSCI secondaries",
-        topology.len(),
-        disabled,
-        boot_mpidr,
-        psci_secondaries
-    );
-    for (logical_id, cpu) in topology.iter().enumerate() {
-        debug!(
-            "CPU topology logical #{}: MPIDR={:#x} boot={} enable-method={}",
-            logical_id,
-            cpu.mpidr,
-            cpu.boot_cpu,
-            cpu.enable_method.name()
-        );
-    }
-
-    Some(topology.as_slice())
+    Some(install(TopologySource::DeviceTree, discovered, boot_mpidr))
 }
 
-pub(super) fn summary() -> Option<(usize, usize)> {
+pub(super) fn init_acpi(
+    madt: &crate::acpi::madt::Madt,
+    psci_available: bool,
+) -> Option<&'static [CpuDescription]> {
+    let boot_mpidr = unsafe { control_regs::mpidr() } & MPIDR_HWID_MASK;
+    let discovered = match discover_acpi(madt, boot_mpidr, psci_available) {
+        Ok(topology) => topology,
+        Err(error) => {
+            warn!("CPU topology unavailable: {}", error);
+            return None;
+        }
+    };
+
+    Some(install(TopologySource::Acpi, discovered, boot_mpidr))
+}
+
+pub(super) fn summary() -> Option<(TopologySource, usize, usize)> {
     let topology = TOPOLOGY.get()?;
     let psci_secondaries = topology
+        .cpus
         .iter()
         .filter(|cpu| !cpu.boot_cpu && cpu.enable_method == EnableMethod::Psci)
         .count();
-    Some((topology.len(), psci_secondaries))
+    Some((topology.source, topology.cpus.len(), psci_secondaries))
 }
 
 #[cfg(test)]
