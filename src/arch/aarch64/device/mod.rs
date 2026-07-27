@@ -43,6 +43,8 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
     unsafe {
         info!("PSCI INIT");
         psci::init(fdt);
+        info!("CPU TOPOLOGY INIT");
+        cpu::init_topology(fdt);
         info!("IRQCHIP INIT");
         crate::dtb::irqchip::init(&fdt);
         init_root_ic(&fdt);

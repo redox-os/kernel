@@ -156,10 +156,17 @@ static BSP_READY: AtomicBool = AtomicBool::new(false);
 pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
 
-    BSP_READY.store(true, Ordering::SeqCst);
-
     //Initialize the first context, stored in kernel/src/context/mod.rs
     context::init(&mut token);
+    // EMPTY_CR3 and the BSP idle context must exist before secondary CPUs are
+    // released into their own context initialization.
+    BSP_READY.store(true, Ordering::Release);
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        info!("SECONDARY CPU INIT");
+        crate::arch::device::cpu::start_secondaries();
+    }
 
     //Initialize global schemes, such as `acpi:`.
     scheme::init_globals();
@@ -203,7 +210,7 @@ pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
 
     AP_READY.store(true, Ordering::SeqCst);
-    while !BSP_READY.load(Ordering::SeqCst) {
+    while !BSP_READY.load(Ordering::Acquire) {
         hint::spin_loop();
     }
 

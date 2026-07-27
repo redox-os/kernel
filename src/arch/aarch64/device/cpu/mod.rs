@@ -2,6 +2,7 @@ use core::fmt::{Result, Write};
 
 use crate::arch::device::cpu::registers::{control_regs, id_regs};
 
+mod boot;
 pub mod registers;
 mod topology;
 
@@ -273,4 +274,15 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     writeln!(w)?;
 
     Ok(())
+}
+
+pub fn init_topology(fdt: &fdt::Fdt<'_>) {
+    let Some(topology) = topology::init(fdt) else {
+        return;
+    };
+    boot::prepare(topology);
+}
+
+pub fn start_secondaries() {
+    boot::start_secondaries();
 }
