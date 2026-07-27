@@ -54,6 +54,44 @@ fn selected_conduit() -> Option<Conduit> {
     }
 }
 
+pub(crate) fn available() -> bool {
+    selected_conduit().is_some()
+}
+
+fn initialize_conduit(conduit: Conduit, source: &str) {
+    // Probe PSCI_VERSION before publishing the operations so later calls
+    // cannot accidentally use a half-initialized interface.
+    let version = unsafe { invoke_with(conduit, PSCI_VERSION, 0, 0, 0) };
+    if version < 0 {
+        warn!(
+            "PSCI_VERSION failed through {} from {} with {}",
+            conduit.name(),
+            source,
+            version
+        );
+        return;
+    }
+    let version = version as u32;
+    let major = version >> 16;
+    let minor = version & 0xffff;
+    if major == 0 && minor < 2 {
+        warn!(
+            "{} claims PSCI v0.2+ but firmware reported {}.{}",
+            source, major, minor
+        );
+        return;
+    }
+
+    CONDUIT.store(conduit.encoded(), Ordering::Release);
+    info!(
+        "PSCI {}.{} using {} conduit from {}",
+        major,
+        minor,
+        conduit.name(),
+        source
+    );
+}
+
 /// Initializes the PSCI v0.2+ conduit described by the device tree.
 ///
 /// PSCI v0.1 used implementation-defined function IDs in DT properties and is
@@ -86,31 +124,58 @@ pub fn init(fdt: &Fdt<'_>) {
         return;
     };
 
-    // Linux probes PSCI_VERSION before publishing the operations for a v0.2+
-    // node. Do the same and publish the conduit only after validation so later
-    // calls cannot accidentally use a half-initialized interface.
-    let version = unsafe { invoke_with(conduit, PSCI_VERSION, 0, 0, 0) };
-    if version < 0 {
+    initialize_conduit(conduit, "device tree");
+}
+
+/// Initializes the PSCI conduit described by the ARM boot architecture flags
+/// in the ACPI FADT. These fields are at byte offsets 129 and 130 of every FADT
+/// revision that supports AArch64.
+pub(crate) fn init_acpi() {
+    const FADT_ARM_BOOT_ARCH_OFFSET: usize = 129;
+    const FADT_ARM_BOOT_ARCH_END: usize = FADT_ARM_BOOT_ARCH_OFFSET + size_of::<u16>();
+    const PSCI_COMPLIANT: u16 = 1 << 0;
+    const PSCI_USE_HVC: u16 = 1 << 1;
+
+    let fadts = crate::acpi::find_sdt("FACP");
+    let fadt = match fadts.as_slice() {
+        [] => {
+            warn!("ACPI FADT not found; PSCI is unavailable");
+            return;
+        }
+        [fadt] => *fadt,
+        _ => {
+            warn!(
+                "ACPI supplies {} FADTs; PSCI conduit is ambiguous",
+                fadts.len()
+            );
+            return;
+        }
+    };
+    let length = fadt.length as usize;
+    if length < FADT_ARM_BOOT_ARCH_END {
         warn!(
-            "PSCI_VERSION failed through {} with {}",
-            conduit.name(),
-            version
-        );
-        return;
-    }
-    let version = version as u32;
-    let major = version >> 16;
-    let minor = version & 0xffff;
-    if major == 0 && minor < 2 {
-        warn!(
-            "PSCI node claims v0.2+ but firmware reported {}.{}",
-            major, minor
+            "ACPI FADT is too short for ARM boot architecture flags ({})",
+            length
         );
         return;
     }
 
-    CONDUIT.store(conduit.encoded(), Ordering::Release);
-    info!("PSCI {}.{} using {} conduit", major, minor, conduit.name());
+    let arm_boot_arch = u16::from_le(unsafe {
+        ((fadt as *const crate::acpi::sdt::Sdt as *const u8).add(FADT_ARM_BOOT_ARCH_OFFSET)
+            as *const u16)
+            .read_unaligned()
+    });
+    if arm_boot_arch & PSCI_COMPLIANT == 0 {
+        warn!("ACPI FADT does not advertise PSCI compliance");
+        return;
+    }
+
+    let conduit = if arm_boot_arch & PSCI_USE_HVC != 0 {
+        Conduit::Hvc
+    } else {
+        Conduit::Smc
+    };
+    initialize_conduit(conduit, "ACPI FADT");
 }
 
 /// Requests PSCI SYSTEM_RESET. A successful firmware call does not return.

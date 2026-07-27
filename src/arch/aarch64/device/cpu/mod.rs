@@ -171,11 +171,13 @@ impl CpuInfo {
 pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     let cpuinfo = CpuInfo::new();
 
-    if let Some((described, psci_secondaries)) = topology::summary() {
+    if let Some((source, described, psci_secondaries)) = topology::summary() {
         writeln!(
             w,
-            "DT CPUs: {} ({} PSCI secondaries)",
-            described, psci_secondaries
+            "{} CPUs: {} ({} PSCI secondaries)",
+            source.name(),
+            described,
+            psci_secondaries
         )?;
     }
     writeln!(w, "MIDR_EL1: 0x{:08x}", cpuinfo.midr)?;
@@ -278,6 +280,13 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
 
 pub fn init_topology(fdt: &fdt::Fdt<'_>) {
     let Some(topology) = topology::init(fdt) else {
+        return;
+    };
+    boot::prepare(topology);
+}
+
+pub(crate) fn init_topology_acpi(madt: &crate::acpi::madt::Madt) {
+    let Some(topology) = topology::init_acpi(madt, super::psci::available()) else {
         return;
     };
     boot::prepare(topology);
