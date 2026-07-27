@@ -478,6 +478,10 @@ pub(super) fn start_secondaries() {
         );
         return;
     }
+    if crate::arch::device::irqchip::current_cpu_target_mask().is_none() {
+        error!("CPU activation unavailable: BSP has no directed-SGI target mask");
+        return;
+    }
     if !crate::arch::device::generic_timer::ready() {
         error!("CPU activation unavailable: architected timer is not initialized");
         return;

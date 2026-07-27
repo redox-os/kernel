@@ -55,6 +55,14 @@ pub(crate) fn cpu_capacity() -> Option<usize> {
     (count != 0).then_some(count)
 }
 
+pub(crate) fn current_cpu_target_mask() -> Option<u8> {
+    let target_mask = crate::percpu::PercpuBlock::current()
+        .misc_arch_info
+        .gic_target_mask
+        .load(Ordering::Acquire);
+    (target_mask != 0).then_some(target_mask)
+}
+
 pub(crate) fn init_current_cpu() -> Result<()> {
     let dist = GICD_BASE.load(Ordering::Acquire);
     let cpu = GICC_BASE.load(Ordering::Acquire);
@@ -79,11 +87,9 @@ pub(crate) fn init_current_cpu() -> Result<()> {
     write32(cpu, GICC_CTLR, 1);
 
     // ITARGETSR0 is banked for SGIs/PPIs and exposes the target bit assigned
-    // to the current GICv2 CPU interface.
+    // to the current GICv2 CPU interface. On a uniprocessor GIC the target
+    // registers are RAZ/WI, so zero is valid until directed SGIs are needed.
     let target_mask = (read32(dist, GICD_ITARGETSR) & 0xff) as u8;
-    if target_mask == 0 {
-        return Err(Error::new(EINVAL));
-    }
     crate::percpu::PercpuBlock::current()
         .misc_arch_info
         .gic_target_mask
