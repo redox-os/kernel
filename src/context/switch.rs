@@ -187,12 +187,19 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     // Acquire the global lock to ensure exclusive access during context switch and avoid
     // issues that would be caused by the unsafe operations below
     // TODO: Better memory orderings?
+    #[cfg(target_arch = "aarch64")]
+    let mut lock_stall_watch = crate::arch::misc::StallWatch::start(2);
+
     while arch::CONTEXT_SWITCH_LOCK
         .compare_exchange_weak(false, true, Ordering::SeqCst, Ordering::Relaxed)
         .is_err()
     {
         hint::spin_loop();
         percpu.maybe_handle_tlb_shootdown();
+        #[cfg(target_arch = "aarch64")]
+        if lock_stall_watch.stalled() {
+            error!("context switch lock stalled on CPU {}", crate::cpu_id());
+        }
     }
 
     // Lock the previous context.
