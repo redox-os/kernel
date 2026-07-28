@@ -1,4 +1,3 @@
-use core::sync::atomic::Ordering;
 use spin::Once;
 
 use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
@@ -98,20 +97,39 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
     unsafe { IRQ_CHIP.irq_enable(config.virq) };
 }
 
-pub unsafe fn init_acpi(gsiv: u32) {
+pub unsafe fn init_acpi(non_secure_physical_gsiv: u32, virtual_gsiv: u32) {
     let use_virtual = unsafe { !control_regs::vhe_present() };
     let clk_freq = unsafe { control_regs::cntfrq_el0() };
     if clk_freq == 0 {
         error!("architected timer reports zero frequency");
         return;
     }
+    let hwirq = if use_virtual {
+        virtual_gsiv
+    } else {
+        non_secure_physical_gsiv
+    };
+    let reload_count = clk_freq / 100;
+    if reload_count == 0 {
+        error!("architected timer frequency is too low");
+        return;
+    }
     let config = TIMER.call_once(|| TimerConfig {
         use_virtual,
         clk_freq,
-        reload_count: clk_freq / 100,
-        hwirq: gsiv,
-        virq: gsiv,
+        reload_count,
+        hwirq,
+        virq: hwirq,
     });
+    info!(
+        "architected timer virq = {} ({})",
+        config.virq,
+        if config.use_virtual {
+            "virtual"
+        } else {
+            "non-secure physical"
+        }
+    );
     program_current(config);
     unsafe { IRQ_CHIP.irq_enable(config.virq) };
 }
@@ -185,14 +203,6 @@ pub(crate) fn handle(hwirq: u32, raw_iar: u32, token: &mut CleanLockToken) -> bo
     }
 
     let cpu_id = crate::cpu_id();
-    if cpu_id != crate::cpu_set::LogicalCpuId::BSP
-        && !crate::percpu::PercpuBlock::current()
-            .misc_arch_info
-            .timer_irq_seen
-            .swap(true, Ordering::AcqRel)
-    {
-        info!("CPU logical {}: timer IRQ path active", cpu_id);
-    }
 
     if cpu_id == crate::cpu_set::LogicalCpuId::BSP {
         *time::OFFSET.write(token.token()) += config.clk_freq as u128;

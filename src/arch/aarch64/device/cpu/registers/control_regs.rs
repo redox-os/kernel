@@ -4,35 +4,6 @@
 
 use core::arch::asm;
 
-const ARM_IMPLEMENTER: u32 = 0x41;
-const CORTEX_A53_PART: u32 = 0xd03;
-const CORTEX_A35_PART: u32 = 0xd04;
-const CORTEX_A73_PART: u32 = 0xd09;
-pub const CPUECTLR_SMPEN: u64 = 1 << 6;
-
-/// These pre-DynamIQ Arm cores use CPUECTLR_EL1.SMPEN to join the cluster's
-/// hardware coherency domain. Newer cores such as Cortex-A55 use hardware
-/// assisted coherency and do not expose this contract at the same encoding.
-pub fn requires_cpuectlr_smpen(midr: u32) -> bool {
-    let implementer = midr >> 24;
-    let part = (midr >> 4) & 0xfff;
-    implementer == ARM_IMPLEMENTER
-        && matches!(part, CORTEX_A35_PART | CORTEX_A53_PART | CORTEX_A73_PART)
-}
-
-/// Read the implementation-defined CPUECTLR_EL1 used by Cortex-A35/A53/A73.
-///
-/// # Safety
-///
-/// Call only after `requires_cpuectlr_smpen` accepted the local MIDR.
-pub unsafe fn cpuectlr_el1() -> u64 {
-    unsafe {
-        let ret: u64;
-        asm!("mrs {}, S3_1_C15_C2_1", out(reg) ret, options(nomem, nostack));
-        ret
-    }
-}
-
 pub unsafe fn ttbr0_el1() -> u64 {
     unsafe {
         let ret: u64;

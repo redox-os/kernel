@@ -41,6 +41,8 @@ pub(crate) fn ic_for_chip(fdt: &Fdt, node: &FdtNode) -> Option<usize> {
 }
 
 pub(crate) fn init_ap() -> syscall::Result<()> {
+    // Secondary CPU activation currently supports the memory-mapped GICv2
+    // interface. GICv3 remains on the safe single-CPU fallback path.
     if gic::active() {
         gic::init_current_cpu()?;
         gic::current_cpu_target_mask()

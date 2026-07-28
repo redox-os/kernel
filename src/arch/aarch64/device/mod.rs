@@ -1,5 +1,5 @@
 use crate::info;
-use core::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use fdt::Fdt;
 
 pub mod cpu;
@@ -59,16 +59,12 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
 
 pub struct ArchPercpuMisc {
     pub gic_target_mask: AtomicU8,
-    pub timer_irq_seen: AtomicBool,
-    pub sgi_irq_seen: AtomicBool,
 }
 
 impl ArchPercpuMisc {
     pub const fn default() -> Self {
         Self {
             gic_target_mask: AtomicU8::new(0),
-            timer_irq_seen: AtomicBool::new(false),
-            sgi_irq_seen: AtomicBool::new(false),
         }
     }
 }
