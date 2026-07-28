@@ -1,8 +1,13 @@
 use crate::{
-    arch::device::local_apic::the_local_apic, context, percpu::PercpuBlock, sync::CleanLockToken,
+    arch::device::local_apic::the_local_apic,
+    context::{self, switch::drain_ipi_context_wakeups},
+    percpu::PercpuBlock,
+    sync::CleanLockToken,
 };
 
 interrupt!(wakeup, || {
+    let mut token = unsafe { CleanLockToken::new() };
+    drain_ipi_context_wakeups(&mut token);
     unsafe { the_local_apic().eoi() };
 });
 

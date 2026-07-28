@@ -878,6 +878,7 @@ impl UserInner {
                 let context_lock = context.upgrade().ok_or(Error::new(ESRCH))?;
 
                 let mut lock_token = token.token();
+                let mut wake = (false, None);
                 let (frame, _) = AddrSpace::current()?
                     .acquire_read(lock_token.downgrade())
                     .table
@@ -892,9 +893,12 @@ impl UserInner {
                     } = context.status
                     {
                         context.status = Status::Runnable;
-                        wakeup_context(&context_lock, context.cpu_id);
+                        wake = (true, context.cpu_id);
                     }
                     context.fmap_ret = Some(Frame::containing(frame));
+                }
+                if wake.0 {
+                    wakeup_context(&context_lock, wake.1, &mut token.downgrade());
                 }
             }
             ParsedCqe::TriggerFevent { number, flags } => {

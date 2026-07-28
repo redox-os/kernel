@@ -84,11 +84,7 @@ static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new())
 // Actual context store for the scheduler
 static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
 
-// Context that has been pushed out from RUN_CONTEXTS after being idle
-static IDLE_CONTEXTS: Mutex<L2, VecDeque<WeakContextRef>> = Mutex::new(VecDeque::new());
-
 pub struct RunContextData {
-    // queue: VecDeque<WeakContextRef>,
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
     timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
     count: usize,
@@ -108,10 +104,6 @@ impl RunContextData {
             min_vtime: 0,
         }
     }
-    pub fn update_count(&mut self) -> usize {
-        self.count = self.queue.len();
-        self.count
-    }
 }
 
 /// Get the global schemes list, const
@@ -122,16 +114,6 @@ pub fn contexts(token: LockToken<'_, L1>) -> RwLockReadGuard<'_, L2, BTreeSet<Co
 /// Get per cpu contexts, mutable
 pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
     CONTEXTS.write(token)
-}
-
-pub fn idle_contexts(token: LockToken<'_, L1>) -> MutexGuard<'_, L2, VecDeque<WeakContextRef>> {
-    IDLE_CONTEXTS.lock(token)
-}
-
-pub fn idle_contexts_try(
-    token: LockToken<'_, L1>,
-) -> Option<MutexGuard<'_, L2, VecDeque<WeakContextRef>>> {
-    IDLE_CONTEXTS.try_lock(token)
 }
 
 pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
@@ -146,42 +128,55 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
     let cpu_id = {
         let mut guard = context_lock.write(token.token());
         if !guard.unblock_no_ipi() {
-            if guard.status.is_runnable() {
+            let guard_runnable = guard.status.is_runnable();
+            let guard_cpu_id = guard.cpu_id;
+            if guard_runnable {
                 // already set to runnable externally
-                wakeup_context(context_lock, guard.cpu_id);
+                drop(guard);
+                wakeup_context(context_lock, guard_cpu_id, token);
             }
             return false;
         }
         guard.cpu_id
     };
 
-    wakeup_context(context_lock, cpu_id);
+    wakeup_context(context_lock, cpu_id, token);
 
     true
 }
 
-pub fn wakeup_context(context_lock: &Arc<ContextLock>, cpu_id: Option<LogicalCpuId>) {
+pub fn wakeup_context(
+    context_lock: &Arc<ContextLock>,
+    cpu_id: Option<LogicalCpuId>,
+    token: &mut LockToken<'_, L3>,
+) {
     let weak = WeakContextRef(Arc::downgrade(context_lock));
     let curr_cpu = crate::cpu_id();
 
-    if let Some(target) = cpu_id
-        && target != curr_cpu
-    {
-        if let Some(percpu) = unsafe {
-            ALL_PERCPU_BLOCKS[target.get() as usize]
-                .load(Ordering::Acquire)
-                .as_ref()
-        } {
-            percpu.switch_internals.wakeup_list.lock().push(weak);
-            ipi(IpiKind::Wakeup, IpiTarget::Other);
-            return;
+    if let Some(target) = cpu_id {
+        if target != curr_cpu {
+            if let Some(percpu) = unsafe {
+                ALL_PERCPU_BLOCKS[target.get() as usize]
+                    .load(Ordering::Acquire)
+                    .as_ref()
+            } {
+                // cross core wakeup
+                percpu
+                    .switch_internals
+                    .ipi_context_wakeup_list
+                    .lock(token.token())
+                    .push(weak);
+                ipi(IpiKind::Wakeup, IpiTarget::Other);
+                return;
+            }
         }
     }
 
+    // local wakeup
     PercpuBlock::current()
         .switch_internals
-        .wakeup_list
-        .lock()
+        .local_wakeup_list
+        .borrow_mut()
         .push(weak);
 }
 
@@ -401,7 +396,7 @@ impl Drop for PreemptGuardL2<'_> {
 pub fn get_contexts_stats(token: &mut CleanLockToken) -> (usize, usize, usize) {
     let alive = contexts(token.downgrade()).len();
     let running = run_contexts(token.token()).count;
-    let blocked = idle_contexts(token.downgrade()).len();
+    let blocked = alive.saturating_sub(running);
 
     (alive, running, blocked)
 }

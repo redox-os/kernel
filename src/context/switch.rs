@@ -4,16 +4,18 @@
 
 use crate::{
     context::{
-        self, arch, idle_contexts, idle_contexts_try, memory::AddrSpaceSwitchReadGuard,
-        run_contexts, run_contexts_try, wakeup_context, ArcContextLockWriteGuard, Context,
-        ContextLock, WeakContextRef,
+        self, arch, memory::AddrSpaceSwitchReadGuard, run_contexts, run_contexts_try,
+        wakeup_context, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
-    percpu::PercpuBlock,
-    sync::{ArcRwLockWriteGuard, CleanLockToken, L4},
+    percpu::{self, PercpuBlock},
+    sync::{ArcRwLockWriteGuard, CleanLockToken, Mutex, L4},
 };
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 use core::{
     cell::{Cell, RefCell},
     cmp::Reverse,
@@ -138,6 +140,22 @@ pub unsafe extern "C" fn switch_finish_hook() {
     }
 }
 
+/// Drains the cross_cpu_wakeup_list into local_wakeup_list.
+/// This is called from the ipi handler.
+pub fn drain_ipi_context_wakeups(token: &mut CleanLockToken) {
+    let percpu = PercpuBlock::current();
+    let mut cross_cpu_wake = percpu
+        .switch_internals
+        .ipi_context_wakeup_list
+        .lock(token.token());
+    if cross_cpu_wake.is_empty() {
+        return;
+    }
+
+    let mut local_wake = percpu.switch_internals.local_wakeup_list.borrow_mut();
+    local_wake.extend(cross_cpu_wake.drain(..));
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SwitchResult {
     Switched,
@@ -187,104 +205,96 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         return SwitchResult::Switched;
     }
 
-    // Alarm (previously in update_runnable)
-    let mut wakeups: SmallVec<[(Option<u128>, WeakContextRef); 16]> = wakeup_contexts(token)
-        .into_iter()
-        .map(|ctxt| (None, ctxt))
-        .collect();
-    let mut push_idle: SmallVec<[WeakContextRef; 16]> = SmallVec::new();
-
-    // These timers coukd have expired
-    let mut timers: SmallVec<[(u128, WeakContextRef); 16]> = SmallVec::new();
-    if let Some(mut run_contexts) = run_contexts_try(token.token()) {
-        // Pop Timers
-        while let Some((wake, _)) = run_contexts.timers.first() {
-            if *wake > switch_time {
-                break;
-            }
-
-            if let Some(entry) = run_contexts.timers.pop_first() {
-                timers.push(entry);
-            }
-        }
-    }
-
-    for (wake, context_ref) in timers {
-        let Some(context_lock) = context_ref.upgrade() else {
-            continue;
-        };
-
-        let guard = context_lock.read(token.token());
-        if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
-            wakeups.push((Some(wake), context_ref));
-        }
-    }
-
-    // Drain from percpu
     {
-        if let Some(mut percpu_wake) = percpu.switch_internals.wakeup_list.try_lock() {
-            wakeups.extend(percpu_wake.drain(..).map(|ctx| (None, ctx)));
-        }
-    }
+        // Alarm (previously in update_runnable)
+        let mut wakeups = percpu.switch_internals.tmp_wakeups.borrow_mut();
 
-    if wakeups.len() > 0 {
-        let mut run_contexts = run_contexts(token.token());
-        for (wake_opt, context_ref) in wakeups {
+        // These timers coukd have expired
+        let mut timers = percpu.switch_internals.tmp_timers.borrow_mut();
+        timers.clear();
+        if let Some(mut run_contexts) = run_contexts_try(token.token()) {
+            let split_key = (switch_time.saturating_add(1), WeakContextRef(Weak::new()));
+
+            timers.extend(run_contexts.timers.extract_if(..split_key, |_| true));
+        }
+
+        timers.retain(|(wake, context_ref)| {
             let Some(context_lock) = context_ref.upgrade() else {
-                continue;
+                return false;
             };
 
-            let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
-                if let Some(wake) = wake_opt {
-                    run_contexts.timers.insert((wake, context_ref));
-                } else {
-                    push_idle.push(context_ref);
+            if let Some(guard) = context_lock.try_read(token.token()) {
+                if guard.status.is_soft_blocked() && guard.wake == Some(*wake) {
+                    wakeups.push((Some(*wake), context_ref.clone()));
                 }
-                continue;
-            };
-
-            if let Some(wake) = wake_opt {
-                if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
-                    guard.wake = None;
-                    guard.unblock_no_ipi();
-                }
+                false
+            } else {
+                true
             }
+        });
 
-            if guard.running || !guard.status.is_runnable() {
-                continue;
-            }
-
-            let new_vtime = guard.vtime.max(run_contexts.v);
-            guard.vtime = new_vtime;
-
-            let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
-            let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
-
-            if !guard.is_active {
-                guard.is_active = true;
-                run_contexts.total_weight += weight;
-            }
-
-            if let Some(old_key) = guard.queue_key.take() {
-                run_contexts.queue.remove(&old_key);
-            }
-
-            guard.vd = new_vtime + scaled_slice as u64;
-            guard.rem_slice = BASE_SLICE_TICKS * SCALE as u64;
-            let key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
-            guard.queue_key = Some(key);
-            drop(guard);
-
-            run_contexts
-                .queue
-                .insert(key, (new_vtime, weight, context_ref));
+        // Drain from percpu
+        {
+            let mut local_wake = percpu.switch_internals.local_wakeup_list.borrow_mut();
+            wakeups.extend(local_wake.drain(..).map(|ctx| (None, ctx)));
         }
-    }
 
-    {
-        let mut idle_list = idle_contexts(token.downgrade());
-        for context_ref in push_idle {
-            idle_list.push_back(context_ref);
+        if wakeups.len() > 0 {
+            let mut run_contexts = run_contexts(token.token());
+            for (wake_opt, context_ref) in wakeups.drain(..) {
+                let Some(context_lock) = context_ref.upgrade() else {
+                    continue;
+                };
+
+                let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
+                    if let Some(wake) = wake_opt {
+                        run_contexts.timers.insert((wake, context_ref));
+                    } else {
+                        percpu
+                            .switch_internals
+                            .local_wakeup_list
+                            .borrow_mut()
+                            .push(context_ref);
+                    }
+                    continue;
+                };
+
+                if let Some(wake) = wake_opt {
+                    if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
+                        guard.wake = None;
+                        guard.unblock_no_ipi();
+                    }
+                }
+
+                if guard.running || !guard.status.is_runnable() {
+                    continue;
+                }
+
+                let new_vtime = guard.vtime.max(run_contexts.v);
+                guard.vtime = new_vtime;
+
+                let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
+                let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
+
+                if !guard.is_active {
+                    guard.is_active = true;
+                    run_contexts.total_weight += weight;
+                }
+
+                if let Some(old_key) = guard.queue_key.take() {
+                    run_contexts.queue.remove(&old_key);
+                }
+
+                guard.vd = new_vtime + scaled_slice as u64;
+                guard.rem_slice = BASE_SLICE_TICKS * SCALE as u64;
+                let key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
+                guard.queue_key = Some(key);
+                drop(guard);
+
+                run_contexts
+                    .queue
+                    .insert(key, (new_vtime, weight, context_ref));
+            }
         }
     }
 
@@ -432,48 +442,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 }
 
-fn wakeup_contexts(token: &mut CleanLockToken) -> SmallVec<[WeakContextRef; 16]> {
-    // TODO: Optimise this somehow
-    let mut wakeups = SmallVec::new();
-    let current_context = context::current();
-    let Some(idle_contexts) = idle_contexts_try(token.downgrade()) else {
-        // other cpus may spawning or killing contexts so let's skip wakeups to avoid contention
-        return wakeups;
-    };
-    let (mut idle_contexts, mut token) = idle_contexts.into_split();
-    let len = idle_contexts.len();
-    for _ in 0..len {
-        let Some(context_ref) = idle_contexts.pop_front() else {
-            break;
-        };
-        let Some(context) = context_ref.upgrade() else {
-            continue;
-        };
-        if Arc::ptr_eq(&context, &current_context) {
-            idle_contexts.push_back(context_ref);
-            continue;
-        }
-        let Some(guard) = context.try_read(token.token()) else {
-            idle_contexts.push_back(context_ref);
-            continue;
-        };
-        if guard.status.is_dead() {
-            // TODO: who hold this dead context?
-            continue;
-        }
-
-        if guard.status.is_runnable() && !guard.running {
-            drop(guard);
-            wakeups.push(context_ref);
-            continue;
-        }
-
-        drop(guard);
-        idle_contexts.push_back(context_ref);
-    }
-    wakeups
-}
-
 /// This is the scheduler function which currently utilises EEVDF Scheduler
 fn select_next_context(
     token: &mut CleanLockToken,
@@ -593,8 +561,6 @@ fn select_next_context(
 
             contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             drop(guard);
-            // TODO: Reenqueue should be handled by unblock
-            idle_contexts(token.token()).push_back(context_ref.clone());
             continue;
         }
 
@@ -703,9 +669,6 @@ fn select_next_context(
                         WeakContextRef(Arc::downgrade(&prev_context_lock)),
                     ),
                 );
-            } else if !is_idle && !is_timer {
-                idle_contexts(token.token())
-                    .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
             }
 
             return Some((chosen_guard, addr_space));
@@ -713,11 +676,6 @@ fn select_next_context(
             return None;
         }
     } else {
-        if !is_idle && !is_timer {
-            idle_contexts(token.token())
-                .push_back(WeakContextRef(Arc::downgrade(&prev_context_lock)));
-        }
-
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
         if (!was_idle || prev_is_dead) && !is_idle {
             return Some(unsafe { (idle_context.write_arc(), None) });
@@ -747,7 +705,10 @@ pub struct ContextSwitchPercpu {
     pub(crate) being_sigkilled: Cell<bool>,
 
     // wakeups
-    pub(crate) wakeup_list: SpinMutex<Vec<WeakContextRef>>,
+    pub(crate) ipi_context_wakeup_list: Mutex<L4, Vec<WeakContextRef>>,
+    pub(crate) local_wakeup_list: RefCell<Vec<WeakContextRef>>,
+    tmp_wakeups: RefCell<Vec<(Option<u128>, WeakContextRef)>>,
+    tmp_timers: RefCell<Vec<(u128, WeakContextRef)>>,
 }
 
 impl ContextSwitchPercpu {
@@ -759,7 +720,10 @@ impl ContextSwitchPercpu {
             current_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
             being_sigkilled: Cell::new(false),
-            wakeup_list: SpinMutex::new(Vec::new()),
+            ipi_context_wakeup_list: Mutex::new(Vec::new()),
+            local_wakeup_list: RefCell::new(Vec::new()),
+            tmp_wakeups: RefCell::new(Vec::new()),
+            tmp_timers: RefCell::new(Vec::new()),
 
             #[cfg(feature = "profiling")]
             current_dbg_id: core::sync::atomic::AtomicU32::new(!0),

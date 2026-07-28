@@ -84,16 +84,24 @@ fn try_stop_context<T>(
         running = context_ref.read(token.token()).running;
     }
 
-    let mut context = context_ref.write(token.token());
+    let mut guard = context_ref.write(token.token());
     assert!(
-        !context.running,
+        !guard.running,
         "process can't have been restarted, we stopped it!"
     );
 
-    let (context, token) = context.token_split();
-    let ret = callback(context, token);
+    let (context, l4_token) = guard.token_split();
+    let ret = callback(context, l4_token);
 
     context.status = prev_status;
+
+    let cpu_id = context.cpu_id;
+
+    let wake = context.status.is_runnable();
+    drop(guard);
+    if wake {
+        wakeup_context(&context_ref, cpu_id, &mut token.downgrade());
+    }
 
     ret
 }
@@ -1147,7 +1155,7 @@ impl ContextHandle {
                     }
                 };
 
-                wakeup_context(&context, cpu_id);
+                wakeup_context(&context, cpu_id, &mut token.downgrade());
                 Ok(buf.len())
             }
             ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } => {
@@ -1292,7 +1300,9 @@ impl ContextHandle {
                         } = guard.status
                         {
                             guard.status = Status::Runnable;
-                            wakeup_context(&context, guard.cpu_id);
+                            let cpu_id = guard.cpu_id;
+                            drop(guard);
+                            wakeup_context(&context, cpu_id, &mut token.downgrade());
                         }
                         Ok(size_of::<usize>())
                     }
@@ -1336,7 +1346,7 @@ impl ContextHandle {
                                 ctxt.being_sigkilled = true;
                                 ctxt.cpu_id
                             };
-                            wakeup_context(&context, cpu_id);
+                            wakeup_context(&context, cpu_id, &mut token.downgrade());
                             Ok(size_of::<usize>())
                         }
                     }
