@@ -41,9 +41,9 @@ impl Gtdt {
             return;
         };
 
-        let gsiv = gtdt.non_secure_el1_timer_gsiv;
-        info!("generic_timer gsiv = {}", gsiv);
-        unsafe { generic_timer::init_acpi(gsiv) };
+        unsafe {
+            generic_timer::init_acpi(gtdt.non_secure_el1_timer_gsiv, gtdt.virtual_el1_timer_gsiv)
+        };
     }
 
     pub fn new(sdt: &'static Sdt) -> Option<&'static Gtdt> {

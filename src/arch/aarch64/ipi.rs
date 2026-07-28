@@ -60,15 +60,6 @@ pub(crate) fn handle(hwirq: u32, raw_iar: u32) -> bool {
     };
 
     if handled {
-        let cpu_id = crate::cpu_id();
-        if cpu_id != crate::cpu_set::LogicalCpuId::BSP
-            && !PercpuBlock::current()
-                .misc_arch_info
-                .sgi_irq_seen
-                .swap(true, Ordering::AcqRel)
-        {
-            info!("CPU logical {}: SGI IRQ path active", cpu_id);
-        }
         crate::arch::device::irqchip::end_root(raw_iar);
     }
     handled

@@ -87,10 +87,10 @@ impl fmt::Display for TopologyError<'_> {
             Self::MissingCpusNode => write!(f, "missing /cpus node"),
             Self::InvalidAddressCells => write!(f, "/cpus has invalid #address-cells"),
             Self::InvalidSizeCells => write!(f, "/cpus must have #size-cells = 0"),
-            Self::NoEnabledCpus => write!(f, "/cpus has no enabled CPU nodes"),
+            Self::NoEnabledCpus => write!(f, "CPU topology has no enabled processors"),
             Self::TooManyCpus(count) => write!(
                 f,
-                "/cpus describes {} enabled CPUs, kernel limit is {}",
+                "CPU topology describes {} enabled CPUs, kernel limit is {}",
                 count, MAX_CPU_COUNT
             ),
             Self::InvalidDeviceType(node) => {

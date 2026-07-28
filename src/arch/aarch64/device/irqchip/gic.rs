@@ -46,6 +46,22 @@ fn write32(base: usize, offset: u32, value: u32) {
     unsafe { write_volatile((base + offset as usize) as *mut u32, value) }
 }
 
+fn read_current_cpu_target_mask(dist: usize) -> u8 {
+    // GICD_ITARGETSR0-7 are banked and read-only for SGIs/PPIs. Fold each
+    // word into one byte and scan all eight registers, as some implementations
+    // do not expose a useful value in ITARGETSR0 itself.
+    for offset in (0..32).step_by(4) {
+        let mut mask = read32(dist, GICD_ITARGETSR + offset);
+        mask |= mask >> 16;
+        mask |= mask >> 8;
+        let mask = mask as u8;
+        if mask.is_power_of_two() {
+            return mask;
+        }
+    }
+    0
+}
+
 pub(crate) fn active() -> bool {
     GICD_BASE.load(Ordering::Acquire) != 0 && GICC_BASE.load(Ordering::Acquire) != 0
 }
@@ -86,10 +102,9 @@ pub(crate) fn init_current_cpu() -> Result<()> {
     unsafe { core::arch::asm!("dsb sy", options(nostack, preserves_flags)) };
     write32(cpu, GICC_CTLR, 1);
 
-    // ITARGETSR0 is banked for SGIs/PPIs and exposes the target bit assigned
-    // to the current GICv2 CPU interface. On a uniprocessor GIC the target
-    // registers are RAZ/WI, so zero is valid until directed SGIs are needed.
-    let target_mask = (read32(dist, GICD_ITARGETSR) & 0xff) as u8;
+    // On a uniprocessor GIC the target registers may be RAZ/WI, so zero is
+    // valid until directed SGIs are needed.
+    let target_mask = read_current_cpu_target_mask(dist);
     crate::percpu::PercpuBlock::current()
         .misc_arch_info
         .gic_target_mask
@@ -305,6 +320,10 @@ impl GicDistIf {
                 "gic: Distributor supports {:?} CPUs and {:?} IRQs",
                 self.ncpus, self.nirqs
             );
+            let target_mask = read_current_cpu_target_mask(addr);
+            if target_mask == 0 && self.ncpus > 1 {
+                warn!("GICv2 did not expose the boot CPU target mask; SMP will remain disabled");
+            }
 
             // Set all SPIs to level triggered
             for irq in (32..self.nirqs).step_by(16) {
@@ -316,21 +335,18 @@ impl GicDistIf {
                 self.write(GICD_ICENABLER + ((irq / 32) * 4), 0xffff_ffff);
             }
 
-            // Affine all SPIs to CPU0 and set priorities for all IRQs
-            for irq in 0..self.nirqs {
-                if irq > 31 {
-                    let ext_offset = GICD_ITARGETSR + (4 * (irq / 4));
-                    let int_offset = irq % 4;
-                    let mut val = self.read(ext_offset);
-                    val |= 0b0000_0001 << (8 * int_offset);
-                    self.write(ext_offset, val);
+            // When the mapping is available, keep every shared interrupt on
+            // the BSP. Write the complete target field instead of preserving
+            // firmware targets that could also deliver an SPI to an AP.
+            let target_word = (target_mask != 0).then_some(u32::from(target_mask) * 0x0101_0101);
+            for irq in (32..self.nirqs).step_by(4) {
+                // If the mapping is unavailable, preserve the firmware target
+                // configuration so the safe single-CPU fallback can still
+                // receive device interrupts.
+                if let Some(target_word) = target_word {
+                    self.write(GICD_ITARGETSR + irq, target_word);
                 }
-
-                let ext_offset = GICD_IPRIORITY + (4 * (irq / 4));
-                let int_offset = irq % 4;
-                let mut val = self.read(ext_offset);
-                val |= 0b0000_0000 << (8 * int_offset);
-                self.write(ext_offset, val);
+                self.write(GICD_IPRIORITY + irq, 0xa0a0_a0a0);
             }
 
             // Enable IRQ group 0 and group 1 non-secure distribution

@@ -301,6 +301,26 @@ fn prepare_trampoline() -> Option<(RaiiFrame, PhysicalAddress)> {
 }
 
 pub(super) fn prepare(topology: &[CpuDescription]) {
+    let secondary_count = topology.iter().filter(|cpu| !cpu.boot_cpu).count();
+    if secondary_count == 0 {
+        info!("CPU boot resources: no secondary CPUs");
+        return;
+    }
+    if !cfg!(feature = "multi_core") {
+        info!("CPU boot resource preparation disabled by kernel configuration");
+        return;
+    }
+    if let Some(cpu) = topology
+        .iter()
+        .find(|cpu| !cpu.boot_cpu && cpu.enable_method != EnableMethod::Psci)
+    {
+        warn!(
+            "CPU boot resources unavailable: secondary MPIDR={:#x} is not PSCI-enabled",
+            cpu.mpidr
+        );
+        return;
+    }
+
     // Page-table walks have their own cacheability/shareability attributes in
     // TCR_EL1. PTE.SH makes the mapped data shareable, but cannot make stale
     // page-table entries coherent between walkers. The boot path currently
@@ -318,26 +338,6 @@ pub(super) fn prepare(topology: &[CpuDescription]) {
         "BSP translation-table walks are inner-shareable: TCR_EL1={:#x}",
         tcr
     );
-
-    if let Some(cpu) = topology
-        .iter()
-        .find(|cpu| !cpu.boot_cpu && cpu.enable_method != EnableMethod::Psci)
-    {
-        warn!(
-            "CPU boot resources unavailable: secondary MPIDR={:#x} is not PSCI-enabled",
-            cpu.mpidr
-        );
-        return;
-    }
-
-    let secondary_count = topology
-        .iter()
-        .filter(|cpu| !cpu.boot_cpu && cpu.enable_method == EnableMethod::Psci)
-        .count();
-    if secondary_count == 0 {
-        info!("CPU boot resources: no PSCI secondary CPUs");
-        return;
-    }
 
     let Some((trampoline, idmap_root)) = prepare_trampoline() else {
         warn!("CPU boot resources unavailable: cannot prepare physical trampoline");
@@ -467,7 +467,7 @@ pub(super) fn start_secondaries() {
         return;
     };
     let Some(gic_capacity) = crate::arch::device::irqchip::cpu_capacity() else {
-        error!("CPU activation unavailable: no supported local interrupt controller");
+        error!("CPU activation unavailable: PSCI secondary boot currently requires GICv2");
         return;
     };
     if resources.slots.len() + 1 > gic_capacity {
