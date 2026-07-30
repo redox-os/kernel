@@ -1,6 +1,8 @@
 use core::sync::atomic::Ordering;
 
-use crate::percpu::PercpuBlock;
+use crate::{
+    context::switch::drain_ipi_context_wakeups, percpu::PercpuBlock, sync::CleanLockToken,
+};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
@@ -50,7 +52,14 @@ pub fn ipi_single(kind: IpiKind, target: &PercpuBlock) {
 
 pub(crate) fn handle(hwirq: u32, raw_iar: u32) -> bool {
     let handled = match hwirq {
-        x if x == IpiKind::Wakeup as u32 => true,
+        x if x == IpiKind::Wakeup as u32 => {
+            // Cross-CPU scheduler wakeups are queued per CPU. Drain this CPU's
+            // queue before completing the SGI, otherwise contexts assigned to
+            // this CPU can remain blocked indefinitely.
+            let mut token = unsafe { CleanLockToken::new() };
+            drain_ipi_context_wakeups(&mut token);
+            true
+        }
         x if x == IpiKind::Tlb as u32 => {
             unsafe { core::arch::asm!("dmb ish", options(nostack, preserves_flags)) };
             PercpuBlock::current().maybe_handle_tlb_shootdown();
