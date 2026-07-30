@@ -77,16 +77,27 @@ pub fn irq_trigger(irq: u8, token: &mut CleanLockToken) {
 #[allow(dead_code)]
 enum Handle {
     SchemeRoot,
-    Irq { ack: AtomicUsize, irq: u8 },
+    Irq {
+        ack: AtomicUsize,
+        irq: u8,
+        reservation: Option<IrqReservation>,
+    },
     Avail(LogicalCpuId),
     TopLevel,
     Phandle(u8, Vec<u8>),
     Bsp,
 }
+
+#[derive(Clone, Copy)]
+struct IrqReservation {
+    cpu_id: LogicalCpuId,
+    index: u8,
+}
+
 impl Handle {
     fn as_irq_handle(&self) -> Option<(&AtomicUsize, u8)> {
         match self {
-            &Self::Irq { ref ack, irq } => Some((ack, irq)),
+            &Self::Irq { ref ack, irq, .. } => Some((ack, irq)),
             _ => None,
         }
     }
@@ -140,6 +151,7 @@ impl IrqScheme {
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
                         irq: irq_number,
+                        reservation: None,
                     },
                     InternalFlags::empty(),
                 )
@@ -147,17 +159,26 @@ impl IrqScheme {
                 if flags & O_CREAT == 0 && flags & O_STAT == 0 {
                     return Err(Error::new(EINVAL));
                 }
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                if flags & O_STAT == 0 {
-                    if is_reserved(cpu_id, irq_to_vector(irq_number)) {
-                        return Err(Error::new(EEXIST));
+                let reservation = if flags & O_STAT == 0 {
+                    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+                    {
+                        let index = irq_to_vector(irq_number);
+                        if is_reserved(cpu_id, index) {
+                            return Err(Error::new(EEXIST));
+                        }
+                        set_reserved(cpu_id, index, true);
+                        Some(IrqReservation { cpu_id, index })
                     }
-                    set_reserved(cpu_id, irq_to_vector(irq_number), true);
-                }
+                    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                    None
+                } else {
+                    None
+                };
                 (
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
                         irq: irq_number,
+                        reservation,
                     },
                     InternalFlags::empty(),
                 )
@@ -188,17 +209,29 @@ impl IrqScheme {
                 let irq_number = IRQ_CHIP
                     .irq_xlate(ic_idx, addr.as_slice())
                     .or(Err(Error::new(ENOENT)))?;
+                let irq_number = u8::try_from(irq_number).or(Err(Error::new(ENOENT)))?;
+                if irq_number >= TOTAL_IRQ_COUNT {
+                    return Err(Error::new(ENOENT));
+                }
                 debug!("open_phandle_irq  virq={}", irq_number);
-                if flags & O_STAT == 0 {
-                    if is_reserved(LogicalCpuId::new(0), irq_number as u8) {
+                let reservation = if flags & O_STAT == 0 {
+                    let cpu_id = LogicalCpuId::BSP;
+                    if is_reserved(cpu_id, irq_number) {
                         return Err(Error::new(EEXIST));
                     }
-                    set_reserved(LogicalCpuId::new(0), irq_number as u8, true);
-                }
+                    set_reserved(cpu_id, irq_number, true);
+                    Some(IrqReservation {
+                        cpu_id,
+                        index: irq_number,
+                    })
+                } else {
+                    None
+                };
                 (
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
-                        irq: irq_number as u8,
+                        irq: irq_number,
+                        reservation,
                     },
                     InternalFlags::empty(),
                 )
@@ -313,6 +346,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     Handle::Irq {
                         ack: AtomicUsize::new(0),
                         irq: plain_irq_number,
+                        reservation: None,
                     },
                     InternalFlags::empty(),
                 )
@@ -412,14 +446,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let mut handle = HANDLES.write(token.token()).remove(id)?;
+        let handle = HANDLES.write(token.token()).remove(id)?;
 
         if let Handle::Irq {
-            irq: handle_irq, ..
+            reservation: Some(reservation),
+            ..
         } = handle
-            && handle_irq > BASE_IRQ_COUNT
         {
-            set_reserved(LogicalCpuId::BSP, irq_to_vector(handle_irq), false);
+            set_reserved(reservation.cpu_id, reservation.index, false);
         }
         Ok(())
     }
@@ -438,6 +472,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             &Handle::Irq {
                 irq: handle_irq,
                 ack: ref handle_ack,
+                ..
             } => {
                 if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
@@ -542,6 +577,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             Handle::Irq {
                 irq: handle_irq,
                 ack: ref handle_ack,
+                ..
             } => {
                 if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
