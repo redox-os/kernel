@@ -18,7 +18,7 @@ pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, PfError},
+        memory::{AccessMode, AddrSpace, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     numa,
@@ -1307,12 +1307,13 @@ unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let order = count.data().next_power_of_two().trailing_zeros();
         if let Some(mask) = numa::free_list_mask()
-            && let Some(mem_policy) = unsafe { context::current_mem_policy() }
+            && let Some(addr_space) = AddrSpace::current().ok()
         {
+            let mem_policy = addr_space.mem_policy.read();
             allocate_p2frame_with_mask(
                 mask,
                 order,
-                if let NumaMemoryPolicy::NodeLocalLeniant = mem_policy {
+                if let NumaMemoryPolicy::NodeLocalLeniant = *mem_policy {
                     true
                 } else {
                     false

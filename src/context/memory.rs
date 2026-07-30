@@ -98,7 +98,7 @@ pub struct AddrSpaceWrapper {
     pub inner: RwLock<L5, AddrSpace>,
     pub tlb_ack: AtomicU32,
     pub used_by: LogicalCpuSet,
-    pub mem_policy: RwLock<L5, NumaMemoryPolicy>,
+    pub mem_policy: spin::rwlock::RwLock<NumaMemoryPolicy>,
 }
 impl AddrSpaceWrapper {
     pub fn new() -> Result<Arc<Self>> {
@@ -106,7 +106,7 @@ impl AddrSpaceWrapper {
             inner: RwLock::new(AddrSpace::new()?),
             tlb_ack: AtomicU32::new(0),
             used_by: LogicalCpuSet::empty(),
-            mem_policy: RwLock::new(NumaMemoryPolicy::NodeLocalLeniant),
+            mem_policy: spin::rwlock::RwLock::new(NumaMemoryPolicy::NodeLocalLeniant),
         }))
     }
     pub fn acquire_read<'a>(

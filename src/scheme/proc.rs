@@ -42,7 +42,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, Error};
+use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -141,6 +141,10 @@ enum ContextHandle {
     },
     CurrentAddrSpace,
 
+    AddrSpaceView {
+        addrspace: Arc<AddrSpaceWrapper>,
+    },
+
     AwaitingAddrSpaceChange {
         new: Arc<AddrSpaceWrapper>,
         new_sp: usize,
@@ -219,6 +223,17 @@ impl ProcScheme {
         Ok(Some(match path {
             "addrspace" => (
                 ContextHandle::AddrSpace {
+                    addrspace: Arc::clone(
+                        context
+                            .read(token.token())
+                            .addr_space()
+                            .map_err(|_| Error::new(ENOENT))?,
+                    ),
+                },
+                true,
+            ),
+            "addrspace-view" => (
+                ContextHandle::AddrSpaceView {
                     addrspace: Arc::clone(
                         context
                             .read(token.token())
@@ -1697,6 +1712,26 @@ impl ContextHandle {
                         Ok(size as usize)
                     }
                     _ => Err(Error::new(EOPNOTSUPP)),
+                }
+            }
+            ContextHandle::AddrSpaceView { addrspace } => {
+                let op = syscall::flag::NumaVerb::try_from_raw(
+                    *metadata.get(0).ok_or(Error::new(EINVAL))?,
+                )
+                .ok_or(Error::new(EINVAL))?;
+
+                match op {
+                    NumaVerb::SetMemPolicy => {
+                        let mut mem_policy = addrspace.mem_policy.write();
+                        *mem_policy =
+                            NumaMemoryPolicy::try_from(*metadata.get(1).ok_or(Error::new(EINVAL))?)
+                                .map_err(|_| Error::new(EINVAL))?;
+                        Ok(0)
+                    }
+                    NumaVerb::GetMemPolicy => {
+                        let mem_policy = addrspace.mem_policy.read();
+                        Ok(*mem_policy as usize)
+                    }
                 }
             }
             _ => Err(Error::new(EBADF)),

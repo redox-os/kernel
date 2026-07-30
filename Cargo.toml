@@ -119,6 +119,3 @@ panic = "abort"
 panic = "abort"
 #lto = true
 debug = "full"
-
-[patch.crates-io]
-redox_syscall = {git = "https://gitlab.redox-os.org/EuclidDivisionLemma/syscall/", branch = "numa"}
