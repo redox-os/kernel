@@ -434,11 +434,20 @@ impl crate::scheme::KernelScheme for IrqScheme {
 
     fn fevent(
         &self,
-        _id: usize,
-        _flags: EventFlags,
-        _token: &mut CleanLockToken,
+        id: usize,
+        flags: EventFlags,
+        token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        Ok(EventFlags::empty())
+        let handles_guard = HANDLES.read(token.token());
+        let handle = handles_guard.get(id)?;
+        let (handle_ack, handle_irq) = handle.as_irq_handle().ok_or(Error::new(EBADF))?;
+
+        let current = COUNTS.lock()[handle_irq as usize];
+        if flags.contains(EVENT_READ) && handle_ack.load(Ordering::SeqCst) != current {
+            Ok(EventFlags::EVENT_READ)
+        } else {
+            Ok(EventFlags::empty())
+        }
     }
 
     fn fsync(&self, _file: usize, _token: &mut CleanLockToken) -> Result<()> {
