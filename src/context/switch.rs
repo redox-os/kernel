@@ -4,12 +4,12 @@
 
 use crate::{
     context::{
-        self, arch, memory::AddrSpaceSwitchReadGuard, run_contexts, run_contexts_try,
-        wakeup_context, ArcContextLockWriteGuard, Context, ContextLock, WeakContextRef,
+        self, arch, memory::AddrSpaceSwitchReadGuard, wakeup_context, ArcContextLockWriteGuard,
+        Context, ContextLock, RunContextData, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
-    percpu::{self, PercpuBlock},
+    percpu::{self, PercpuBlock, ALL_PERCPU_BLOCKS},
     sync::{ArcRwLockWriteGuard, CleanLockToken, Mutex, L4},
 };
 use alloc::{
@@ -21,7 +21,7 @@ use core::{
     cmp::Reverse,
     hint, matches, mem,
     option::Option::{None, Some},
-    sync::atomic::Ordering,
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     u64,
 };
 use smallvec::SmallVec;
@@ -45,6 +45,9 @@ pub const SCALE: u128 = 1 << 40;
 pub const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
 pub const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
 pub const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
+pub const STEAL_THRESHOLD: usize = 2;
+pub const STEAL_INTERVAL: usize = 2;
+pub const MAX_STEAL: usize = 2;
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
@@ -212,10 +215,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         // These timers coukd have expired
         let mut timers = percpu.switch_internals.tmp_timers.borrow_mut();
         timers.clear();
-        if let Some(mut run_contexts) = run_contexts_try(token.token()) {
+        {
+            let mut run_queue = percpu.switch_internals.run_queue.lock();
             let split_key = (switch_time.saturating_add(1), WeakContextRef(Weak::new()));
 
-            timers.extend(run_contexts.timers.extract_if(..split_key, |_| true));
+            timers.extend(run_queue.timers.extract_if(..split_key, |_| true));
         }
 
         timers.retain(|(wake, context_ref)| {
@@ -239,8 +243,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
             wakeups.extend(local_wake.drain(..).map(|ctx| (None, ctx)));
         }
 
-        if wakeups.len() > 0 {
-            let mut run_contexts = run_contexts(token.token());
+        if !wakeups.is_empty() {
+            let mut run_queue = percpu.switch_internals.run_queue.lock();
             for (wake_opt, context_ref) in wakeups.drain(..) {
                 let Some(context_lock) = context_ref.upgrade() else {
                     continue;
@@ -248,7 +252,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
                 let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
                     if let Some(wake) = wake_opt {
-                        run_contexts.timers.insert((wake, context_ref));
+                        run_queue.timers.insert((wake, context_ref));
                     } else {
                         percpu
                             .switch_internals
@@ -270,7 +274,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                     continue;
                 }
 
-                let new_vtime = guard.vtime.max(run_contexts.v);
+                let new_vtime = guard.vtime.max(run_queue.v);
                 guard.vtime = new_vtime;
 
                 let weight = SCHED_PRIO_TO_WEIGHT[guard.prio] as u64;
@@ -278,11 +282,19 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
                 if !guard.is_active {
                     guard.is_active = true;
-                    run_contexts.total_weight += weight;
+                    run_queue.total_weight += weight;
+                    percpu
+                        .switch_internals
+                        .total_weight
+                        .store(run_queue.total_weight, Ordering::Relaxed);
                 }
 
                 if let Some(old_key) = guard.queue_key.take() {
-                    run_contexts.queue.remove(&old_key);
+                    run_queue.queue.remove(&old_key);
+                    percpu
+                        .switch_internals
+                        .queue_len
+                        .store(run_queue.queue.len(), Ordering::Relaxed);
                 }
 
                 guard.vd = new_vtime + scaled_slice as u64;
@@ -291,9 +303,13 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 guard.queue_key = Some(key);
                 drop(guard);
 
-                run_contexts
+                run_queue
                     .queue
                     .insert(key, (new_vtime, weight, context_ref));
+                percpu
+                    .switch_internals
+                    .queue_len
+                    .store(run_queue.queue.len(), Ordering::Relaxed);
             }
         }
     }
@@ -323,7 +339,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     percpu.switch_internals.switch_time.set(switch_time);
 
     let switch_context_opt = select_next_context(
-        token,
         percpu,
         cpu_id,
         switch_time,
@@ -444,7 +459,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
 /// This is the scheduler function which currently utilises EEVDF Scheduler
 fn select_next_context(
-    token: &mut CleanLockToken,
     percpu: &PercpuBlock,
     cpu_id: LogicalCpuId,
     switch_time: u128,
@@ -452,15 +466,13 @@ fn select_next_context(
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
 ) -> Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)> {
-    let contexts_data = run_contexts(token.token());
-    let (mut contexts_data, mut token) = contexts_data.into_split();
+    let mut contexts_data = percpu.switch_internals.run_queue.lock();
     let idle_context = percpu.switch_internals.idle_context();
 
     // Lock the previous context.
     let prev_context_lock = crate::context::current();
     let is_idle = Arc::ptr_eq(&prev_context_lock, &idle_context);
     let prev_runnable = !is_idle && prev_context_guard.status.is_runnable();
-    let is_timer = prev_context_guard.wake.is_some();
 
     let elapsed_ticks = elapsed_time as u128 * SCALE / NANOS_PER_TICK;
 
@@ -540,8 +552,6 @@ fn select_next_context(
         if Arc::ptr_eq(&context_lock, &idle_context)
             || Arc::ptr_eq(&context_lock, &prev_context_lock)
         {
-            //weight_change += *context_weight as u64;
-            //contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             continue;
         }
 
@@ -597,10 +607,18 @@ fn select_next_context(
     }
 
     contexts_data.total_weight = contexts_data.total_weight.saturating_sub(weight_change);
+    percpu
+        .switch_internals
+        .total_weight
+        .store(contexts_data.total_weight, Ordering::Relaxed);
 
     for old_key in contexts_to_remove {
         contexts_data.queue.remove(&old_key);
     }
+    percpu
+        .switch_internals
+        .queue_len
+        .store(contexts_data.queue.len(), Ordering::Relaxed);
 
     // No eligible context was found
     if !(prev_is_eligible || eligible_best.is_some()) && ineligible_min_vtime != u64::MAX {
@@ -635,8 +653,169 @@ fn select_next_context(
     if let Some((mut chosen_guard, addr_space)) = eligible_best {
         if let Some(key) = chosen_guard.queue_key.take() {
             contexts_data.queue.remove(&key);
+            percpu
+                .switch_internals
+                .queue_len
+                .store(contexts_data.queue.len(), Ordering::Relaxed);
         }
         final_winner = Some((chosen_guard, addr_space));
+    }
+
+    // Work Stealing
+    {
+        let local_len = contexts_data.queue.len();
+        let num_cpu = crate::cpu_count();
+        let curr_cpu = cpu_id.get();
+
+        let counter = percpu
+            .switch_internals
+            .steal_counter
+            .fetch_add(1, Ordering::Relaxed)
+            % STEAL_INTERVAL;
+
+        let should_steal = local_len == 0
+            || (counter == 0 && {
+                let mut max_neighbour = 0;
+
+                for i in 0..num_cpu {
+                    if i == curr_cpu {
+                        continue;
+                    }
+
+                    if let Some(p) = unsafe {
+                        ALL_PERCPU_BLOCKS[i as usize]
+                            .load(Ordering::Acquire)
+                            .as_ref()
+                    } {
+                        max_neighbour =
+                            max_neighbour.max(p.switch_internals.queue_len.load(Ordering::Relaxed));
+                    }
+                }
+
+                max_neighbour > local_len.saturating_add(STEAL_THRESHOLD)
+            });
+
+        if should_steal {
+            for i in 1..num_cpu {
+                let target_cpu = (curr_cpu + i) % num_cpu;
+                let Some(target_percpu) = (unsafe {
+                    ALL_PERCPU_BLOCKS[target_cpu as usize]
+                        .load(Ordering::Acquire)
+                        .as_ref()
+                }) else {
+                    continue;
+                };
+
+                if !target_percpu
+                    .switch_internals
+                    .stealable
+                    .load(Ordering::Relaxed)
+                {
+                    continue;
+                }
+
+                let Some(mut target_queue) = target_percpu.switch_internals.run_queue.try_lock()
+                else {
+                    continue;
+                };
+
+                let target_len = target_queue.queue.len();
+                if target_len == 0 {
+                    continue;
+                }
+
+                let extra = target_len.saturating_sub(contexts_data.queue.len());
+                let want = (extra / 2).clamp(1, MAX_STEAL);
+
+                let mut stolen = percpu.switch_internals.tmp_steal.borrow_mut();
+                stolen.clear();
+
+                for (key, (_, weight, context_ref)) in target_queue.queue.iter() {
+                    if stolen.len() >= want {
+                        break;
+                    }
+
+                    let Some(context_lock) = context_ref.upgrade() else {
+                        continue;
+                    };
+
+                    let Some(guard) = (unsafe { context_lock.try_write_arc() }) else {
+                        continue;
+                    };
+
+                    if !guard.sched_affinity.contains(cpu_id)
+                        || !guard.status.is_runnable()
+                        || guard.running
+                    {
+                        continue;
+                    }
+
+                    let mut best_addr_space = None;
+                    if let Some(addr_space) = &guard.addr_space {
+                        let mut t = unsafe { CleanLockToken::new() };
+                        match addr_space.inner.try_read(t.token()) {
+                            Some(addr) => {
+                                best_addr_space = Some(AddrSpaceSwitchReadGuard::new(addr))
+                            }
+                            None => continue,
+                        }
+                    }
+
+                    stolen.push((*key, *weight, context_ref.clone(), guard, best_addr_space));
+                }
+
+                if stolen.is_empty() {
+                    continue;
+                }
+
+                for (key, weight, context_ref, mut guard, addr_space) in stolen.drain(..) {
+                    target_queue.queue.remove(&key);
+                    target_queue.total_weight = target_queue.total_weight.saturating_sub(weight);
+                    guard.queue_key = None;
+
+                    let offset = guard.vtime.saturating_sub(target_queue.v);
+                    guard.vtime = contexts_data.v.saturating_add(offset);
+                    let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
+                    guard.vd = guard.vtime + scaled_slice as u64;
+
+                    if final_winner.is_none() && !prev_runnable {
+                        final_winner = Some((guard, addr_space));
+                    } else {
+                        let new_key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
+                        guard.queue_key = Some(new_key);
+                        contexts_data.total_weight =
+                            contexts_data.total_weight.saturating_add(weight);
+                        contexts_data
+                            .queue
+                            .insert(new_key, (guard.vtime, weight, context_ref));
+                    }
+                }
+
+                percpu
+                    .switch_internals
+                    .total_weight
+                    .store(contexts_data.total_weight, Ordering::Relaxed);
+                percpu
+                    .switch_internals
+                    .queue_len
+                    .store(contexts_data.queue.len(), Ordering::Relaxed);
+
+                target_percpu
+                    .switch_internals
+                    .queue_len
+                    .store(target_queue.queue.len(), Ordering::Relaxed);
+                target_percpu
+                    .switch_internals
+                    .total_weight
+                    .store(target_queue.total_weight, Ordering::Relaxed);
+                target_percpu
+                    .switch_internals
+                    .stealable
+                    .store(!target_queue.queue.is_empty(), Ordering::Relaxed);
+
+                break;
+            }
+        }
     }
 
     if final_winner.is_some() || prev_runnable {
@@ -656,6 +835,10 @@ fn select_next_context(
 
                 if let Some(old_key) = prev_context_guard.queue_key.take() {
                     contexts_data.queue.remove(&old_key);
+                    percpu
+                        .switch_internals
+                        .queue_len
+                        .store(contexts_data.queue.len(), Ordering::Relaxed);
                 }
 
                 prev_context_guard.queue_key = Some((vd, Reverse(rem_slice), ctxt_id));
@@ -669,14 +852,33 @@ fn select_next_context(
                         WeakContextRef(Arc::downgrade(&prev_context_lock)),
                     ),
                 );
+                percpu
+                    .switch_internals
+                    .queue_len
+                    .store(contexts_data.queue.len(), Ordering::Relaxed);
             }
+
+            percpu
+                .switch_internals
+                .stealable
+                .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
 
             return Some((chosen_guard, addr_space));
         } else {
+            percpu
+                .switch_internals
+                .stealable
+                .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
             return None;
         }
     } else {
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
+
+        percpu
+            .switch_internals
+            .stealable
+            .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
+
         if (!was_idle || prev_is_dead) && !is_idle {
             return Some(unsafe { (idle_context.write_arc(), None) });
         } else {
@@ -709,6 +911,26 @@ pub struct ContextSwitchPercpu {
     pub(crate) local_wakeup_list: RefCell<Vec<WeakContextRef>>,
     tmp_wakeups: RefCell<Vec<(Option<u128>, WeakContextRef)>>,
     tmp_timers: RefCell<Vec<(u128, WeakContextRef)>>,
+
+    /// Holds the data necessary for work-stealing
+    /// (key, weight, context_ref, guard, addr_space)
+    tmp_steal: RefCell<
+        Vec<(
+            (u64, Reverse<u64>, u32), // key (vd, rem_slice, ctxt_id)
+            u64,                      // weight
+            WeakContextRef,
+            ArcRwLockWriteGuard<L4, Context>,
+            Option<AddrSpaceSwitchReadGuard>,
+        )>,
+    >,
+
+    /// Run Queue
+    pub(crate) run_queue: SpinMutex<RunContextData>,
+
+    pub(crate) stealable: AtomicBool,
+    pub(crate) queue_len: AtomicUsize,
+    pub(crate) total_weight: AtomicU64,
+    pub(crate) steal_counter: AtomicUsize,
 }
 
 impl ContextSwitchPercpu {
@@ -724,6 +946,12 @@ impl ContextSwitchPercpu {
             local_wakeup_list: RefCell::new(Vec::new()),
             tmp_wakeups: RefCell::new(Vec::new()),
             tmp_timers: RefCell::new(Vec::new()),
+            tmp_steal: RefCell::new(Vec::new()),
+            run_queue: SpinMutex::new(RunContextData::new()),
+            stealable: AtomicBool::new(false),
+            queue_len: AtomicUsize::new(0),
+            total_weight: AtomicU64::new(0),
+            steal_counter: AtomicUsize::new(0),
 
             #[cfg(feature = "profiling")]
             current_dbg_id: core::sync::atomic::AtomicU32::new(!0),

@@ -6,7 +6,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Weak},
 };
-use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref};
+use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
 
 use crate::{
     context::{
@@ -81,9 +81,6 @@ pub use self::arch::empty_cr3;
 // the context file descriptors.
 static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
-// Actual context store for the scheduler
-static RUN_CONTEXTS: Mutex<L1, RunContextData> = Mutex::new(RunContextData::new());
-
 pub struct RunContextData {
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
     timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
@@ -116,14 +113,6 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
     CONTEXTS.write(token)
 }
 
-pub fn run_contexts(token: LockToken<'_, L0>) -> MutexGuard<'_, L1, RunContextData> {
-    RUN_CONTEXTS.lock(token)
-}
-
-pub fn run_contexts_try(token: LockToken<'_, L0>) -> Option<MutexGuard<'_, L1, RunContextData>> {
-    RUN_CONTEXTS.try_lock(token)
-}
-
 pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
     let cpu_id = {
         let mut guard = context_lock.write(token.token());
@@ -153,22 +142,22 @@ pub fn wakeup_context(
     let weak = WeakContextRef(Arc::downgrade(context_lock));
     let curr_cpu = crate::cpu_id();
 
-    if let Some(target) = cpu_id {
-        if target != curr_cpu {
-            if let Some(percpu) = unsafe {
-                ALL_PERCPU_BLOCKS[target.get() as usize]
-                    .load(Ordering::Acquire)
-                    .as_ref()
-            } {
-                // cross core wakeup
-                percpu
-                    .switch_internals
-                    .ipi_context_wakeup_list
-                    .lock(token.token())
-                    .push(weak);
-                ipi(IpiKind::Wakeup, IpiTarget::Other);
-                return;
-            }
+    let target_cpu = cpu_id.unwrap_or(curr_cpu);
+
+    if target_cpu != curr_cpu {
+        if let Some(percpu) = unsafe {
+            ALL_PERCPU_BLOCKS[target_cpu.get() as usize]
+                .load(Ordering::Acquire)
+                .as_ref()
+        } {
+            // non-local wakeup
+            percpu
+                .switch_internals
+                .ipi_context_wakeup_list
+                .lock(token.token())
+                .push(weak);
+            ipi(IpiKind::Wakeup, IpiTarget::Other);
+            return;
         }
     }
 
@@ -395,7 +384,19 @@ impl Drop for PreemptGuardL2<'_> {
 
 pub fn get_contexts_stats(token: &mut CleanLockToken) -> (usize, usize, usize) {
     let alive = contexts(token.downgrade()).len();
-    let running = run_contexts(token.token()).count;
+
+    let mut running = 0;
+
+    for i in 0..crate::cpu_count() {
+        if let Some(percpu) = unsafe {
+            ALL_PERCPU_BLOCKS[i as usize]
+                .load(Ordering::Acquire)
+                .as_ref()
+        } {
+            running += percpu.switch_internals.run_queue.lock().queue.len();
+        }
+    }
+
     let blocked = alive.saturating_sub(running);
 
     (alive, running, blocked)
