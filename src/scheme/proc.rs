@@ -1334,6 +1334,7 @@ impl ContextHandle {
                                     handle_notify_files(res, token);
                                 }
                             }
+                            drop(context);
                             crate::syscall::exit_this_context(None, token);
                         } else {
                             let cpu_id = {
@@ -1417,6 +1418,7 @@ impl ContextHandle {
                                     handle_notify_files(res, token);
                                 }
                             }
+                            drop(context);
                             crate::syscall::exit_this_context(None, token);
                         } else {
                             Err(Error::new(EPERM))

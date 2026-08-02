@@ -30,6 +30,10 @@ use crate::{
 
 use super::usercopy::UserSliceWo;
 
+/// Exit current context
+///
+/// SAFETY: Returns Never type, all things that implement `Drop` must be dropped manually before calling this to prevent memory leak.
+///
 pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
     let context_lock = context::current();
     let (addrspace_opt, mut close_files) = {

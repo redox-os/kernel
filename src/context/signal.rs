@@ -88,6 +88,7 @@ pub fn excp_handler(excp: syscall::Exception) {
             context.name
         );
         drop(context);
+        drop(current);
         // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
         // context (closing files, dropping AddrSpace, etc)
         crate::syscall::process::exit_this_context(Some(excp), &mut token);
