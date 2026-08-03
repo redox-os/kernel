@@ -1,12 +1,13 @@
-use core::{ops::Add, slice};
+use core::{mem, ops::Add, slice};
 
 use crate::{
     acpi,
-    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
-    percpu,
+    cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
+    percpu::{self, ALL_PERCPU_BLOCKS},
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
+use bitfield::Bit;
 use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
@@ -19,13 +20,34 @@ static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
 static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
-pub static LOGICAL_CPU_ID_MAP: Once<Vec<u32>> = Once::new();
+
+/// Each bit of this mask corresponds to an index of `FREE_LISTS`.
+///
+/// This abstraction allows future extensions to the number of memory regions supported.
+#[derive(Default, Debug)]
+pub struct FreeListMask {
+    mask: u128,
+}
+
+impl FreeListMask {
+    pub fn enable_index(&mut self, i: usize) {
+        self.mask.set_bit(i, true);
+    }
+
+    pub fn disable_index(&mut self, i: usize) {
+        self.mask.set_bit(i, false);
+    }
+
+    pub fn is_enabled(&self, i: usize) -> bool {
+        self.mask.bit(i)
+    }
+}
 
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct NumaNode {
     pub cpus: u128,
-    pub memories: u128,
+    pub memories: FreeListMask,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -77,10 +99,6 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
                 MAX_DOMAINS,
             )
         };
-        numa_nodes.fill(NumaNode {
-            cpus: 0,
-            memories: 0,
-        });
 
         for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
             numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
@@ -91,7 +109,7 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
             .enumerate()
             .filter(|(i, memory)| memory.length != 0)
         {
-            numa_nodes[memory.node_id as usize].memories |= 1u128 << i;
+            numa_nodes[memory.node_id as usize].memories.enable_index(i);
         }
 
         NUMA_NODES.call_once(|| numa_nodes);
@@ -285,8 +303,8 @@ pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
 pub fn current_node() -> Option<&'static NumaNode> {
     let cpu = percpu::PercpuBlock::current();
-    let cpu_id = if let Some(map) = LOGICAL_CPU_ID_MAP.get() {
-        *map.get(cpu.cpu_id.get() as usize).unwrap()
+    let cpu_id = if let Some(apic_id) = cpu.misc_arch_info.apic_id_opt.get() {
+        apic_id.get()
     } else {
         cpu.cpu_id.get()
     };
@@ -305,6 +323,6 @@ pub fn current_node() -> Option<&'static NumaNode> {
     None
 }
 
-pub fn free_list_mask() -> Option<u128> {
-    Some(current_node()?.memories)
+pub fn free_list_mask() -> Option<&'static FreeListMask> {
+    Some(&current_node()?.memories)
 }

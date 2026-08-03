@@ -21,7 +21,7 @@ use crate::{
         memory::{AccessMode, AddrSpace, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    numa,
+    numa::{self, FreeListMask},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
@@ -74,9 +74,13 @@ pub fn total_frames() -> usize {
     sections().iter().map(|section| section.frames.len()).sum()
 }
 
-pub fn allocate_p2frame_with_mask(mask: u128, order: u32, fallback: bool) -> Option<Frame> {
+pub fn allocate_p2frame_with_mask(
+    mask: &FreeListMask,
+    order: u32,
+    fallback: bool,
+) -> Option<Frame> {
     for i in 0..128 {
-        if mask.bit(i) == true
+        if mask.is_enabled(i)
             && let Some(_) = FREE_LISTS.get().unwrap().get(i)
         {
             if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
@@ -87,7 +91,7 @@ pub fn allocate_p2frame_with_mask(mask: u128, order: u32, fallback: bool) -> Opt
 
     if fallback {
         for i in 0..128 {
-            if mask.bit(i) == false
+            if !mask.is_enabled(i)
                 && let Some(_) = FREE_LISTS.get().unwrap().get(i)
             {
                 if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
@@ -1313,11 +1317,7 @@ unsafe impl FrameAllocator for TheFrameAllocator {
             allocate_p2frame_with_mask(
                 mask,
                 order,
-                if let NumaMemoryPolicy::NodeLocalLeniant = *mem_policy {
-                    true
-                } else {
-                    false
-                },
+                matches!(*mem_policy, NumaMemoryPolicy::NodeLocalLeniant),
             )
             .map(|f| f.base())
         } else {
