@@ -130,8 +130,8 @@ pub fn futex(
                         return Err(Error::new(EINVAL));
                     }
 
-                    // On systems where virtual memory is not abundant, we might instead add an
-                    // atomic usercopy function.
+                    // TODO: On systems where virtual memory is not abundant, we might instead
+                    // add an atomic usercopy function.
                     let accessible_addr = crate::memory::RmmA::phys_to_virt(target_physaddr).data();
 
                     (
@@ -149,8 +149,16 @@ pub fn futex(
                         if !addr.is_multiple_of(8) {
                             return Err(Error::new(EINVAL));
                         }
+
+                        // TODO: On systems where virtual memory is not abundant, we might instead
+                        // add an atomic usercopy function.
+                        let accessible_addr =
+                            crate::memory::RmmA::phys_to_virt(target_physaddr).data();
+
                         (
-                            unsafe { (*(addr as *const AtomicU64)).load(Ordering::SeqCst) },
+                            unsafe {
+                                (*(accessible_addr as *const AtomicU64)).load(Ordering::SeqCst)
+                            },
                             val as u64,
                         )
                     }
