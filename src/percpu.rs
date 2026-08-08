@@ -51,7 +51,7 @@ pub struct PercpuBlock {
 
     pub stats: CpuStats,
 
-    pub numa_node: Cell<Option<&'static NumaNode>>,
+    pub numa_node: Cell<Option<(u32, &'static NumaNode)>>,
 }
 
 pub static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =

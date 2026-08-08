@@ -79,7 +79,12 @@ pub fn allocate_p2frame_with_mask(
     order: u32,
     fallback: bool,
 ) -> Option<Frame> {
-    for i in 0..128 {
+    let numreg = numa::number_of_memory_regions();
+    if numreg == 0 {
+        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+    }
+
+    for i in 0..numreg {
         if mask.is_enabled(i)
             && let Some(_) = FREE_LISTS.get().unwrap().get(i)
         {
@@ -90,12 +95,24 @@ pub fn allocate_p2frame_with_mask(
     }
 
     if fallback {
-        for i in 0..128 {
-            if !mask.is_enabled(i)
-                && let Some(_) = FREE_LISTS.get().unwrap().get(i)
-            {
-                if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+        // if distance info is available, use it to try allocating
+        // from nodes in the increasing order of distance from current node
+        if let Some(masks) = numa::free_lists_masks() {
+            for mask in masks {
+                if let Some(frame) = allocate_p2frame_with_mask(&mask, order, false) {
                     return Some(frame);
+                }
+            }
+        } else {
+            // if distance info is not available, just try allocating from the remaining memory regions
+            // not present in the mask
+            for i in 0..numreg {
+                if !mask.is_enabled(i)
+                    && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+                {
+                    if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+                        return Some(frame);
+                    }
                 }
             }
         }

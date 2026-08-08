@@ -24,7 +24,7 @@ static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
 /// Each bit of this mask corresponds to an index of `FREE_LISTS`.
 ///
 /// This abstraction allows future extensions to the number of memory regions supported.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct FreeListMask {
     mask: u128,
 }
@@ -122,14 +122,18 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
                     .get()
                     .map_or(cpu.cpu_id.get(), |e| e.get());
 
-                let node = numa_nodes.iter().find_map(|node| {
-                    if node.cpus & 1u128 << cpu_id != 0 {
-                        Some(node)
-                    } else {
-                        None
-                    }
-                });
-                cpu.numa_node.set(node);
+                let n = numa_nodes
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, node)| {
+                        if node.cpus & 1u128 << cpu_id != 0 {
+                            Some((i, node))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|(i, node)| (i as u32, node));
+                cpu.numa_node.set(n);
             } else {
                 break;
             }
@@ -326,9 +330,51 @@ pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
 pub fn current_node() -> Option<&'static NumaNode> {
     let cpu = percpu::PercpuBlock::current();
-    cpu.numa_node.get()
+    Some(cpu.numa_node.get()?.1)
+}
+
+pub fn current_node_id() -> Option<u32> {
+    let cpu = percpu::PercpuBlock::current();
+    Some(cpu.numa_node.get()?.0)
 }
 
 pub fn free_list_mask() -> Option<&'static FreeListMask> {
     Some(&current_node()?.memories)
+}
+
+pub struct FreeListMaskIter {
+    i: usize,
+    others: [u32; MAX_DOMAINS],
+}
+
+impl Iterator for FreeListMaskIter {
+    type Item = FreeListMask;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_node_id = self.others.get(self.i)?;
+        let next_node = &NUMA_NODES.get().unwrap()[*next_node_id as usize];
+        self.i += 1;
+        Some(next_node.memories)
+    }
+}
+
+pub fn free_lists_masks() -> Option<FreeListMaskIter> {
+    let mut others: [(u32, u8); MAX_DOMAINS] = [(0u32, 0u8); MAX_DOMAINS];
+    others.fill((u32::MAX, 0));
+    let node_id = current_node_id()? as usize;
+    let mut iter = FreeListMaskIter {
+        i: 0,
+        others: [0u32; MAX_DOMAINS],
+    };
+    let distances = DISTANCES.get()?;
+    let num_nodes = NUMA_NODES.get().unwrap().len();
+
+    for (i, node) in NUMA_NODES.get()?.iter().enumerate() {
+        others[i] = (i as u32, distances[num_nodes * node_id as usize + i]);
+    }
+    others.sort_by_key(|(node_id, distance)| *distance);
+    let others = others.map(|e| e.0);
+    iter.others = others;
+
+    Some(iter)
 }
