@@ -112,6 +112,29 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
             numa_nodes[memory.node_id as usize].memories.enable_index(i);
         }
 
+        for cpu_ptr in percpu::ALL_PERCPU_BLOCKS.as_ref() {
+            if let Some(cpu) =
+                unsafe { cpu_ptr.load(core::sync::atomic::Ordering::Relaxed).as_mut() }
+            {
+                let cpu_id = cpu
+                    .misc_arch_info
+                    .apic_id_opt
+                    .get()
+                    .map_or(cpu.cpu_id.get(), |e| e.get());
+
+                let node = numa_nodes.iter().find_map(|node| {
+                    if node.cpus & 1u128 << cpu_id != 0 {
+                        Some(node)
+                    } else {
+                        None
+                    }
+                });
+                cpu.numa_node.set(node);
+            } else {
+                break;
+            }
+        }
+
         NUMA_NODES.call_once(|| numa_nodes);
     }
 }
@@ -303,24 +326,7 @@ pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
 pub fn current_node() -> Option<&'static NumaNode> {
     let cpu = percpu::PercpuBlock::current();
-    let cpu_id = if let Some(apic_id) = cpu.misc_arch_info.apic_id_opt.get() {
-        apic_id.get()
-    } else {
-        cpu.cpu_id.get()
-    };
-
-    let mut mask = 0;
-    if let Some(nodes) = NUMA_NODES.get() {
-        let node = nodes.iter().find_map(|node| {
-            if node.cpus & 1u128 << cpu_id != 0 {
-                Some(node)
-            } else {
-                None
-            }
-        })?;
-        return Some(node);
-    }
-    None
+    cpu.numa_node.get()
 }
 
 pub fn free_list_mask() -> Option<&'static FreeListMask> {
