@@ -35,8 +35,12 @@ impl KernelMapper<true> {
 
 impl<const RW: bool> KernelMapper<RW> {
     fn lock() -> Self {
-        let mapper =
-            unsafe { PageMapper::current(TableKind::Kernel, crate::memory::TheFrameAllocator) };
+        let mapper = unsafe {
+            PageMapper::current(
+                TableKind::Kernel,
+                crate::memory::TheFrameAllocator(syscall::NumaMemoryPolicy::NodeLocalLeniant),
+            )
+        };
 
         let current_processor = crate::cpu_id();
         loop {

@@ -1,4 +1,4 @@
-use core::{mem, ops::Add, slice};
+use core::{mem, ops::Add, ptr::write_bytes, slice};
 
 use crate::{
     acpi,
@@ -11,7 +11,7 @@ use bitfield::Bit;
 use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, Result, ENODATA, EOPNOTSUPP};
+use syscall::{Error, NumaMemoryPolicy, Result, ENODATA, EOPNOTSUPP};
 
 pub const MAX_DOMAINS: usize = 128;
 
@@ -20,6 +20,10 @@ static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
 static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
+
+pub fn is_supported() -> bool {
+    NUMA_NODES.get().is_some()
+}
 
 /// Each bit of this mask corresponds to an index of `FREE_LISTS`.
 ///
@@ -44,7 +48,7 @@ impl FreeListMask {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NumaNode {
     pub cpus: u128,
     pub memories: FreeListMask,
@@ -94,10 +98,9 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
         && let Some(memories) = NUMA_MEMORY.get()
     {
         let numa_nodes = unsafe {
-            slice::from_raw_parts_mut(
-                memories.as_ptr().add(MAX_DOMAINS).addr() as *mut NumaNode,
-                MAX_DOMAINS,
-            )
+            let ptr = memories.as_ptr().add(MAX_DOMAINS).addr() as *mut u8;
+            write_bytes(ptr, 0, MAX_DOMAINS * size_of::<NumaNode>());
+            slice::from_raw_parts_mut(ptr as *mut NumaNode, MAX_DOMAINS)
         };
 
         for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
@@ -338,8 +341,11 @@ pub fn current_node_id() -> Option<u32> {
     Some(cpu.numa_node.get()?.0)
 }
 
-pub fn free_list_mask() -> Option<&'static FreeListMask> {
-    Some(&current_node()?.memories)
+pub fn free_list_mask(mem_policy: NumaMemoryPolicy) -> Option<(FreeListMask, bool)> {
+    match mem_policy {
+        NumaMemoryPolicy::NodeLocalStrict => Some((current_node()?.memories, false)),
+        NumaMemoryPolicy::NodeLocalLeniant => Some((current_node()?.memories, true)),
+    }
 }
 
 pub struct FreeListMaskIter {

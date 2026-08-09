@@ -1707,14 +1707,15 @@ impl ContextHandle {
 
                 match op {
                     NumaVerb::SetMemPolicy => {
-                        let mut mem_policy = addrspace.mem_policy.write();
-                        *mem_policy = NumaMemoryPolicy::try_from(payload.read_usize()? as u64)
-                            .map_err(|_| Error::new(EINVAL))?;
+                        let mut addrspace = addrspace.acquire_write(token.downgrade());
+                        addrspace.table.utable.allocator_mut().0 =
+                            NumaMemoryPolicy::try_from(payload.read_usize()? as u64)
+                                .map_err(|_| Error::new(EINVAL))?;
                         Ok(0)
                     }
                     NumaVerb::GetMemPolicy => {
-                        let mem_policy = addrspace.mem_policy.read();
-                        Ok(*mem_policy as usize)
+                        let addrspace = addrspace.acquire_read(token.downgrade());
+                        Ok(addrspace.table.utable.allocator().0 as usize)
                     }
                 }
             }

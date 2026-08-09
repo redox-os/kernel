@@ -98,7 +98,6 @@ pub struct AddrSpaceWrapper {
     pub inner: RwLock<L5, AddrSpace>,
     pub tlb_ack: AtomicU32,
     pub used_by: LogicalCpuSet,
-    pub mem_policy: spin::rwlock::RwLock<NumaMemoryPolicy>,
 }
 impl AddrSpaceWrapper {
     pub fn new() -> Result<Arc<Self>> {
@@ -106,7 +105,6 @@ impl AddrSpaceWrapper {
             inner: RwLock::new(AddrSpace::new()?),
             tlb_ack: AtomicU32::new(0),
             used_by: LogicalCpuSet::empty(),
-            mem_policy: spin::rwlock::RwLock::new(NumaMemoryPolicy::NodeLocalLeniant),
         }))
     }
     pub fn acquire_read<'a>(
@@ -586,8 +584,11 @@ impl AddrSpace {
 
     pub fn new() -> Result<Self> {
         let utable = unsafe {
-            PageMapper::create(TableKind::User, crate::memory::TheFrameAllocator)
-                .ok_or(Error::new(ENOMEM))?
+            PageMapper::create(
+                TableKind::User,
+                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+            )
+            .ok_or(Error::new(ENOMEM))?
         };
 
         Ok(Self {
@@ -1338,13 +1339,14 @@ impl Grant {
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
+        mem_policy: NumaMemoryPolicy,
     ) -> Result<Grant, Enomem> {
         if !span.count.is_power_of_two() {
             warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
         }
 
         let count = span.count.next_power_of_two();
-        let mut frame_allocator = TheFrameAllocator;
+        let mut frame_allocator = TheFrameAllocator(mem_policy);
         let base = Frame::containing(
             frame_allocator
                 .allocate(FrameCount::new(count))
