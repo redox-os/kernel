@@ -773,10 +773,11 @@ fn select_next_context(
                     target_queue.total_weight = target_queue.total_weight.saturating_sub(weight);
                     guard.queue_key = None;
 
-                    let offset = guard.vtime.saturating_sub(target_queue.v);
-                    guard.vtime = contexts_data.v.saturating_add(offset);
-                    let scaled_slice = (BASE_SLICE_TICKS as u128 * SCALE) / weight as u128;
-                    guard.vd = guard.vtime + scaled_slice as u64;
+                    let offset = guard.vtime as i128 - target_queue.v as i128;
+                    guard.vtime = (contexts_data.v as i128 + offset).max(0) as u64;
+
+                    let scaled_slice = (guard.rem_slice as u128 * SCALE) / weight as u128;
+                    guard.vd = guard.vtime.saturating_add(scaled_slice as u64);
 
                     if final_winner.is_none() && !prev_runnable {
                         final_winner = Some((guard, addr_space));
