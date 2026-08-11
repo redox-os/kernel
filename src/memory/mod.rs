@@ -74,20 +74,16 @@ pub fn total_frames() -> usize {
 
 /// Allocate a range of frames
 pub fn allocate_p2frame(order: u32) -> Option<Frame> {
-    static RR_INDEX: Mutex<u8> = Mutex::new(0);
+    static RR_INDEX: AtomicU8 = AtomicU8::new(0);
     let len = FREE_LISTS.get().unwrap().len();
 
     if len == 1 {
         return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
     }
 
-    let index = {
-        let mut lock = RR_INDEX.lock();
-        let index =
-            usize::try_from(*lock).expect("Maximum number of memory regions supported is 128");
-        *lock = u8::try_from((index + 1) % len).expect("Maximum number of memory regions is 128");
-        index
-    };
+    // relaxed ordering since we only want atomicity
+    let index =
+        usize::from(RR_INDEX.fetch_add(1, Ordering::Relaxed)) % numa::number_of_memory_regions();
     for i in index..len {
         if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
             return Some(frame.0);
