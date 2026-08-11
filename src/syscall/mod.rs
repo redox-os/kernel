@@ -175,7 +175,7 @@ pub fn syscall(
             SYS_CLOSE => close(fd, token).map(|()| 0),
             SYS_CALL => {
                 let flags = CallFlags::from_bits(e & !0xff).ok_or(Error::new(EINVAL))?;
-                if flags.contains(CallFlags::MULTIPLE_FDS) {
+                let file_descriptors = if flags.contains(CallFlags::MULTIPLE_FDS) {
                     if g / core::mem::size_of::<usize>() > 16 {
                         return Err(Error::new(EINVAL));
                     };
@@ -189,22 +189,17 @@ pub fn syscall(
                             fds.len() * core::mem::size_of::<usize>(),
                         )
                     })?;
-                    call(
-                        &fds[..copied / core::mem::size_of::<usize>()],
-                        UserSlice::rw(c, d)?,
-                        flags,
-                        UserSlice::ro(f, (e & 0xff) * 8)?,
-                        token,
-                    )
+                    &fds[..copied / core::mem::size_of::<usize>()]
                 } else {
-                    call(
-                        &[b],
-                        UserSlice::rw(c, d)?,
-                        flags,
-                        UserSlice::ro(f, (e & 0xff) * 8)?,
-                        token,
-                    )
-                }
+                    &[b]
+                };
+                call(
+                    file_descriptors,
+                    UserSlice::rw(c, d)?,
+                    flags,
+                    UserSlice::ro(f, (e & 0xff) * 8)?,
+                    token,
+                )
             }
             SYS_OPENAT_INTO => openat_into(
                 fd,
