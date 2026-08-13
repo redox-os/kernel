@@ -1705,19 +1705,19 @@ impl ContextHandle {
                 )
                 .ok_or(Error::new(EINVAL))?;
 
-                match op {
-                    NumaVerb::SetMemPolicy => {
-                        let mut addrspace = addrspace.acquire_write(token.downgrade());
-                        addrspace.table.utable.allocator_mut().0 =
-                            NumaMemoryPolicy::try_from(payload.read_usize()? as u64)
-                                .map_err(|_| Error::new(EINVAL))?;
-                        Ok(0)
-                    }
-                    NumaVerb::GetMemPolicy => {
-                        let addrspace = addrspace.acquire_read(token.downgrade());
-                        Ok(addrspace.table.utable.allocator().0 as usize)
-                    }
+                let NumaVerb::MemPolicy = op;
+
+                if flags.contains(CallFlags::WRITE) {
+                    let mut addrspace = addrspace.acquire_write(token.downgrade());
+                    addrspace.table.utable.allocator_mut().0 =
+                        NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
                 }
+                if flags.contains(CallFlags::READ) {
+                    let addrspace = addrspace.acquire_read(token.downgrade());
+                    let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
+                    payload.copy_from_slice(&mem_policy)?;
+                }
+                Ok(0)
             }
             _ => Err(Error::new(EBADF)),
         }
