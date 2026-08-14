@@ -673,7 +673,7 @@ fn select_next_context(
             .fetch_add(1, Ordering::Relaxed)
             % STEAL_INTERVAL;
 
-        let steal_hint = None;
+        let mut steal_hint = None;
         let should_steal = local_len == 0
             || (counter == 0 && {
                 let mut max_neighbour = 0;
