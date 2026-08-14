@@ -673,6 +673,7 @@ fn select_next_context(
             .fetch_add(1, Ordering::Relaxed)
             % STEAL_INTERVAL;
 
+        let steal_hint = None;
         let should_steal = local_len == 0
             || (counter == 0 && {
                 let mut max_neighbour = 0;
@@ -687,8 +688,12 @@ fn select_next_context(
                             .load(Ordering::Acquire)
                             .as_ref()
                     } {
-                        max_neighbour =
-                            max_neighbour.max(p.switch_internals.queue_len.load(Ordering::Relaxed));
+                        let neighbour_len = p.switch_internals.queue_len.load(Ordering::Relaxed);
+
+                        if neighbour_len > max_neighbour {
+                            max_neighbour = neighbour_len;
+                            steal_hint = Some(i);
+                        }
                     }
                 }
 
@@ -696,8 +701,15 @@ fn select_next_context(
             });
 
         if should_steal {
-            for i in 1..num_cpu {
-                let target_cpu = (curr_cpu + i) % num_cpu;
+            let targets = steal_hint
+                .into_iter()
+                .chain((1..num_cpu))
+                .map(|i| (curr_cpu + i % num_cpu));
+
+            for target_cpu in targets {
+                if target_cpu == curr_cpu {
+                    continue;
+                }
                 let Some(target_percpu) = (unsafe {
                     ALL_PERCPU_BLOCKS[target_cpu as usize]
                         .load(Ordering::Acquire)
@@ -720,11 +732,13 @@ fn select_next_context(
                 };
 
                 let target_len = target_queue.queue.len();
-                if target_len == 0 {
+
+                let extra = target_len.saturating_sub(contexts_data.queue.len());
+
+                if extra == 0 {
                     continue;
                 }
 
-                let extra = target_len.saturating_sub(contexts_data.queue.len());
                 let want = (extra / 2).clamp(1, MAX_STEAL);
 
                 let mut stolen = percpu.switch_internals.tmp_steal.borrow_mut();
