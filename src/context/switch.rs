@@ -41,7 +41,7 @@ pub const SCHED_PRIO_TO_WEIGHT: [usize; 40] = [
     70, 56, 45, 36, 29, 23, 18, 15,
 ];
 
-pub const SCALE: u128 = 1 << 40;
+pub const SCALE: u128 = 1 << 30;
 pub const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
 pub const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
 pub const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
@@ -790,8 +790,8 @@ fn select_next_context(
                     let offset = guard.vtime as i128 - target_queue.v as i128;
                     guard.vtime = (contexts_data.v as i128 + offset).max(0) as u64;
 
-                    let scaled_slice = (guard.rem_slice as u128 * SCALE) / weight as u128;
-                    guard.vd = guard.vtime.saturating_add(scaled_slice as u64);
+                    let scaled_slice = guard.rem_slice / weight;
+                    guard.vd = guard.vtime.saturating_add(scaled_slice);
 
                     if final_winner.is_none() && !prev_runnable {
                         final_winner = Some((guard, addr_space));
