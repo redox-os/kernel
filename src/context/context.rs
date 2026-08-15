@@ -1,4 +1,4 @@
-use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     cmp::Reverse,
@@ -600,8 +600,8 @@ impl core::fmt::Debug for Kstack {
 
 #[derive(Clone, Debug, Default)]
 pub struct FdTbl {
-    pub lower_fdtbl: Vec<Option<FileDescriptor>>,
-    pub upper_fdtbl: Vec<Option<FileDescriptor>>,
+    pub lower_fdtbl: RadixFdTbl,
+    pub upper_fdtbl: RadixFdTbl,
     active_count: usize,
 }
 
@@ -610,30 +610,17 @@ pub type LockedFdTbl = RwLock<L5, FdTbl>;
 impl FdTbl {
     pub fn new() -> Self {
         Self {
-            lower_fdtbl: Vec::new(),
-            upper_fdtbl: Vec::new(),
+            lower_fdtbl: RadixFdTbl::new(),
+            upper_fdtbl: RadixFdTbl::new(),
             active_count: 0,
         }
-    }
-
-    pub fn resize(&mut self, which: usize, size: usize) -> Result<()> {
-        let (fdtbl, _) = self.select_fdtbl_mut(which);
-        if super::CONTEXT_MAX_FILES < size {
-            return Err(Error::new(EMFILE));
-        }
-        if size < fdtbl.len() {
-            return Err(Error::new(EINVAL));
-        }
-
-        fdtbl.resize(size, None);
-        Ok(())
     }
 
     fn strip_tags(index: usize) -> usize {
         index & !UPPER_FDTBL_TAG
     }
 
-    fn select_fdtbl(&self, index: usize) -> (&Vec<Option<FileDescriptor>>, usize) {
+    fn select_fdtbl(&self, index: usize) -> (&RadixFdTbl, usize) {
         if index & UPPER_FDTBL_TAG == 0 {
             (&self.lower_fdtbl, index)
         } else {
@@ -641,7 +628,7 @@ impl FdTbl {
         }
     }
 
-    fn select_fdtbl_mut(&mut self, index: usize) -> (&mut Vec<Option<FileDescriptor>>, usize) {
+    fn select_fdtbl_mut(&mut self, index: usize) -> (&mut RadixFdTbl, usize) {
         if index & UPPER_FDTBL_TAG == 0 {
             (&mut self.lower_fdtbl, index)
         } else {
@@ -659,7 +646,7 @@ impl FdTbl {
             if !checked_handles.insert(index) {
                 return Err(Error::new(EBADF)); // Duplicate handle
             }
-            if !matches!(self.get(index), Some(Some(_))) {
+            if !self.is_occupied(index) {
                 return Err(Error::new(EBADF));
             }
         }
@@ -677,7 +664,7 @@ impl FdTbl {
             if !checked_slots.insert(index) {
                 return Err(Error::new(EINVAL)); // Duplicate slots
             }
-            if matches!(self.get(index), Some(Some(_))) {
+            if self.is_occupied(index) {
                 return Err(Error::new(EEXIST));
             }
         }
@@ -686,27 +673,21 @@ impl FdTbl {
     }
 
     fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
-        if self.active_count >= super::CONTEXT_MAX_FILES {
-            return None;
-        }
         let index = i.get();
-        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
+        let is_occupied = self.is_occupied(index);
 
-        if real_index >= super::CONTEXT_MAX_FILES {
+        if !is_occupied && self.active_count >= super::CONTEXT_MAX_FILES {
             return None;
         }
 
-        if real_index >= fdtbl.len() {
-            fdtbl.resize_with(real_index + 1, || None);
+        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
+        let old = fdtbl.insert(real_index, file)?;
+
+        if old.is_none() {
+            self.active_count += 1;
         }
 
-        if let Some(slot @ None) = fdtbl.get_mut(real_index) {
-            *slot = Some(file);
-            self.active_count += 1;
-            Some(i)
-        } else {
-            None
-        }
+        Some(i)
     }
 
     fn bulk_insert_files(
@@ -732,20 +713,19 @@ impl FdTbl {
         Ok(())
     }
 
-    pub fn get(&self, index: usize) -> Option<&Option<FileDescriptor>> {
+    pub fn is_occupied(&self, index: usize) -> bool {
         let (fdtbl, real_index) = self.select_fdtbl(index);
-
-        fdtbl.get(real_index)
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut Option<FileDescriptor>> {
-        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
-
-        fdtbl.get_mut(real_index)
+        fdtbl.is_occupied(real_index)
     }
 
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        self.get(i.get()).cloned().flatten()
+        let (fdtbl, real_index) = self.select_fdtbl(i.get());
+        fdtbl.get(real_index).cloned()
+    }
+
+    pub fn get_file_mut(&mut self, i: FileHandle) -> Option<&mut FileDescriptor> {
+        let (fdtbl, real_index) = self.select_fdtbl_mut(i.get());
+        fdtbl.get_mut(real_index)
     }
 
     fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
@@ -785,8 +765,11 @@ impl FdTbl {
     pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
         let index = i.get();
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
+        if real_index >= super::CONTEXT_MAX_FILES {
+            return None;
+        }
 
-        let removed_file_opt = fdtbl.get_mut(real_index).and_then(|opt| opt.take());
+        let removed_file_opt = fdtbl.remove(real_index);
         if removed_file_opt.is_some() {
             self.active_count -= 1;
         }
@@ -817,11 +800,10 @@ impl FdTbl {
 }
 
 impl FdTbl {
-    pub fn enumerate(&self) -> impl Iterator<Item = (usize, &Option<FileDescriptor>)> {
-        self.lower_fdtbl.iter().enumerate().chain(
+    pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
+        self.lower_fdtbl.enumerate_fds().chain(
             self.upper_fdtbl
-                .iter()
-                .enumerate()
+                .enumerate_fds()
                 .map(|(i, fd)| (i | UPPER_FDTBL_TAG, fd)),
         )
     }
@@ -863,4 +845,159 @@ pub fn bulk_insert_fds(
     let files = files_iter.collect::<Vec<_>>();
     current.bulk_insert_files(files, &handles, &mut token)?;
     Ok(handles.len())
+}
+
+#[cfg(target_pointer_width = "64")]
+pub const NODE_BITS: usize = 9; // 512 entries
+
+#[cfg(target_pointer_width = "32")]
+pub const NODE_BITS: usize = 10; // 1024 entries
+
+pub const NODE_SIZE: usize = 1 << NODE_BITS;
+pub const NODE_MASK: usize = NODE_SIZE - 1;
+
+#[derive(Clone, Debug)]
+pub struct LeafNode {
+    pub entries: [Option<FileDescriptor>; NODE_SIZE],
+}
+
+impl LeafNode {
+    pub const fn new() -> Self {
+        Self {
+            entries: [const { None }; NODE_SIZE],
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<&FileDescriptor> {
+        self.entries[index].as_ref()
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut FileDescriptor> {
+        self.entries[index].as_mut()
+    }
+
+    pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(l0, fd)| fd.as_ref().map(|fd| (l0, fd)))
+    }
+
+    pub fn enumerate_fds_with_base(
+        &self,
+        base: usize,
+    ) -> impl Iterator<Item = (usize, &FileDescriptor)> {
+        self.enumerate_fds().map(move |(l0, fd)| (base | l0, fd))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct InnerNode {
+    pub children: [Option<Box<LeafNode>>; NODE_SIZE],
+}
+
+impl InnerNode {
+    pub const fn new() -> Self {
+        Self {
+            children: [const { None }; NODE_SIZE],
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<&LeafNode> {
+        self.children[index].as_deref()
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut LeafNode> {
+        self.children[index].as_deref_mut()
+    }
+
+    pub fn iter_leaves(&self) -> impl Iterator<Item = (usize, &LeafNode)> {
+        self.children
+            .iter()
+            .enumerate()
+            .filter_map(|(l1, leaf)| leaf.as_deref().map(|leaf| (l1, leaf)))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RadixFdTbl {
+    root: Box<InnerNode>,
+}
+
+impl Default for RadixFdTbl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RadixFdTbl {
+    pub fn new() -> Self {
+        Self {
+            root: Box::new(InnerNode::new()),
+        }
+    }
+
+    #[inline]
+    fn split_index(index: usize) -> (usize, usize) {
+        let l1 = (index >> NODE_BITS) & NODE_MASK;
+        let l0 = index & NODE_MASK;
+        (l1, l0)
+    }
+
+    #[inline]
+    fn is_occupied(&self, handle: usize) -> bool {
+        self.get(handle).is_some()
+    }
+
+    pub fn get(&self, handle: usize) -> Option<&FileDescriptor> {
+        let (l1, l0) = Self::split_index(handle);
+        self.root.get(l1)?.get(l0)
+    }
+
+    pub fn get_mut(&mut self, handle: usize) -> Option<&mut FileDescriptor> {
+        let (l1, l0) = Self::split_index(handle);
+        self.root.get_mut(l1)?.get_mut(l0)
+    }
+
+    pub fn insert(&mut self, handle: usize, fd: FileDescriptor) -> Option<Option<FileDescriptor>> {
+        let (l1, l0) = Self::split_index(handle);
+
+        let leaf = self.root.children[l1].get_or_insert_with(|| Box::new(LeafNode::new()));
+        let old = leaf.entries[l0].replace(fd);
+
+        Some(old)
+    }
+
+    pub fn remove(&mut self, handle: usize) -> Option<FileDescriptor> {
+        let (l1, l0) = Self::split_index(handle);
+        self.root
+            .get_mut(l1)
+            .and_then(|leaf| leaf.entries[l0].take())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
+        self.root
+            .children
+            .iter()
+            .filter_map(|leaf| leaf.as_deref())
+            .flat_map(|leaf| leaf.entries.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
+        self.root
+            .children
+            .iter_mut()
+            .filter_map(|leaf| leaf.as_deref_mut())
+            .flat_map(|leaf| leaf.entries.iter_mut())
+    }
+
+    pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
+        self.root
+            .iter_leaves()
+            .flat_map(|(l1, leaf)| leaf.enumerate_fds_with_base(l1 << NODE_BITS))
+    }
 }

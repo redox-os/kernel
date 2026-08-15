@@ -39,12 +39,8 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
         for (id, name, fs) in rows.iter() {
             let _ = writeln!(string, "{}: {}", id, name);
 
-            for (fd, f) in fs.enumerate() {
-                let file = match *f {
-                    None => continue,
-                    Some(ref file) => file.clone(),
-                };
-
+            for (fd, f) in fs.enumerate_fds() {
+                let file = f.clone();
                 let (scheme_res, number, flags) = {
                     let desc = file.description.read(token.token());
                     (desc.scheme_ref.upgrade(), desc.number, desc.flags)
