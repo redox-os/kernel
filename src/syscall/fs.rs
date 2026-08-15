@@ -515,7 +515,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
         let mut files = context.files.write(token.token());
         let (files, mut token) = files.token_split();
-        match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
+        match files.get_file_mut(fd) {
             Some(ref mut file) => match cmd {
                 F_GETFD => Ok(0),
                 F_SETFD => Ok(0),
