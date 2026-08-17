@@ -744,7 +744,7 @@ fn select_next_context(
                 let mut stolen = percpu.switch_internals.tmp_steal.borrow_mut();
                 stolen.clear();
 
-                for (key, (_, weight, context_ref)) in target_queue.queue.iter() {
+                for (key, (_, weight, context_ref)) in target_queue.queue.iter().step_by(2) {
                     if stolen.len() >= want {
                         break;
                     }
