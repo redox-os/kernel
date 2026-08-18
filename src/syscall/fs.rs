@@ -3,7 +3,6 @@
 use core::num::NonZeroUsize;
 
 use alloc::{string::String, sync::Arc, vec::Vec};
-use redox_path::RedoxPath;
 
 use crate::{
     context::{
@@ -536,22 +535,13 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
     let path = path_buf.use_for_string(raw_path)?;
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let (number, scheme) = {
         let desc = file.description.read(token.token());
         (desc.number, desc.scheme_ref.upgrade()?)
     };
 
-    // TODO: Check EXDEV.
-    /*
-    if scheme_id != description.scheme {
-        return Err(Error::new(EXDEV));
-    }
-    */
-
-    scheme.flink(number, reference.as_ref(), caller_ctx, token)
+    scheme.flink(number, path_buf.as_ref(), caller_ctx, token)
 }
 
 pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
@@ -570,22 +560,13 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     let path = path_buf.use_for_string(raw_path)?;
     */
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-    let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
-    let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
     let (number, scheme) = {
         let desc = file.description.read(token.token());
         (desc.number, desc.scheme_ref.upgrade()?)
     };
 
-    // TODO: Check EXDEV.
-    /*
-    if scheme_id != description.scheme {
-        return Err(Error::new(EXDEV));
-    }
-    */
-
-    scheme.frename(number, reference.as_ref(), caller_ctx, token)
+    scheme.frename(number, path_buf.as_ref(), caller_ctx, token)
 }
 
 /// File status
