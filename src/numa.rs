@@ -124,7 +124,8 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
                     .misc_arch_info
                     .apic_id_opt
                     .get()
-                    .map_or(cpu.cpu_id.get(), |e| e.get());
+                    .map(|e| e.get())
+                    .unwrap();
 
                 #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
                 let cpu_id = 0; // TODO
