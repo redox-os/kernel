@@ -102,4 +102,4 @@ test-relibc: all
 test-acid: all
 	$(MAKE) install
 	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg acid-bins
-	REDOXER_SYSROOT=$(DESTDIR) redoxer exec acid invalid_syscall getppid_bench pgtbl_populate_bench
+	REDOXER_SYSROOT=$(DESTDIR) redoxer exec --artifact root:/home/root env ACID_BENCH_OUTPUT=/home/root/bench-output.txt acid invalid_syscall getppid_bench pgtbl_populate_bench
