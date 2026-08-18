@@ -273,6 +273,16 @@ fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usi
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
     context
+        .files
+        .write(token.token())
+        .resize(0, 64)
+        .expect("failed to resize lower fdtbl");
+    context
+        .files
+        .write(token.token())
+        .resize(syscall::flag::UPPER_FDTBL_TAG, 64)
+        .expect("failed to resize upper fdtbl");
+    context
         .insert_file(
             FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | scheme.get()),
             FileDescriptor {
