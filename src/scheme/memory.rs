@@ -5,10 +5,12 @@ use rmm::PhysicalAddress;
 
 use crate::{
     context::{
+        self,
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
     },
     memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
+    numa, percpu,
     sync::CleanLockToken,
     syscall::{
         data::{Map, StatVfs},
@@ -75,6 +77,10 @@ impl MemoryScheme {
         memory_type: MemoryType,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        let mem_policy = {
+            let addrspace = addr_space.inner.read(token.token());
+            addrspace.table.utable.allocator().0
+        };
         let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size)
             .ok_or(Error::new(EINVAL))?;
         let page_count = NonZeroUsize::new(span.count).ok_or(Error::new(EINVAL))?;
@@ -109,7 +115,9 @@ impl MemoryScheme {
                 }
                 let span = PageSpan::new(dst_page, page_count.get());
                 if is_phys_contiguous {
-                    Ok(Grant::zeroed_phys_contiguous(span, flags, mapper, flusher)?)
+                    Ok(Grant::zeroed_phys_contiguous(
+                        span, flags, mapper, flusher, mem_policy,
+                    )?)
                 } else {
                     Ok(Grant::zeroed(
                         span,

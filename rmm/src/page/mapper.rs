@@ -1,8 +1,8 @@
 use core::marker::PhantomData;
 
 use crate::{
-    Arch, FrameAllocator, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress, TableKind,
-    VirtualAddress,
+    Arch, FrameAllocator, FrameCount, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress,
+    TableKind, VirtualAddress,
 };
 
 pub struct PageMapper<A, F> {

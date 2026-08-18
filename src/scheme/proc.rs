@@ -42,7 +42,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, Error};
+use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -1698,6 +1698,26 @@ impl ContextHandle {
                     }
                     _ => Err(Error::new(EOPNOTSUPP)),
                 }
+            }
+            ContextHandle::AddrSpace { addrspace } => {
+                let op = syscall::flag::NumaVerb::try_from_raw(
+                    *metadata.get(0).ok_or(Error::new(EINVAL))?,
+                )
+                .ok_or(Error::new(EINVAL))?;
+
+                let NumaVerb::MemPolicy = op;
+
+                if flags.contains(CallFlags::WRITE) {
+                    let mut addrspace = addrspace.acquire_write(token.downgrade());
+                    addrspace.table.utable.allocator_mut().0 =
+                        NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
+                }
+                if flags.contains(CallFlags::READ) {
+                    let addrspace = addrspace.acquire_read(token.downgrade());
+                    let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
+                    payload.copy_from_slice(&mem_policy)?;
+                }
+                Ok(0)
             }
             _ => Err(Error::new(EBADF)),
         }

@@ -7,6 +7,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
+use syscall::NumaMemoryPolicy;
 
 use crate::{
     context::{
@@ -210,6 +211,7 @@ pub fn current() -> Arc<ContextLock> {
         .switch_internals
         .with_context(Arc::clone)
 }
+
 pub fn try_current() -> Option<Arc<ContextLock>> {
     PercpuBlock::current()
         .switch_internals

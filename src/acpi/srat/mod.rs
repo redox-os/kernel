@@ -34,7 +34,7 @@ pub fn init<A: Arch>(
     mem: &Once<&'static [NumaMemory]>,
 ) {
     let dom_node_map = allocator
-        .allocate(rmm::FrameCount::new(1))
+        .allocate(rmm::FrameCount::new(2))
         .expect("Failed to allocate memory for storing NUMA info");
 
     let dom_node_map_ptr =

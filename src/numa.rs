@@ -1,15 +1,17 @@
-use core::ops::Add;
+use core::{mem, ops::Add, ptr::write_bytes, slice};
 
 use crate::{
     acpi,
-    cpu_set::LogicalCpuId,
+    cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
+    percpu::{self, ALL_PERCPU_BLOCKS},
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
+use bitfield::Bit;
 use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, Result, ENODATA, EOPNOTSUPP};
+use syscall::{Error, NumaMemoryPolicy, Result, ENODATA, EOPNOTSUPP};
 
 pub const MAX_DOMAINS: usize = 128;
 
@@ -17,6 +19,40 @@ static DOMAIN_NODE_MAP: Once<&'static [u32]> = Once::new();
 static NUMA_CPUS: Once<&'static [u32]> = Once::new();
 static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
+static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
+
+pub fn is_supported() -> bool {
+    NUMA_NODES.get().is_some()
+}
+
+/// Each bit of this mask corresponds to an index of `FREE_LISTS`.
+///
+/// This abstraction allows future extensions to the number of memory regions supported.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct FreeListMask {
+    mask: u128,
+}
+
+impl FreeListMask {
+    pub fn enable_index(&mut self, i: usize) {
+        self.mask.set_bit(i, true);
+    }
+
+    pub fn disable_index(&mut self, i: usize) {
+        self.mask.set_bit(i, false);
+    }
+
+    pub fn is_enabled(&self, i: usize) -> bool {
+        self.mask.bit(i)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Default)]
+pub struct NumaNode {
+    pub cpus: u128,
+    pub memories: FreeListMask,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct NumaMemory {
@@ -56,6 +92,57 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
         acpi::slit::init(allocator, &DISTANCES);
+    }
+
+    if let Some(cpus) = NUMA_CPUS.get()
+        && let Some(memories) = NUMA_MEMORY.get()
+    {
+        let numa_nodes = unsafe {
+            let ptr = memories.as_ptr().add(MAX_DOMAINS).addr() as *mut u8;
+            write_bytes(ptr, 0, MAX_DOMAINS * size_of::<NumaNode>());
+            slice::from_raw_parts_mut(ptr as *mut NumaNode, MAX_DOMAINS)
+        };
+
+        for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
+            numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
+        }
+
+        for (i, memory) in memories
+            .iter()
+            .enumerate()
+            .filter(|(i, memory)| memory.length != 0)
+        {
+            numa_nodes[memory.node_id as usize].memories.enable_index(i);
+        }
+
+        for cpu_ptr in percpu::ALL_PERCPU_BLOCKS.as_ref() {
+            if let Some(cpu) =
+                unsafe { cpu_ptr.load(core::sync::atomic::Ordering::Relaxed).as_mut() }
+            {
+                let cpu_id = cpu
+                    .misc_arch_info
+                    .apic_id_opt
+                    .get()
+                    .map_or(cpu.cpu_id.get(), |e| e.get());
+
+                let n = numa_nodes
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, node)| {
+                        if node.cpus & 1u128 << cpu_id != 0 {
+                            Some((i, node))
+                        } else {
+                            None
+                        }
+                    })
+                    .map(|(i, node)| (i as u32, node));
+                cpu.numa_node.set(n);
+            } else {
+                break;
+            }
+        }
+
+        NUMA_NODES.call_once(|| numa_nodes);
     }
 }
 
@@ -140,15 +227,6 @@ impl Iterator for NumaMemoryIter {
             base: PhysicalAddress::new(mem.start),
             size: mem.length,
         })
-    }
-}
-
-impl NumaMemoryIter {
-    /// Skips an arbitrarily chosen `i`th element. Unlike `skip`, which skips the first `n` elements,
-    /// `iskip` can ignore non-consecutive elements
-    pub fn iskip(&self, addr: usize) -> Option<usize> {
-        let i = self.mem.binary_search_by_key(&addr, |e| e.start).ok()?;
-        Some(i)
     }
 }
 
@@ -251,4 +329,58 @@ pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         .map(|e| e.to_ne_bytes())
         .flatten()
         .collect())
+}
+
+pub fn current_node() -> Option<&'static NumaNode> {
+    let cpu = percpu::PercpuBlock::current();
+    Some(cpu.numa_node.get()?.1)
+}
+
+pub fn current_node_id() -> Option<u32> {
+    let cpu = percpu::PercpuBlock::current();
+    Some(cpu.numa_node.get()?.0)
+}
+
+pub fn free_list_mask(mem_policy: NumaMemoryPolicy) -> Option<(FreeListMask, bool)> {
+    match mem_policy {
+        NumaMemoryPolicy::NodeLocalStrict => Some((current_node()?.memories, false)),
+        NumaMemoryPolicy::NodeLocalLeniant => Some((current_node()?.memories, true)),
+    }
+}
+
+pub struct FreeListMaskIter {
+    i: usize,
+    others: [u32; MAX_DOMAINS],
+}
+
+impl Iterator for FreeListMaskIter {
+    type Item = FreeListMask;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_node_id = self.others.get(self.i)?;
+        let next_node = &NUMA_NODES.get().unwrap()[*next_node_id as usize];
+        self.i += 1;
+        Some(next_node.memories)
+    }
+}
+
+pub fn free_lists_masks() -> Option<FreeListMaskIter> {
+    let mut others: [(u32, u8); MAX_DOMAINS] = [(0u32, 0u8); MAX_DOMAINS];
+    others.fill((u32::MAX, 0));
+    let node_id = current_node_id()? as usize;
+    let mut iter = FreeListMaskIter {
+        i: 0,
+        others: [0u32; MAX_DOMAINS],
+    };
+    let distances = DISTANCES.get()?;
+    let num_nodes = NUMA_NODES.get().unwrap().len();
+
+    for (i, node) in NUMA_NODES.get()?.iter().enumerate() {
+        others[i] = (i as u32, distances[num_nodes * node_id as usize + i]);
+    }
+    others.sort_by_key(|(node_id, distance)| *distance);
+    let others = others.map(|e| e.0);
+    iter.others = others;
+
+    Some(iter)
 }

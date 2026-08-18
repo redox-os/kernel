@@ -24,6 +24,7 @@ pub fn init_srat(dom_node_map: &mut [u32], cpus: &mut [u32], mem: &mut [NumaMemo
                 memory_count += 1
             }
         }
+
         _ => (),
     });
 

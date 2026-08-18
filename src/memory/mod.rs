@@ -9,17 +9,19 @@ use core::{
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
+use bitfield::Bit;
 pub use kernel_mapper::KernelMapper;
 use spin::{once::Once, Mutex};
+use syscall::NumaMemoryPolicy;
 
 pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, PfError},
+        memory::{AccessMode, AddrSpace, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    numa,
+    numa::{self, FreeListMask},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
@@ -70,6 +72,49 @@ pub fn used_frames() -> usize {
 pub fn total_frames() -> usize {
     // TODO: Include bump allocator static pages?
     sections().iter().map(|section| section.frames.len()).sum()
+}
+
+pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool) -> Option<Frame> {
+    let numreg = numa::number_of_memory_regions();
+    if numreg == 0 {
+        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+    }
+
+    for i in 0..numreg {
+        if mask.is_enabled(i)
+            && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+        {
+            if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+                return Some(frame);
+            }
+        }
+    }
+
+    if fallback {
+        // if distance info is available, use it to try allocating
+        // from nodes in the increasing order of distance from current node
+        if let Some(masks) = numa::free_lists_masks() {
+            for mask in masks {
+                if let Some(frame) = allocate_p2frame_with_mask(mask, order, false) {
+                    return Some(frame);
+                }
+            }
+        } else {
+            // if distance info is not available, just try allocating from the remaining memory regions
+            // not present in the mask
+            for i in 0..numreg {
+                if !mask.is_enabled(i)
+                    && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+                {
+                    if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+                        return Some(frame);
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 /// Allocate a range of frames
@@ -527,6 +572,8 @@ struct FreeList {
     for_orders: [Option<Frame>; ORDER_COUNT as usize],
     used_frames: usize,
 }
+
+/// Each free list in this array corresponds to a discrete memory region found in the SRAT.
 static FREE_LISTS: Once<&'static [Mutex<FreeList>]> = Once::new();
 
 pub struct Section {
@@ -965,6 +1012,7 @@ pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
         THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
     }
 }
+
 #[derive(Debug, PartialEq)]
 pub enum AddRefError {
     CowToShared,
@@ -1270,13 +1318,18 @@ pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     Ok(new_frame)
 }
 #[derive(Debug)]
-pub struct TheFrameAllocator;
+pub struct TheFrameAllocator(pub NumaMemoryPolicy);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let order = count.data().next_power_of_two().trailing_zeros();
-        allocate_p2frame(order).map(|f| f.base())
+        if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
+            allocate_p2frame_with_mask(mask, order, fallback).map(|f| f.base())
+        } else {
+            allocate_p2frame(order).map(|f| f.base())
+        }
     }
+
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
         unsafe {
             let order = count.data().next_power_of_two().trailing_zeros();

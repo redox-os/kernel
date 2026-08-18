@@ -38,6 +38,7 @@ pub fn init_srat(
                 memory_count += 1
             }
         }
+
         SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
             if processor_local_affinity.flags & 1 != 0 {
                 cpu_count += 1

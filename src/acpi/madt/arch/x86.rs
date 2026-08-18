@@ -1,5 +1,5 @@
 use core::{
-    hint,
+    hint, slice,
     sync::atomic::{AtomicU8, Ordering},
 };
 
@@ -8,7 +8,7 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
-    cpu_set::LogicalCpuId,
+    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,
@@ -65,7 +65,6 @@ pub(super) fn init(madt: Madt) {
         let preliminary_cpu_count = madt.iter().filter(|e| matches!(e, MadtEntry::LocalApic(entry) if u32::from(entry.id) == me.get() || entry.flags & 1 == 1)).count();
         crate::profiling::allocate(preliminary_cpu_count as u32);
     }
-
     for madt_entry in madt.iter() {
         debug!("      {:x?}", madt_entry);
         if let MadtEntry::LocalApic(ap_local_apic) = madt_entry {
