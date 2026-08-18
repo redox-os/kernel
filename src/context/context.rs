@@ -613,6 +613,15 @@ impl FdTbl {
         }
     }
 
+    pub fn resize(&mut self, which: usize, size: usize) -> Result<()> {
+        let (fdtbl, _) = self.select_fdtbl_mut(which);
+        if super::CONTEXT_MAX_FILES < size {
+            return Err(Error::new(EMFILE));
+        }
+
+        fdtbl.resize(size)
+    }
+
     fn strip_tags(index: usize) -> usize {
         index & !UPPER_FDTBL_TAG
     }
@@ -982,13 +991,28 @@ impl RadixFdTbl {
         self.root.get_mut()?.get_mut(l1)?.get_mut(l0)
     }
 
-    pub fn insert(&mut self, handle: usize, fd: FileDescriptor) -> Option<Option<FileDescriptor>> {
-        let (l1, l0) = Self::split_index(handle);
-
+    pub fn resize(&mut self, size: usize) -> Result<()> {
         let root = self
             .root
             .get_or_init(|| FrameAllocated::new(InnerNode::new()));
-        let leaf = root.children[l1].get_or_insert_with(|| FrameAllocated::new(LeafNode::new()));
+
+        if size > 0 {
+            let (max_l1, _) = Self::split_index(size.saturating_sub(1));
+            for l1 in 0..=max_l1 {
+                if root.children[l1].is_none() {
+                    root.children[l1] = Some(FrameAllocated::new(LeafNode::new()));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn insert(&mut self, handle: usize, fd: FileDescriptor) -> Option<Option<FileDescriptor>> {
+        let (l1, l0) = Self::split_index(handle);
+
+        let root = self.root.get_mut()?;
+        let leaf = root.children[l1].as_deref_mut()?;
         let old = leaf.entries[l0].replace(fd);
 
         Some(old)
