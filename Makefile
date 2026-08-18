@@ -98,3 +98,8 @@ test-relibc: all
 	$(MAKE) install
 	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg relibc-tests-bins
 	REDOXER_SYSROOT=$(DESTDIR) redoxer exec relibc-tests-runner
+
+test-acid: all
+	$(MAKE) install
+	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg acid-bins
+	REDOXER_SYSROOT=$(DESTDIR) redoxer exec acid invalid_syscall getppid_bench pgtbl_populate_bench

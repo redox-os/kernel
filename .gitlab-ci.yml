@@ -79,3 +79,10 @@ x86_64:profiling:
   variables:
     ARCH: "x86_64"
     KERNEL_CHECK_FEATURES: profiling
+
+x86_64:benches:
+  stage: test
+  needs: [x86_64]
+  allow_failure: true
+  script:
+    - redoxer env make test-acid
