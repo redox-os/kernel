@@ -119,11 +119,15 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
             if let Some(cpu) =
                 unsafe { cpu_ptr.load(core::sync::atomic::Ordering::Relaxed).as_mut() }
             {
+                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                 let cpu_id = cpu
                     .misc_arch_info
                     .apic_id_opt
                     .get()
                     .map_or(cpu.cpu_id.get(), |e| e.get());
+
+                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+                let cpu_id = 0; // TODO
 
                 let n = numa_nodes
                     .iter()
