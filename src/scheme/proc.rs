@@ -1682,7 +1682,13 @@ impl ContextHandle {
                         Ok(0)
                     }
                     FileTableVerb::Resize => {
-                        let size = metadata.get(2).copied().ok_or(Error::new(EINVAL))?;
+                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let Some(&[which, size]) = metadata.get(1..3) else {
+                            return Err(Error::new(EINVAL));
+                        };
+                        files
+                            .write(token.token())
+                            .resize(which as usize, size as usize)?;
                         Ok(size as usize)
                     }
                     _ => Err(Error::new(EOPNOTSUPP)),
