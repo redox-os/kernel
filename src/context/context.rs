@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, collections::BTreeSet, sync::Arc, vec::Vec};
+use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     cmp::Reverse,
@@ -19,7 +19,8 @@ use crate::{
     cpu_stats,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{
-        allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame, RmmA, RmmArch, PAGE_SIZE,
+        allocate_p2frame, deallocate_p2frame, Enomem, Frame, FrameAllocated, RaiiFrame, RmmA,
+        RmmArch, PAGE_SIZE,
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
@@ -847,6 +848,32 @@ pub fn bulk_insert_fds(
     Ok(handles.len())
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct FrameCell<T> {
+    inner: Option<FrameAllocated<T>>,
+}
+
+impl<T> FrameCell<T> {
+    pub const fn new() -> Self {
+        Self { inner: None }
+    }
+
+    #[inline]
+    pub fn get(&self) -> Option<&T> {
+        self.inner.as_deref()
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        self.inner.as_deref_mut()
+    }
+
+    #[inline]
+    pub fn get_or_init<F: FnOnce() -> FrameAllocated<T>>(&mut self, f: F) -> &mut T {
+        self.inner.get_or_insert_with(f)
+    }
+}
+
 #[cfg(target_pointer_width = "64")]
 pub const NODE_BITS: usize = 9; // 512 entries
 
@@ -895,7 +922,7 @@ impl LeafNode {
 
 #[derive(Clone, Debug)]
 pub struct InnerNode {
-    pub children: [Option<Box<LeafNode>>; NODE_SIZE],
+    pub children: [Option<FrameAllocated<LeafNode>>; NODE_SIZE],
 }
 
 impl InnerNode {
@@ -925,7 +952,7 @@ impl InnerNode {
 
 #[derive(Clone, Debug)]
 pub struct RadixFdTbl {
-    root: Box<InnerNode>,
+    root: FrameCell<InnerNode>,
 }
 
 impl Default for RadixFdTbl {
@@ -937,7 +964,7 @@ impl Default for RadixFdTbl {
 impl RadixFdTbl {
     pub fn new() -> Self {
         Self {
-            root: Box::new(InnerNode::new()),
+            root: FrameCell::new(),
         }
     }
 
@@ -955,18 +982,21 @@ impl RadixFdTbl {
 
     pub fn get(&self, handle: usize) -> Option<&FileDescriptor> {
         let (l1, l0) = Self::split_index(handle);
-        self.root.get(l1)?.get(l0)
+        self.root.get()?.get(l1)?.get(l0)
     }
 
     pub fn get_mut(&mut self, handle: usize) -> Option<&mut FileDescriptor> {
         let (l1, l0) = Self::split_index(handle);
-        self.root.get_mut(l1)?.get_mut(l0)
+        self.root.get_mut()?.get_mut(l1)?.get_mut(l0)
     }
 
     pub fn insert(&mut self, handle: usize, fd: FileDescriptor) -> Option<Option<FileDescriptor>> {
         let (l1, l0) = Self::split_index(handle);
 
-        let leaf = self.root.children[l1].get_or_insert_with(|| Box::new(LeafNode::new()));
+        let root = self
+            .root
+            .get_or_init(|| FrameAllocated::new(InnerNode::new()));
+        let leaf = root.children[l1].get_or_insert_with(|| FrameAllocated::new(LeafNode::new()));
         let old = leaf.entries[l0].replace(fd);
 
         Some(old)
@@ -975,29 +1005,34 @@ impl RadixFdTbl {
     pub fn remove(&mut self, handle: usize) -> Option<FileDescriptor> {
         let (l1, l0) = Self::split_index(handle);
         self.root
+            .get_mut()?
             .get_mut(l1)
             .and_then(|leaf| leaf.entries[l0].take())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
         self.root
-            .children
-            .iter()
+            .get()
+            .into_iter()
+            .flat_map(|root| root.children.iter())
             .filter_map(|leaf| leaf.as_deref())
             .flat_map(|leaf| leaf.entries.iter())
     }
 
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
         self.root
-            .children
-            .iter_mut()
+            .get_mut()
+            .into_iter()
+            .flat_map(|root| root.children.iter_mut())
             .filter_map(|leaf| leaf.as_deref_mut())
             .flat_map(|leaf| leaf.entries.iter_mut())
     }
 
     pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
         self.root
-            .iter_leaves()
+            .get()
+            .into_iter()
+            .flat_map(|root| root.iter_leaves())
             .flat_map(|(l1, leaf)| leaf.enumerate_fds_with_base(l1 << NODE_BITS))
     }
 }
