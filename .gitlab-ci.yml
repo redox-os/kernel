@@ -86,3 +86,6 @@ x86_64:benches:
   allow_failure: true
   script:
     - redoxer env make test-acid
+  artifacts:
+    paths:
+      - root/bench-output.txt
