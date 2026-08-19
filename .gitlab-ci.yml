@@ -21,8 +21,7 @@ aarch64:
   image: "registry.redox-os.org/redox-os/redoxer:aarch64"
   script:
     - redoxer env make
-    # TODO: the image is outdated
-    - redoxer env cargo clippy --target ${ARCH}-unknown-redox
+    - redoxer clippy
   variables:
     ARCH: "aarch64"
 
@@ -53,16 +52,14 @@ aarch64:boot:
   image: "registry.redox-os.org/redox-os/redoxer:aarch64"
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - TARGET=${ARCH}-unknown-redox redoxer env make test
-  variables:
-    ARCH: "aarch64"
+    - timeout -s KILL 5m redoxer env make test
 
 i586:boot:
   stage: test
   needs: [i586]
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - TARGET=${ARCH}-unknown-redox redoxer env make test
+    - TARGET=${ARCH}-unknown-redox timeout -s KILL 5m redoxer env make test
   variables:
     ARCH: "i586"
 
@@ -71,7 +68,7 @@ x86_64:boot:
   needs: [x86_64]
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - redoxer env make test
+    - timeout -s KILL 5m redoxer env make test
 
 x86_64:relibc:
   stage: test
