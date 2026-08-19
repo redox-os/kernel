@@ -83,9 +83,15 @@ pub trait Arch: Clone + Copy {
 
     #[inline(always)]
     fn phys_to_virt(phys: PhysicalAddress) -> VirtualAddress {
+        #[cfg(not(target_pointer_width = "32"))]
         match phys.data().checked_add(Self::PHYS_OFFSET) {
             Some(some) => VirtualAddress::new(some),
             None => panic!("phys_to_virt({:#x}) overflow", phys.data()),
+        }
+        // FIXME: Overflow on purpose
+        #[cfg(target_pointer_width = "32")]
+        {
+            VirtualAddress::new(phys.data() + Self::PHYS_OFFSET)
         }
     }
 
