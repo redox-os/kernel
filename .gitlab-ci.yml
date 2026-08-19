@@ -18,7 +18,7 @@ x86_64:
 
 aarch64:
   stage: cross-build
-  image: "redoxos/redoxer:aarch64"
+  image: "registry.redox-os.org/redox-os/redoxer:aarch64"
   script:
     - redoxer env make
     # TODO: the image is outdated
@@ -46,6 +46,25 @@ fmt:
   stage: build
   script:
       - redoxer env cargo fmt --check
+
+aarch64:boot:
+  stage: test
+  needs: [aarch64]
+  image: "registry.redox-os.org/redox-os/redoxer:aarch64"
+  script:
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - TARGET=${ARCH}-unknown-redox redoxer env make test
+  variables:
+    ARCH: "aarch64"
+
+i586:boot:
+  stage: test
+  needs: [i586]
+  script:
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - TARGET=${ARCH}-unknown-redox redoxer env make test
+  variables:
+    ARCH: "i586"
 
 x86_64:boot:
   stage: test
