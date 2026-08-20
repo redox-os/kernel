@@ -2,8 +2,10 @@ use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     cmp::Reverse,
+    iter::{Enumerate, FilterMap, FlatMap},
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
+    slice::Iter,
     sync::atomic::{AtomicU32, Ordering},
 };
 use syscall::{NumaMemoryPolicy, SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
@@ -623,7 +625,8 @@ impl FdTbl {
             return Err(Error::new(EMFILE));
         }
 
-        fdtbl.resize(size)
+        fdtbl.resize(size);
+        Ok(())
     }
 
     fn strip_tags(index: usize) -> usize {
@@ -799,12 +802,20 @@ impl FdTbl {
         Ok(files)
     }
 
+    pub fn for_each_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Option<FileDescriptor>),
+    {
+        self.lower_fdtbl.for_each_mut(&mut f);
+        self.upper_fdtbl.for_each_mut(&mut f);
+    }
+
     pub fn force_close_all(&mut self, token: &mut CleanLockToken) {
-        for file_opt in self.iter_mut() {
+        self.for_each_mut(|file_opt| {
             if let Some(file) = file_opt.take() {
                 let _ = file.close(token);
             }
-        }
+        });
         self.active_count = 0;
     }
 }
@@ -820,12 +831,6 @@ impl FdTbl {
 
     pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
         self.lower_fdtbl.iter().chain(self.upper_fdtbl.iter())
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
-        self.lower_fdtbl
-            .iter_mut()
-            .chain(self.upper_fdtbl.iter_mut())
     }
 }
 
@@ -857,32 +862,6 @@ pub fn bulk_insert_fds(
     Ok(handles.len())
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct FrameCell<T> {
-    inner: Option<FrameAllocated<T>>,
-}
-
-impl<T> FrameCell<T> {
-    pub const fn new() -> Self {
-        Self { inner: None }
-    }
-
-    #[inline]
-    pub fn get(&self) -> Option<&T> {
-        self.inner.as_deref()
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> Option<&mut T> {
-        self.inner.as_deref_mut()
-    }
-
-    #[inline]
-    pub fn get_or_init<F: FnOnce() -> FrameAllocated<T>>(&mut self, f: F) -> &mut T {
-        self.inner.get_or_insert_with(f)
-    }
-}
-
 #[cfg(target_pointer_width = "64")]
 pub const NODE_BITS: usize = 9; // 512 entries
 
@@ -893,75 +872,98 @@ pub const NODE_SIZE: usize = 1 << NODE_BITS;
 pub const NODE_MASK: usize = NODE_SIZE - 1;
 
 #[derive(Clone, Debug)]
-pub struct LeafNode {
-    pub entries: [Option<FileDescriptor>; NODE_SIZE],
+pub enum Node {
+    Leaf([Option<FileDescriptor>; NODE_SIZE]),
+    Branch([Option<FrameAllocated<Node>>; NODE_SIZE]),
 }
 
-impl LeafNode {
-    pub const fn new() -> Self {
-        Self {
-            entries: [const { None }; NODE_SIZE],
+impl Node {
+    pub const fn empty_leaf() -> Self {
+        Self::Leaf([const { None }; NODE_SIZE])
+    }
+
+    pub const fn empty_branch() -> Self {
+        Self::Branch([const { None }; NODE_SIZE])
+    }
+
+    pub fn get(&self, handle: usize, shift: usize) -> Option<&Option<FileDescriptor>> {
+        let index = (handle >> shift) & NODE_MASK;
+        match self {
+            Self::Leaf(slots) => slots.get(index),
+            Self::Branch(children) => {
+                let child = children.get(index)?.as_deref()?;
+                child.get(handle, shift.checked_sub(NODE_BITS)?)
+            }
         }
     }
 
-    #[inline]
-    pub fn get(&self, index: usize) -> Option<&FileDescriptor> {
-        self.entries[index].as_ref()
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut FileDescriptor> {
-        self.entries[index].as_mut()
-    }
-
-    pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
-        self.entries
-            .iter()
-            .enumerate()
-            .filter_map(|(l0, fd)| fd.as_ref().map(|fd| (l0, fd)))
-    }
-
-    pub fn enumerate_fds_with_base(
-        &self,
-        base: usize,
-    ) -> impl Iterator<Item = (usize, &FileDescriptor)> {
-        self.enumerate_fds().map(move |(l0, fd)| (base | l0, fd))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct InnerNode {
-    pub children: [Option<FrameAllocated<LeafNode>>; NODE_SIZE],
-}
-
-impl InnerNode {
-    pub const fn new() -> Self {
-        Self {
-            children: [const { None }; NODE_SIZE],
+    pub fn get_mut(&mut self, handle: usize, shift: usize) -> Option<&mut Option<FileDescriptor>> {
+        let index = (handle >> shift) & NODE_MASK;
+        match self {
+            Self::Leaf(slots) => slots.get_mut(index),
+            Self::Branch(children) => {
+                let child = children.get_mut(index)?.as_deref_mut()?;
+                child.get_mut(handle, shift.checked_sub(NODE_BITS)?)
+            }
         }
     }
 
-    #[inline]
-    pub fn get(&self, index: usize) -> Option<&LeafNode> {
-        self.children[index].as_deref()
+    pub fn ensure_path(&mut self, max_index: usize, shift: usize) {
+        let max_idx = (max_index >> shift) & NODE_MASK;
+        let next_shift = shift.saturating_sub(NODE_BITS);
+
+        if let Self::Branch(children) = self {
+            for i in 0..max_idx {
+                let child = children[i].get_or_insert_with(|| {
+                    FrameAllocated::new(if next_shift == 0 {
+                        Node::empty_leaf()
+                    } else {
+                        Node::empty_branch()
+                    })
+                });
+                if next_shift > 0 {
+                    let sub_max = (1 << shift) - 1;
+                    child.ensure_path(sub_max, next_shift);
+                }
+            }
+
+            let child = children[max_idx].get_or_insert_with(|| {
+                FrameAllocated::new(if next_shift == 0 {
+                    Node::empty_leaf()
+                } else {
+                    Node::empty_branch()
+                })
+            });
+            if next_shift > 0 {
+                child.ensure_path(max_index, next_shift);
+            }
+        }
     }
 
-    #[inline]
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut LeafNode> {
-        self.children[index].as_deref_mut()
-    }
-
-    pub fn iter_leaves(&self) -> impl Iterator<Item = (usize, &LeafNode)> {
-        self.children
-            .iter()
-            .enumerate()
-            .filter_map(|(l1, leaf)| leaf.as_deref().map(|leaf| (l1, leaf)))
+    pub fn for_each_mut<F>(&mut self, f: &mut F)
+    where
+        F: FnMut(&mut Option<FileDescriptor>),
+    {
+        match self {
+            Self::Leaf(slots) => {
+                for slot in slots.iter_mut() {
+                    f(slot);
+                }
+            }
+            Self::Branch(children) => {
+                for child in children.iter_mut().flatten() {
+                    child.for_each_mut(f);
+                }
+            }
+        }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct RadixFdTbl {
-    root: FrameCell<InnerNode>,
+    root: Option<FrameAllocated<Node>>,
+    levels: usize,
+    allocated_size: usize,
 }
 
 impl Default for RadixFdTbl {
@@ -971,92 +973,185 @@ impl Default for RadixFdTbl {
 }
 
 impl RadixFdTbl {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            root: FrameCell::new(),
+            root: None,
+            levels: 0,
+            allocated_size: 0,
         }
     }
 
     #[inline]
-    fn split_index(index: usize) -> (usize, usize) {
-        let l1 = (index >> NODE_BITS) & NODE_MASK;
-        let l0 = index & NODE_MASK;
-        (l1, l0)
+    fn root_shift(&self) -> usize {
+        self.levels.saturating_sub(1) * NODE_BITS
     }
 
     #[inline]
-    fn is_occupied(&self, handle: usize) -> bool {
-        self.get(handle).is_some()
+    pub fn capacity(&self) -> usize {
+        if self.levels == 0 {
+            0
+        } else {
+            1 << (self.levels * NODE_BITS)
+        }
+    }
+
+    #[inline]
+    pub fn allocated_size(&self) -> usize {
+        self.allocated_size
     }
 
     pub fn get(&self, handle: usize) -> Option<&FileDescriptor> {
-        let (l1, l0) = Self::split_index(handle);
-        self.root.get()?.get(l1)?.get(l0)
+        if handle >= self.allocated_size {
+            return None;
+        }
+        self.root
+            .as_deref()?
+            .get(handle, self.root_shift())?
+            .as_ref()
     }
 
     pub fn get_mut(&mut self, handle: usize) -> Option<&mut FileDescriptor> {
-        let (l1, l0) = Self::split_index(handle);
-        self.root.get_mut()?.get_mut(l1)?.get_mut(l0)
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root.as_deref_mut()?.get_mut(handle, shift)?.as_mut()
     }
 
-    pub fn resize(&mut self, size: usize) -> Result<()> {
-        let root = self
-            .root
-            .get_or_init(|| FrameAllocated::new(InnerNode::new()));
-
-        if size > 0 {
-            let (max_l1, _) = Self::split_index(size.saturating_sub(1));
-            for l1 in 0..=max_l1 {
-                if root.children[l1].is_none() {
-                    root.children[l1] = Some(FrameAllocated::new(LeafNode::new()));
-                }
-            }
+    pub fn get_slot(&self, handle: usize) -> Option<&Option<FileDescriptor>> {
+        if handle >= self.allocated_size {
+            return None;
         }
+        self.root.as_deref()?.get(handle, self.root_shift())
+    }
 
-        Ok(())
+    pub fn get_slot_mut(&mut self, handle: usize) -> Option<&mut Option<FileDescriptor>> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root.as_deref_mut()?.get_mut(handle, shift)
+    }
+
+    #[inline]
+    pub fn is_occupied(&self, handle: usize) -> bool {
+        self.get(handle).is_some()
     }
 
     pub fn insert(&mut self, handle: usize, fd: FileDescriptor) -> Option<Option<FileDescriptor>> {
-        let (l1, l0) = Self::split_index(handle);
-
-        let root = self.root.get_mut()?;
-        let leaf = root.children[l1].as_deref_mut()?;
-        let old = leaf.entries[l0].replace(fd);
-
-        Some(old)
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root
+            .as_deref_mut()?
+            .get_mut(handle, shift)
+            .map(|slot| slot.replace(fd))
     }
 
     pub fn remove(&mut self, handle: usize) -> Option<FileDescriptor> {
-        let (l1, l0) = Self::split_index(handle);
-        self.root
-            .get_mut()?
-            .get_mut(l1)
-            .and_then(|leaf| leaf.entries[l0].take())
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root.as_deref_mut()?.get_mut(handle, shift)?.take()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
-        self.root
-            .get()
-            .into_iter()
-            .flat_map(|root| root.children.iter())
-            .filter_map(|leaf| leaf.as_deref())
-            .flat_map(|leaf| leaf.entries.iter())
+    pub fn resize(&mut self, size: usize) {
+        if size <= self.allocated_size {
+            return;
+        }
+        let max_index = size - 1;
+
+        if self.root.is_none() {
+            self.root = Some(FrameAllocated::new(Node::empty_leaf()));
+            self.levels = 1;
+        }
+
+        while max_index >= self.capacity() {
+            let old_root = self.root.take().unwrap();
+            let mut new_branch = Node::empty_branch();
+            if let Node::Branch(ref mut children) = new_branch {
+                children[0] = Some(old_root);
+            }
+            self.root = Some(FrameAllocated::new(new_branch));
+            self.levels += 1;
+        }
+
+        let shift = self.root_shift();
+        if let Some(ref mut root) = self.root {
+            if self.levels > 1 {
+                root.ensure_path(max_index, shift);
+            }
+        }
+
+        self.allocated_size = size;
     }
 
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
-        self.root
-            .get_mut()
-            .into_iter()
-            .flat_map(|root| root.children.iter_mut())
-            .filter_map(|leaf| leaf.as_deref_mut())
-            .flat_map(|leaf| leaf.entries.iter_mut())
+    #[inline]
+    pub fn iter(&self) -> RadixFdTblIter<'_> {
+        RadixFdTblIter {
+            tbl: self,
+            cur: 0,
+            max: self.allocated_size,
+        }
     }
 
-    pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
-        self.root
-            .get()
-            .into_iter()
-            .flat_map(|root| root.iter_leaves())
-            .flat_map(|(l1, leaf)| leaf.enumerate_fds_with_base(l1 << NODE_BITS))
+    pub fn for_each_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Option<FileDescriptor>),
+    {
+        if let Some(ref mut root) = self.root {
+            root.for_each_mut(&mut f);
+        }
+    }
+
+    #[inline]
+    pub fn enumerate_fds(&self) -> RadixFdTblEnumerateFds<'_> {
+        RadixFdTblEnumerateFds {
+            tbl: self,
+            cur: 0,
+            max: self.allocated_size,
+        }
+    }
+}
+
+pub struct RadixFdTblIter<'a> {
+    tbl: &'a RadixFdTbl,
+    cur: usize,
+    max: usize,
+}
+
+impl<'a> Iterator for RadixFdTblIter<'a> {
+    type Item = &'a Option<FileDescriptor>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.cur < self.max {
+            let handle = self.cur;
+            self.cur += 1;
+            return self.tbl.get_slot(handle);
+        }
+        None
+    }
+}
+
+pub struct RadixFdTblEnumerateFds<'a> {
+    tbl: &'a RadixFdTbl,
+    cur: usize,
+    max: usize,
+}
+
+impl<'a> Iterator for RadixFdTblEnumerateFds<'a> {
+    type Item = (usize, &'a FileDescriptor);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.cur < self.max {
+            let handle = self.cur;
+            self.cur += 1;
+            if let Some(fd) = self.tbl.get(handle) {
+                return Some((handle, fd));
+            }
+        }
+        None
     }
 }
