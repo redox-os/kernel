@@ -479,7 +479,7 @@ impl Drop for RaiiFrame {
 }
 
 pub struct FrameAllocated<T> {
-    frame: RaiiFrame,
+    frame: Frame,
     _marker: core::marker::PhantomData<T>,
 }
 
@@ -500,15 +500,10 @@ impl<T> FrameAllocated<T> {
     pub fn new(val: T) -> Self {
         Self::try_new(val).expect("FrameAllocated: failed to allocate physical frame")
     }
+
     pub fn try_new(val: T) -> Option<Self> {
         let order = Self::order()?;
-
-        let frame = if order == 0 {
-            RaiiFrame::allocate().ok()?
-        } else {
-            crate::memory::allocate_p2frame(order)
-                .map(|f| unsafe { RaiiFrame::new_unchecked(f) })?
-        };
+        let frame = crate::memory::allocate_p2frame(order)?;
 
         let this = Self {
             frame,
@@ -522,9 +517,10 @@ impl<T> FrameAllocated<T> {
 
         Some(this)
     }
+
     #[inline]
     fn as_ptr(&self) -> *mut T {
-        unsafe { RmmA::phys_to_virt(self.frame.get().base()).data() as *mut T }
+        unsafe { RmmA::phys_to_virt(self.frame.base()).data() as *mut T }
     }
 }
 
@@ -550,9 +546,7 @@ impl<T> Drop for FrameAllocated<T> {
             core::ptr::drop_in_place(self.as_ptr());
 
             if let Some(order) = Self::order() {
-                if order > 0 {
-                    crate::memory::deallocate_p2frame(self.frame.get(), order);
-                }
+                crate::memory::deallocate_p2frame(self.frame, order);
             }
         }
     }
