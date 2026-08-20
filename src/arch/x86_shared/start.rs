@@ -142,6 +142,8 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Initialize devices
             device::init();
 
+            numa::init_arch();
+
             // Read ACPI tables, starts APs
             if cfg!(feature = "acpi") {
                 crate::acpi::init_after_mem(args.acpi_rsdp());

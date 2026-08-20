@@ -47,7 +47,6 @@ impl FreeListMask {
     }
 }
 
-#[repr(C)]
 #[derive(Debug, Default)]
 pub struct NumaNode {
     pub cpus: u128,
@@ -93,7 +92,9 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
         acpi::slit::init(allocator, &DISTANCES);
     }
+}
 
+pub fn init_arch() {
     if let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
     {
