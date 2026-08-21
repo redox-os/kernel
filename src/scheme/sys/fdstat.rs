@@ -45,7 +45,14 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         let (files, mut token) = files_guard.token_split();
         writeln!(report, "'{}' {{", context.name).unwrap();
 
-        for file in files.iter().filter_map(|f| f.clone()) {
+        let Some(a) = context.addr_space.clone() else {
+            continue 'contexts;
+        };
+
+        files.for_each(|file_opt| {
+            let Some(file) = file_opt else {
+                return;
+            };
             writeln!(
                 report,
                 "\tS{}W{}",
@@ -53,10 +60,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 Arc::weak_count(&file.description)
             )
             .unwrap();
+
             let fr = Ref(file.description.clone());
-            let Some(a) = context.addr_space.clone() else {
-                continue 'contexts;
-            };
             let descr = map.entry(fr).or_default();
 
             // TODO: could be done cleaner
@@ -69,7 +74,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             let scheme = schemes.get(&scheme_id);
             descr
                 .owners
-                .entry(Ref(a))
+                .entry(Ref(a.clone()))
                 .or_insert(context.name.clone().to_string());
             descr.scheme = match scheme {
                 Some(scheme::Handle::SchemeCreationCapability) => "SchemeCreationCapability".into(),
@@ -81,7 +86,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 _ => format!("[unknown {}]", scheme_id.0).into(),
             };
             descr.number = file.description.read(token.token()).number;
-        }
+        });
         writeln!(report, "}}").unwrap();
     }
     writeln!(report, "==========").unwrap();
