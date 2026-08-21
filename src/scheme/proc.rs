@@ -8,7 +8,7 @@ use crate::{
     },
     cpu_id,
     memory::{Page, VirtualAddress, PAGE_SIZE},
-    ptrace,
+    numa, ptrace,
     scheme::{
         self,
         memory::{MemoryScheme, MemoryType},
@@ -1678,8 +1678,7 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let mut file =
-                            context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;
@@ -1706,6 +1705,10 @@ impl ContextHandle {
                 .ok_or(Error::new(EINVAL))?;
 
                 let NumaVerb::MemPolicy = op;
+
+                if !numa::is_supported() {
+                    return Err(Error::new(EOPNOTSUPP));
+                }
 
                 if flags.contains(CallFlags::WRITE) {
                     let mut addrspace = addrspace.acquire_write(token.downgrade());
