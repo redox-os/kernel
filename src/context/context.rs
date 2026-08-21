@@ -762,17 +762,23 @@ impl FdTbl {
         scheme_number: usize,
         token: &mut LockToken<L5>,
     ) -> Result<FileDescriptor> {
-        self.iter()
-            .flatten()
-            .find(|&context_fd| {
-                let desc = context_fd.description.read(token.token());
-                // TODO: possibly quite slow
-                desc.scheme_ref.upgrade().map_or(false, |s| {
-                    s.scheme_id() == scheme_id && desc.number == scheme_number
-                })
-            })
-            .cloned()
-            .ok_or(Error::new(EBADF))
+        let mut found = None;
+        self.for_each(|fd_opt| {
+            if found.is_some() {
+                return;
+            }
+            let Some(context_fd) = fd_opt else {
+                return;
+            };
+            let desc = context_fd.description.read(token.token());
+            // TODO: possibly quite slow
+            if let Some(s) = desc.scheme_ref.upgrade() {
+                if s.scheme_id() == scheme_id && desc.number == scheme_number {
+                    found = Some(context_fd.clone());
+                }
+            }
+        });
+        found.ok_or(Error::new(EBADF))
     }
 
     pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
@@ -802,6 +808,14 @@ impl FdTbl {
         Ok(files)
     }
 
+    pub fn for_each<F>(&self, mut f: F)
+    where
+        F: FnMut(&Option<FileDescriptor>),
+    {
+        self.lower_fdtbl.for_each(&mut f);
+        self.upper_fdtbl.for_each(&mut f);
+    }
+
     pub fn for_each_mut<F>(&mut self, mut f: F)
     where
         F: FnMut(&mut Option<FileDescriptor>),
@@ -827,10 +841,6 @@ impl FdTbl {
                 .enumerate_fds()
                 .map(|(i, fd)| (i | UPPER_FDTBL_TAG, fd)),
         )
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
-        self.lower_fdtbl.iter().chain(self.upper_fdtbl.iter())
     }
 }
 
@@ -936,6 +946,24 @@ impl Node {
             });
             if next_shift > 0 {
                 child.ensure_path(max_index, next_shift);
+            }
+        }
+    }
+
+    pub fn for_each<F>(&self, f: &mut F)
+    where
+        F: FnMut(&Option<FileDescriptor>),
+    {
+        match self {
+            Self::Leaf(slots) => {
+                for slot in slots.iter() {
+                    f(slot);
+                }
+            }
+            Self::Branch(children) => {
+                for child in children.iter().flatten() {
+                    child.for_each(f);
+                }
             }
         }
     }
@@ -1088,12 +1116,12 @@ impl RadixFdTbl {
         self.allocated_size = size;
     }
 
-    #[inline]
-    pub fn iter(&self) -> RadixFdTblIter<'_> {
-        RadixFdTblIter {
-            tbl: self,
-            cur: 0,
-            max: self.allocated_size,
+    pub fn for_each<F>(&self, mut f: F)
+    where
+        F: FnMut(&Option<FileDescriptor>),
+    {
+        if let Some(ref root) = self.root {
+            root.for_each(&mut f);
         }
     }
 
@@ -1113,25 +1141,6 @@ impl RadixFdTbl {
             cur: 0,
             max: self.allocated_size,
         }
-    }
-}
-
-pub struct RadixFdTblIter<'a> {
-    tbl: &'a RadixFdTbl,
-    cur: usize,
-    max: usize,
-}
-
-impl<'a> Iterator for RadixFdTblIter<'a> {
-    type Item = &'a Option<FileDescriptor>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.cur < self.max {
-            let handle = self.cur;
-            self.cur += 1;
-            return self.tbl.get_slot(handle);
-        }
-        None
     }
 }
 
