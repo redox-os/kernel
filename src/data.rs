@@ -524,3 +524,16 @@ impl TryFrom<u64> for NumaMemoryPolicy {
         }
     }
 }
+
+impl TryFrom<&[u8]> for NumaMemoryPolicy {
+    type Error = Error;
+
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        let mut buf = [0u8; size_of::<NumaMemoryPolicy>()];
+        if buf.len() != value.len() {
+            return Err(Error::new(EINVAL));
+        };
+        buf.copy_from_slice(value);
+        NumaMemoryPolicy::try_from(u32::from_ne_bytes(buf) as u64)
+    }
+}
