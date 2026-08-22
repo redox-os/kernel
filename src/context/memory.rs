@@ -10,6 +10,7 @@ use core::{
     mem::ManuallyDrop,
     num::NonZeroUsize,
     ops::{Bound, Deref},
+    ptr::NonNull,
     sync::atomic::{AtomicU32, Ordering},
 };
 use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush};
@@ -143,7 +144,13 @@ impl AddrSpaceWrapper {
 
 #[derive(Debug)]
 pub struct AddrSpace {
+    /// The root table - one that is created for the first thread.
     pub table: Table,
+
+    /// These tables are optionally created for subsequently spawned threads and they inherit mappings
+    /// from the root table.
+    replicas: Vec<Table>,
+
     pub grants: UserGrants,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
     /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
@@ -594,6 +601,7 @@ impl AddrSpace {
             grants: UserGrants::new(),
             table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
+            replicas: Vec::new(),
         })
     }
     fn munmap_inner(
@@ -1174,6 +1182,10 @@ pub struct GrantInfo {
     flags: PageFlags<RmmA>,
     // TODO: Rename to unmapped?
     mapped: bool,
+
+    /// The page table in which the mapping was originally created.
+    owner: usize,
+
     pub(crate) provider: Provider,
 }
 
@@ -1248,6 +1260,7 @@ impl Grant {
                     cow_file_ref: None,
                     phys_contiguous: false,
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         }
     }
@@ -1294,6 +1307,7 @@ impl Grant {
                 provider: Provider::AllocatedShared {
                     is_pinned_userscheme_borrow: is_pinned,
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1335,6 +1349,7 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: Provider::PhysBorrowed { base: phys },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1385,6 +1400,7 @@ impl Grant {
                     cow_file_ref: None,
                     phys_contiguous: true,
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1435,6 +1451,7 @@ impl Grant {
                         phys_contiguous: false,
                     }
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1461,6 +1478,7 @@ impl Grant {
                     address_space: src_address_space_lock,
                     is_pinned_userscheme_borrow: false,
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1631,6 +1649,7 @@ impl Grant {
                     file_ref,
                     pin_refcount: 0,
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1756,6 +1775,7 @@ impl Grant {
                     src_base,
                     is_pinned_userscheme_borrow,
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -1914,6 +1934,7 @@ impl Grant {
                         is_pinned_userscheme_borrow: false,
                     },
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         })
     }
@@ -2169,6 +2190,7 @@ impl Grant {
                         pin_refcount: 0,
                     },
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         });
 
@@ -2237,6 +2259,7 @@ impl Grant {
                         pin_refcount: 0,
                     },
                 },
+                owner: numa::current_node_id().unwrap_or(0) as usize,
             },
         });
 
