@@ -32,6 +32,46 @@ pub unsafe fn ttbr1_el1_write(val: u64) {
     }
 }
 
+pub unsafe fn tcr_el1() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("mrs {}, tcr_el1", out(reg) ret);
+        ret
+    }
+}
+
+pub unsafe fn mair_el1() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("mrs {}, mair_el1", out(reg) ret);
+        ret
+    }
+}
+
+pub unsafe fn sctlr_el1() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("mrs {}, sctlr_el1", out(reg) ret);
+        ret
+    }
+}
+
+pub unsafe fn vbar_el1() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("mrs {}, vbar_el1", out(reg) ret);
+        ret
+    }
+}
+
+pub unsafe fn cpacr_el1() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("mrs {}, cpacr_el1", out(reg) ret);
+        ret
+    }
+}
+
 pub unsafe fn tpidr_el0() -> u64 {
     unsafe {
         let ret: u64;
@@ -102,6 +142,14 @@ pub unsafe fn cntfrq_el0() -> u32 {
     }
 }
 
+pub unsafe fn cntvct_el0() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("isb", "mrs {}, cntvct_el0", out(reg) ret, options(nomem, nostack));
+        ret
+    }
+}
+
 pub unsafe fn ptmr_ctrl() -> u32 {
     unsafe {
         let ret: usize;
@@ -163,5 +211,13 @@ pub unsafe fn midr() -> u32 {
         let ret: usize;
         asm!("mrs {}, midr_el1", out(reg) ret);
         ret as u32
+    }
+}
+
+pub unsafe fn mpidr() -> u64 {
+    unsafe {
+        let ret: u64;
+        asm!("mrs {}, mpidr_el1", out(reg) ret);
+        ret
     }
 }

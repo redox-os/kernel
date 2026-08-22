@@ -179,7 +179,13 @@ pub unsafe fn init_after_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
 
             // TODO: Enumerate processors in userspace, and then provide an ACPI-independent interface
             // to initialize enumerated processors to userspace?
+            #[cfg(target_arch = "aarch64")]
+            crate::arch::device::psci::init_acpi();
             Madt::init();
+            #[cfg(target_arch = "aarch64")]
+            if let Some(madt) = madt::madt() {
+                crate::arch::device::cpu::init_topology_acpi(madt);
+            }
             //TODO: support this on any arch
             // SPCR must be initialized after MADT for interrupt controllers
             #[cfg(target_arch = "aarch64")]

@@ -112,7 +112,16 @@ static CPU_COUNT: AtomicU32 = AtomicU32::new(1);
 /// Get the number of CPUs currently active
 #[inline(always)]
 fn cpu_count() -> u32 {
-    CPU_COUNT.load(Ordering::Relaxed)
+    CPU_COUNT.load(Ordering::Acquire)
+}
+
+/// Publishes the next contiguous logical CPU after its architecture-specific
+/// initialization and handshake have completed.
+fn publish_cpu(cpu_id: crate::cpu_set::LogicalCpuId) -> bool {
+    let expected = cpu_id.get();
+    CPU_COUNT
+        .compare_exchange(expected, expected + 1, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
 }
 
 macro_rules! linker_offsets(
