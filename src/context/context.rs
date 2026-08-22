@@ -534,15 +534,16 @@ impl BorrowedHtBuf {
     */
 
     pub fn into_drop(self, token: &mut CleanLockToken) {
-        ManuallyDrop::new(self).inner_drop(token);
+        let mut this = ManuallyDrop::new(self);
+        this.inner_drop(token);
+        // this.inner is already dropped
     }
 
     fn inner_drop(&mut self, token: &mut CleanLockToken) {
-        let context = context::current();
-
         let Some(inner) = self.inner.take() else {
             return;
         };
+        let context = context::current();
         let mut context = context.write(token.token());
         {
             *(if self.head_and_not_tail {

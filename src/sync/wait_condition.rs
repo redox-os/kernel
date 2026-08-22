@@ -124,7 +124,10 @@ impl WaitCondition {
     }
 
     pub fn into_drop_locked(self, token: LockToken<'_, L1>) {
-        ManuallyDrop::new(self).inner_drop(token);
+        let mut this = ManuallyDrop::new(self);
+        unsafe {
+            core::ptr::drop_in_place(&mut this.contexts);
+        }
     }
 
     fn inner_drop(&mut self, token: LockToken<'_, L1>) {
