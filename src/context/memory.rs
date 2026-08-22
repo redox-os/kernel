@@ -761,7 +761,12 @@ impl AddrSpace {
     }
 
     pub fn into_drop(self, token: &mut CleanLockToken) {
-        ManuallyDrop::new(self).inner_drop(token);
+        let mut this = ManuallyDrop::new(self);
+        this.inner_drop(token);
+        unsafe {
+            core::ptr::drop_in_place(&mut this.grants);
+            core::ptr::drop_in_place(&mut this.table);
+        }
     }
 
     fn inner_drop(&mut self, token: &mut CleanLockToken) {

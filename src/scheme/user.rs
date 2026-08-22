@@ -1280,14 +1280,36 @@ struct CopyInfo<const READ: bool, const WRITE: bool> {
     dst: Option<UserSlice<true, true>>,
 }
 impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
+    fn release_inner_drop(&mut self, token: &mut CleanLockToken) -> Result<()> {
+        let mut res = Ok(());
+        let unpin = true;
+        if let Some(addrsp) = self.addrsp.take() {
+            if !self.span.is_empty() {
+                res = addrsp.munmap(self.span, unpin, token).and_then(|res| {
+                    handle_notify_files(res, token);
+                    Ok(())
+                });
+            }
+            if let Some(addrsp) = Arc::into_inner(addrsp) {
+                addrsp.into_drop(token);
+            }
+        }
+        if let Some(src) = self.head.src.take() {
+            src.into_drop(token);
+        }
+        if let Some(src) = self.tail.src.take() {
+            src.into_drop(token);
+        }
+        res
+    }
     fn release_inner(&mut self, token: &mut CleanLockToken) -> Result<()> {
         if self.destroyed {
-            return Ok(());
+            return self.release_inner_drop(token);
         }
         self.destroyed = true;
 
         if self.base == DANGLING {
-            return Ok(());
+            return self.release_inner_drop(token);
         }
 
         // TODO: Encode src and dst better using const generics.
@@ -1305,27 +1327,12 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         {
             dst.copy_from_slice(&src.buf()[..dst.len()])?;
         }
-        let unpin = true;
-        if let Some(addrsp) = self.addrsp.take() {
-            if !self.span.is_empty() {
-                let res = addrsp.munmap(self.span, unpin, token)?;
-                handle_notify_files(res, token);
-            }
-            if let Some(addrsp) = Arc::into_inner(addrsp) {
-                addrsp.into_drop(token);
-            }
-        }
-
-        Ok(())
+        self.release_inner_drop(token)
     }
     pub fn release(mut self, token: &mut CleanLockToken) -> Result<()> {
         self.release_inner(token)?;
-        if let Some(src) = self.head.src.take() {
-            src.into_drop(token);
-        }
-        if let Some(src) = self.tail.src.take() {
-            src.into_drop(token);
-        }
+
+        // Safe to ignore as we're already dropped all that need drop
         let _ = ManuallyDrop::new(self);
         Ok(())
     }
