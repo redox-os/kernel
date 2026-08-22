@@ -4,7 +4,8 @@
 use core::{
     cell::SyncUnsafeCell,
     num::NonZeroUsize,
-    ops::AddAssign,
+    ops::{AddAssign, Deref, DerefMut},
+    ptr::NonNull,
     slice,
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
@@ -474,6 +475,92 @@ impl Drop for RaiiFrame {
                 deallocate_frame(self.inner);
             }
         }
+    }
+}
+
+pub struct FrameAllocated<T> {
+    frame: Frame,
+    _marker: core::marker::PhantomData<T>,
+}
+
+unsafe impl<T: Send> Send for FrameAllocated<T> {}
+unsafe impl<T: Sync> Sync for FrameAllocated<T> {}
+
+impl<T> FrameAllocated<T> {
+    const fn order() -> Option<u32> {
+        let size = size_of::<T>();
+        if size == 0 || size > PAGE_SIZE * 4 {
+            return None;
+        }
+
+        let pages = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+        Some(pages.next_power_of_two().trailing_zeros())
+    }
+
+    pub fn new(val: T) -> Self {
+        Self::try_new(val).expect("FrameAllocated: failed to allocate physical frame")
+    }
+
+    pub fn try_new(val: T) -> Option<Self> {
+        let order = Self::order()?;
+        let frame = crate::memory::allocate_p2frame(order)?;
+
+        let this = Self {
+            frame,
+            _marker: core::marker::PhantomData,
+        };
+
+        unsafe {
+            let virt = this.as_ptr();
+            virt.write(val);
+        }
+
+        Some(this)
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *mut T {
+        unsafe { RmmA::phys_to_virt(self.frame.base()).data() as *mut T }
+    }
+}
+
+impl<T> Deref for FrameAllocated<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.as_ptr() }
+    }
+}
+
+impl<T> DerefMut for FrameAllocated<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.as_ptr() }
+    }
+}
+
+impl<T> Drop for FrameAllocated<T> {
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::drop_in_place(self.as_ptr());
+
+            if let Some(order) = Self::order() {
+                crate::memory::deallocate_p2frame(self.frame, order);
+            }
+        }
+    }
+}
+
+impl<T: Clone> Clone for FrameAllocated<T> {
+    fn clone(&self) -> Self {
+        Self::new((**self).clone())
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for FrameAllocated<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        (**self).fmt(f)
     }
 }
 
