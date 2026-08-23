@@ -262,7 +262,7 @@ unsafe fn invoke_with(
     }
     // PSCI v0.2 return codes are signed 32-bit values even for the 64-bit
     // calling convention. Do not rely on firmware to sign-extend w0 into x0.
-    result as u32 as i32 as i64
+    i64::from(result as i32)
 }
 
 #[cfg(test)]
