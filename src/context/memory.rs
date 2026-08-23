@@ -13,7 +13,7 @@ use core::{
     ptr::NonNull,
     sync::atomic::{AtomicU32, Ordering},
 };
-use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush};
+use rmm::{Arch as _, FrameAllocator, FrameCount, PageFlush, PhysicalAddress};
 use smallvec::SmallVec;
 use syscall::{error::*, flag::MapFlags, GrantFlags, MunmapFlags, NumaMemoryPolicy};
 
@@ -145,11 +145,14 @@ impl AddrSpaceWrapper {
 #[derive(Debug)]
 pub struct AddrSpace {
     /// The root table - one that is created for the first thread.
-    pub table: Table,
+    table: Table,
 
-    /// These tables are optionally created for subsequently spawned threads and they inherit mappings
-    /// from the root table.
-    replicas: Vec<Table>,
+    /// The id of the NUMA node in which the root page table resides.
+    root_table_node_id: u32,
+
+    /// These tables are optionally created for subsequently spawned threads and they
+    /// initially inherit mappings from the root table.
+    replicas: hashbrown::HashMap<u32, Table>,
 
     pub grants: UserGrants,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
@@ -170,7 +173,8 @@ impl AddrSpaceWrapper {
         let new =
             Arc::get_mut(&mut new_arc).expect("expected new address space Arc not to be aliased");
 
-        let _this_mapper = &mut guard.table.utable;
+        // It's okay to use the field directly here instead of the method `table_mut`
+        // because, the grants will be copied to the new address space
         let this_mapper = &mut guard.table.utable;
         let mut this_flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
 
@@ -262,7 +266,6 @@ impl AddrSpaceWrapper {
         let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
 
-        let mapper = &mut guard.table.utable;
         let mut flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
 
         // TODO: Remove allocation (might require BTreeMap::set_key or interior mutability).
@@ -317,7 +320,12 @@ impl AddrSpaceWrapper {
             // x86_64 with protection keys (although only enforced by userspace), and AArch64 (I
             // think), execute-only memory is also supported.
 
+            let mapper = &mut guard.table.utable;
             grant.remap(mapper, &mut flusher, new_flags);
+
+            for mapper in guard.replicas.values_mut().map(|e| &mut e.utable) {
+                grant.remap(mapper, &mut flusher, new_flags);
+            }
             //info!("Mprotect grant became {:#?}", grant);
             guard.grants.insert(grant);
         }
@@ -334,13 +342,7 @@ impl AddrSpaceWrapper {
         let guard = &mut *guard;
 
         let mut flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
-        AddrSpace::munmap_inner(
-            &mut guard.grants,
-            &mut guard.table.utable,
-            &mut flusher,
-            requested_span,
-            unpin,
-        )
+        guard.munmap_inner(&mut flusher, requested_span, unpin)
     }
     pub fn r#move(
         &self,
@@ -361,7 +363,7 @@ impl AddrSpaceWrapper {
         let mut src_opt = match src_opt {
             Some((aw, a)) => {
                 src_flusher = Flusher::with_cpu_set(&aw.used_by, &aw.tlb_ack);
-                Some((&mut a.grants, &mut a.table.utable, &mut src_flusher))
+                Some((&mut src_flusher, &mut *a))
             }
             None => None,
         };
@@ -382,13 +384,8 @@ impl AddrSpaceWrapper {
             }
             Some(base) if new_flags.contains(MapFlags::MAP_FIXED) => {
                 let unpin = false;
-                let notify_files = AddrSpace::munmap_inner(
-                    &mut dst.grants,
-                    &mut dst.table.utable,
-                    &mut dst_flusher,
-                    PageSpan::new(base, new_page_count),
-                    unpin,
-                )?;
+                let notify_files =
+                    dst.munmap_inner(&mut dst_flusher, PageSpan::new(base, new_page_count), unpin)?;
                 if let Some(notify_files_out) = notify_files_out.as_mut() {
                     notify_files_out.extend(notify_files);
                 }
@@ -403,18 +400,20 @@ impl AddrSpaceWrapper {
             }
         };
 
-        let (src_grants, src_mapper, src_flusher) = match &mut src_opt {
-            Some((g, m, f)) => (&mut **g, &mut **m, &mut **f),
-            None => (&mut dst.grants, &mut dst.table.utable, &mut dst_flusher),
+        let (src_flusher, src) = match &mut src_opt {
+            Some((f, a)) => (&mut **f, &mut **a),
+            None => (&mut dst_flusher, &mut *dst),
         };
 
-        if src_grants
+        if src
+            .grants
             .conflicts(src_span)
             .any(|(_, g)| !g.can_extract(false))
         {
             return Err(Error::new(EBUSY));
         }
-        if src_grants
+        if src
+            .grants
             .conflicts(src_span)
             .any(|(_, g)| !g.can_have_flags(new_flags))
         {
@@ -426,9 +425,7 @@ impl AddrSpaceWrapper {
 
         if new_page_count < src_span.count {
             let unpin = false;
-            let notify_files = AddrSpace::munmap_inner(
-                src_grants,
-                src_mapper,
+            let notify_files = src.munmap_inner(
                 src_flusher,
                 PageSpan::new(
                     src_span.base.next_by(new_page_count),
@@ -444,13 +441,15 @@ impl AddrSpaceWrapper {
         let mut remaining_src_span =
             PageSpan::new(src_span.base, cmp::min(src_span.count, new_page_count));
 
-        let to_remap = src_grants
+        let to_remap = src
+            .grants
             .conflicts(remaining_src_span)
             .map(|(b, _)| b)
             .collect::<Vec<_>>();
 
         let mut prev_grant_end = src_span.base;
 
+        let dst_root_table_node_id = dst.root_table_node_id;
         //while let Some(grant_base) = next(src_opt.as_mut().map(|s| &mut **s), dst, remaining_src_span) {
         for grant_base in to_remap {
             if prev_grant_end < grant_base {
@@ -459,18 +458,22 @@ impl AddrSpaceWrapper {
                     dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
                     hole_page_count,
                 );
-                dst.grants.insert(Grant::zeroed(
-                    hole_span,
-                    page_flags(new_flags),
-                    &mut dst.table.utable,
-                    &mut dst_flusher,
-                    false,
-                )?);
+                dst.grants.insert({
+                    let mut grant = Grant::zeroed(
+                        hole_span,
+                        page_flags(new_flags),
+                        &mut dst.table.utable,
+                        &mut dst_flusher,
+                        false,
+                    )?;
+                    grant.info.owner = dst_root_table_node_id;
+                    grant
+                });
             }
 
             let src_grants = src_opt
                 .as_mut()
-                .map_or(&mut dst.grants, |(g, _, _)| &mut *g);
+                .map_or(&mut dst.grants, |(_, a)| &mut a.grants);
             let grant = src_grants
                 .remove_containing(grant_base)
                 .expect("grant cannot disappear");
@@ -489,24 +492,27 @@ impl AddrSpaceWrapper {
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
 
-            dst.grants.insert(match src_opt.as_mut() {
-                Some((_, other_mapper, other_flusher)) => middle.transfer(
+            let mut new_grant = match src_opt.as_mut() {
+                Some((other_flusher, other)) => middle.transfer(
                     dst_grant_base,
                     page_flags(new_flags),
-                    other_mapper,
-                    Some(&mut dst.table.utable),
+                    other,
+                    Some(dst),
                     other_flusher,
                     &mut dst_flusher,
                 )?,
                 None => middle.transfer(
                     dst_grant_base,
                     page_flags(new_flags),
-                    &mut dst.table.utable,
+                    dst,
                     None,
                     &mut dst_flusher,
                     &mut NopFlusher,
                 )?,
-            });
+            };
+            new_grant.info.owner = dst_root_table_node_id;
+
+            dst.grants.insert(new_grant);
 
             prev_grant_end = middle_span.base.next_by(middle_span.count);
             let pages_advanced = prev_grant_end.offset_from(remaining_src_span.base);
@@ -519,13 +525,17 @@ impl AddrSpaceWrapper {
                 dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
                 new_page_count - prev_grant_end.offset_from(src_span.base),
             );
-            dst.grants.insert(Grant::zeroed(
-                last_hole_span,
-                page_flags(new_flags),
-                &mut dst.table.utable,
-                &mut dst_flusher,
-                false,
-            )?);
+            dst.grants.insert({
+                let mut grant = Grant::zeroed(
+                    last_hole_span,
+                    page_flags(new_flags),
+                    &mut dst.table.utable,
+                    &mut dst_flusher,
+                    false,
+                )?;
+                grant.info.owner = dst_root_table_node_id;
+                grant
+            });
         }
 
         Ok(dst_base)
@@ -588,6 +598,62 @@ impl AddrSpace {
             .ok_or(Error::new(ESRCH))
     }
 
+    pub fn current_table(&self) -> &Table {
+        let node_id = numa::current_node_id().unwrap_or(0);
+        self.replicas.get(&node_id).unwrap_or(&self.table)
+    }
+
+    pub fn current_table_mut(&mut self) -> &mut Table {
+        let node_id = numa::current_node_id().unwrap_or(0);
+        self.replicas.get_mut(&node_id).unwrap_or(&mut self.table)
+    }
+
+    /// Unmaps from all page tables of this address space.
+    ///
+    /// This function returns a `Some(..)` only if the owning page table contains this mapping.
+    /// If the owning page table does not contain the mapping, then it is guaranteed that
+    /// none of the other page tables do, because all other page tables inherit their mappings
+    /// from the owner. So there is no need to check the rest of the page tables.
+    pub unsafe fn unmap_from_all(
+        &mut self,
+        va: VirtualAddress,
+        owning_node_id: u32,
+    ) -> Option<(PhysicalAddress, PageFlags<RmmA>, PageFlush<RmmA>)> {
+        let mut f_root = None;
+
+        let f = unsafe { self.table.utable.unmap_phys(va) };
+
+        if self.root_table_node_id == owning_node_id {
+            if f.is_none() {
+                return None;
+            }
+            f_root = f;
+        }
+
+        unsafe {
+            for (node_id, mapper) in self.replicas.iter_mut().map(|e| (*e.0, &mut e.1.utable)) {
+                let f = mapper.unmap_phys(va);
+                if node_id == owning_node_id {
+                    if f.is_none() {
+                        return None;
+                    }
+                    f_root = f;
+                }
+            }
+        };
+        f_root
+    }
+
+    pub fn owning_table(&self, grant: &Grant) -> &Table {
+        self.replicas.get(&grant.info.owner).unwrap_or(&self.table)
+    }
+
+    pub fn owning_table_mut(&mut self, grant: &Grant) -> &mut Table {
+        self.replicas
+            .get_mut(&grant.info.owner)
+            .unwrap_or(&mut self.table)
+    }
+
     pub fn new() -> Result<Self> {
         let utable = unsafe {
             PageMapper::create(
@@ -601,12 +667,12 @@ impl AddrSpace {
             grants: UserGrants::new(),
             table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
-            replicas: Vec::new(),
+            replicas: hashbrown::HashMap::new(),
+            root_table_node_id: numa::current_node_id().unwrap_or(0),
         })
     }
     fn munmap_inner(
-        this_grants: &mut UserGrants,
-        this_mapper: &mut PageMapper,
+        &mut self,
         this_flusher: &mut Flusher,
         mut requested_span: PageSpan,
         unpin: bool,
@@ -627,6 +693,8 @@ impl AddrSpace {
                 })
                 .next()
         };
+        let this_grants = &mut self.grants;
+        let mut grants_to_be_unmapped = SmallVec::<[Grant; 128]>::new();
 
         while let Some(conflicting_span_res) = next(this_grants, requested_span) {
             let conflicting_span = conflicting_span_res?;
@@ -681,10 +749,14 @@ impl AddrSpace {
                 this_grants.insert(after);
             }
 
+            grants_to_be_unmapped.push(grant);
+        }
+
+        for grant in grants_to_be_unmapped {
             // Remove irrelevant region
             // TODO: Lock ordering violation
             let mut token = unsafe { CleanLockToken::new() };
-            let unmap_result = grant.unmap(this_mapper, this_flusher, &mut token);
+            let unmap_result = grant.unmap(self, this_flusher, &mut token);
 
             // Notify scheme that holds grant
             if unmap_result.file_desc.is_some() {
@@ -727,9 +799,7 @@ impl AddrSpace {
                     requested_span
                 } else if flags.contains(MapFlags::MAP_FIXED) {
                     let unpin = false;
-                    let mut notify_files = Self::munmap_inner(
-                        &mut self.grants,
-                        &mut self.table.utable,
+                    let mut notify_files = self.munmap_inner(
                         &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
                         requested_span,
                         unpin,
@@ -788,7 +858,7 @@ impl AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher, token) };
+            let res = { grant.unmap(self, &mut NopFlusher, token) };
 
             let _ = res.unmap(token);
         }
@@ -1186,8 +1256,9 @@ pub struct GrantInfo {
     // TODO: Rename to unmapped?
     mapped: bool,
 
-    /// The page table in which the mapping was originally created.
-    owner: usize,
+    /// The NUMA node ID of the page table in which the mapping was originally created or
+    /// was intended to be created.
+    owner: u32,
 
     pub(crate) provider: Provider,
 }
@@ -1263,7 +1334,7 @@ impl Grant {
                     cow_file_ref: None,
                     phys_contiguous: false,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         }
     }
@@ -1310,7 +1381,7 @@ impl Grant {
                 provider: Provider::AllocatedShared {
                     is_pinned_userscheme_borrow: is_pinned,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1352,7 +1423,7 @@ impl Grant {
                 flags,
                 mapped: true,
                 provider: Provider::PhysBorrowed { base: phys },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1403,7 +1474,7 @@ impl Grant {
                     cow_file_ref: None,
                     phys_contiguous: true,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1454,7 +1525,7 @@ impl Grant {
                         phys_contiguous: false,
                     }
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1481,7 +1552,7 @@ impl Grant {
                     address_space: src_address_space_lock,
                     is_pinned_userscheme_borrow: false,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1652,7 +1723,7 @@ impl Grant {
                     file_ref,
                     pin_refcount: 0,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1778,7 +1849,7 @@ impl Grant {
                     src_base,
                     is_pinned_userscheme_borrow,
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1937,7 +2008,7 @@ impl Grant {
                         is_pinned_userscheme_borrow: false,
                     },
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         })
     }
@@ -1946,8 +2017,8 @@ impl Grant {
         mut self,
         dst_base: Page,
         flags: PageFlags<RmmA>,
-        src_mapper: &mut PageMapper,
-        mut dst_mapper: Option<&mut PageMapper>,
+        src: &mut AddrSpace,
+        mut dst: Option<&mut AddrSpace>,
         src_flusher: &mut Flusher,
         dst_flusher: &mut impl GenericFlusher,
     ) -> Result<Grant> {
@@ -1958,7 +2029,7 @@ impl Grant {
 
             // TODO: Validate flags?
             let Some((phys, _flags, flush)) =
-                (unsafe { src_mapper.unmap_phys(src_page.start_address()) })
+                (unsafe { src.unmap_from_all(src_page.start_address(), self.info.owner) })
             else {
                 continue;
             };
@@ -1967,11 +2038,13 @@ impl Grant {
             }
             src_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::MOVE);
 
-            let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
-
             // TODO: Preallocate to handle OOM?
             let flush = unsafe {
-                dst_mapper
+                let mapper = dst
+                    .as_mut()
+                    .map(|dst| &mut dst.current_table_mut().utable)
+                    .unwrap_or(&mut src.current_table_mut().utable);
+                mapper
                     .map_phys(dst_page.start_address(), phys, flags)
                     .expect("TODO: OOM")
             };
@@ -2029,7 +2102,7 @@ impl Grant {
     #[must_use = "will not unmap itself"]
     pub fn unmap(
         mut self,
-        mapper: &mut PageMapper,
+        addrspace: &mut AddrSpace,
         flusher: &mut impl GenericFlusher,
         token: &mut CleanLockToken,
     ) -> UnmapResult {
@@ -2080,13 +2153,17 @@ impl Grant {
         };
 
         if is_phys_contiguous {
-            let (phys_base, _) = mapper.translate(self.base.start_address()).unwrap();
+            let (phys_base, _) = addrspace
+                .owning_table(&self)
+                .utable
+                .translate(self.base.start_address())
+                .unwrap();
             let base_frame = Frame::containing(phys_base);
 
             for i in 0..self.info.page_count {
                 unsafe {
-                    let (phys, _, flush) = mapper
-                        .unmap_phys(self.base.next_by(i).start_address())
+                    let (phys, _, flush) = addrspace
+                        .unmap_from_all(self.base.next_by(i).start_address(), self.info.owner)
                         .expect("all physborrowed grants must be fully Present in the page tables");
                     flush.ignore();
 
@@ -2102,7 +2179,8 @@ impl Grant {
         } else {
             for page in self.span().pages() {
                 // Lazy mappings do not need to be unmapped.
-                let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address()) })
+                let Some((phys, _, flush)) =
+                    (unsafe { addrspace.unmap_from_all(page.start_address(), self.info.owner) })
                 else {
                     continue;
                 };
@@ -2193,7 +2271,7 @@ impl Grant {
                         pin_refcount: 0,
                     },
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         });
 
@@ -2262,7 +2340,7 @@ impl Grant {
                         pin_refcount: 0,
                     },
                 },
-                owner: numa::current_node_id().unwrap_or(0) as usize,
+                owner: numa::current_node_id().unwrap_or(0),
             },
         });
 

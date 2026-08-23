@@ -65,7 +65,10 @@ fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Optio
     let page = Page::containing_address(addr);
     let off = addr.data() - page.start_address().data();
 
-    let (frame, _) = space.table.utable.translate(page.start_address())?;
+    let (frame, _) = space
+        .current_table()
+        .utable
+        .translate(page.start_address())?;
 
     Some(frame.add(off))
 }

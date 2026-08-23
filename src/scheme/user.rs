@@ -900,7 +900,7 @@ impl UserInner {
                 let mut wake = (false, None);
                 let (frame, _) = AddrSpace::current()?
                     .acquire_read(lock_token.downgrade())
-                    .table
+                    .current_table()
                     .utable
                     .translate(base_addr)
                     .ok_or(Error::new(EFAULT))?;
