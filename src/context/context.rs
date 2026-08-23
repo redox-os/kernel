@@ -414,7 +414,7 @@ impl Context {
                     new.used_by.atomic_set(this_percpu.cpu_id);
                     let new_addrsp = new.acquire_read(token);
                     unsafe {
-                        new_addrsp.table.utable.make_current();
+                        new_addrsp.current_table().utable.make_current();
                     }
                 }
                 _ => unsafe {

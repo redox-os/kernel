@@ -1699,12 +1699,13 @@ impl ContextHandle {
 
                 if flags.contains(CallFlags::WRITE) {
                     let mut addrspace = addrspace.acquire_write(token.downgrade());
-                    addrspace.table.utable.allocator_mut().0 =
+                    addrspace.current_table_mut().utable.allocator_mut().0 =
                         NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
                 }
                 if flags.contains(CallFlags::READ) {
                     let addrspace = addrspace.acquire_read(token.downgrade());
-                    let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
+                    let mem_policy =
+                        (addrspace.current_table().utable.allocator().0 as u32).to_ne_bytes();
                     payload.copy_from_slice(&mem_policy)?;
                 }
                 Ok(0)

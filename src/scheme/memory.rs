@@ -79,7 +79,7 @@ impl MemoryScheme {
     ) -> Result<usize> {
         let mem_policy = {
             let addrspace = addr_space.inner.read(token.token());
-            addrspace.table.utable.allocator().0
+            addrspace.current_table().utable.allocator().0
         };
         let span = PageSpan::validate_nonempty(VirtualAddress::new(map.address), map.size)
             .ok_or(Error::new(EINVAL))?;
@@ -291,7 +291,7 @@ impl KernelScheme for MemoryScheme {
                 let addr = AddrSpace::current()?;
                 let addr = addr.acquire_read(token.downgrade());
                 let (phys, _) = addr
-                    .table
+                    .current_table()
                     .utable
                     .translate(virt)
                     .ok_or(Error::new(ENOENT))?;
