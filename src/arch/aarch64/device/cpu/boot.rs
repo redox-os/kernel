@@ -14,6 +14,7 @@ use crate::{
         PageFlags, PageMapper, PhysicalAddress, RaiiFrame, RmmA, RmmArch, TableKind,
         TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
+    syscall::data::NumaMemoryPolicy,
 };
 
 use super::{
@@ -285,7 +286,12 @@ fn prepare_trampoline() -> Option<(RaiiFrame, PhysicalAddress)> {
     }
     synchronize_instructions(trampoline_virt, source_len);
 
-    let mut mapper = unsafe { PageMapper::create(TableKind::User, TheFrameAllocator) }?;
+    let mut mapper = unsafe {
+        PageMapper::create(
+            TableKind::User,
+            TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+        )
+    }?;
     let flush = unsafe {
         mapper.map_phys(
             VirtualAddress::new(trampoline_phys.data()),
