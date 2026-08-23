@@ -1,33 +1,34 @@
-use crate::sync::CleanLockToken;
-use core::arch::asm;
+use crate::{arch::device::psci, sync::CleanLockToken};
+
+fn halt_after_failed_psci(operation: &str, error: psci::CallError) -> ! {
+    error!("PSCI {} failed: {:?}", operation, error);
+    loop {
+        unsafe {
+            crate::arch::interrupt::disable();
+            crate::arch::interrupt::halt();
+        }
+    }
+}
 
 pub unsafe fn kreset() -> ! {
-    unsafe {
-        println!("kreset");
-
-        asm!("hvc   #0",
-             in("x0") 0x8400_0009_usize,
-             options(noreturn),
-        )
+    println!("kreset");
+    match psci::system_reset() {
+        Ok(()) => unreachable!(),
+        Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),
     }
 }
 
 pub unsafe fn emergency_reset() -> ! {
-    unsafe {
-        asm!("hvc   #0",
-             in("x0")  0x8400_0009_usize,
-             options(noreturn),
-        )
+    match psci::system_reset() {
+        Ok(()) => unreachable!(),
+        Err(error) => halt_after_failed_psci("SYSTEM_RESET", error),
     }
 }
 
 pub unsafe fn kstop(_token: &mut CleanLockToken) -> ! {
-    unsafe {
-        println!("kstop");
-
-        asm!("hvc   #0",
-             in("x0")  0x8400_0008_usize,
-             options(noreturn),
-        )
+    println!("kstop");
+    match psci::system_off() {
+        Ok(()) => unreachable!(),
+        Err(error) => halt_after_failed_psci("SYSTEM_OFF", error),
     }
 }

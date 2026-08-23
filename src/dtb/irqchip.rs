@@ -417,7 +417,7 @@ pub fn set_reserved(_cpu_id: LogicalCpuId, index: u8, reserved: bool) {
         if reserved {
             IRQ_CHIP.irq_enable(index as u32);
         } else {
-            IRQ_CHIP.irq_enable(index as u32);
+            IRQ_CHIP.irq_disable(index as u32);
         }
     }
 }

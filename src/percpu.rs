@@ -109,10 +109,14 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
 
         crate::ipi::ipi_single(crate::ipi::IpiKind::Tlb, percpublock);
     } else {
+        let current = crate::cpu_id();
         for id in 0..crate::cpu_count() {
             // TODO: Optimize: use global counter and percpu ack counters, send IPI using
             // destination shorthand "all CPUs".
-            shootdown_tlb_ipi(Some(LogicalCpuId::new(id)));
+            let id = LogicalCpuId::new(id);
+            if id != current {
+                shootdown_tlb_ipi(Some(id));
+            }
         }
     }
 }

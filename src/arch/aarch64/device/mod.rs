@@ -1,10 +1,11 @@
 use crate::info;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use fdt::Fdt;
 
 pub mod cpu;
 pub mod generic_timer;
 pub mod irqchip;
+pub mod psci;
 pub mod rtc;
 pub mod serial;
 
@@ -33,12 +34,17 @@ unsafe fn init_root_ic(fdt: &Fdt) {
             .phandle_to_ic_idx(root_irqc_phandle as u32)
             .unwrap();
         info!("select {} as root ic", ic_idx);
-        ROOT_IC_IDX.store(ic_idx, Ordering::Relaxed);
+        ROOT_IC_IDX.store(ic_idx, Ordering::Release);
+        ROOT_IC_IDX_IS_SET.store(1, Ordering::Release);
     }
 }
 
 pub unsafe fn init_devicetree(fdt: &Fdt) {
     unsafe {
+        info!("PSCI INIT");
+        psci::init(fdt);
+        info!("CPU TOPOLOGY INIT");
+        cpu::init_topology(fdt);
         info!("IRQCHIP INIT");
         crate::dtb::irqchip::init(&fdt);
         init_root_ic(&fdt);
@@ -51,10 +57,14 @@ pub unsafe fn init_devicetree(fdt: &Fdt) {
     }
 }
 
-pub struct ArchPercpuMisc;
+pub struct ArchPercpuMisc {
+    pub gic_target_mask: AtomicU8,
+}
 
 impl ArchPercpuMisc {
     pub const fn default() -> Self {
-        Self
+        Self {
+            gic_target_mask: AtomicU8::new(0),
+        }
     }
 }

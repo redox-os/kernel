@@ -1,10 +1,5 @@
-use alloc::boxed::Box;
-
 use super::{find_sdt, sdt::Sdt};
-use crate::{
-    arch::device::generic_timer::GenericTimer,
-    dtb::irqchip::{register_irq, IRQ_CHIP},
-};
+use crate::arch::device::generic_timer;
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C, packed)]
@@ -46,12 +41,9 @@ impl Gtdt {
             return;
         };
 
-        let gsiv = gtdt.non_secure_el1_timer_gsiv;
-        info!("generic_timer gsiv = {}", gsiv);
-        let mut timer = GenericTimer::new();
-        timer.init();
-        register_irq(gsiv, Box::new(timer));
-        unsafe { IRQ_CHIP.irq_enable(gsiv as u32) };
+        unsafe {
+            generic_timer::init_acpi(gtdt.non_secure_el1_timer_gsiv, gtdt.virtual_el1_timer_gsiv)
+        };
     }
 
     pub fn new(sdt: &'static Sdt) -> Option<&'static Gtdt> {
