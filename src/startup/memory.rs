@@ -165,7 +165,9 @@ fn align_down(x: usize) -> usize {
 
 fn register_memory_from_kernel_args(args: &KernelArgs) {
     register_bootloader_areas(args.areas_base as usize, args.areas_size as usize);
-    if let Some(dt) = args.dtb() {
+    if cfg!(dtb)
+        && let Some(dt) = args.dtb()
+    {
         crate::dtb::register_fixed_reserved_memory_ranges(&dt);
         crate::dtb::register_dev_memory_ranges(&dt);
     }

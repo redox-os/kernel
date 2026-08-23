@@ -448,6 +448,7 @@ pub const ALL_KERNEL_SCHEMES: &[GlobalSchemes] = &[
     GlobalSchemes::Sys,
     GlobalSchemes::Proc,
     GlobalSchemes::Acpi,
+    #[cfg(dtb)]
     GlobalSchemes::Dtb,
 ];
 
@@ -474,7 +475,10 @@ impl SchemeExt for GlobalSchemes {
             Self::Sys => &SysScheme,
             Self::Proc => &ProcScheme,
             Self::Acpi => &AcpiScheme,
+            #[cfg(dtb)]
             Self::Dtb => &DtbScheme,
+            #[cfg(not(dtb))]
+            Self::Dtb => &AcpiScheme, // technically unreachable
         }
     }
     fn scheme_id(self) -> SchemeId {
@@ -487,7 +491,9 @@ pub fn init_globals() {
     if cfg!(feature = "acpi") {
         AcpiScheme::init();
     }
-    DtbScheme::init();
+    if cfg!(dtb) {
+        DtbScheme::init();
+    }
     IrqScheme::init();
 }
 
