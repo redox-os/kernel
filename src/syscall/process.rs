@@ -7,7 +7,7 @@ use syscall::data::GlobalSchemes;
 use crate::{
     context::{
         context::SyscallFrame,
-        file::{FileDescription, FileDescriptor, InternalFlags},
+        file::{FileDescription, FileDescriptor, InternalFlags, KernelSchemeRef},
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
@@ -161,7 +161,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    insert_fd(scheme.scheme_id(), cap_fd, token)
+                    insert_fd(KernelSchemeRef::Global(*scheme), cap_fd, token)
                 };
             }
         }
@@ -173,8 +173,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 Err(_) => usize::MAX,
             };
             // Second, retrieve the scheme ID.
-            let scheme_id = &SchemeList.id();
-            insert_fd(*scheme_id, cap_fd, token)
+            insert_fd(KernelSchemeRef::SchemeMgr, cap_fd, token)
         };
 
         let mut lock_token = token.token();
@@ -268,7 +267,7 @@ unsafe fn bootstrap_mem(bootstrap: &crate::startup::Bootstrap) -> &'static [u8] 
     }
 }
 
-fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usize {
+fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockToken) -> usize {
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
@@ -282,12 +281,13 @@ fn insert_fd(scheme: SchemeId, number: usize, token: &mut CleanLockToken) -> usi
         .write(token.token())
         .resize(syscall::flag::UPPER_FDTBL_TAG, 64)
         .expect("failed to resize upper fdtbl");
+    let id = scheme_ref.upgrade().unwrap().scheme_id(); // TODO: clean up
     context
         .insert_file(
-            FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | scheme.get()),
+            FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | id.get()),
             FileDescriptor {
                 description: Arc::new(RwLock::new(FileDescription {
-                    scheme,
+                    scheme_ref,
                     number,
                     offset: 0,
                     flags: (O_CREAT | O_RDWR) as u32,

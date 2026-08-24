@@ -43,11 +43,12 @@ pub fn file_op_generic_ext<T>(
         let mut current = current_lock.read(token.token());
         let (context, mut token) = current.token_split();
         let file = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
-        let desc = *file.description.read(token.token());
+        // TODO: potential unnecessary clone
+        let desc = file.description.read(token.token()).clone();
         (file, desc)
     };
 
-    let scheme = scheme::get_scheme(token.token(), desc.scheme)?;
+    let scheme = desc.scheme_ref.upgrade()?;
 
     op(&*scheme, file.description, desc, token)
 }
@@ -74,20 +75,18 @@ pub fn openat_into(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (scheme_id, number) = {
+    let (scheme, number) = {
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
         let (context, mut token) = current.token_split();
         let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
-        (desc.scheme, desc.number)
+        (desc.scheme_ref.upgrade()?, desc.number)
     };
 
     let caller_ctx = context::current().read(token.token()).caller_ctx();
 
     let new_description = {
-        let scheme = scheme::get_scheme(token.token(), scheme_id)?;
-
         let res = scheme.kopenat(
             number,
             StrOrBytes::from_str(&path_buf),
@@ -102,7 +101,7 @@ pub fn openat_into(
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
                     internal_flags,
-                    scheme: scheme_id,
+                    scheme_ref: scheme.downgrade(),
                     number,
                     flags: flags as u32,
                 }))
@@ -133,16 +132,14 @@ pub fn unlinkat(
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (number, scheme_id) = {
+    let (number, scheme) = {
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
         let (context, mut token) = current.token_split();
         let pipe = context.get_file(fh, &mut token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
-        (desc.number, desc.scheme)
+        (desc.number, desc.scheme_ref.upgrade()?)
     };
-
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     let caller_ctx = context::current().read(token.token()).caller_ctx();
 
@@ -187,17 +184,18 @@ fn duplicate_file(
             description: Arc::clone(&file.description),
         })
     } else {
-        let description = { *file.description.read(token.token()) };
+        // TODO: potential unnecessary clone
+        let description = { file.description.read(token.token()).clone() };
 
         let new_description = {
-            let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+            let scheme = description.scheme_ref.upgrade()?;
 
             match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
                 OpenResult::SchemeLocal(number, internal_flags) => {
                     Arc::new(RwLock::new(FileDescription {
                         offset: 0,
                         internal_flags,
-                        scheme: description.scheme,
+                        scheme_ref: scheme.downgrade(),
                         number,
                         flags: description.flags,
                     }))
@@ -326,7 +324,7 @@ fn call_normal(
     let consume = flags.contains(CallFlags::CONSUME);
     let mut fds = fds.iter();
 
-    let (target_file, scheme_id) = {
+    let (target_file, scheme) = {
         let fd = FileHandle::from(fds.next().copied().unwrap());
         let mut current = current_lock.read(token.token());
 
@@ -340,11 +338,11 @@ fn call_normal(
 
         let desc = file.description.read(split_token.token());
 
-        let scheme_id = desc.scheme;
+        let scheme = desc.scheme_ref.upgrade()?;
         nums.push(desc.number);
         drop(desc);
         let target_file = file;
-        (target_file, scheme_id)
+        (target_file, scheme)
     };
 
     for &fd in fds {
@@ -360,13 +358,11 @@ fn call_normal(
         let file = file.ok_or(Error::new(EBADF))?;
 
         let desc = file.description.read(split_token.token());
-        if desc.scheme != scheme_id {
+        if !desc.scheme_ref.same_ref_as(&scheme) {
             return Err(Error::new(EXDEV));
         }
         nums.push(desc.number);
     }
-
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     if flags.contains(CallFlags::STD_FS) {
         scheme.translate_std_fs_call(
@@ -407,9 +403,8 @@ fn call_fdwrite(
             let (context, mut token) = current.token_split();
             let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
             let desc = &file_descriptor.description.read(token.token());
-            (desc.scheme, desc.number)
+            (desc.scheme_ref.upgrade()?, desc.number)
         };
-        let scheme = scheme::get_scheme(token.token(), scheme)?;
 
         let current_lock = context::current();
         let mut current = current_lock.read(token.token());
@@ -456,17 +451,12 @@ fn call_fdread(
     token: &mut CleanLockToken,
 ) -> Result<usize> {
     let (scheme, number) = {
-        let (scheme, number) = {
-            let current_lock = context::current();
-            let mut current = current_lock.read(token.token());
-            let (context, mut token) = current.token_split();
-            let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
-            let desc = file_descriptor.description.read(token.token());
-            (desc.scheme, desc.number)
-        };
-        let scheme = scheme::get_scheme(token.token(), scheme)?;
-
-        (scheme, number)
+        let current_lock = context::current();
+        let mut current = current_lock.read(token.token());
+        let (context, mut token) = current.token_split();
+        let file_descriptor = context.get_file(fd, &mut token).ok_or(Error::new(EBADF))?;
+        let desc = file_descriptor.description.read(token.token());
+        (desc.scheme_ref.upgrade()?, desc.number)
     };
 
     scheme.kfdread(number, payload, flags, metadata, token)
@@ -482,9 +472,9 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     }
     .ok_or(Error::new(EBADF))?;
 
-    let (scheme_id, number, flags) = {
+    let (scheme, number, flags) = {
         let desc = file.description.read(token.token());
-        (desc.scheme, desc.number, desc.flags)
+        (desc.scheme_ref.upgrade()?, desc.number, desc.flags)
     };
 
     if cmd == F_DUPFD {
@@ -502,8 +492,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
     // Communicate fcntl with scheme
     if cmd != F_GETFD && cmd != F_SETFD {
-        let scheme = scheme::get_scheme(token.token(), scheme_id)?;
-
         scheme.fcntl(number, cmd, arg, token)?;
     };
 
@@ -551,12 +539,10 @@ pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) 
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
-    let (number, scheme_id) = {
+    let (number, scheme) = {
         let desc = file.description.read(token.token());
-        (desc.number, desc.scheme)
+        (desc.number, desc.scheme_ref.upgrade()?)
     };
-
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     // TODO: Check EXDEV.
     /*
@@ -587,12 +573,10 @@ pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken
     let path = RedoxPath::from_absolute(&path_buf).ok_or(Error::new(EINVAL))?;
     let (_, reference) = path.as_parts().ok_or(Error::new(EINVAL))?;
 
-    let (number, scheme_id) = {
+    let (number, scheme) = {
         let desc = file.description.read(token.token());
-        (desc.number, desc.scheme)
+        (desc.number, desc.scheme_ref.upgrade()?)
     };
-
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     // TODO: Check EXDEV.
     /*
@@ -613,7 +597,9 @@ pub fn fstat(fd: FileHandle, user_buf: UserSliceWo, token: &mut CleanLockToken) 
         // for retrieving the scheme ID from a file descriptor.
         // TODO: Less hacky method.
         let st_dev = desc
-            .scheme
+            .scheme_ref
+            .upgrade()?
+            .scheme_id()
             .get()
             .try_into()
             .map_err(|_| Error::new(EOVERFLOW))?;

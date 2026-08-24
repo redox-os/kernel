@@ -760,8 +760,9 @@ impl FdTbl {
         Ok(files)
     }
 
-    // TODO: Faster, cleaner mechanism to get descriptor
-    // Find a file descriptor by scheme id and number.
+    /// Find a file descriptor by scheme id and number.
+    // TODO: This method is bad, but since it's only used by UserScheme's fmap, it should be
+    // relatively easy to modify kfmap to also take the file description as an additional argument.
     pub fn find_by_scheme(
         &self,
         scheme_id: SchemeId,
@@ -772,7 +773,10 @@ impl FdTbl {
             .flatten()
             .find(|&context_fd| {
                 let desc = context_fd.description.read(token.token());
-                desc.scheme == scheme_id && desc.number == scheme_number
+                // TODO: possibly quite slow
+                desc.scheme_ref.upgrade().map_or(false, |s| {
+                    s.scheme_id() == scheme_id && desc.number == scheme_number
+                })
             })
             .cloned()
             .ok_or(Error::new(EBADF))
