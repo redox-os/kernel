@@ -1040,6 +1040,14 @@ impl UserGrants {
             .map(|(base, info)| (*base, info))
     }
 
+    pub fn contains_mut(&mut self, page: Page) -> Option<(Page, &mut GrantInfo)> {
+        self.inner
+            .range_mut(..=page)
+            .next_back()
+            .filter(|(base, info)| (**base..base.next_by(info.page_count)).contains(&page))
+            .map(|(base, info)| (*base, info))
+    }
+
     /// Returns an iterator over all grants that occupy some part of the
     /// requested region
     pub fn conflicts(&self, span: PageSpan) -> impl Iterator<Item = (Page, &'_ GrantInfo)> + '_ {
@@ -1254,7 +1262,10 @@ pub struct GrantInfo {
     mapped: bool,
 
     /// The NUMA node ID of the page table in which the mapping was originally created or
-    /// was intended to be created.
+    /// modified. This changes dynamically with the mapping.
+    ///
+    /// Example: For CoW mappings, the owner would originally be the node that CoW-mapped this grant.
+    /// But after copying, the owner would be the node that did the copy.
     owner: u32,
 
     pub(crate) provider: Provider,
@@ -2948,6 +2959,8 @@ fn correct_inner<'l>(
         // TODO
         return Err(PfError::Oom);
     };
+    let (_, gi) = addr_space.grants.contains_mut(faulting_page).unwrap();
+    gi.owner = numa::current_node_id().unwrap_or(0);
 
     drop(flusher);
     Ok((frame, flush, addr_space))
