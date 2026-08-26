@@ -97,13 +97,21 @@ pub struct Context {
     pub status: Status,
     pub status_reason: &'static str,
     /// Context running or not
+    ///
+    /// Formally, true iff there exists a hardware thread such that its percpu.sched_ctxt is this context
     pub running: bool,
+    /// Same condition as `running` except for percpu.current_ctxt
+    pub currently_scheduled: bool,
     /// Current CPU ID
     pub cpu_id: Option<LogicalCpuId>,
+    /// Time this context was scheduler-switched to
+    pub schedule_time: u128,
     /// Time this context was switched to
     pub switch_time: u128,
-    /// Amount of CPU time used
-    pub cpu_time: u128,
+    /// Amount of CPU time while being the current context
+    pub active_cpu_time: u128,
+    /// Amount of CPU time while being the sched context
+    pub sched_cpu_time: u128,
     /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything else than
     /// this value.
     pub sched_affinity: LogicalCpuSet,
@@ -195,9 +203,12 @@ impl Context {
             },
             status_reason: "",
             running: false,
+            currently_scheduled: false,
             cpu_id: None,
+            schedule_time: 0,
             switch_time: 0,
-            cpu_time: 0,
+            active_cpu_time: 0,
+            sched_cpu_time: 0,
             sched_affinity: LogicalCpuSet::all(),
             inside_syscall: false,
             syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),

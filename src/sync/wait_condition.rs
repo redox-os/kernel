@@ -76,9 +76,8 @@ impl WaitCondition {
             // ourselves to the wait list as otherwise we might miss a wakeup.
             // We cannot add ourselves to the wait list first as that would lead
             // to deadlock if we were woken up immediately.
+
             let mut token = token.token();
-            let mut preempt = PreemptGuardL2::new(&current_context_ref, &mut token);
-            let token = preempt.token();
             {
                 let context = current_context_ref.upgradeable_read(token.token());
                 if let Some((control, pctl, _)) = context.sigcontrol()
