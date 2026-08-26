@@ -63,10 +63,7 @@ pub fn used_frames() -> usize {
         .get()
         .unwrap()
         .iter()
-        .map(|e| {
-            let l = e.lock();
-            l.used_frames
-        })
+        .map(|e| e.free_list_inner.lock().used_frames)
         .sum()
 }
 pub fn total_frames() -> usize {
@@ -153,7 +150,7 @@ pub fn allocate_p2frame_complex(
     min_order: u32,
     index: usize,
 ) -> Option<(Frame, usize)> {
-    let mut freelist = FREE_LISTS.get().unwrap()[index].lock();
+    let mut freelist = FREE_LISTS.get().unwrap()[index].free_list_inner.lock();
 
     let (frame_order, frame) = freelist
         .for_orders
@@ -228,8 +225,7 @@ pub fn allocate_p2frame_complex(
 
 fn get_index_for_deallocation(addr: usize) -> Option<usize> {
     for (i, list) in FREE_LISTS.get().unwrap().iter().enumerate() {
-        let l = list.lock();
-        if addr >= l.lower_limit && addr < l.upper_limit {
+        if addr >= list.lower_limit && addr < list.upper_limit {
             return Some(i);
         }
     }
@@ -242,7 +238,7 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
     } else {
         0
     };
-    let mut freelist = FREE_LISTS.get().unwrap()[index].lock();
+    let mut freelist = FREE_LISTS.get().unwrap()[index].free_list_inner.lock();
 
     let initial_info = get_page_info(orig_frame)
         .unwrap_or_else(|| panic!("missing PageInfo for {orig_frame:?} being freed"));
@@ -570,15 +566,20 @@ struct AllocatorData {
     abs_off: usize,
 }
 #[derive(Debug)]
-struct FreeList {
-    upper_limit: usize,
-    lower_limit: usize,
+struct FreeListInner {
     for_orders: [Option<Frame>; ORDER_COUNT as usize],
     used_frames: usize,
 }
 
+#[derive(Debug)]
+struct FreeList {
+    upper_limit: usize,
+    lower_limit: usize,
+    free_list_inner: Mutex<FreeListInner>,
+}
+
 /// Each free list in this array corresponds to a discrete memory region found in the SRAT.
-static FREE_LISTS: Once<&'static [Mutex<FreeList>]> = Once::new();
+static FREE_LISTS: Once<&'static [FreeList]> = Once::new();
 
 pub struct Section {
     base: Frame,
@@ -966,34 +967,36 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                     .div_ceil(PAGE_SIZE),
             ))
             .expect("Failed to allocate free list page");
-        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut Mutex<FreeList> };
+        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
         free_lists = unsafe { slice::from_raw_parts_mut(va, numa::number_of_memory_regions()) };
         for (i, region) in regions.enumerate() {
             let free_list = FreeList {
-                for_orders: free_list_fill(Some(region), &mut allocator)
-                    .map(|pair| pair.map(|(frame, _)| frame)),
-                used_frames: 0,
                 upper_limit: region.base.add(region.size).data(),
                 lower_limit: region.base.data(),
+                free_list_inner: Mutex::new(FreeListInner {
+                    for_orders: free_list_fill(Some(region), &mut allocator)
+                        .map(|pair| pair.map(|(frame, _)| frame)),
+                    used_frames: 0,
+                }),
             };
-            free_lists[i] = Mutex::new(free_list);
+            free_lists[i] = free_list;
         }
     } else {
         let free_list_page = allocator
-            .allocate(FrameCount::new(
-                size_of::<Mutex<FreeList>>().div_ceil(PAGE_SIZE),
-            ))
+            .allocate(FrameCount::new(size_of::<FreeList>().div_ceil(PAGE_SIZE)))
             .expect("Failed to allocate free list page");
-        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut Mutex<FreeList> };
+        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
         free_lists = unsafe { slice::from_raw_parts_mut(va, 1) };
         let free_list = FreeList {
-            for_orders: free_list_fill(None, &mut allocator)
-                .map(|pair| pair.map(|(frame, _)| frame)),
-            used_frames: 0,
             upper_limit: usize::MAX,
             lower_limit: 0,
+            free_list_inner: Mutex::new(FreeListInner {
+                for_orders: free_list_fill(None, &mut allocator)
+                    .map(|pair| pair.map(|(frame, _)| frame)),
+                used_frames: 0,
+            }),
         };
-        free_lists[0] = Mutex::new(free_list);
+        free_lists[0] = free_list;
     }
 
     FREE_LISTS.call_once(|| free_lists);
