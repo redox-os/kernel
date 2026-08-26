@@ -129,7 +129,11 @@ impl EventQueue {
 
             let (scheme, number) = {
                 let description = file.description.read(token.token());
-                (description.scheme, description.number)
+                // TODO: possibly slower than needed
+                (
+                    description.scheme_ref.upgrade()?.scheme_id(),
+                    description.number,
+                )
             };
 
             if scheme == GlobalSchemes::Event.scheme_id() && number == self.id.into() {

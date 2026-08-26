@@ -25,7 +25,7 @@ use syscall::{
 use crate::{
     context::{
         self,
-        file::{FileDescription, InternalFlags, LockedFileDescription},
+        file::{FileDescription, InternalFlags, KernelSchemeRef, LockedFileDescription},
         memory::AddrSpaceWrapper,
         ContextLock,
     },
@@ -166,7 +166,11 @@ enum Handle {
 }
 
 /// Schemes list
+
+// TODO: Depending on whether we actually want to expose scheme IDs to userspace, a faster way
+// could be to just take the static scheme ID or pointer of Weak<UserInner> and use that directly.
 static HANDLES: Once<RwLock<L1, HashMap<SchemeId, Handle>>> = Once::new();
+
 static SCHEME_LIST_NEXT_ID: AtomicUsize = AtomicUsize::new(MAX_GLOBAL_SCHEMES);
 static SCHEME_LIST_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -291,14 +295,12 @@ impl KernelScheme for SchemeList {
             .ok_or(Error::new(EBADF))?
         {
             Handle::Scheme(KernelSchemes::User(UserScheme { inner })) => {
-                let inner = inner.clone();
-                assert!(scheme_id == inner.scheme_id);
-                let scheme = scheme_id;
+                let scheme_ref = KernelSchemeRef::User(Arc::downgrade(inner));
                 let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
 
                 return Ok(OpenResult::External(Arc::new(RwLock::new(
                     FileDescription {
-                        scheme,
+                        scheme_ref,
                         number: params.number,
                         offset: params.offset,
                         flags: params.flags as u32,
@@ -422,6 +424,23 @@ pub enum KernelSchemes {
     SchemeMgr,
     User(UserScheme),
     Global(GlobalSchemes),
+}
+
+impl KernelSchemes {
+    pub fn scheme_id(&self) -> SchemeId {
+        match self {
+            Self::SchemeMgr => SchemeList.id(),
+            Self::User(u) => u.inner.scheme_id,
+            Self::Global(gl) => gl.scheme_id(),
+        }
+    }
+    pub fn downgrade(&self) -> KernelSchemeRef {
+        match self {
+            Self::SchemeMgr => KernelSchemeRef::SchemeMgr,
+            Self::Global(gl) => KernelSchemeRef::Global(*gl),
+            Self::User(user) => KernelSchemeRef::User(Arc::downgrade(&user.inner)),
+        }
+    }
 }
 
 impl core::ops::Deref for KernelSchemes {

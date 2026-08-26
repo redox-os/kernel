@@ -1,7 +1,7 @@
 use crate::{
     alloc::string::ToString,
     context::{contexts, file::LockedFileDescription, memory::AddrSpaceWrapper},
-    scheme::{self, handles, KernelSchemes},
+    scheme::{self, handles, KernelSchemes, SchemeId},
     sync::CleanLockToken,
     syscall::error::Result,
 };
@@ -59,7 +59,13 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             };
             let descr = map.entry(fr).or_default();
 
-            let scheme_id = file.description.read(token.token()).scheme;
+            // TODO: could be done cleaner
+            let scheme_id = file
+                .description
+                .read(token.token())
+                .scheme_ref
+                .upgrade()
+                .map_or(SchemeId::new(!0), |s| s.scheme_id());
             let scheme = schemes.get(&scheme_id);
             descr
                 .owners

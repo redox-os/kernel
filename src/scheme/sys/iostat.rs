@@ -4,7 +4,7 @@ use crate::{
         memory::{handle_notify_files, Grant, PageSpan},
     },
     memory::PAGE_SIZE,
-    scheme,
+    scheme::{self, SchemeId},
     sync::CleanLockToken,
     syscall::{
         error::Result,
@@ -45,10 +45,14 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                     Some(ref file) => file.clone(),
                 };
 
-                let (scheme, number, flags) = {
+                let (scheme_res, number, flags) = {
                     let desc = file.description.read(token.token());
-                    (desc.scheme, desc.number, desc.flags)
+                    (desc.scheme_ref.upgrade(), desc.number, desc.flags)
                 };
+
+                let scheme_id = scheme_res
+                    .as_ref()
+                    .map_or(SchemeId::new(!0), |s| s.scheme_id());
 
                 let _ = write!(
                     string,
@@ -59,19 +63,14 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                         "U"
                     },
                     fd & !syscall::UPPER_FDTBL_TAG,
-                    scheme.get(),
+                    scheme_id.get(),
                     number,
                     flags
                 );
 
-                let scheme = {
-                    match scheme::get_scheme(token.token(), scheme) {
-                        Ok(scheme) => scheme.clone(),
-                        Err(_) => {
-                            let _ = writeln!(string, "no scheme",);
-                            continue;
-                        }
-                    }
+                let Ok(scheme) = scheme_res else {
+                    let _ = writeln!(string, "no scheme",);
+                    continue;
                 };
 
                 match scheme.kfpath(number, fpath_user.reinterpret_unchecked(), token) {

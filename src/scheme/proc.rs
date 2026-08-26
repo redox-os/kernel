@@ -940,19 +940,15 @@ impl KernelScheme for ProcScheme {
     }
 }
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
-    let (scheme_id, number) = {
-        let current_lock = context::current();
-        let mut current = current_lock.read(token.token());
-        let (context, mut token) = current.token_split();
-        let file_descriptor = context
-            .get_file(FileHandle::from(fd), &mut token)
-            .ok_or(Error::new(EBADF))?;
-        let desc = file_descriptor.description.read(token.token());
-        (desc.scheme, desc.number)
-    };
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
+    let current_lock = context::current();
+    let mut current = current_lock.read(token.token());
+    let (context, mut token) = current.token_split();
+    let file_descriptor = context
+        .get_file(FileHandle::from(fd), &mut token)
+        .ok_or(Error::new(EBADF))?;
 
-    Ok((scheme, number))
+    let desc = file_descriptor.description.read(token.token());
+    Ok((desc.scheme_ref.upgrade()?, desc.number))
 }
 fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
     if !matches!(scheme, KernelSchemes::Global(GlobalSchemes::Proc)) {

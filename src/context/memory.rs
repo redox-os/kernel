@@ -75,13 +75,12 @@ impl UnmapResult {
         // TODO: This is not ideal, the lock must be held until try_close(), however that would break borrowing rules.
         // Proper unmap operation would be a recursive operation, since closing a file can trigger another unmap().
         // We should refactor Result of munmap() to handle unmap and closing files recursively.
-        let (scheme_id, number) = {
+        let (scheme_res, number) = {
             let desc = description.write(token.token());
-            (desc.scheme, desc.number)
+            (desc.scheme_ref.upgrade(), desc.number)
         };
 
-        let scheme_opt = scheme::get_scheme(token.token(), scheme_id);
-        let funmap_result = scheme_opt
+        let funmap_result = scheme_res
             .and_then(|scheme| scheme.kfunmap(number, base_offset, self.size, self.flags, token));
 
         if let Ok(fd) = Arc::try_unwrap(description) {
@@ -2786,11 +2785,11 @@ fn correct_inner<'l>(
             // XXX: This is cheating, but guaranteed we won't deadlock because we've dropped addr_space_guard
             let mut token = unsafe { CleanLockToken::new() };
 
-            let (scheme_id, scheme_number) = {
+            let (scheme_res, scheme_number) = {
                 let desc = &file_ref.description.read(token.token());
-                (desc.scheme, desc.number)
+                (desc.scheme_ref.upgrade(), desc.number)
             };
-            let user_inner = scheme::get_scheme(token.token(), scheme_id)
+            let user_inner = scheme_res
                 .ok()
                 .and_then(|s| {
                     if let KernelSchemes::User(user) = s {
