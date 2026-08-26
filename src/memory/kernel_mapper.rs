@@ -38,7 +38,7 @@ impl<const RW: bool> KernelMapper<RW> {
         let mapper = unsafe {
             PageMapper::current(
                 TableKind::Kernel,
-                crate::memory::TheFrameAllocator(syscall::NumaMemoryPolicy::NodeLocalLeniant),
+                crate::memory::TheFrameAllocator(syscall::NumaMemoryPolicy::NodeLocalLeniant, None),
             )
         };
 

@@ -25,7 +25,7 @@ use crate::{
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
         TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
-    numa,
+    numa::{self, FreeListMask},
     percpu::PercpuBlock,
     scheme::{self, KernelSchemes},
     sync::{
@@ -153,6 +153,12 @@ pub struct AddrSpace {
     /// These tables are optionally created for subsequently spawned threads and they
     /// initially inherit mappings from the root table.
     replicas: hashbrown::HashMap<u32, Table>,
+
+    /// These are discarded tables. These tables are not immediately deallocated,
+    /// as in future, a thread might be scheduled on one of these table's numa node.
+    /// Instead of creating a new set of page tables and copying all the mappings,
+    /// we can simply reuse these.
+    replica_cache: hashbrown::HashMap<u32, Table>,
 
     pub grants: UserGrants,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
@@ -631,7 +637,16 @@ impl AddrSpace {
         }
 
         unsafe {
-            for (node_id, mapper) in self.replicas.iter_mut().map(|e| (*e.0, &mut e.1.utable)) {
+            for (node_id, mapper) in self
+                .replicas
+                .iter_mut()
+                .map(|e| (*e.0, &mut e.1.utable))
+                .chain(
+                    self.replica_cache
+                        .iter_mut()
+                        .map(|e| (*e.0, &mut e.1.utable)),
+                )
+            {
                 let f = mapper.unmap_phys(va);
                 if node_id == owning_node_id {
                     if f.is_none() {
@@ -652,11 +667,51 @@ impl AddrSpace {
         self.replicas.get_mut(&owner).unwrap_or(&mut self.table)
     }
 
+    pub fn owning_table_or(&self, owner: u32) -> (&Table, u32) {
+        self.replicas
+            .get(&owner)
+            .map(|e| (e, owner))
+            .unwrap_or((&self.table, self.root_table_node_id))
+    }
+
+    pub fn add_replica(&mut self, table: Table, node_id: u32) -> bool {
+        self.replicas.insert(node_id, table).is_none()
+    }
+
+    pub fn remove_replica(&mut self, node_id: u32) -> Option<Table> {
+        self.replicas.remove(&node_id)
+    }
+
+    pub fn root_table_node_id(&self) -> u32 {
+        self.root_table_node_id
+    }
+
+    pub fn cache(&mut self, table: Table, node_id: u32) {
+        self.replica_cache
+            .insert(node_id, table)
+            .expect("not expected");
+    }
+
+    pub fn swap_root_table(&mut self, new_table: Option<(u32, Table)>) -> Option<(u32, Table)> {
+        let (new_node_id, new_table) = if let Some((new_node_id, new_table)) = new_table {
+            (new_node_id, new_table)
+        } else {
+            // If no new table is specified, make any one of the replicas as the root table
+            let node_id = *self.replicas.iter().last()?.0;
+            let any_table = self.replicas.remove(&node_id).unwrap();
+            (node_id, any_table)
+        };
+        let old_root = core::mem::replace(&mut self.table, new_table);
+        let old_node_id = self.root_table_node_id;
+        self.root_table_node_id = new_node_id;
+        Some((old_node_id, old_root))
+    }
+
     pub fn new() -> Result<Self> {
         let utable = unsafe {
             PageMapper::create(
                 TableKind::User,
-                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant, None),
             )
             .ok_or(Error::new(ENOMEM))?
         };
@@ -668,6 +723,7 @@ impl AddrSpace {
             mmap_min: MMAP_MIN_DEFAULT,
             replicas: hashbrown::HashMap::new(),
             root_table_node_id: node_id,
+            replica_cache: hashbrown::HashMap::new(),
         })
     }
     fn munmap_inner(
@@ -1446,7 +1502,7 @@ impl Grant {
         }
 
         let count = span.count.next_power_of_two();
-        let mut frame_allocator = TheFrameAllocator(mem_policy);
+        let mut frame_allocator = TheFrameAllocator(mem_policy, None);
         let base = Frame::containing(
             frame_allocator
                 .allocate(FrameCount::new(count))
@@ -2506,6 +2562,36 @@ pub const DANGLING: usize = 1 << (usize::BITS - 2);
 #[derive(Debug)]
 pub struct Table {
     pub utable: PageMapper,
+}
+
+impl Table {
+    pub fn try_clone(
+        &self,
+        target_node: u32,
+        policy: NumaMemoryPolicy,
+        preference: Option<FreeListMask>,
+    ) -> Result<Table> {
+        let mut table = Table {
+            utable: unsafe {
+                PageMapper::create(
+                    TableKind::User,
+                    TheFrameAllocator(
+                        // temporarily use this policy to allocate on target node
+                        NumaMemoryPolicy::FromPreferredNodes,
+                        numa::make_mask(1 << target_node),
+                    ),
+                )
+                .ok_or(Error::new(ENOMEM))?
+            },
+        };
+
+        table.utable.allocator_mut().0 = policy;
+        table.utable.allocator_mut().1 = preference;
+
+        // The mappings will be created lazily on page faults.
+
+        Ok(table)
+    }
 }
 
 impl Drop for AddrSpace {
