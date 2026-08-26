@@ -237,7 +237,11 @@ fn get_index_for_deallocation(addr: usize) -> Option<usize> {
 }
 
 pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
-    let index = get_index_for_deallocation(orig_frame.physaddr.get()).expect("Expected an index");
+    let index = if numa::is_supported() {
+        get_index_for_deallocation(orig_frame.physaddr.get()).expect("Expected an index")
+    } else {
+        0
+    };
     let mut freelist = FREE_LISTS.get().unwrap()[index].lock();
 
     let initial_info = get_page_info(orig_frame)
