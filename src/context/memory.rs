@@ -644,14 +644,12 @@ impl AddrSpace {
         f_root
     }
 
-    pub fn owning_table(&self, grant: &Grant) -> &Table {
-        self.replicas.get(&grant.info.owner).unwrap_or(&self.table)
+    pub fn owning_table(&self, owner: u32) -> &Table {
+        self.replicas.get(&owner).unwrap_or(&self.table)
     }
 
-    pub fn owning_table_mut(&mut self, grant: &Grant) -> &mut Table {
-        self.replicas
-            .get_mut(&grant.info.owner)
-            .unwrap_or(&mut self.table)
+    pub fn owning_table_mut(&mut self, owner: u32) -> &mut Table {
+        self.replicas.get_mut(&owner).unwrap_or(&mut self.table)
     }
 
     pub fn new() -> Result<Self> {
@@ -662,13 +660,14 @@ impl AddrSpace {
             )
             .ok_or(Error::new(ENOMEM))?
         };
+        let node_id = numa::current_node_id().unwrap_or(0);
 
         Ok(Self {
             grants: UserGrants::new(),
             table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
             replicas: hashbrown::HashMap::new(),
-            root_table_node_id: numa::current_node_id().unwrap_or(0),
+            root_table_node_id: node_id,
         })
     }
     fn munmap_inner(
@@ -2162,7 +2161,7 @@ impl Grant {
 
         if is_phys_contiguous {
             let (phys_base, _) = addrspace
-                .owning_table(&self)
+                .owning_table(self.info.owner)
                 .utable
                 .translate(self.base.start_address())
                 .unwrap();
@@ -2709,6 +2708,29 @@ fn correct_inner<'l>(
 
     // By now, the memory at the faulting page is actually valid, but simply not yet mapped, either
     // at all, or with the required flags.
+
+    // TODO: walking 4 levels of page tables 2 times for each replica is costly;
+    // think of adapting mitosis circular linked list approach to RedoxOS
+    let current_node_id = numa::current_node_id().unwrap_or(0);
+    if grant_info.owner != current_node_id {
+        let owning_table = addr_space.owning_table(grant_info.owner);
+
+        // If the assumed owner does not have the mapping, continue with the normal
+        // path and make this node the owner
+        if let Some((pa, flags)) = owning_table.utable.translate(faulting_page.start_address()) {
+            let current_table = addr_space.current_table_mut();
+            let Some(flush) = (unsafe {
+                current_table
+                    .utable
+                    .map_phys(faulting_page.start_address(), pa, flags)
+            }) else {
+                return Err(PfError::Oom);
+            };
+            return Ok((Frame::containing(pa), flush, addr_space));
+        }
+    }
+
+    let (_, grant_info) = addr_space.grants.contains(faulting_page).unwrap();
 
     let faulting_frame_opt = addr_space
         .table
