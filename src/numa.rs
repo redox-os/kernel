@@ -373,3 +373,29 @@ pub fn make_mask(nodes: u128) -> Option<FreeListMask> {
     }
     Some(mask)
 }
+
+pub fn exists_with_memory(node_id: u32) -> bool {
+    NUMA_NODES.get().is_some()
+        && NUMA_NODES
+            .get()
+            .unwrap()
+            .iter()
+            .filter(|e| e.memories.mask != 0)
+            .count()
+            > node_id as usize
+}
+
+pub fn exists_with_cpu(node_id: u32) -> bool {
+    NUMA_NODES.get().is_some()
+        && NUMA_NODES
+            .get()
+            .unwrap()
+            .iter()
+            .filter(|e| e.cpus != 0)
+            .count()
+            > node_id as usize
+}
+
+pub fn exists(node_id: u32) -> bool {
+    exists_with_cpu(node_id) || exists_with_memory(node_id)
+}
