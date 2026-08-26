@@ -921,6 +921,14 @@ impl KernelScheme for ProcScheme {
                                 .parse::<u32>()
                                 .map_err(|_| Error::new(EINVAL))?;
 
+                            if numa::exists(target_node) {
+                                if !numa::exists_with_memory(target_node) {
+                                    return Err(Error::new(ENOMEM));
+                                }
+                            } else {
+                                return Err(Error::new(ENXIO));
+                            }
+
                             // if the target node already has a local page table
                             if addrspace_lock.owning_table_or(target_node).1 == target_node {
                                 return Err(Error::new(EEXIST));

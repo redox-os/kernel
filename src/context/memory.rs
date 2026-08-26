@@ -2580,7 +2580,7 @@ impl Table {
                     TableKind::User,
                     TheFrameAllocator(
                         // temporarily use this policy to allocate on target node
-                        NumaMemoryPolicy::FromPreferredNodes,
+                        NumaMemoryPolicy::FromPreferredNodesStrict,
                         numa::make_mask(1 << target_node),
                     ),
                 )
