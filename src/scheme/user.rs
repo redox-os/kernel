@@ -154,6 +154,24 @@ impl ParsedCqe {
     }
 }
 
+// Controls whether `UserScheme` calls should by default direct-switch to the scheme's context.
+// Userspace has been tested to work quite well with this, and it does improve performance in
+// macro-benchmarks (often ~5%), likely related to the avoidance of BTreeMap in the scheduler and
+// some locking.
+//
+// The drawback is that it may interfere with the scheduler heuristics, such as the SYS_YIELD
+// penalty. For example, if context A only has 10% of its timeslice remaining, and direct-switches
+// to context B that happens to already be ready and in another hardware thread's run_queue, then
+// context A would be scheduled for a shorter timeslice than necessary (although it would quickly
+// re-push itself to the run_queue afterwards and likely be prioritized by EEVDF). On the other
+// hand, direct switching doesn't modify scheduler state, and can only interfere with it either by
+// locking or "being first" as described above.
+//
+// TODO: measure 2nd-order impacts such as e.g. cache usage, with perf counters
+// TODO: Add kernel statistics measuring the percentage of UserScheme calls where direct switching
+// was possible. The same should also be done for direct-switch-back.
+const DEF_ALLOW_DIRECT_SWITCH: bool = true;
+
 impl UserInner {
     pub fn new(root_id: SchemeId, scheme_id: SchemeId, context: Weak<ContextLock>) -> UserInner {
         UserInner {
@@ -183,6 +201,7 @@ impl UserInner {
         args: impl Args,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
+        allow_direct_switch: bool,
     ) -> Result<Response> {
         self.call_inner(
             fds,
@@ -200,6 +219,7 @@ impl UserInner {
             },
             caller_responsible,
             token,
+            allow_direct_switch,
         )
     }
 
@@ -209,16 +229,10 @@ impl UserInner {
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
+        allow_direct_switch: bool,
     ) -> Result<Response> {
         {
-            // Disable preemption to avoid context switches between setting the
-            // process state and sending the scheme request. The process is made
-            // runnable again when the scheme response is received. Hence, we
-            // need to ensure that the following operations are atomic as
-            // otherwise the process will be blocked forever.
             let current_context = context::current();
-            let mut preempt = PreemptGuard::new(&current_context, token);
-            let token = preempt.token();
             current_context
                 .write(token.token())
                 .block("UserInner::call");
@@ -241,7 +255,13 @@ impl UserInner {
         }
 
         loop {
-            context::switch(token);
+            if allow_direct_switch && let Some(handler_context) = self.context.upgrade() {
+                // Direct switching can fail if e.g. the target context is blocked or currently
+                // scheduled.
+                context::switch::direct_switch_to(handler_context, token);
+            } else {
+                context::switch(token);
+            }
 
             {
                 let mut eintr_if_sigkill =
@@ -1063,6 +1083,7 @@ impl UserInner {
             ],
             &mut PageSpan::empty(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         )?;
 
         // TODO: I've previously tested that this works, but because the scheme trait all of
@@ -1371,6 +1392,7 @@ impl UserScheme {
         slice: UserSlice<READ, WRITE>,
         metadata: &[u64],
         mut on_response: impl FnMut(bool, &mut CleanLockToken),
+        allow_direct_switch: bool,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -1413,7 +1435,7 @@ impl UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
 
-        match inner.call_inner(Vec::new(), sqe, address.span(), token) {
+        match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch) {
             Ok(Response::Regular(res, _, notify_on_detach)) => {
                 address.release(token)?;
                 on_response(notify_on_detach, token);
@@ -1449,6 +1471,7 @@ impl KernelScheme for UserScheme {
             [file, address.base(), address.len(), flags, fcntl_flags as _],
             address.span(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         );
 
         address.release(token)?;
@@ -1482,6 +1505,7 @@ impl KernelScheme for UserScheme {
             [file, address.base(), address.len(), flags],
             address.span(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         ) {
             Ok(res) => {
                 address.release(token)?;
@@ -1505,6 +1529,7 @@ impl KernelScheme for UserScheme {
                 [file],
                 &mut PageSpan::empty(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular()
             .map(|o| o as u64)
@@ -1528,6 +1553,7 @@ impl KernelScheme for UserScheme {
                 [file, uid as usize, gid as usize],
                 &mut PageSpan::empty(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular()?;
         Ok(())
@@ -1549,6 +1575,7 @@ impl KernelScheme for UserScheme {
                 [file, cmd, arg],
                 &mut PageSpan::empty(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular()
     }
@@ -1568,6 +1595,7 @@ impl KernelScheme for UserScheme {
                 [file, flags.bits()],
                 &mut PageSpan::empty(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular()
             .map(EventFlags::from_bits_truncate)
@@ -1588,6 +1616,7 @@ impl KernelScheme for UserScheme {
             [file, address.base(), address.len()],
             address.span(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         ) {
             Ok(res) => {
                 address.release(token)?;
@@ -1616,6 +1645,7 @@ impl KernelScheme for UserScheme {
             [file, address.base(), address.len()],
             address.span(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         ) {
             Ok(res) => {
                 address.release(token)?;
@@ -1639,6 +1669,7 @@ impl KernelScheme for UserScheme {
                 [file],
                 &mut PageSpan::empty(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular()?;
         Ok(())
@@ -1705,6 +1736,7 @@ impl KernelScheme for UserScheme {
             [file, address.base(), address.len()],
             address.span(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         );
 
         address.release(token)?;
@@ -1733,6 +1765,7 @@ impl KernelScheme for UserScheme {
                 [file, address.base(), address.len()],
                 address.span(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular();
         address.release(token)?;
@@ -1766,6 +1799,7 @@ impl KernelScheme for UserScheme {
                 ],
                 address.span(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular();
         address.release(token)?;
@@ -1800,6 +1834,7 @@ impl KernelScheme for UserScheme {
                 ],
                 address.span(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular();
         address.release(token)?;
@@ -1831,6 +1866,7 @@ impl KernelScheme for UserScheme {
                 [file, address.base(), address.len()],
                 address.span(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular();
         address.release(token)?;
@@ -1876,6 +1912,7 @@ impl KernelScheme for UserScheme {
             [number, size, flags.bits(), offset],
             &mut PageSpan::empty(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         )?;
 
         res.into_regular()?;
@@ -1889,11 +1926,30 @@ impl KernelScheme for UserScheme {
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        let allow_direct_switch =
+            flags.contains(CallFlags::ALLOW_DIRECT_SWITCH) || DEF_ALLOW_DIRECT_SWITCH;
+
         if flags.contains(CallFlags::READ) {
-            self.call_generic(Opcode::Call, fds, payload, metadata, |_, _| {}, token)
+            self.call_generic(
+                Opcode::Call,
+                fds,
+                payload,
+                metadata,
+                |_, _| {},
+                allow_direct_switch,
+                token,
+            )
         } else {
             let ro_slice = payload.reinterpret_unchecked::<true, false>();
-            self.call_generic(Opcode::Call, fds, ro_slice, metadata, |_, _| {}, token)
+            self.call_generic(
+                Opcode::Call,
+                fds,
+                ro_slice,
+                metadata,
+                |_, _| {},
+                allow_direct_switch,
+                token,
+            )
         }
     }
     fn kstdfscall(
@@ -1906,6 +1962,9 @@ impl KernelScheme for UserScheme {
         metadata: StdFsCallMeta,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
+        let allow_direct_switch =
+            flags.contains(CallFlags::ALLOW_DIRECT_SWITCH) || DEF_ALLOW_DIRECT_SWITCH;
+
         let on_response = |notify_on_detach: bool, token: &mut CleanLockToken| {
             desc.write(token.token())
                 .internal_flags
@@ -1919,6 +1978,7 @@ impl KernelScheme for UserScheme {
                 payload,
                 &metadata,
                 on_response,
+                allow_direct_switch,
                 token,
             )
         } else {
@@ -1929,6 +1989,7 @@ impl KernelScheme for UserScheme {
                 ro_slice,
                 &metadata,
                 on_response,
+                allow_direct_switch,
                 token,
             )
         }
@@ -1964,6 +2025,7 @@ impl KernelScheme for UserScheme {
                 ],
                 &mut PageSpan::empty(),
                 token,
+                DEF_ALLOW_DIRECT_SWITCH,
             )?
             .into_regular()
     }
@@ -1999,6 +2061,7 @@ impl KernelScheme for UserScheme {
             ],
             &mut PageSpan::empty(),
             token,
+            DEF_ALLOW_DIRECT_SWITCH,
         )?;
 
         let descriptions_opt = match res {

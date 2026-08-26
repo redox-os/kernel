@@ -81,6 +81,7 @@ pub use self::arch::empty_cr3;
 // the context file descriptors.
 static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
+#[derive(Debug)]
 pub struct RunContextData {
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
     timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
@@ -195,6 +196,9 @@ pub fn init(token: &mut CleanLockToken) {
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        percpu
+            .switch_internals
+            .set_sched_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
 }
@@ -269,6 +273,11 @@ impl PartialEq for WeakContextRef {
     }
 }
 impl Eq for WeakContextRef {}
+impl core::fmt::Debug for WeakContextRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:p}", Weak::as_ptr(&self.0))
+    }
+}
 
 /// Spawn a context from a function.
 pub fn spawn(
