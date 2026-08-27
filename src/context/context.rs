@@ -777,7 +777,7 @@ impl FdTbl {
             };
             let desc = context_fd.description.read(token.token());
             // TODO: possibly quite slow
-            if let Some(s) = desc.scheme_ref.upgrade() {
+            if let Ok(s) = desc.scheme_ref.upgrade() {
                 if s.scheme_id() == scheme_id && desc.number == scheme_number {
                     found = Some(context_fd.clone());
                 }
