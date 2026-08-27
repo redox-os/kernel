@@ -5,7 +5,6 @@ use core::{
     cell::SyncUnsafeCell,
     num::NonZeroUsize,
     ops::{AddAssign, Deref, DerefMut},
-    ptr::NonNull,
     slice,
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
@@ -498,10 +497,6 @@ impl<T> FrameAllocated<T> {
         Some(pages.next_power_of_two().trailing_zeros())
     }
 
-    pub fn new(val: T) -> Self {
-        Self::try_new(val).expect("FrameAllocated: failed to allocate physical frame")
-    }
-
     pub fn try_new(val: T) -> Option<Self> {
         let order = Self::order()?;
         let frame = crate::memory::allocate_p2frame(order)?;
@@ -550,12 +545,6 @@ impl<T> Drop for FrameAllocated<T> {
                 crate::memory::deallocate_p2frame(self.frame, order);
             }
         }
-    }
-}
-
-impl<T: Clone> Clone for FrameAllocated<T> {
-    fn clone(&self) -> Self {
-        Self::new((**self).clone())
     }
 }
 

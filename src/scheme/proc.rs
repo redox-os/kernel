@@ -789,7 +789,7 @@ impl KernelScheme for ProcScheme {
                             let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
                             let new_filetable =
-                                Arc::new(RwLock::new(filetable.read(token.token()).clone()));
+                                Arc::new(RwLock::new(filetable.read(token.token()).try_clone()?));
 
                             Handle {
                                 kind: ContextHandle::NewFiletable {
