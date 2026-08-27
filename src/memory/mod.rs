@@ -489,7 +489,8 @@ unsafe impl<T: Sync> Sync for FrameAllocated<T> {}
 impl<T> FrameAllocated<T> {
     const fn order() -> Option<u32> {
         let size = size_of::<T>();
-        if size == 0 || size > PAGE_SIZE * 4 {
+        let align = align_of::<T>();
+        if size == 0 || size > PAGE_SIZE * 4 || align > PAGE_SIZE {
             return None;
         }
 
