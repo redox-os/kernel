@@ -158,7 +158,7 @@ pub struct AddrSpace {
     /// as in future, a thread might be scheduled on one of these table's numa node.
     /// Instead of creating a new set of page tables and copying all the mappings,
     /// we can simply reuse these.
-    replica_cache: hashbrown::HashMap<u32, Table>,
+    pub replica_cache: hashbrown::HashMap<u32, Table>,
 
     pub grants: UserGrants,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
@@ -684,12 +684,6 @@ impl AddrSpace {
 
     pub fn root_table_node_id(&self) -> u32 {
         self.root_table_node_id
-    }
-
-    pub fn cache(&mut self, table: Table, node_id: u32) {
-        self.replica_cache
-            .insert(node_id, table)
-            .expect("not expected");
     }
 
     pub fn swap_root_table(&mut self, new_table: Option<(u32, Table)>) -> Option<(u32, Table)> {
