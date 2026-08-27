@@ -2,10 +2,8 @@ use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
     cmp::Reverse,
-    iter::{Enumerate, FilterMap, FlatMap},
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
-    slice::Iter,
     sync::atomic::{AtomicU32, Ordering},
 };
 use syscall::{NumaMemoryPolicy, SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
@@ -30,7 +28,7 @@ use crate::{
     syscall::usercopy::UserSliceRw,
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ENOMEM, ESRCH};
 
 use super::{
     empty_cr3,
@@ -601,7 +599,7 @@ impl core::fmt::Debug for Kstack {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct FdTbl {
     pub lower_fdtbl: RadixFdTbl,
     pub upper_fdtbl: RadixFdTbl,
@@ -619,14 +617,21 @@ impl FdTbl {
         }
     }
 
+    pub fn try_clone(&self) -> Result<Self> {
+        Ok(Self {
+            lower_fdtbl: self.lower_fdtbl.try_clone()?,
+            upper_fdtbl: self.upper_fdtbl.try_clone()?,
+            active_count: self.active_count,
+        })
+    }
+
     pub fn resize(&mut self, which: usize, size: usize) -> Result<()> {
         let (fdtbl, _) = self.select_fdtbl_mut(which);
         if super::CONTEXT_MAX_FILES < size {
             return Err(Error::new(EMFILE));
         }
 
-        fdtbl.resize(size);
-        Ok(())
+        fdtbl.resize(size)
     }
 
     fn strip_tags(index: usize) -> usize {
@@ -881,7 +886,7 @@ pub const NODE_BITS: usize = 10; // 1024 entries
 pub const NODE_SIZE: usize = 1 << NODE_BITS;
 pub const NODE_MASK: usize = NODE_SIZE - 1;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Node {
     Leaf([Option<FileDescriptor>; NODE_SIZE]),
     Branch([Option<FrameAllocated<Node>>; NODE_SIZE]),
@@ -918,36 +923,47 @@ impl Node {
         }
     }
 
-    pub fn ensure_path(&mut self, max_index: usize, shift: usize) {
+    pub fn ensure_path(&mut self, max_index: usize, shift: usize) -> Result<()> {
         let max_idx = (max_index >> shift) & NODE_MASK;
         let next_shift = shift.saturating_sub(NODE_BITS);
 
         if let Self::Branch(children) = self {
             for i in 0..max_idx {
-                let child = children[i].get_or_insert_with(|| {
-                    FrameAllocated::new(if next_shift == 0 {
+                let child = match &mut children[i] {
+                    Some(child) => child,
+                    slot @ None => {
+                        let child = FrameAllocated::try_new(if next_shift == 0 {
+                            Node::empty_leaf()
+                        } else {
+                            Node::empty_branch()
+                        })
+                        .ok_or(Error::new(ENOMEM))?;
+                        slot.insert(child)
+                    }
+                };
+                if next_shift > 0 {
+                    let sub_max = (1 << shift) - 1;
+                    child.ensure_path(sub_max, next_shift)?;
+                }
+            }
+
+            let child = match &mut children[max_idx] {
+                Some(child) => child,
+                slot @ None => {
+                    let child = FrameAllocated::try_new(if next_shift == 0 {
                         Node::empty_leaf()
                     } else {
                         Node::empty_branch()
                     })
-                });
-                if next_shift > 0 {
-                    let sub_max = (1 << shift) - 1;
-                    child.ensure_path(sub_max, next_shift);
+                    .ok_or(Error::new(ENOMEM))?;
+                    slot.insert(child)
                 }
-            }
-
-            let child = children[max_idx].get_or_insert_with(|| {
-                FrameAllocated::new(if next_shift == 0 {
-                    Node::empty_leaf()
-                } else {
-                    Node::empty_branch()
-                })
-            });
+            };
             if next_shift > 0 {
-                child.ensure_path(max_index, next_shift);
+                child.ensure_path(max_index, next_shift)?;
             }
         }
+        Ok(())
     }
 
     pub fn for_each<F>(&self, f: &mut F)
@@ -985,9 +1001,26 @@ impl Node {
             }
         }
     }
+
+    pub fn try_clone(&self) -> Result<Self> {
+        match self {
+            Self::Leaf(fds) => Ok(Self::Leaf(core::array::from_fn(|i| fds[i].clone()))),
+            Self::Branch(nodes) => {
+                let mut new_nodes = [const { None }; NODE_SIZE];
+                for (i, node_opt) in nodes.iter().enumerate() {
+                    if let Some(node) = node_opt {
+                        new_nodes[i] = Some(
+                            FrameAllocated::try_new(node.try_clone()?).ok_or(Error::new(ENOMEM))?,
+                        );
+                    }
+                }
+                Ok(Self::Branch(new_nodes))
+            }
+        }
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct RadixFdTbl {
     root: Option<FrameAllocated<Node>>,
     levels: usize,
@@ -1007,6 +1040,19 @@ impl RadixFdTbl {
             levels: 0,
             allocated_size: 0,
         }
+    }
+
+    pub fn try_clone(&self) -> Result<Self> {
+        Ok(Self {
+            root: match &self.root {
+                None => None,
+                Some(root) => {
+                    Some(FrameAllocated::try_new(root.try_clone()?).ok_or(Error::new(ENOMEM))?)
+                }
+            },
+            levels: self.levels,
+            allocated_size: self.allocated_size,
+        })
     }
 
     #[inline]
@@ -1085,14 +1131,15 @@ impl RadixFdTbl {
         self.root.as_deref_mut()?.get_mut(handle, shift)?.take()
     }
 
-    pub fn resize(&mut self, size: usize) {
-        if size <= self.allocated_size {
-            return;
+    pub fn resize(&mut self, size: usize) -> Result<()> {
+        if size < self.allocated_size {
+            return Err(Error::new(EINVAL));
         }
         let max_index = size - 1;
 
         if self.root.is_none() {
-            self.root = Some(FrameAllocated::new(Node::empty_leaf()));
+            self.root =
+                Some(FrameAllocated::try_new(Node::empty_leaf()).ok_or(Error::new(ENOMEM))?);
             self.levels = 1;
         }
 
@@ -1102,18 +1149,19 @@ impl RadixFdTbl {
             if let Node::Branch(ref mut children) = new_branch {
                 children[0] = Some(old_root);
             }
-            self.root = Some(FrameAllocated::new(new_branch));
+            self.root = Some(FrameAllocated::try_new(new_branch).ok_or(Error::new(ENOMEM))?);
             self.levels += 1;
         }
 
         let shift = self.root_shift();
         if let Some(ref mut root) = self.root {
             if self.levels > 1 {
-                root.ensure_path(max_index, shift);
+                root.ensure_path(max_index, shift)?;
             }
         }
 
         self.allocated_size = size;
+        Ok(())
     }
 
     pub fn for_each<F>(&self, mut f: F)
