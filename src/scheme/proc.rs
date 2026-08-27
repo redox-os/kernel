@@ -944,10 +944,17 @@ impl KernelScheme for ProcScheme {
                                 // but the current node's table which on non-NUMA systems,
                                 // is the same as the root table
                                 debug_assert!(n == numa_node_id);
+
                                 page_table.try_clone(
                                     target_node,
                                     page_table.utable.allocator().0,
                                     page_table.utable.allocator().1,
+                                    true, // when one wishes to place the page tables on a
+                                          // particular node, one generally doesn't want those
+                                          //  pages to be placed on other nodes, so strict.
+                                          // If one really wants to fallback on failure,
+                                          // one can use the implicit page table replication
+                                          // on context migration
                                 )?
                             };
                             // assertion checks that the node does not already have a table,
@@ -1810,7 +1817,14 @@ impl ContextHandle {
                 )
                 .ok_or(Error::new(EINVAL))?;
 
-                let NumaVerb::MemPolicy = op;
+                match op {
+                    NumaVerb::MemPolicy => (), // actions performed below from line 1838
+                    NumaVerb::ReplicatePageTables => {
+                        let mut addrspace = addrspace.acquire_write(token.downgrade());
+                        addrspace.replicate_on_node_switch = false;
+                        return Ok(0);
+                    }
+                }
 
                 if !numa::is_supported() {
                     return Err(Error::new(EOPNOTSUPP));

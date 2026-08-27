@@ -150,7 +150,7 @@ pub struct AddrSpace {
     root_table_node_id: u32,
 
     /// These tables are optionally created for subsequently spawned threads and they
-    /// initially inherit mappings from the root table.
+    /// **initially** inherit mappings from the root table.
     replicas: hashbrown::HashMap<u32, Table>,
 
     /// These are discarded tables. These tables are not immediately deallocated,
@@ -158,6 +158,10 @@ pub struct AddrSpace {
     /// Instead of creating a new set of page tables and copying all the mappings,
     /// we can simply reuse these.
     pub replica_cache: hashbrown::HashMap<u32, Table>,
+
+    /// Indicates whether page tables will be replicated when a context starts running
+    /// on another node and if the node doesn't already have a replica.
+    pub replicate_on_node_switch: bool,
 
     pub grants: UserGrants,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
@@ -721,6 +725,7 @@ impl AddrSpace {
             replicas: hashbrown::HashMap::new(),
             root_table_node_id: node_id,
             replica_cache: hashbrown::HashMap::new(),
+            replicate_on_node_switch: true,
         })
     }
     fn munmap_inner(
@@ -2581,6 +2586,7 @@ impl Table {
         target_node: u32,
         policy: NumaMemoryPolicy,
         preference: Option<FreeListMask>,
+        strict: bool,
     ) -> Result<Table> {
         let mut table = Table {
             utable: unsafe {
@@ -2588,7 +2594,11 @@ impl Table {
                     TableKind::User,
                     TheFrameAllocator(
                         // temporarily use this policy to allocate on target node
-                        NumaMemoryPolicy::FromPreferredNodesStrict,
+                        if strict {
+                            NumaMemoryPolicy::FromPreferredNodesStrict
+                        } else {
+                            NumaMemoryPolicy::FromPreferredNodes
+                        },
                         numa::make_mask(1 << target_node),
                     ),
                 )
