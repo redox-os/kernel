@@ -933,16 +933,23 @@ impl KernelScheme for ProcScheme {
                             if addrspace_lock.owning_table_or(target_node).1 == target_node {
                                 return Err(Error::new(EEXIST));
                             }
-                            let (page_table, n) = addrspace_lock.owning_table_or(numa_node_id);
-                            // assertion checks that the table is not the root table
-                            // but the current node's table which on non-NUMA systems,
-                            // is the same as the root table
-                            debug_assert!(n == numa_node_id);
-                            let new_table = page_table.try_clone(
-                                target_node,
-                                page_table.utable.allocator().0,
-                                page_table.utable.allocator().1,
-                            )?;
+
+                            let new_table = if let Some(page_table) =
+                                addrspace_lock.replica_cache.remove(&target_node)
+                            {
+                                page_table
+                            } else {
+                                let (page_table, n) = addrspace_lock.owning_table_or(numa_node_id);
+                                // assertion checks that the table is not the root table
+                                // but the current node's table which on non-NUMA systems,
+                                // is the same as the root table
+                                debug_assert!(n == numa_node_id);
+                                page_table.try_clone(
+                                    target_node,
+                                    page_table.utable.allocator().0,
+                                    page_table.utable.allocator().1,
+                                )?
+                            };
                             // assertion checks that the node does not already have a table,
                             // something that is already checked above where we return EEXIST
                             // just to be extra sure
@@ -1138,7 +1145,7 @@ impl ContextHandle {
 
                 let mut addrspace = addrspace.acquire_write(token.downgrade());
                 if let Some(table) = addrspace.remove_replica(numa_node_id) {
-                    addrspace.cache(table, numa_node_id);
+                    addrspace.replica_cache.insert(numa_node_id, table);
                     return Ok(0);
                 }
 
