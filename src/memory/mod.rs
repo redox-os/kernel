@@ -493,7 +493,7 @@ impl<T> FrameAllocated<T> {
             return None;
         }
 
-        let pages = size.next_multiple_of(PAGE_SIZE);
+        let pages = size.div_ceil(PAGE_SIZE);
         Some(pages.next_power_of_two().trailing_zeros())
     }
 
