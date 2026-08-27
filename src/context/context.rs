@@ -22,6 +22,7 @@ use crate::{
         allocate_p2frame, deallocate_p2frame, Enomem, Frame, FrameAllocated, RaiiFrame, RmmA,
         RmmArch, PAGE_SIZE,
     },
+    numa,
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
     sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
@@ -412,7 +413,33 @@ impl Context {
             match addr_space {
                 Some(ref new) => {
                     new.used_by.atomic_set(this_percpu.cpu_id);
-                    let new_addrsp = new.acquire_read(token);
+                    let new_addrsp = new.acquire_upgradeable_read(token);
+                    let node_id = numa::current_node_id().unwrap_or(0);
+
+                    // The below code: ⬇️
+                    //
+                    // First checks if replicate_on_node_switch is true.
+                    // If it is true, it checks whether there is a node-local copy of page table.
+                    // If there's local copy, proceed with usual path. If a local copy
+                    // does not exist, clone the page table and add it to the list of replicas
+                    // and proceed as usual
+
+                    let new_addrsp = if new_addrsp.replicate_on_node_switch
+                        && new_addrsp.owning_table_or(node_id).1 == new_addrsp.root_table_node_id()
+                    {
+                        let mut new_addrsp = new_addrsp.upgrade();
+                        if let Ok(new_table) = new_addrsp.current_table().try_clone(
+                            node_id,
+                            new_addrsp.current_table().utable.allocator().0,
+                            new_addrsp.current_table().utable.allocator().1,
+                            false,
+                        ) {
+                            debug_assert!(new_addrsp.add_replica(new_table, node_id));
+                        }
+                        new_addrsp.downgrade()
+                    } else {
+                        new_addrsp.upgrade().downgrade()
+                    };
                     unsafe {
                         new_addrsp.current_table().utable.make_current();
                     }
