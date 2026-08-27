@@ -144,8 +144,8 @@ impl AddrSpaceWrapper {
 
 #[derive(Debug)]
 pub struct AddrSpace {
-    /// The root table - one that is created for the first thread.
-    table: Table,
+    /// This table is created for the first thread.
+    root_table: Table,
 
     /// The id of the NUMA node in which the root page table resides.
     root_table_node_id: u32,
@@ -181,7 +181,7 @@ impl AddrSpaceWrapper {
 
         // It's okay to use the field directly here instead of the method `table_mut`
         // because, the grants will be copied to the new address space
-        let this_mapper = &mut guard.table.utable;
+        let this_mapper = &mut guard.root_table.utable;
         let mut this_flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
 
         for (grant_base, grant_info) in guard.grants.iter() {
@@ -206,7 +206,7 @@ impl AddrSpaceWrapper {
                     base,
                     PageSpan::new(grant_base, grant_info.page_count),
                     grant_info.flags,
-                    &mut new.inner.get_mut().table.utable,
+                    &mut new.inner.get_mut().root_table.utable,
                     &mut NopFlusher,
                 )?,
                 Provider::Allocated {
@@ -218,7 +218,7 @@ impl AddrSpaceWrapper {
                     grant_info.page_count,
                     grant_info.flags,
                     this_mapper,
-                    &mut new.inner.get_mut().table.utable,
+                    &mut new.inner.get_mut().root_table.utable,
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Owned {
@@ -234,7 +234,7 @@ impl AddrSpaceWrapper {
                     grant_info.page_count,
                     grant_info.flags,
                     this_mapper,
-                    &mut new.inner.get_mut().table.utable,
+                    &mut new.inner.get_mut().root_table.utable,
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Borrowed,
@@ -251,7 +251,7 @@ impl AddrSpaceWrapper {
                     src_base,
                     grant_base,
                     grant_info,
-                    &mut new.inner.get_mut().table.utable,
+                    &mut new.inner.get_mut().root_table.utable,
                     &mut NopFlusher,
                     false,
                 )?,
@@ -326,7 +326,7 @@ impl AddrSpaceWrapper {
             // x86_64 with protection keys (although only enforced by userspace), and AArch64 (I
             // think), execute-only memory is also supported.
 
-            let mapper = &mut guard.table.utable;
+            let mapper = &mut guard.root_table.utable;
             grant.remap(mapper, &mut flusher, new_flags);
 
             for mapper in guard.replicas.values_mut().map(|e| &mut e.utable) {
@@ -468,7 +468,7 @@ impl AddrSpaceWrapper {
                     let mut grant = Grant::zeroed(
                         hole_span,
                         page_flags(new_flags),
-                        &mut dst.table.utable,
+                        &mut dst.root_table.utable,
                         &mut dst_flusher,
                         false,
                     )?;
@@ -535,7 +535,7 @@ impl AddrSpaceWrapper {
                 let mut grant = Grant::zeroed(
                     last_hole_span,
                     page_flags(new_flags),
-                    &mut dst.table.utable,
+                    &mut dst.root_table.utable,
                     &mut dst_flusher,
                     false,
                 )?;
@@ -566,7 +566,7 @@ impl AddrSpaceWrapper {
         }
 
         let mut guard_lock = None;
-        let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address())
+        let frame = if let Some((f, fl)) = guard.root_table.utable.translate(page.start_address())
             && fl.has_write()
         {
             Frame::containing(f)
@@ -606,12 +606,14 @@ impl AddrSpace {
 
     pub fn current_table(&self) -> &Table {
         let node_id = numa::current_node_id().unwrap_or(0);
-        self.replicas.get(&node_id).unwrap_or(&self.table)
+        self.replicas.get(&node_id).unwrap_or(&self.root_table)
     }
 
     pub fn current_table_mut(&mut self) -> &mut Table {
         let node_id = numa::current_node_id().unwrap_or(0);
-        self.replicas.get_mut(&node_id).unwrap_or(&mut self.table)
+        self.replicas
+            .get_mut(&node_id)
+            .unwrap_or(&mut self.root_table)
     }
 
     /// Unmaps from all page tables of this address space.
@@ -627,7 +629,7 @@ impl AddrSpace {
     ) -> Option<(PhysicalAddress, PageFlags<RmmA>, PageFlush<RmmA>)> {
         let mut f_root = None;
 
-        let f = unsafe { self.table.utable.unmap_phys(va) };
+        let f = unsafe { self.root_table.utable.unmap_phys(va) };
 
         if self.root_table_node_id == owning_node_id {
             if f.is_none() {
@@ -660,18 +662,20 @@ impl AddrSpace {
     }
 
     pub fn owning_table(&self, owner: u32) -> &Table {
-        self.replicas.get(&owner).unwrap_or(&self.table)
+        self.replicas.get(&owner).unwrap_or(&self.root_table)
     }
 
     pub fn owning_table_mut(&mut self, owner: u32) -> &mut Table {
-        self.replicas.get_mut(&owner).unwrap_or(&mut self.table)
+        self.replicas
+            .get_mut(&owner)
+            .unwrap_or(&mut self.root_table)
     }
 
     pub fn owning_table_or(&self, owner: u32) -> (&Table, u32) {
         self.replicas
             .get(&owner)
             .map(|e| (e, owner))
-            .unwrap_or((&self.table, self.root_table_node_id))
+            .unwrap_or((&self.root_table, self.root_table_node_id))
     }
 
     pub fn add_replica(&mut self, table: Table, node_id: u32) -> bool {
@@ -695,7 +699,7 @@ impl AddrSpace {
             let any_table = self.replicas.remove(&node_id).unwrap();
             (node_id, any_table)
         };
-        let old_root = core::mem::replace(&mut self.table, new_table);
+        let old_root = core::mem::replace(&mut self.root_table, new_table);
         let old_node_id = self.root_table_node_id;
         self.root_table_node_id = new_node_id;
         Some((old_node_id, old_root))
@@ -713,7 +717,7 @@ impl AddrSpace {
 
         Ok(Self {
             grants: UserGrants::new(),
-            table: Table { utable },
+            root_table: Table { utable },
             mmap_min: MMAP_MIN_DEFAULT,
             replicas: hashbrown::HashMap::new(),
             root_table_node_id: node_id,
@@ -878,7 +882,7 @@ impl AddrSpace {
         let grant = map(
             selected_span.base,
             page_flags(flags),
-            &mut self.table.utable,
+            &mut self.root_table.utable,
             &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
         )?;
         self.grants.insert(grant);
@@ -891,7 +895,7 @@ impl AddrSpace {
         this.inner_drop(token);
         unsafe {
             core::ptr::drop_in_place(&mut this.grants);
-            core::ptr::drop_in_place(&mut this.table);
+            core::ptr::drop_in_place(&mut this.root_table);
         }
     }
 
@@ -1636,7 +1640,7 @@ impl Grant {
                     MmapMode::Shared => {
                         // TODO: Error code for "scheme responded with unmapped page"?
                         let (frame, page_flags) = match src_addrspace
-                            .table
+                            .root_table
                             .utable
                             .translate(src_page.start_address())
                         {
@@ -1652,7 +1656,7 @@ impl Grant {
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 let page_flags = new_guard
-                                    .table
+                                    .root_table
                                     .utable
                                     .translate(src_page.start_address())
                                     .unwrap()
@@ -1666,7 +1670,7 @@ impl Grant {
                     }
                     MmapMode::Cow => unsafe {
                         let (frame, page_flags) = match guard
-                            .table
+                            .root_table
                             .utable
                             .remap_with(src_page.start_address(), |flags| flags.write(false))
                         {
@@ -1683,7 +1687,7 @@ impl Grant {
                                 .map_err(|_| Error::new(EIO))?;
                                 // FIXME correct_inner should read the page flags instead
                                 let page_flags = new_guard
-                                    .table
+                                    .root_table
                                     .utable
                                     .translate(src_page.start_address())
                                     .unwrap()
@@ -1709,7 +1713,7 @@ impl Grant {
                                 .map_err(|_| Error::new(ENOMEM))?;
 
                             let (old_flags, _, _flush) = src_addrspace
-                                .table
+                                .root_table
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
                                     Some((new_cow_frame.base(), flags))
@@ -1858,7 +1862,7 @@ impl Grant {
                 .take(MAX_EAGER_PAGES)
             {
                 let Some((phys, _)) = src_address_space
-                    .table
+                    .root_table
                     .utable
                     .translate(page.start_address())
                 else {
@@ -2813,7 +2817,7 @@ fn correct_inner<'l>(
     let (_, grant_info) = addr_space.grants.contains(faulting_page).unwrap();
 
     let faulting_frame_opt = addr_space
-        .table
+        .root_table
         .utable
         .translate(faulting_page.start_address())
         .map(|(phys, _page_flags)| Frame::containing(phys));
@@ -2846,7 +2850,7 @@ fn correct_inner<'l>(
                     }
                 }
                 _ => map_zeroed(
-                    &mut addr_space.table.utable,
+                    &mut addr_space.root_table.utable,
                     faulting_page,
                     grant_flags,
                     true,
@@ -2872,7 +2876,7 @@ fn correct_inner<'l>(
                 None => {
                     // TODO: the zeroed page first, readonly?
                     map_zeroed(
-                        &mut addr_space.table.utable,
+                        &mut addr_space.root_table.utable,
                         faulting_page,
                         grant_flags,
                         false,
@@ -2899,52 +2903,54 @@ fn correct_inner<'l>(
 
             match guard.grants.contains(src_page) {
                 Some(_) => {
-                    let src_frame = match guard.table.utable.translate(src_page.start_address()) {
-                        Some((phys, _)) => Frame::containing(phys),
-                        _ => {
-                            // Grant was valid (TODO check), but we need to correct the underlying page.
-                            // TODO: Access mode
+                    let src_frame =
+                        match guard.root_table.utable.translate(src_page.start_address()) {
+                            Some((phys, _)) => Frame::containing(phys),
+                            _ => {
+                                // Grant was valid (TODO check), but we need to correct the underlying page.
+                                // TODO: Access mode
 
-                            // TODO: Reasonable maximum?
-                            let new_recursion_level = recursion_level
-                                .checked_add(1)
-                                .filter(|new_lvl| *new_lvl < 16)
-                                .ok_or(PfError::RecursionLimitExceeded)?;
+                                // TODO: Reasonable maximum?
+                                let new_recursion_level = recursion_level
+                                    .checked_add(1)
+                                    .filter(|new_lvl| *new_lvl < 16)
+                                    .ok_or(PfError::RecursionLimitExceeded)?;
 
-                            let guard_token = guard.into_token();
-                            let addr_space_guard_token = addr_space.into_token();
-                            drop(flusher);
+                                let guard_token = guard.into_token();
+                                let addr_space_guard_token = addr_space.into_token();
+                                drop(flusher);
 
-                            // FIXME: Can this result in invalid address space state?
-                            let ext_addrspace = &foreign_address_space;
-                            let mut free_token = unsafe { CleanLockToken::new() };
-                            let (frame, _, _) = {
-                                let g = ext_addrspace.acquire_write(free_token.downgrade());
-                                correct_inner(
-                                    ext_addrspace,
-                                    g,
-                                    src_page,
-                                    AccessMode::Read,
-                                    new_recursion_level,
-                                )?
-                            };
+                                // FIXME: Can this result in invalid address space state?
+                                let ext_addrspace = &foreign_address_space;
+                                let mut free_token = unsafe { CleanLockToken::new() };
+                                let (frame, _, _) = {
+                                    let g = ext_addrspace.acquire_write(free_token.downgrade());
+                                    correct_inner(
+                                        ext_addrspace,
+                                        g,
+                                        src_page,
+                                        AccessMode::Read,
+                                        new_recursion_level,
+                                    )?
+                                };
 
-                            // SAFETY: Caller guarantees addr_space_guard is coming from this addr_space_lock
-                            addr_space =
-                                unsafe { addr_space_lock.acquire_rewrite(addr_space_guard_token) };
-                            flusher = Flusher::with_cpu_set(
-                                &addr_space_lock.used_by,
-                                &addr_space_lock.tlb_ack,
-                            );
+                                // SAFETY: Caller guarantees addr_space_guard is coming from this addr_space_lock
+                                addr_space = unsafe {
+                                    addr_space_lock.acquire_rewrite(addr_space_guard_token)
+                                };
+                                flusher = Flusher::with_cpu_set(
+                                    &addr_space_lock.used_by,
+                                    &addr_space_lock.tlb_ack,
+                                );
 
-                            // SAFETY: We guarantee that guard is coming from foreign_address_space
-                            guard = unsafe {
-                                foreign_address_space.acquire_reupgradeable_read(guard_token)
-                            };
+                                // SAFETY: We guarantee that guard is coming from foreign_address_space
+                                guard = unsafe {
+                                    foreign_address_space.acquire_reupgradeable_read(guard_token)
+                                };
 
-                            frame
-                        }
-                    };
+                                frame
+                            }
+                        };
 
                     let info =
                         get_page_info(src_frame).expect("all allocated frames need a PageInfo");
@@ -2967,7 +2973,7 @@ fn correct_inner<'l>(
                             // TODO: flusher
                             unsafe {
                                 guard
-                                    .table
+                                    .root_table
                                     .utable
                                     .remap_with_full(src_page.start_address(), |_, f| {
                                         Some((new_frame.base(), f))
@@ -2990,7 +2996,7 @@ fn correct_inner<'l>(
                     // TODO: Should this be called?
                     warn!("Mapped zero page since grant didn't exist");
                     map_zeroed(
-                        &mut guard.table.utable,
+                        &mut guard.root_table.utable,
                         src_page,
                         grant_flags,
                         access == AccessMode::Write,
@@ -3053,10 +3059,11 @@ fn correct_inner<'l>(
 
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
     let Some(flush) = (unsafe {
-        addr_space
-            .table
-            .utable
-            .map_phys(faulting_page.start_address(), frame.base(), new_flags)
+        addr_space.root_table.utable.map_phys(
+            faulting_page.start_address(),
+            frame.base(),
+            new_flags,
+        )
     }) else {
         // TODO
         return Err(PfError::Oom);
