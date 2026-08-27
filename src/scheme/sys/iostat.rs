@@ -30,7 +30,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                 rows.push((
                     context.pid,
                     context.name,
-                    context.files.read(token.token()).clone(),
+                    context.files.read(token.token()).try_clone()?,
                 ));
             }
         }
