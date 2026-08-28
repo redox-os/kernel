@@ -1595,7 +1595,7 @@ impl ContextHandle {
         &self,
         _fds: &[usize],
         payload: UserSliceRw,
-        _flags: CallFlags,
+        flags: CallFlags,
         metadata: &[u64],
         context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
