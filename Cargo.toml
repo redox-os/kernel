@@ -80,6 +80,7 @@ default = [
   "acpi",
   #"debugger",
   "multi_core",
+  "opportunistic_context_locking",
   "serial_debug",
   "self_modifying",
   "x86_kvm_pv",
@@ -90,6 +91,10 @@ default = [
 
 # Activates some limited code-overwriting optimizations, based on CPU features.
 self_modifying = []
+
+# Allows the scheduler to skip contexts that were locked at the time of check.
+# This is preferred for performance, but makes it harder to spot deadlocks, and can therefore be disabled.
+opportunistic_context_locking = []
 
 acpi = []
 lpss_debug = []

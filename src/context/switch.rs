@@ -49,6 +49,14 @@ pub const STEAL_THRESHOLD: usize = 2;
 pub const STEAL_INTERVAL: usize = 2;
 pub const MAX_STEAL: usize = 2;
 
+unsafe fn opportunistic_write_arc(lock: &Arc<ContextLock>) -> Option<ArcContextLockWriteGuard> {
+    if cfg!(opportunistic_context_locking) {
+        unsafe { lock.try_write_arc() }
+    } else {
+        Some(unsafe { lock.write_arc() })
+    }
+}
+
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
 ///
@@ -256,8 +264,14 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 let Some(context_lock) = context_ref.upgrade() else {
                     continue;
                 };
+                // TODO: can this happen?
+                if !cfg!(opportunistic_context_locking)
+                    && Weak::as_ptr(&context_ref.0) == Arc::as_ptr(&prev_context_lock)
+                {
+                    continue;
+                }
 
-                let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
+                let Some(mut guard) = (unsafe { opportunistic_write_arc(&context_lock) }) else {
                     if let Some(wake) = wake_opt {
                         run_queue.timers.insert((wake, context_ref));
                     } else {
@@ -562,7 +576,7 @@ fn select_next_context(
             continue;
         }
 
-        let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
+        let Some(mut guard) = (unsafe { opportunistic_write_arc(&context_lock) }) else {
             continue;
         };
 
@@ -760,7 +774,7 @@ fn select_next_context(
                         continue;
                     };
 
-                    let Some(guard) = (unsafe { context_lock.try_write_arc() }) else {
+                    let Some(guard) = (unsafe { opportunistic_write_arc(&context_lock) }) else {
                         continue;
                     };
 
