@@ -1593,7 +1593,7 @@ impl ContextHandle {
     }
     pub fn kcall(
         &self,
-        _fds: &[usize],
+        fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -1617,8 +1617,8 @@ impl ContextHandle {
             }
             ContextHandle::Filetable {
                 filetable,
-                binary_format: _,
-                data: _,
+                binary_format,
+                data,
             } => {
                 let op = syscall::flag::FileTableVerb::try_from_raw(
                     u8::try_from(*metadata.first().ok_or(Error::new(EINVAL))?)
@@ -1685,6 +1685,40 @@ impl ContextHandle {
                             .write(token.token())
                             .resize(which as usize, size as usize)?;
                         Ok(size as usize)
+                    }
+                    FileTableVerb::Refresh => {
+                        let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
+
+                        let new_data = if *binary_format {
+                            let mut data = Vec::new();
+                            for index in filetable
+                                .read(token.token())
+                                .enumerate_fds()
+                                .map(|(i, _)| i)
+                            {
+                                data.extend((index as u64).to_le_bytes());
+                            }
+                            data.into_boxed_slice()
+                        } else {
+                            use core::fmt::Write;
+                            let mut data = String::new();
+                            for index in filetable
+                                .read(token.token())
+                                .enumerate_fds()
+                                .map(|(i, _)| i)
+                            {
+                                writeln!(data, "{}", index).unwrap();
+                            }
+                            data.into_bytes().into_boxed_slice()
+                        };
+
+                        let mut handles = HANDLES.write(token.token());
+                        let entry = handles.get_mut(&fds[0]).ok_or(Error::new(EBADF))?;
+                        if let ContextHandle::Filetable { ref mut data, .. } = entry.kind {
+                            *data = new_data;
+                        }
+
+                        Ok(0)
                     }
                     FileTableVerb::Swap => {
                         let mut it = payload.usizes();
