@@ -82,11 +82,11 @@ pub fn openat_into(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (caller_ctx, scheme_id, number) = with_current_ctx(token, |context, token| {
+    let (caller_ctx, scheme, number) = with_current_ctx(token, |context, token| {
         let caller_ctx = context.caller_ctx();
         let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
-        Ok((caller_ctx, desc.scheme, desc.number))
+        Ok((caller_ctx, desc.scheme_ref.upgrade()?, desc.number))
     })?;
 
     let new_description = {
@@ -134,14 +134,12 @@ pub fn unlinkat(
 ) -> Result<()> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (caller_ctx, number, scheme_id) = with_current_ctx(token, |context, token| {
+    let (caller_ctx, number, scheme) = with_current_ctx(token, |context, token| {
         let caller_ctx = context.caller_ctx();
         let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
         let desc = pipe.description.read(token.token());
-        Ok((caller_ctx, desc.number, desc.scheme))
+        Ok((caller_ctx, desc.number, desc.scheme_ref.upgrade()?))
     })?;
-
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
 
     /*
     let mut path_buf = BorrowedHtBuf::head()?;
@@ -173,13 +171,13 @@ fn duplicate_file(
 
     // TODO: potential unnecessary clone
     let description = { file.description.read(token.token()).clone() };
-    let scheme = scheme::get_scheme(token.token(), description.scheme)?;
+    let scheme = description.scheme_ref.upgrade()?;
 
     let new_description = match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
         OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
             offset: 0,
             internal_flags,
-            scheme: description.scheme,
+            scheme_ref: scheme.downgrade(),
             number,
             flags: description.flags,
         })),
@@ -400,16 +398,11 @@ fn call_fdread(
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
-    let (scheme, number) = {
-        let (scheme, number) = with_current_ctx(token, |context, token| {
-            let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
-            let desc = file_descriptor.description.read(token.token());
-            Ok((desc.scheme_ref.upgrade()?, desc.number))
-        })?;
-        let scheme = scheme::get_scheme(token.token(), scheme)?;
-
-        (scheme, number)
-    };
+    let (scheme, number) = with_current_ctx(token, |context, token| {
+        let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        let desc = file_descriptor.description.read(token.token());
+        Ok((desc.scheme_ref.upgrade()?, desc.number))
+    })?;
 
     scheme.kfdread(number, payload, flags, metadata, token)
 }
@@ -426,8 +419,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     };
 
     // Communicate fcntl with scheme
-    let scheme = scheme::get_scheme(token.token(), scheme_id)?;
-
     scheme.fcntl(number, cmd, arg, token)?;
 
     // Perform kernel operation if scheme agrees
