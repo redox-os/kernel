@@ -286,8 +286,9 @@ pub enum FileTableVerb {
     Dup2 = 2,
     Reserved1 = 3,
     Resize = 4,
-    Move = 5,
-    Swap = 6,
+    Refresh = 5,
+    Move = 6,
+    Swap = 7,
 }
 impl FileTableVerb {
     pub fn try_from_raw(value: u8) -> Option<Self> {
