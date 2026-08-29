@@ -972,9 +972,12 @@ impl UserInner {
 
                         drop(states_lock);
 
-                        let unpin = true;
-                        let res = AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
-                        handle_notify_files(res, token);
+                        if !callee_responsible.is_empty() {
+                            let unpin = true;
+                            let res =
+                                AddrSpace::current()?.munmap(callee_responsible, unpin, token)?;
+                            handle_notify_files(res, token);
+                        }
                     }
                 },
                 // invalid state
