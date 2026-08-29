@@ -609,7 +609,7 @@ pub fn funmap(virtual_address: usize, length: usize, token: &mut CleanLockToken)
         );
     }
 
-    let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
+    let addr_space = AddrSpace::current()?;
     let span = PageSpan::validate_nonempty(VirtualAddress::new(virtual_address), length_aligned)
         .ok_or(Error::new(EINVAL))?;
     let unpin = false;

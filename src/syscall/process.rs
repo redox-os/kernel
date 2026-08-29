@@ -109,12 +109,8 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
     assert_ne!(bootstrap.page_count, 0);
 
     {
-        let addr_space = Arc::clone(
-            context::current()
-                .read(token.token())
-                .addr_space()
-                .expect("expected bootstrap context to have an address space"),
-        );
+        let addr_space =
+            AddrSpace::current().expect("expected bootstrap context to have an address space");
 
         let base = Page::containing_address(VirtualAddress::new(PAGE_SIZE));
         let flags = MapFlags::MAP_FIXED_NOREPLACE
