@@ -509,7 +509,7 @@ pub enum StdFsCallKind {
     Ftruncate = 7,
     Futimens = 8,
     // 9 reserved in fscall RFC
-    // Unlinkat = 10,
+    Unlinkat = 10,
     Relpathat = 11,
     Lock = 12,
     Unlock = 13,
@@ -531,7 +531,7 @@ impl StdFsCallKind {
             7 => Ftruncate,
             8 => Futimens,
             // 9 reserved in fscall RFC
-            // 10 => Unlinkat,
+            10 => Unlinkat,
             11 => Relpathat,
             12 => Lock,
             13 => Unlock,
