@@ -104,6 +104,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             match c {
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
+                F_GET_SCHEMEID => "F_GET_SCHEMEID",
                 _ => "UNKNOWN",
             },
             c,

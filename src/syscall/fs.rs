@@ -418,8 +418,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         (desc.scheme_ref.upgrade()?, desc.number, desc.flags)
     };
 
-    // Communicate fcntl with scheme
-    scheme.fcntl(number, cmd, arg, token)?;
+    if cmd != F_GET_SCHEMEID {
+        // Communicate fcntl with scheme
+        scheme.fcntl(number, cmd, arg, token)?;
+    }
 
     // Perform kernel operation if scheme agrees
     with_current_ctx(token, |context, token| {
@@ -433,6 +435,13 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                     file.description.write(token.token()).flags = new_flags;
                     Ok(0)
                 }
+                F_GET_SCHEMEID => Ok(file
+                    .description
+                    .write(token.token())
+                    .scheme_ref
+                    .upgrade()?
+                    .scheme_id()
+                    .get()),
                 _ => Err(Error::new(EINVAL)),
             },
             None => Err(Error::new(EBADF)),
