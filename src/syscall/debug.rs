@@ -125,13 +125,52 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
         ),
         SYS_FSYNC => format!("fsync({})", b),
-        SYS_CALL => format!(
-            "call({b}, {c:x}+{d}, {:?}, {:0x?}",
-            CallFlags::from_bits_retain(e & !0xff),
-            // TODO: u64
-            UserSlice::ro(f, (e & 0xff) * 8)
-                .and_then(|buf| buf.usizes().collect::<Result<Vec<usize>>>()),
-        ),
+        SYS_CALL => {
+            let flags = CallFlags::from_bits_retain(e & !0xff);
+            let metadata = UserSlice::ro(f, (e & 0xff) * 8)
+                .and_then(|buf| buf.usizes().collect::<Result<Vec<usize>>>());
+            if !flags.contains(CallFlags::STD_FS) {
+                return format!(
+                    "call({b}, {c:x}+{d}, {:?}, {:0x?}",
+                    flags,
+                    // TODO: u64
+                    metadata,
+                );
+            }
+            let kind = if let Ok(ref metadata) = metadata {
+                *metadata.first().unwrap_or(&usize::MAX)
+            } else {
+                usize::MAX
+            };
+
+            format!(
+                "std_fs_call({}, {b}, {c:x}+{d}, {:?}, {:0x?}",
+                match StdFsCallKind::try_from_raw(kind as u8) {
+                    Some(kind) => {
+                        use StdFsCallKind::*;
+                        match kind {
+                            Fchmod => "Fchmod",
+                            Fchown => "Fchown",
+                            Getdents => "Getdents",
+                            Fstat => "Fstat",
+                            Fstatvfs => "Fstatvfs",
+                            Fsync => "Fsync",
+                            Ftruncate => "Ftruncate",
+                            Futimens => "Futimens",
+                            Unlinkat => "Unlinkat",
+                            Relpathat => "Relpathat",
+                            Lock => "Lock",
+                            Unlock => "Unlock",
+                            GetLock => "GetLock",
+                        }
+                    }
+                    None => "UNKNOWN",
+                },
+                flags,
+                // TODO: u64
+                metadata
+            )
+        }
 
         SYS_CLOCK_GETTIME => format!("clock_gettime({}, {:?})", b, unsafe {
             read_struct::<TimeSpec>(c)
