@@ -213,7 +213,7 @@ impl ProcScheme {
     fn openat_context(
         &self,
         path: &str,
-        context: Arc<ContextLock>,
+        context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<Option<(ContextHandle, bool)>> {
         Ok(Some(match path {
@@ -305,7 +305,7 @@ impl ProcScheme {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
             OpenTy::Ctxt(context) => {
-                match self.openat_context(operation_name, Arc::clone(&context), token)? {
+                match self.openat_context(operation_name, &context, token)? {
                     Some((kind, positioned)) => (Handle { context, kind }, positioned),
                     _ => {
                         return Err(Error::new(EINVAL));
@@ -658,7 +658,7 @@ impl KernelScheme for ProcScheme {
             payload,
             flags,
             metadata,
-            Arc::clone(&handle.context),
+            &handle.context,
             token,
         )
     }
@@ -1609,7 +1609,7 @@ impl ContextHandle {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
-        context: Arc<ContextLock>,
+        context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self {
