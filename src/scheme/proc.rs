@@ -1628,7 +1628,7 @@ impl ContextHandle {
 
                 match op {
                     FileTableVerb::Close => {
-                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let files = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
                         let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
                         let fds = payload_chunks
                             .map(|chunk| {
@@ -1677,7 +1677,7 @@ impl ContextHandle {
                         Ok(0)
                     }
                     FileTableVerb::Resize => {
-                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let files = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
                         let Some(&[which, size]) = metadata.get(1..3) else {
                             return Err(Error::new(EINVAL));
                         };
