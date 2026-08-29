@@ -52,7 +52,7 @@ bitflags! {
 
 pub const F_GETFL: usize = 3;
 pub const F_SETFL: usize = 4;
-pub const F_GET_SCHEMEID: usize = 0x1000 + 1;
+pub const F_GET_SCHEMEID: usize = 0x1000 | 1;
 
 pub const FUTEX_WAIT: usize = 0;
 pub const FUTEX_WAKE: usize = 1;
@@ -298,8 +298,9 @@ impl FileTableVerb {
             2 => Self::Dup2,
             3 => Self::Reserved1,
             4 => Self::Resize,
-            5 => Self::Move,
-            6 => Self::Swap,
+            5 => Self::Refresh,
+            6 => Self::Move,
+            7 => Self::Swap,
             _ => return None,
         })
     }
