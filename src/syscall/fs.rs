@@ -319,13 +319,13 @@ fn call_normal(
 
     let mut nums = arrayvec::ArrayVec::<_, 2>::new();
 
-    let current_lock = context::current();
+    let current_lock_ref = context::current();
     let consume = flags.contains(CallFlags::CONSUME);
     let mut fds = fds.iter();
 
     let (target_file, scheme) = {
         let fd = FileHandle::from(fds.next().copied().unwrap());
-        let mut current = current_lock.read(token.token());
+        let mut current = current_lock_ref.read(token.token());
 
         let (file, mut split_token) = match (current.token_split(), consume) {
             ((ctxt, mut split_token), true) => {
@@ -346,7 +346,7 @@ fn call_normal(
 
     for &fd in fds {
         let fd = FileHandle::from(fd);
-        let mut current = current_lock.read(token.token());
+        let mut current = current_lock_ref.read(token.token());
 
         let (file, mut split_token) = match (current.token_split(), consume) {
             ((ctxt, mut split_token), true) => {
@@ -362,6 +362,9 @@ fn call_normal(
         }
         nums.push(desc.number);
     }
+
+    // must never be held when context::switch is called, or it will (predictably) panic
+    drop(current_lock_ref);
 
     if flags.contains(CallFlags::STD_FS) {
         scheme.translate_std_fs_call(

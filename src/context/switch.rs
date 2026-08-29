@@ -17,7 +17,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    cell::{Cell, RefCell},
+    cell::{Cell, Ref, RefCell},
     cmp::Reverse,
     hint, matches, mem,
     option::Option::{None, Some},
@@ -60,9 +60,6 @@ unsafe fn opportunistic_write_arc(lock: &Arc<ContextLock>) -> Option<ArcContextL
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
 /// principle, the current CPU).
 ///
-/// # Safety
-/// This function is unsafe because it modifies the `context`'s state directly without synchronization.
-///
 /// # Parameters
 /// - `context`: The context (process/thread) to be checked.
 /// - `cpu_id`: The logical ID of the CPU on which the context is being scheduled.
@@ -70,11 +67,7 @@ unsafe fn opportunistic_write_arc(lock: &Arc<ContextLock>) -> Option<ArcContextL
 /// # Returns
 /// - `UpdateResult::CanSwitch`: If the context can be switched to.
 /// - `UpdateResult::Skip`: If the context should be skipped (e.g., it's running on another CPU).
-unsafe fn update_runnable(
-    context: &mut Context,
-    cpu_id: LogicalCpuId,
-    switch_time: u128,
-) -> UpdateResult {
+fn update_runnable(context: &mut Context, cpu_id: LogicalCpuId, switch_time: u128) -> UpdateResult {
     // Ignore contexts that are already running.
     if context.running {
         return UpdateResult::Skip;
@@ -211,9 +204,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     }
 
     // Lock the previous context.
-    let prev_context_lock = crate::context::current();
-    // We are careful not to lock this context twice
-    let mut prev_context_guard = unsafe { prev_context_lock.write_arc() };
+    let mut prev_context_guard = {
+        let prev_context_lock_ref = crate::context::current();
+        // We are careful not to lock this context twice
+        unsafe { prev_context_lock_ref.write_arc() }
+    };
 
     if !prev_context_guard.is_preemptable() {
         // Unset global lock
@@ -266,7 +261,8 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 };
                 // TODO: can this happen?
                 if !cfg!(opportunistic_context_locking)
-                    && Weak::as_ptr(&context_ref.0) == Arc::as_ptr(&prev_context_lock)
+                    && Weak::as_ptr(&context_ref.0)
+                        == Arc::as_ptr(&ArcRwLockWriteGuard::rwlock(&prev_context_guard))
                 {
                     continue;
                 }
@@ -452,9 +448,6 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                 .being_sigkilled
                 .set(next_context.being_sigkilled);
 
-            // Anything implement Drop must be manually dropped now
-            drop(prev_context_lock);
-
             unsafe {
                 percpu.new_addrsp_guard.set(addr_space_guard);
                 arch::switch_to(prev_context, next_context);
@@ -580,7 +573,7 @@ fn select_next_context(
             continue;
         };
 
-        let sw = unsafe { update_runnable(&mut guard, cpu_id, switch_time) };
+        let sw = update_runnable(&mut guard, cpu_id, switch_time);
 
         if matches!(sw, UpdateResult::Blocked) {
             if guard.is_active {
@@ -994,39 +987,23 @@ impl ContextSwitchPercpu {
         }
     }
 
-    /// Applies a function to the current context, allowing controlled access.
-    ///
-    /// # Parameters
-    /// - `f`: A closure that receives a reference to the current context and returns a value.
-    ///
-    /// # Returns
-    /// The result of applying `f` to the current context.
-    pub fn with_context<T>(&self, f: impl FnOnce(&Arc<ContextLock>) -> T) -> T {
-        f(self
-            .current_ctxt
-            .borrow()
-            .as_ref()
-            .expect("not inside of context"))
+    /// Gets a reference to the raw current context slot.
+    pub fn current_context_raw(&self) -> Ref<'_, Option<Arc<ContextLock>>> {
+        self.current_ctxt.borrow()
     }
 
-    /// Applies a function to the current context, allowing controlled access.
-    ///
-    /// # Parameters
-    /// - `f`: A closure that receives a reference to the current context and returns a value.
-    ///
-    /// # Returns
-    /// The result of applying `f` to the current context if any.
-    pub fn try_with_context<T>(&self, f: impl FnOnce(Option<&Arc<ContextLock>>) -> T) -> T {
-        f(self.current_ctxt.borrow().as_ref())
+    /// Gets a reference to the current context, which will always be populated after the startup
+    /// code (unless there are kernel bugs).
+    pub fn current_context(&self) -> Ref<'_, Arc<ContextLock>> {
+        Ref::map(self.current_ctxt.borrow(), |c| {
+            c.as_ref().expect("no current context present")
+        })
     }
 
     /// Sets the current context to a new value.
     ///
     /// # Safety
     /// This function is unsafe as it modifies the context state directly.
-    ///
-    /// # Parameters
-    /// - `new`: The new context to be set as the current context.
     pub unsafe fn set_current_context(&self, new: Arc<ContextLock>) {
         *self.current_ctxt.borrow_mut() = Some(new);
     }
@@ -1035,23 +1012,14 @@ impl ContextSwitchPercpu {
     ///
     /// # Safety
     /// This function is unsafe as it modifies the idle context state directly.
-    ///
-    /// # Parameters
-    /// - `new`: The new context to be set as the idle context.
     pub unsafe fn set_idle_context(&self, new: Arc<ContextLock>) {
         *self.idle_ctxt.borrow_mut() = Some(new);
     }
 
     /// Retrieves the current idle context.
-    ///
-    /// # Returns
-    /// A reference to the idle context.
-    pub fn idle_context(&self) -> Arc<ContextLock> {
-        Arc::clone(
-            self.idle_ctxt
-                .borrow()
-                .as_ref()
-                .expect("no idle context present"),
-        )
+    pub fn idle_context(&self) -> Ref<'_, Arc<ContextLock>> {
+        Ref::map(self.idle_ctxt.borrow(), |opt| {
+            opt.as_ref().expect("no idle context present")
+        })
     }
 }

@@ -35,7 +35,7 @@ use super::usercopy::UserSliceWo;
 /// SAFETY: Returns Never type, all things that implement `Drop` must be dropped manually before calling this to prevent memory leak.
 ///
 pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
-    let context_lock = context::current();
+    let context_lock = Arc::clone(&*context::current());
     let (addrspace_opt, mut close_files) = {
         let mut context = context_lock.write(token.token());
         let (context, token) = context.token_split();
@@ -70,12 +70,14 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         );
     }
     {
-        if !context::contexts_mut(token.downgrade()).remove(&ContextRef(context_lock)) {
+        let context_ref = ContextRef(context_lock);
+        if !context::contexts_mut(token.downgrade()).remove(&context_ref) {
             #[cfg(feature = "drop_panic")]
             {
                 panic!("This context is not in the cpu")
             }
         }
+        drop(context_ref);
     }
     drop(close_files);
     context::switch(token);

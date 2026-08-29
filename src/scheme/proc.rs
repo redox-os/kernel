@@ -326,7 +326,7 @@ impl ProcScheme {
                         );
                         return Ok((id.get(), InternalFlags::empty()));
                     }
-                    "cur-context" => context::current(),
+                    "cur-context" => Arc::clone(&*context::current()),
                     _ => return Err(Error::new(ENOENT)),
                 };
 
@@ -416,7 +416,7 @@ impl KernelScheme for ProcScheme {
             id,
             Handle {
                 // TODO: placeholder
-                context: context::current(),
+                context: Arc::clone(&*context::current()),
                 kind: ContextHandle::Authority,
             },
         );
