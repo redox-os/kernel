@@ -70,8 +70,8 @@ impl WaitCondition {
         reason: &'static str,
         token: &'a mut LockToken<'a, L2>,
     ) -> bool {
-        let current_context_ref = context::current();
-        {
+        let current_context_ptr = {
+            let current_context_ref = context::current();
             // Avoid a context switch between blocking ourselves and adding
             // ourselves to the wait list as otherwise we might miss a wakeup.
             // We cannot add ourselves to the wait list first as that would lead
@@ -94,12 +94,17 @@ impl WaitCondition {
                 .push(Arc::downgrade(&current_context_ref));
 
             drop(guard);
-        }
+
+            // It's perfectly valid to use raw pointers in Safe Rust for comparing...
+            Arc::as_ptr(&*current_context_ref)
+        };
 
         {
             // SAFETY: Guaranteed by caller
             let token = unsafe { &mut CleanLockToken::new() };
             context::switch(token);
+            // ... and in order for it to be possible to switch back, the context Arc and thus
+            // current_context_ptr must continue to be alive (meaningful to check against).
         }
 
         let mut waited = true;
@@ -109,7 +114,7 @@ impl WaitCondition {
 
             if let Some(index) = contexts
                 .iter()
-                .position(|c| Weak::as_ptr(c) == Arc::as_ptr(&current_context_ref))
+                .position(|c| Weak::as_ptr(c) == current_context_ptr)
             {
                 contexts.swap_remove(index);
                 waited = false;

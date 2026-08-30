@@ -40,7 +40,8 @@ fn panic_handler_inner(info: &PanicInfo) -> ! {
         stack_trace();
     }
 
-    let Some(context_lock) = context::try_current() else {
+    let current_ref = context::try_current();
+    let Some(context_lock) = &*current_ref else {
         println!("CPU {}, CID <none>", cpu_id());
 
         println!("HALT");

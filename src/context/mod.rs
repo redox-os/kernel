@@ -6,7 +6,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Weak},
 };
-use core::{cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
+use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
 use syscall::NumaMemoryPolicy;
 
 use crate::{
@@ -206,21 +206,24 @@ pub fn init(token: &mut CleanLockToken) {
     }
 }
 
-pub fn current() -> Arc<ContextLock> {
-    PercpuBlock::current()
-        .switch_internals
-        .with_context(Arc::clone)
+// TODO: Maybe use lock tokens to forbid holding this reference across context::switch (where the
+// RefCell's borrow_mut will fail if the reference is kept?)? If so, maybe even avoid `RefCell`
+// entirely, if it can be done sufficiently rigorously and without breaking soundness?
+pub fn current() -> Ref<'static, Arc<ContextLock>> {
+    PercpuBlock::current().switch_internals.current_context()
 }
 
-pub fn try_current() -> Option<Arc<ContextLock>> {
+pub fn try_current() -> Ref<'static, Option<Arc<ContextLock>>> {
     PercpuBlock::current()
         .switch_internals
-        .try_with_context(|context| context.map(Arc::clone))
+        .current_context_raw()
 }
 pub fn is_current(context: &Arc<ContextLock>) -> bool {
     PercpuBlock::current()
         .switch_internals
-        .with_context(|current| Arc::ptr_eq(context, current))
+        .current_context_raw()
+        .as_ref()
+        .map_or(false, |current| Arc::ptr_eq(current, context))
 }
 
 #[derive(Clone)]

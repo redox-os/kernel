@@ -36,9 +36,9 @@ pub fn nanosleep(
     let start = time::monotonic(token);
     let end = start + req.to_nanos();
 
-    let current_context = context::current();
     {
-        let context = current_context.upgradeable_read(token.token());
+        let context_lock = context::current();
+        let context = context_lock.upgradeable_read(token.token());
 
         if let Some((tctl, pctl, _)) = context.sigcontrol()
             && tctl.currently_pending_unblocked(pctl) != 0
@@ -54,7 +54,11 @@ pub fn nanosleep(
     // reason?
     context::switch(token);
 
-    let was_interrupted = current_context.write(token.token()).wake.take().is_some();
+    let was_interrupted = context::current()
+        .write(token.token())
+        .wake
+        .take()
+        .is_some();
 
     if let Some(rem_buf) = rem_buf_opt {
         let current = time::monotonic(token);

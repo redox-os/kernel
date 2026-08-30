@@ -1,5 +1,7 @@
 use core::sync::atomic::Ordering;
 
+use alloc::sync::Arc;
+
 use crate::{context, sync::CleanLockToken, syscall::flag::SigcontrolFlags};
 
 pub fn signal_handler(token: &mut CleanLockToken) {
@@ -82,10 +84,11 @@ pub fn excp_handler(excp: syscall::Exception) {
     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         // TODO: Let procmgr print this?
         info!(
-            "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {current:p}",
+            "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {:p}",
             crate::cpu_id(),
             context.pid,
-            context.name
+            context.name,
+            Arc::as_ptr(&*current),
         );
         drop(context);
         drop(current);

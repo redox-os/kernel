@@ -115,9 +115,9 @@ pub fn futex(
                 .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
                 .transpose()?;
 
-            let context_lock = context::current();
-
             {
+                let context_lock = context::current();
+
                 // TODO: Lock ordering violation
                 let mut token = unsafe { CleanLockToken::new() };
                 let mut futexes = FUTEXES.lock(token.token());
@@ -196,11 +196,9 @@ pub fn futex(
 
             context::switch(token);
 
-            let context = context_lock.read(token.token());
-
             // The scheduler clears `wake` on timeout. Hence if a timeout was
             // set and `wake` is now `None`, we timed out.
-            if context.wake.is_none() && timeout_opt.is_some() {
+            if context::current().read(token.token()).wake.is_none() && timeout_opt.is_some() {
                 Err(Error::new(ETIMEDOUT))
             } else {
                 Ok(0)
