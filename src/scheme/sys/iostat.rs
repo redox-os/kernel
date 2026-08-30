@@ -1,7 +1,7 @@
 use crate::{
     context::{
         self,
-        memory::{handle_notify_files, Grant, PageSpan},
+        memory::{handle_notify_files, AddrSpace, Grant, PageSpan},
     },
     memory::PAGE_SIZE,
     scheme::{self, SchemeId},
@@ -93,7 +93,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let page_count = NonZeroUsize::new(1).unwrap();
     let fpath_page = {
-        let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
+        let addr_space = AddrSpace::current()?;
         addr_space
             .acquire_write(token.token().downgrade())
             .mmap_anywhere(
@@ -117,7 +117,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         .and_then(|fpath_user| inner(fpath_user, token));
 
     {
-        let addr_space = Arc::clone(context::current().read(token.token()).addr_space()?);
+        let addr_space = AddrSpace::current()?;
         let res = addr_space.munmap(PageSpan::new(fpath_page, page_count.get()), false, token)?;
         handle_notify_files(res, token);
     }

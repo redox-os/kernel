@@ -213,7 +213,7 @@ impl ProcScheme {
     fn openat_context(
         &self,
         path: &str,
-        context: Arc<ContextLock>,
+        context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<Option<(ContextHandle, bool)>> {
         Ok(Some(match path {
@@ -304,14 +304,12 @@ impl ProcScheme {
     ) -> Result<(usize, InternalFlags)> {
         let operation_name = operation_str.ok_or(Error::new(EINVAL))?;
         let (mut handle, positioned) = match ty {
-            OpenTy::Ctxt(context) => {
-                match self.openat_context(operation_name, Arc::clone(&context), token)? {
-                    Some((kind, positioned)) => (Handle { context, kind }, positioned),
-                    _ => {
-                        return Err(Error::new(EINVAL));
-                    }
+            OpenTy::Ctxt(context) => match self.openat_context(operation_name, &context, token)? {
+                Some((kind, positioned)) => (Handle { context, kind }, positioned),
+                _ => {
+                    return Err(Error::new(EINVAL));
                 }
-            }
+            },
             OpenTy::Auth => {
                 extern "C" fn ret() {}
                 let context = match operation_str.ok_or(Error::new(ENOENT))? {
@@ -653,14 +651,9 @@ impl KernelScheme for ProcScheme {
             handle.clone()
         };
 
-        handle.kind.kcall(
-            fds,
-            payload,
-            flags,
-            metadata,
-            Arc::clone(&handle.context),
-            token,
-        )
+        handle
+            .kind
+            .kcall(fds, payload, flags, metadata, &handle.context, token)
     }
     fn kwriteoff(
         &self,
@@ -1316,8 +1309,7 @@ impl ContextHandle {
                                 let size = args.next().ok_or(Error::new(EINVAL))??;
 
                                 if size > 0 {
-                                    let addrsp =
-                                        Arc::clone(context.read(token.token()).addr_space()?);
+                                    let addrsp = AddrSpace::current()?;
                                     let res = addrsp.munmap(
                                         PageSpan::validate_nonempty(
                                             VirtualAddress::new(base),
@@ -1400,8 +1392,7 @@ impl ContextHandle {
                                 let size = args.next().ok_or(Error::new(EINVAL))??;
 
                                 if size > 0 {
-                                    let addrsp =
-                                        Arc::clone(context.read(token.token()).addr_space()?);
+                                    let addrsp = AddrSpace::current()?;
                                     let res = addrsp.munmap(
                                         PageSpan::validate_nonempty(
                                             VirtualAddress::new(base),
@@ -1609,7 +1600,7 @@ impl ContextHandle {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
-        context: Arc<ContextLock>,
+        context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self {
