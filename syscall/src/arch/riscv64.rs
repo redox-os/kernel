@@ -1,6 +1,6 @@
 use super::error::{Error, Result};
-use core::arch::asm;
 use core::{
+    arch::asm,
     mem,
     ops::{Deref, DerefMut},
     slice,
