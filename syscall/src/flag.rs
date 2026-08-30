@@ -223,10 +223,12 @@ pub enum ContextStatus {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(usize)]
+#[allow(clippy::enum_clike_unportable_variant)]
 pub enum ContextVerb {
     Stop = 1,
     Unstop = 2,
     Interrupt = 3,
+    // XXX: false positive: https://github.com/rust-lang/rust-clippy/issues/8043
     ForceKill = usize::MAX,
 }
 impl ContextVerb {
