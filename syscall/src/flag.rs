@@ -514,6 +514,8 @@ pub enum StdFsCallKind {
     Lock = 12,
     Unlock = 13,
     GetLock = 14,
+    Frenameat = 15,
+    Flinkat = 16,
 }
 
 impl StdFsCallKind {
@@ -536,6 +538,8 @@ impl StdFsCallKind {
             12 => Lock,
             13 => Unlock,
             14 => GetLock,
+            15 => Frenameat,
+            16 => Flinkat,
             _ => return None,
         })
     }
