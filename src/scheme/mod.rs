@@ -768,7 +768,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         match kind {
             // Seems unlikely any kernel scheme will implement this. If so, it can be added back to
             // this trait.
-            Relpathat => Err(Error::new(EOPNOTSUPP)),
+            Relpathat | Frenameat | Flinkat => Err(Error::new(EOPNOTSUPP)),
 
             _ => {
                 if fds.len() != 1 {
@@ -792,10 +792,9 @@ pub trait KernelScheme: Send + Sync + 'static {
                     // old default behavior for all other schemes.
                     Ftruncate | Futimens | Fchmod => Err(Error::new(EBADF)),
 
-                    /* TODO: Support Fchown and Unlinkat using std_fs_call
-                    Fchown => self.kstdfscall(fds, kind, desc, payload, flags, metadata, token),
-                    Unlinkat => self.kstdfscall(fds, kind, payload, metadata, &caller).map(|_| 0)
-                    */
+                    Fchown | Unlinkat => {
+                        self.kstdfscall(fds, kind, desc, payload, flags, metadata, token)
+                    }
                     _ => Err(Error::new(EOPNOTSUPP)),
                 }
             }
