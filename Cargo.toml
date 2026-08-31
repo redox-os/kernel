@@ -85,7 +85,7 @@ default = [
   "x86_kvm_pv",
   #"busy_panic",
   #"drop_panic",
-  "syscall_debug",
+  #"syscall_debug",
 ]
 
 # Activates some limited code-overwriting optimizations, based on CPU features.

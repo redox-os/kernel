@@ -125,28 +125,6 @@ pub fn openat_into(
             .ok_or(Error::new(EEXIST))
     })
 }
-/// Unlinkat syscall
-pub fn unlinkat(
-    fh: FileHandle,
-    raw_path: UserSliceRo,
-    flags: usize,
-    token: &mut CleanLockToken,
-) -> Result<()> {
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let (caller_ctx, number, scheme) = with_current_ctx(token, |context, token| {
-        let caller_ctx = context.caller_ctx();
-        let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
-        let desc = pipe.description.read(token.token());
-        Ok((caller_ctx, desc.number, desc.scheme_ref.upgrade()?))
-    })?;
-
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    scheme.unlinkat(number, &path_buf, flags, caller_ctx, token)
-}
 
 /// Close syscall
 pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
