@@ -52,14 +52,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             f,
             g
         ),
-        SYS_UNLINKAT => format!(
-            "unlinkat({} {:?}, {:#0x}, {}, {})",
-            b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
-            e,
-            f,
-            g,
-        ),
         SYS_CLOSE => format!("close({})", b),
         SYS_DUP_INTO => format!(
             "dup_into({}, {:?}, out: {})",

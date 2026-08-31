@@ -206,7 +206,6 @@ pub fn syscall(
                 token,
             )
             .map(FileHandle::into),
-            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, token).map(|()| 0),
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, size_of::<TimeSpec>())?,
