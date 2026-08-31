@@ -129,9 +129,19 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             let flags = CallFlags::from_bits_retain(e & !0xff);
             let metadata = UserSlice::ro(f, (e & 0xff) * 8)
                 .and_then(|buf| buf.usizes().collect::<Result<Vec<usize>>>());
+
+            let fds = if flags.contains(CallFlags::MULTIPLE_FDS) {
+                UserSlice::ro(b, g)
+                    .and_then(|buf| buf.usizes().collect::<Result<Vec<usize>>>())
+                    .map(|v| format!("{:?}", v))
+                    .unwrap_or_else(|_| format!("invalid_fds({:#x}, {})", b, g))
+            } else {
+                format!("{}", b)
+            };
+
             if !flags.contains(CallFlags::STD_FS) {
                 return format!(
-                    "call({b}, {c:x}+{d}, {:?}, {:0x?}",
+                    "call({fds}, {c:x}+{d}, {:?}, {:0x?})",
                     flags,
                     // TODO: u64
                     metadata,
@@ -144,7 +154,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             };
 
             format!(
-                "std_fs_call({}, {b}, {c:x}+{d}, {:?}, {:0x?}",
+                "std_fs_call({}, {fds}, {c:x}+{d}, {:?}, {:0x?})",
                 match StdFsCallKind::try_from_raw(kind as u8) {
                     Some(kind) => {
                         use StdFsCallKind::*;
@@ -170,7 +180,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
                 },
                 flags,
                 // TODO: u64
-                metadata
+                metadata,
             )
         }
 
