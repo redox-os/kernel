@@ -123,11 +123,6 @@ pub fn openat_into<T: AsRef<str>>(
     }
 }
 
-/// Remove a file at at specific path
-pub fn unlinkat<T: AsRef<str>>(fd: usize, path: T, flags: usize) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall4(SYS_UNLINKAT, fd, path.as_ptr() as usize, path.len(), flags) }
-}
 /// Read from a file descriptor into a buffer
 pub fn read(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_READ, fd, buf.as_mut_ptr() as usize, buf.len()) }
