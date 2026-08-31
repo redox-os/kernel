@@ -183,6 +183,9 @@ pub fn sched_yield() -> Result<usize> {
 }
 
 pub trait Call {
+    fn extra_flags(&self) -> CallFlags {
+        CallFlags::empty()
+    }
     unsafe fn raw_call(
         &self,
         payload_ptr: *const u8,
@@ -214,6 +217,9 @@ impl Call for usize {
 }
 
 impl Call for &[usize] {
+    fn extra_flags(&self) -> CallFlags {
+        CallFlags::MULTIPLE_FDS
+    }
     unsafe fn raw_call(
         &self,
         payload_ptr: *const u8,
@@ -243,11 +249,12 @@ pub fn call_ro<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_mut_ptr(),
             payload.len(),
-            flags | CallFlags::READ,
+            combined_flags | CallFlags::READ,
             metadata,
         )
     }
@@ -259,11 +266,12 @@ pub fn call_wo<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_ptr(),
             payload.len(),
-            flags | CallFlags::WRITE,
+            combined_flags | CallFlags::WRITE,
             metadata,
         )
     }
@@ -275,11 +283,12 @@ pub fn call_rw<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_mut_ptr(),
             payload.len(),
-            flags | CallFlags::READ | CallFlags::WRITE,
+            combined_flags | CallFlags::READ | CallFlags::WRITE,
             metadata,
         )
     }
