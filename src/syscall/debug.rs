@@ -116,14 +116,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Map>() }),
         ),
         SYS_FUNMAP => format!("funmap({:#X}, {:#X})", b, c,),
-        SYS_FLINK => format!("flink({}, {:?})", b, debug_path(c, d),),
         SYS_FPATH => format!("fpath({}, {:#X}, {})", b, c, d),
-        SYS_FRENAME => format!("frename({}, {:?})", b, debug_path(c, d),),
-        SYS_FSTAT => format!(
-            "fstat({}, {:?})",
-            b,
-            UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
-        ),
         SYS_FSYNC => format!("fsync({})", b),
         SYS_CALL => {
             let flags = CallFlags::from_bits_retain(e & !0xff);

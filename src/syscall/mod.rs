@@ -137,10 +137,6 @@ pub fn syscall(
                 scheme.kfpath(number, UserSlice::wo(c, d)?, token)
             }),
 
-            // TODO: Can't replace yet with std_fs_call, as fstat overrides device ID, but that can
-            // be moved to UserScheme.
-            SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
-
             SYS_DUP_INTO => {
                 dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
             }
@@ -155,8 +151,6 @@ pub fn syscall(
                     .fevent(number, EventFlags::from_bits_truncate(c), token)?
                     .bits())
             }),
-            SYS_FLINK => flink(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
-            SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
             SYS_FUNMAP => funmap(b, c, token),
 
             // TODO: This can't be removed yet, since the pre-libredox softbuffer crate is a blocker.
