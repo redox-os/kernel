@@ -62,7 +62,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
         ),
         SYS_CLOSE => format!("close({})", b),
         SYS_DUP_INTO => format!(
-            "DUP_INTO({}, {:?}, out: {})",
+            "dup_into({}, {:?}, out: {})",
             b,
             debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
             e,
@@ -162,6 +162,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
                             Lock => "Lock",
                             Unlock => "Unlock",
                             GetLock => "GetLock",
+                            Frenameat => "Frenameat",
+                            Flinkat => "Flinkat",
                         }
                     }
                     None => "UNKNOWN",
