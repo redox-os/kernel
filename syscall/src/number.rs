@@ -34,10 +34,7 @@ pub const SYS_FMAP: usize = SYS_CLASS_FILE | SYS_ARG_SLICE | 900;
 pub const SYS_FUNMAP: usize = SYS_CLASS_FILE | 92;
 pub const SYS_MREMAP: usize = 155;
 
-pub const SYS_FLINK: usize = SYS_CLASS_FILE | SYS_ARG_PATH | 9;
 pub const SYS_FPATH: usize = SYS_CLASS_FILE | SYS_ARG_MSLICE | 928;
-pub const SYS_FRENAME: usize = SYS_CLASS_FILE | SYS_ARG_PATH | 38;
-pub const SYS_FSTAT: usize = SYS_CLASS_FILE | SYS_ARG_MSLICE | 28;
 pub const SYS_FSYNC: usize = SYS_CLASS_FILE | 118;
 
 pub const SYS_CLOCK_GETTIME: usize = 265;

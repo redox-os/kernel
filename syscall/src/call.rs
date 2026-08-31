@@ -57,30 +57,6 @@ pub fn fpath(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_FPATH, fd, buf.as_mut_ptr() as usize, buf.len()) }
 }
 
-/// Create a link to a file
-pub fn flink<T: AsRef<str>>(fd: usize, path: T) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall3(SYS_FLINK, fd, path.as_ptr() as usize, path.len()) }
-}
-
-/// Rename a file
-pub fn frename<T: AsRef<str>>(fd: usize, path: T) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall3(SYS_FRENAME, fd, path.as_ptr() as usize, path.len()) }
-}
-
-/// Get metadata about a file
-pub fn fstat(fd: usize, stat: &mut Stat) -> Result<usize> {
-    unsafe {
-        syscall3(
-            SYS_FSTAT,
-            fd,
-            stat as *mut Stat as usize,
-            mem::size_of::<Stat>(),
-        )
-    }
-}
-
 /// Sync a file descriptor to its underlying medium
 pub fn fsync(fd: usize) -> Result<usize> {
     unsafe { syscall1(SYS_FSYNC, fd) }
