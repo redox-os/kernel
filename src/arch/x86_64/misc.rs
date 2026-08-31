@@ -23,7 +23,15 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
         if let Some(feats) = cpuid().get_extended_processor_and_feature_identifiers()
             && feats.has_rdtscp()
         {
+            // TSC_AUX is useful as it allows both the userspace and kernel to relatively quickly
+            // read the processor ID, e.g. with RDPID and RDTSCP.
             x86::msr::wrmsr(x86::msr::IA32_TSC_AUX, cpu_id.get().into());
+        }
+
+        // Allows reading performance counters in userspace. This in itself should be harmless, as
+        // the counters won't do anything unless explicitly configured through the MSRs.
+        if cfg!(feature = "profiling") {
+            x86::controlregs::cr4_write(x86::controlregs::cr4() | Cr4::CR4_ENABLE_PPMC);
         }
     }
 }
