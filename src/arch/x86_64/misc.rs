@@ -35,3 +35,63 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
         }
     }
 }
+
+unsafe extern "C" {
+    pub fn __the_wrapped_rdmsr_instr();
+    pub fn __the_wrapped_wrmsr_instr();
+}
+#[derive(Debug)]
+pub struct MsrFault;
+
+/// Reads an MSR "safely", i.e. handling #GP if the register does not exist or fails to be read
+/// from another reason. This can still have side effects that may completely corrupt the kernel
+/// (more so for wrmsr), but which is outside Rust's safety model just like safe Rust can open
+/// `/dev/mem` on userspace Linux. Only privileged userspace processes should ever be granted a
+/// capability to read MSRs.
+#[allow(named_asm_labels)]
+pub fn rdmsr_safe(reg: u32) -> Result<u64, MsrFault> {
+    let failed: u32;
+    let lo: u32;
+    let hi: u32;
+    unsafe {
+        core::arch::asm!("
+            .globl __the_wrapped_rdmsr_instr
+__the_wrapped_rdmsr_instr:
+            rdmsr
+            ",
+            // protection fault handler sets esi if the error occurred at either of these
+            // instruction offsets.
+            inout("esi") 0 => failed,
+            in("ecx") reg,
+            out("eax") lo,
+            out("edx") hi,
+        );
+    }
+    if failed != 0 {
+        return Err(MsrFault);
+    }
+    Ok(u64::from(lo) | (u64::from(hi) << 32))
+}
+/// Writes an MSR "safely", handling #GP.
+#[allow(named_asm_labels)]
+pub fn wrmsr_safe(reg: u32, value: u64) -> Result<(), MsrFault> {
+    let failed: u32;
+    unsafe {
+        core::arch::asm!("
+            .globl __the_wrapped_wrmsr_instr
+__the_wrapped_wrmsr_instr:
+            wrmsr
+            ",
+            // protection fault handler sets esi if the error occurred at either of these
+            // instruction offsets.
+            inout("esi") 0 => failed,
+            in("ecx") reg,
+            in("eax") value & 0xffff_ffff,
+            in("edx") value >> 32,
+        );
+    }
+    if failed != 0 {
+        return Err(MsrFault);
+    }
+    Ok(())
+}
