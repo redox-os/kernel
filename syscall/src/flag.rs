@@ -303,7 +303,7 @@ impl FileTableVerb {
     }
 }
 
-// NOT ABI-STABLE!
+/// NOT ABI-STABLE!
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u64)]
 pub enum AcpiVerb {
@@ -312,12 +312,16 @@ pub enum AcpiVerb {
     ReadRxsdt = 1,
     // no payload, just returns 0 or 1
     CheckShutdown = 2,
+    // reads and/or writes from/to an MSR specified in metadata[1], where the data is passed in
+    // `payload`.
+    Msr = 3,
 }
 impl AcpiVerb {
     pub const fn try_from_raw(value: u64) -> Option<Self> {
         Some(match value {
             1 => Self::ReadRxsdt,
             2 => Self::CheckShutdown,
+            3 => Self::Msr,
             _ => return None,
         })
     }

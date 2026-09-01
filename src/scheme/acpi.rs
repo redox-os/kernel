@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::ordered::{Mutex, L4};
 use spin::Once;
 
-use syscall::data::GlobalSchemes;
+use syscall::{data::GlobalSchemes, EOPNOTSUPP};
 
 use crate::{
     acpi::{RxsdtEnum, RXSDT_ENUM},
@@ -14,7 +14,7 @@ use crate::{
 };
 
 use crate::syscall::{
-    error::{Error, Result, EACCES, EBADFD, EINVAL, ENOENT},
+    error::{Error, Result, EACCES, EBADFD, EINVAL, EIO, ENOENT},
     flag::{AcpiVerb, CallFlags, EventFlags},
     usercopy::UserSliceRw,
 };
@@ -32,6 +32,13 @@ bitflags! {
 
         // mutually exclusive with the other flags
         const KSTOP_HANDLE = 4;
+
+        // TODO: More fine-grained access control should be added, such as capabilities for certain
+        // MSR ranges, and for read/write (there are 2^32 MSRs on x86).
+        // TODO: The ACPI scheme is not the best place for this, but makes most sense for now as
+        // MSRs are only used for x86_64 profiling, where acpi is necessary to be able to start APs
+        // in the first place.
+        const MSR_HANDLE = 8;
     }
 }
 
@@ -113,6 +120,12 @@ impl KernelScheme for AcpiScheme {
                 EXISTS_KSTOP_HANDLE.store(true, Ordering::Relaxed);
                 HandleBits::KSTOP_HANDLE
             }
+            b"msr" if cfg!(target_arch = "x86_64") => {
+                if caller.uid != 0 {
+                    return Err(Error::new(EACCES));
+                }
+                HandleBits::MSR_HANDLE
+            }
             _ => return Err(Error::new(ENOENT)),
         };
         Ok(OpenResult::SchemeLocal(
@@ -152,6 +165,41 @@ impl KernelScheme for AcpiScheme {
                     return Err(Error::new(EINVAL));
                 }
                 Ok(usize::from(*KSTOP_FLAG.lock(token.token())))
+            }
+            AcpiVerb::Msr => {
+                if handle != HandleBits::MSR_HANDLE {
+                    return Err(Error::new(EINVAL));
+                }
+                #[cfg(target_arch = "x86_64")]
+                {
+                    use crate::arch::misc::MsrFault;
+
+                    let register = *metadata.get(1).ok_or(Error::new(EINVAL))? as u32;
+
+                    let write_data = if flags.contains(CallFlags::WRITE) {
+                        Some(payload.read_usize()? as u64)
+                    } else {
+                        None
+                    };
+                    if flags.contains(CallFlags::READ) {
+                        let value = crate::arch::misc::rdmsr_safe(register)
+                            .map_err(|MsrFault| Error::new(EIO))?;
+
+                        debug!("MSR READ {register:x} => {value:x}");
+                        payload.write_usize(value as usize)?;
+                    }
+                    if let Some(write_data) = write_data {
+                        debug!("MSR WRITE {register:x} <= {write_data:x}");
+
+                        crate::arch::misc::wrmsr_safe(register, write_data)
+                            .map_err(|MsrFault| Error::new(EIO))?;
+                    }
+
+                    Ok(0)
+                }
+
+                #[cfg(not(target_arch = "x86_64"))]
+                return Err(Error::new(EOPNOTSUPP));
             }
         }
     }
