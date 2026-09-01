@@ -85,7 +85,6 @@ static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new())
 pub struct RunContextData {
     queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
     timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
-    count: usize,
     v: u64,
     total_weight: u64,
     min_vtime: u64,
@@ -96,7 +95,6 @@ impl RunContextData {
         Self {
             queue: BTreeMap::new(),
             timers: BTreeSet::new(),
-            count: 0,
             v: 0,
             total_weight: 0,
             min_vtime: 0,
