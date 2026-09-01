@@ -717,8 +717,7 @@ fn select_next_context(
         if should_steal {
             let targets = steal_hint
                 .into_iter()
-                .chain((1..num_cpu))
-                .map(|i| (curr_cpu + i % num_cpu));
+                .chain((1..num_cpu).map(|i| (curr_cpu + i) % num_cpu));
 
             for target_cpu in targets {
                 if target_cpu == curr_cpu {
