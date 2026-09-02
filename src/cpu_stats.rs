@@ -39,8 +39,10 @@ pub struct CpuStats {
     irq: AtomicU64,
     /// Current state of the CPU
     state: AtomicU8,
-    /// The number of times (overall) where a CPU switched from one context to another.
+    /// The number of times this CPU switched from one context to another.
     context_switches: AtomicU64,
+    /// The number of times this CPU switched while handling a syscall.
+    syscall_switches: AtomicU64,
 }
 
 impl CpuStats {
@@ -53,6 +55,7 @@ impl CpuStats {
             irq: AtomicU64::new(0),
             state: AtomicU8::new(0),
             context_switches: AtomicU64::new(0),
+            syscall_switches: AtomicU64::new(0),
         }
     }
 }
@@ -70,6 +73,8 @@ pub struct CpuStatsData {
     pub irq: u64,
     /// Number of context switches on this CPU
     pub context_switches: u64,
+    /// Number of syscall-caused context switches on this CPU
+    pub syscall_switches: u64,
 }
 
 impl CpuStats {
@@ -118,12 +123,18 @@ impl CpuStats {
 
     /// Add a context switch to the count.
     #[inline]
-    pub fn add_context_switch(&self) {
+    pub fn add_context_switch(&self, inside_syscall: bool) {
         // Again this is percpu, so fetch_add is unnecessary.
         self.context_switches.store(
             self.context_switches.load(Ordering::Relaxed) + 1,
             Ordering::Relaxed,
         );
+        if inside_syscall {
+            self.syscall_switches.store(
+                self.syscall_switches.load(Ordering::Relaxed) + 1,
+                Ordering::Relaxed,
+            );
+        }
     }
 }
 
@@ -146,6 +157,7 @@ impl From<&CpuStats> for CpuStatsData {
             idle: val.idle.load(Ordering::Relaxed),
             irq: val.irq.load(Ordering::Relaxed),
             context_switches: val.context_switches.load(Ordering::Relaxed),
+            syscall_switches: val.syscall_switches.load(Ordering::Relaxed),
         }
     }
 }

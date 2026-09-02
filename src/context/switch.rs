@@ -180,7 +180,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
     let switch_time = crate::time::monotonic(token);
 
     let percpu = PercpuBlock::current();
-    percpu.stats.add_context_switch();
+    percpu.stats.add_context_switch(percpu.inside_syscall.get());
 
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     percpu.switch_internals.pit_ticks.set(0);

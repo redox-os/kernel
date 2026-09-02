@@ -386,11 +386,12 @@ impl Drop for PreemptGuardL2<'_> {
     }
 }
 
-pub fn get_contexts_stats(token: &mut CleanLockToken) -> (usize, usize, usize, usize) {
+pub fn get_contexts_stats(token: &mut CleanLockToken) -> [usize; 5] {
     let alive = contexts(token.downgrade()).len();
 
     let mut running = 0;
     let mut switches = 0;
+    let mut syscall_switches = 0;
 
     for i in 0..crate::cpu_count() {
         if let Some(percpu) = unsafe {
@@ -399,11 +400,13 @@ pub fn get_contexts_stats(token: &mut CleanLockToken) -> (usize, usize, usize, u
                 .as_ref()
         } {
             running += percpu.switch_internals.run_queue.lock().queue.len();
-            switches += CpuStatsData::from(&percpu.stats).context_switches as usize;
+            let data = CpuStatsData::from(&percpu.stats);
+            switches += data.context_switches as usize;
+            syscall_switches += data.syscall_switches as usize;
         }
     }
 
     let blocked = alive.saturating_sub(running);
 
-    (alive, running, blocked, switches)
+    [alive, running, blocked, switches, syscall_switches]
 }
