@@ -4,9 +4,6 @@ use core::{
     sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering},
 };
 
-// Note: Using AtomicUsize rather than AtomicU64 as 32bit x86 doesn't support the latter
-/// The number of times (overall) where a CPU switched from one context to another.
-static CONTEXT_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Number of times each Interrupt happened.
 // TODO: isn't this already tracked by the irq scheme?
 static IRQ_COUNT: [AtomicUsize; 256] = [const { AtomicUsize::new(0) }; 256];
@@ -42,6 +39,8 @@ pub struct CpuStats {
     irq: AtomicU64,
     /// Current state of the CPU
     state: AtomicU8,
+    /// The number of times (overall) where a CPU switched from one context to another.
+    context_switches: AtomicU64,
 }
 
 impl CpuStats {
@@ -53,6 +52,7 @@ impl CpuStats {
             idle: AtomicU64::new(0),
             irq: AtomicU64::new(0),
             state: AtomicU8::new(0),
+            context_switches: AtomicU64::new(0),
         }
     }
 }
@@ -68,13 +68,12 @@ pub struct CpuStatsData {
     pub idle: u64,
     /// Number of times the CPU handled an interrupt
     pub irq: u64,
+    /// Number of context switches on this CPU
+    pub context_switches: u64,
 }
 
 impl CpuStats {
-    /// Set the CPU's current state
-    ///
-    /// # Parameters
-    /// * `new_state` - The state of the CPU for the following ticks.
+    /// Set the CPU's current state for the following ticks.
     #[inline]
     pub fn set_state(&self, new_state: CpuState) {
         self.state.store(new_state as u8, Ordering::Relaxed);
@@ -116,14 +115,24 @@ impl CpuStats {
         self.irq
             .store(self.irq.load(Ordering::Relaxed) + 1, Ordering::Relaxed)
     }
+
+    /// Add a context switch to the count.
+    #[inline]
+    pub fn add_context_switch(&self) {
+        // Again this is percpu, so fetch_add is unnecessary.
+        self.context_switches.store(
+            self.context_switches.load(Ordering::Relaxed) + 1,
+            Ordering::Relaxed,
+        );
+    }
 }
 
 impl fmt::Display for CpuStatsData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{} {} {} {} {}",
-            self.user, self.nice, self.kernel, self.idle, self.irq,
+            "{} {} {} {} {} {}",
+            self.user, self.nice, self.kernel, self.idle, self.irq, self.context_switches
         )
     }
 }
@@ -136,19 +145,9 @@ impl From<&CpuStats> for CpuStatsData {
             kernel: val.kernel.load(Ordering::Relaxed),
             idle: val.idle.load(Ordering::Relaxed),
             irq: val.irq.load(Ordering::Relaxed),
+            context_switches: val.context_switches.load(Ordering::Relaxed),
         }
     }
-}
-
-/// Add a context switch to the count.
-#[inline]
-pub fn add_context_switch() {
-    CONTEXT_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
-}
-
-/// Get the number of context switches.
-pub fn get_context_switch_count() -> usize {
-    CONTEXT_SWITCH_COUNT.load(Ordering::Relaxed)
 }
 
 /// Add a context creation to the count.

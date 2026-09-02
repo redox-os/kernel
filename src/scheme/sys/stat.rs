@@ -2,7 +2,7 @@ use core::fmt::Write as _;
 
 use crate::{
     context::get_contexts_stats,
-    cpu_stats::{get_context_switch_count, get_contexts_count, irq_counts},
+    cpu_stats::{get_contexts_count, irq_counts},
     event::get_event_stat,
     percpu::get_all_stats,
     sync::CleanLockToken,
@@ -15,7 +15,8 @@ use alloc::{string::String, vec::Vec};
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let start_time_sec = *START.lock(token.token()) / 1_000_000_000;
 
-    let (contexts_alive, contexts_running, contexts_blocked) = get_contexts_stats(token);
+    let (contexts_alive, contexts_running, contexts_blocked, context_switches) =
+        get_contexts_stats(token);
     let (event_keys, event_subs) = get_event_stat(token);
     let (futex_keys, futex_subs) = get_futex_stat(token);
     let pipe_subs = crate::scheme::pipe::get_pipe_stat(token);
@@ -36,7 +37,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         timeout_subscribers: {timeout_subs}\n",
         get_cpu_stats(),
         get_irq_stats(),
-        get_context_switch_count(),
+        context_switches,
         get_contexts_count(),
     );
 
