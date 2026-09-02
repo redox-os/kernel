@@ -53,11 +53,11 @@ fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
 }
 
 fn try_stop_context<T>(
-    context_ref: Arc<ContextLock>,
+    context_ref: &Arc<ContextLock>,
     token: &mut CleanLockToken,
     callback: impl FnOnce(&mut Context, LockToken<'_, L4>) -> Result<T>,
 ) -> Result<T> {
-    if context::is_current(&context_ref) {
+    if context::is_current(context_ref) {
         let context = &mut context_ref.write(token.token());
         let (context, token) = context.token_split();
         return callback(context, token);
@@ -417,7 +417,7 @@ impl KernelScheme for ProcScheme {
 
         match handle {
             Handle {
-                context,
+                ref context,
                 kind:
                     ContextHandle::AwaitingAddrSpaceChange {
                         new,
@@ -1450,16 +1450,20 @@ impl ContextHandle {
 
                 match verb {
                     ProcSchemeVerb::Iopl => {
+                        // TODO: access check?
                         context.write(token.token()).set_userspace_io_allowed(true)
                     }
-                    ProcSchemeVerb::Start => match context.write(token.token()).status {
-                        ref mut status @ Status::HardBlocked {
-                            reason: HardBlockedReason::NotYetStarted,
-                        } => {
-                            *status = Status::Runnable;
+                    ProcSchemeVerb::Start => {
+                        match context.write(token.token()).status {
+                            ref mut status @ Status::HardBlocked {
+                                reason: HardBlockedReason::NotYetStarted,
+                            } => {
+                                *status = Status::Runnable;
+                            }
+                            _ => return Err(Error::new(EINVAL)),
                         }
-                        _ => return Err(Error::new(EINVAL)),
-                    },
+                        unblock_context(context, &mut token.token().downgrade());
+                    }
                     ProcSchemeVerb::SchedAffinity => {
                         let requested_mask = if flags.contains(CallFlags::WRITE) {
                             Some(unsafe { payload.read_exact::<crate::cpu_set::RawMask>()? })
@@ -1519,7 +1523,7 @@ impl ContextHandle {
 
                         if flags.contains(CallFlags::READ) {
                             // TODO: avoid clone?
-                            let regs = read_env_regs(Arc::clone(&context), token)?;
+                            let regs = read_env_regs(&context, token)?;
                             payload.copy_exactly(&regs)?;
                         }
                         if let Some(new) = new_requested {
@@ -1671,11 +1675,11 @@ impl ContextHandle {
 }
 
 fn write_env_regs(
-    context: Arc<ContextLock>,
+    context: &Arc<ContextLock>,
     regs: EnvRegisters,
     token: &mut CleanLockToken,
 ) -> Result<()> {
-    if context::is_current(&context) {
+    if context::is_current(context) {
         context::current()
             .write(token.token())
             .write_current_env_regs(regs)
@@ -1684,8 +1688,8 @@ fn write_env_regs(
     }
 }
 
-fn read_env_regs(context: Arc<ContextLock>, token: &mut CleanLockToken) -> Result<EnvRegisters> {
-    if context::is_current(&context) {
+fn read_env_regs(context: &Arc<ContextLock>, token: &mut CleanLockToken) -> Result<EnvRegisters> {
+    if context::is_current(context) {
         context::current()
             .read(token.token())
             .read_current_env_regs()
