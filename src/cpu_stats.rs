@@ -8,8 +8,10 @@ use core::{
 /// The number of times (overall) where a CPU switched from one context to another.
 static CONTEXT_SWITCH_COUNT: AtomicUsize = AtomicUsize::new(0);
 /// Number of times each Interrupt happened.
+// TODO: isn't this already tracked by the irq scheme?
 static IRQ_COUNT: [AtomicUsize; 256] = [const { AtomicUsize::new(0) }; 256];
 /// Number of contexts that were created.
+// TODO: isn't this also already tracked?
 static CONTEXTS_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Current state of a CPU
@@ -25,7 +27,7 @@ pub enum CpuState {
     User = 2,
 }
 
-/// Statistics for the CPUs.
+/// Per-cpu statistics
 #[derive(Debug, Default)]
 pub struct CpuStats {
     /// Number of ticks spent on userspace contexts
@@ -81,16 +83,22 @@ impl CpuStats {
     /// Increments time statistics of a CPU, return the state is was accounting to.
     ///
     /// Which statistic is incremented depends on the [`State`] of the CPU.
-    ///
-    /// # Parameters
-    /// * `nanos` - Number of nanoseconds to add.
     #[inline]
     pub fn add_time(&self, nanos: u64) -> u8 {
         let state = self.state.load(Ordering::Relaxed);
+        // Note that these counters are read-only when accessed by other CPUs, which means it's
+        // valid not to use fetch_add (as long as the loads/stores are atomic).
         match state {
-            val if val == CpuState::Idle as u8 => self.idle.fetch_add(nanos, Ordering::Relaxed),
-            val if val == CpuState::User as u8 => self.user.fetch_add(nanos, Ordering::Relaxed),
-            val if val == CpuState::Kernel as u8 => self.kernel.fetch_add(nanos, Ordering::Relaxed),
+            val if val == CpuState::Idle as u8 => self
+                .idle
+                .store(self.idle.load(Ordering::Relaxed) + nanos, Ordering::Relaxed),
+            val if val == CpuState::User as u8 => self
+                .user
+                .store(self.user.load(Ordering::Relaxed) + nanos, Ordering::Relaxed),
+            val if val == CpuState::Kernel as u8 => self.kernel.store(
+                self.kernel.load(Ordering::Relaxed) + nanos,
+                Ordering::Relaxed,
+            ),
             _ => unreachable!("all possible values are covered"),
         };
         state
@@ -100,13 +108,13 @@ impl CpuStats {
     ///
     /// This should be called in all [`crate::arch::interrupt:irq::eoi`],
     /// for all architectures.
-    ///
-    /// # Parameters
-    /// * `irq` - The ID of the interrupt that happened.
     #[inline]
     pub fn add_irq(&self, irq: u8) {
         IRQ_COUNT[irq as usize].fetch_add(1, Ordering::Relaxed);
-        self.irq.fetch_add(1, Ordering::Relaxed);
+        // Since this is percpu, but allowed to be accessed readonly from the outside, fetch_add is
+        // not needed.
+        self.irq
+            .store(self.irq.load(Ordering::Relaxed) + 1, Ordering::Relaxed)
     }
 }
 
