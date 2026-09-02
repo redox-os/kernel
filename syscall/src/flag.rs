@@ -284,6 +284,7 @@ impl ProcSchemeVerb {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileTableVerb {
+    Close = 1,
     Dup2 = 2,
     Reserved1 = 3,
     Resize = 4,
