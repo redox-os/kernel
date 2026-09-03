@@ -9,7 +9,7 @@ use syscall::{data::GlobalSchemes, EAGAIN, EINTR};
 
 use crate::{
     context,
-    scheme::{self, SchemeExt, SchemeId},
+    scheme::{self, FileHandle, SchemeExt, SchemeId},
     sync::{
         CleanLockToken, LockToken, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard, WaitQueue, L0,
         L1, L2,
@@ -121,10 +121,9 @@ impl EventQueue {
                 let mut context = context_ref.read(token.token());
                 let (context, mut token) = context.token_split();
                 let files = context.files.read(token.token());
-                match files.get(event.id).ok_or(Error::new(EBADF))? {
-                    Some(file) => file.clone(),
-                    None => return Err(Error::new(EBADF)),
-                }
+                files
+                    .get_file(FileHandle::new(event.id))
+                    .ok_or(Error::new(EBADF))?
             };
 
             let (scheme, number) = {

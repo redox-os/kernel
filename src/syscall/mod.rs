@@ -137,15 +137,8 @@ pub fn syscall(
                 scheme.kfpath(number, UserSlice::wo(c, d)?, token)
             }),
 
-            // TODO: Can't replace yet with std_fs_call, as fstat overrides device ID, but that can
-            // be moved to UserScheme.
-            SYS_FSTAT => fstat(fd, UserSlice::wo(c, d)?, token).map(|()| 0),
-
             SYS_DUP_INTO => {
                 dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
-            }
-            SYS_DUP2 => {
-                dup2(fd, FileHandle::from(c), UserSlice::ro(d, e)?, token).map(FileHandle::into)
             }
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
@@ -158,8 +151,6 @@ pub fn syscall(
                     .fevent(number, EventFlags::from_bits_truncate(c), token)?
                     .bits())
             }),
-            SYS_FLINK => flink(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
-            SYS_FRENAME => frename(fd, UserSlice::ro(c, d)?, token).map(|()| 0),
             SYS_FUNMAP => funmap(b, c, token),
 
             // TODO: This can't be removed yet, since the pre-libredox softbuffer crate is a blocker.
@@ -215,7 +206,6 @@ pub fn syscall(
                 token,
             )
             .map(FileHandle::into),
-            SYS_UNLINKAT => unlinkat(fd, UserSlice::ro(c, d)?, e, token).map(|()| 0),
             SYS_YIELD => sched_yield(token).map(|()| 0),
             SYS_NANOSLEEP => nanosleep(
                 UserSlice::ro(b, size_of::<TimeSpec>())?,

@@ -11,11 +11,9 @@ pub const SYS_RET: usize = 0x00F0_0000;
 pub const SYS_RET_FILE: usize = 0x0010_0000;
 
 pub const SYS_OPENAT_INTO: usize = SYS_CLASS_PATH | SYS_RET_FILE | 987;
-pub const SYS_UNLINKAT: usize = SYS_CLASS_PATH | 263;
 
 pub const SYS_CLOSE: usize = SYS_CLASS_FILE | 6;
 pub const SYS_DUP_INTO: usize = SYS_CLASS_FILE | SYS_RET_FILE | 988;
-pub const SYS_DUP2: usize = SYS_CLASS_FILE | SYS_RET_FILE | 63;
 pub const SYS_READ: usize = SYS_CLASS_FILE | SYS_ARG_MSLICE | 3;
 pub const SYS_READ2: usize = SYS_CLASS_FILE | SYS_ARG_MSLICE | 35;
 pub const SYS_WRITE: usize = SYS_CLASS_FILE | SYS_ARG_SLICE | 4;
@@ -35,10 +33,7 @@ pub const SYS_FMAP: usize = SYS_CLASS_FILE | SYS_ARG_SLICE | 900;
 pub const SYS_FUNMAP: usize = SYS_CLASS_FILE | 92;
 pub const SYS_MREMAP: usize = 155;
 
-pub const SYS_FLINK: usize = SYS_CLASS_FILE | SYS_ARG_PATH | 9;
 pub const SYS_FPATH: usize = SYS_CLASS_FILE | SYS_ARG_MSLICE | 928;
-pub const SYS_FRENAME: usize = SYS_CLASS_FILE | SYS_ARG_PATH | 38;
-pub const SYS_FSTAT: usize = SYS_CLASS_FILE | SYS_ARG_MSLICE | 28;
 pub const SYS_FSYNC: usize = SYS_CLASS_FILE | 118;
 
 pub const SYS_CLOCK_GETTIME: usize = 265;

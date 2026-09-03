@@ -18,11 +18,6 @@ pub fn dup_into(fd: usize, out: usize, buf: &[u8]) -> Result<usize> {
     unsafe { syscall4(SYS_DUP_INTO, fd, buf.as_ptr() as usize, buf.len(), out) }
 }
 
-/// Copy and transform a file descriptor
-pub fn dup2(fd: usize, newfd: usize, buf: &[u8]) -> Result<usize> {
-    unsafe { syscall4(SYS_DUP2, fd, newfd, buf.as_ptr() as usize, buf.len()) }
-}
-
 /// Change file ownership
 pub fn fchown(fd: usize, uid: u32, gid: u32) -> Result<usize> {
     unsafe { syscall3(SYS_FCHOWN, fd, uid as usize, gid as usize) }
@@ -60,30 +55,6 @@ pub unsafe fn funmap(addr: usize, len: usize) -> Result<usize> {
 /// Retrieve the canonical path of a file
 pub fn fpath(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_FPATH, fd, buf.as_mut_ptr() as usize, buf.len()) }
-}
-
-/// Create a link to a file
-pub fn flink<T: AsRef<str>>(fd: usize, path: T) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall3(SYS_FLINK, fd, path.as_ptr() as usize, path.len()) }
-}
-
-/// Rename a file
-pub fn frename<T: AsRef<str>>(fd: usize, path: T) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall3(SYS_FRENAME, fd, path.as_ptr() as usize, path.len()) }
-}
-
-/// Get metadata about a file
-pub fn fstat(fd: usize, stat: &mut Stat) -> Result<usize> {
-    unsafe {
-        syscall3(
-            SYS_FSTAT,
-            fd,
-            stat as *mut Stat as usize,
-            mem::size_of::<Stat>(),
-        )
-    }
 }
 
 /// Sync a file descriptor to its underlying medium
@@ -152,11 +123,6 @@ pub fn openat_into<T: AsRef<str>>(
     }
 }
 
-/// Remove a file at at specific path
-pub fn unlinkat<T: AsRef<str>>(fd: usize, path: T, flags: usize) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall4(SYS_UNLINKAT, fd, path.as_ptr() as usize, path.len(), flags) }
-}
 /// Read from a file descriptor into a buffer
 pub fn read(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_READ, fd, buf.as_mut_ptr() as usize, buf.len()) }
@@ -188,6 +154,9 @@ pub fn sched_yield() -> Result<usize> {
 }
 
 pub trait Call {
+    fn extra_flags(&self) -> CallFlags {
+        CallFlags::empty()
+    }
     unsafe fn raw_call(
         &self,
         payload_ptr: *const u8,
@@ -219,6 +188,9 @@ impl Call for usize {
 }
 
 impl Call for &[usize] {
+    fn extra_flags(&self) -> CallFlags {
+        CallFlags::MULTIPLE_FDS
+    }
     unsafe fn raw_call(
         &self,
         payload_ptr: *const u8,
@@ -248,11 +220,12 @@ pub fn call_ro<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_mut_ptr(),
             payload.len(),
-            flags | CallFlags::READ,
+            combined_flags | CallFlags::READ,
             metadata,
         )
     }
@@ -264,11 +237,12 @@ pub fn call_wo<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_ptr(),
             payload.len(),
-            flags | CallFlags::WRITE,
+            combined_flags | CallFlags::WRITE,
             metadata,
         )
     }
@@ -280,11 +254,12 @@ pub fn call_rw<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_mut_ptr(),
             payload.len(),
-            flags | CallFlags::READ | CallFlags::WRITE,
+            combined_flags | CallFlags::READ | CallFlags::WRITE,
             metadata,
         )
     }

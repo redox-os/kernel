@@ -7,7 +7,7 @@ name = "redox_syscall"
 
 # When publishing to crates.io, bump the version in its own commit, that
 # doesn't change anything else.
-version = "0.9.3"
+version = "0.10.0"
 description = "A Rust library to access raw Redox system calls"
 license = "MIT"
 authors = ["Jeremy Soller <jackpot51@gmail.com>"]
