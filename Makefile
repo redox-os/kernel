@@ -88,6 +88,11 @@ test: all
 	$(MAKE) install
 	REDOXER_SYSROOT=$(DESTDIR) redoxer exec uname -a
 
+# test with custom command
+test-tokio: all
+	$(MAKE) install
+	REDOXER_SYSROOT=$(DESTDIR) timeout -s KILL 20m redoxer exec sh -c "uname -a; pkg install gcc13 --yes"
+
 # test with interactive gui
 test-gui: all
 	$(MAKE) install
@@ -97,4 +102,4 @@ test-gui: all
 test-relibc: all
 	$(MAKE) install
 	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg relibc-tests-bins
-	REDOXER_SYSROOT=$(DESTDIR) redoxer exec relibc-tests-runner
+	REDOXER_SYSROOT=$(DESTDIR) timeout -s KILL 10m redoxer exec relibc-tests-runner
