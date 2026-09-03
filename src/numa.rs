@@ -290,53 +290,6 @@ pub fn nearest_preceding_memory_region(addr: usize, overlap: bool) -> Option<&'s
         .max_by_key(|e| e.start)
 }
 
-pub fn get_numa_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    let cpu_info = NUMA_CPUS
-        .get()
-        .ok_or(Error::new(EOPNOTSUPP))?
-        .iter()
-        .map(|e| e.to_ne_bytes())
-        .flatten()
-        .collect::<Vec<u8>>();
-    let mem_info = NUMA_MEMORY
-        .get()
-        .ok_or(Error::new(EOPNOTSUPP))?
-        .iter()
-        .map(|e| {
-            [
-                e.start.to_ne_bytes(),
-                e.length.to_ne_bytes(),
-                (e.node_id as usize).to_ne_bytes(),
-            ]
-        })
-        .flatten()
-        .flatten()
-        .collect::<Vec<u8>>();
-    let mut numa_info = Vec::new();
-    numa_info.extend(cpu_info);
-    numa_info.extend(mem_info);
-    Ok(numa_info)
-}
-
-pub fn get_numa_distance_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    Ok(DISTANCES
-        .get()
-        .ok_or(Error::new(ENODATA))?
-        .iter()
-        .map(|e| *e)
-        .collect())
-}
-
-pub fn get_numa_dom_info(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    Ok(DOMAIN_NODE_MAP
-        .get()
-        .ok_or(Error::new(EOPNOTSUPP))?
-        .iter()
-        .map(|e| e.to_ne_bytes())
-        .flatten()
-        .collect())
-}
-
 pub fn current_node() -> Option<&'static NumaNode> {
     let cpu = percpu::PercpuBlock::current();
     Some(cpu.numa_node.get()?.1)
