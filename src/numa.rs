@@ -3,7 +3,7 @@ use core::{mem, ops::Add, ptr::write_bytes, slice};
 use crate::{
     acpi,
     cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
-    percpu::{self, ALL_PERCPU_BLOCKS},
+    percpu,
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -116,36 +116,30 @@ pub fn init_arch() {
             numa_nodes[memory.node_id as usize].memories.enable_index(i);
         }
 
-        for cpu_ptr in percpu::ALL_PERCPU_BLOCKS.as_ref() {
-            if let Some(cpu) =
-                unsafe { cpu_ptr.load(core::sync::atomic::Ordering::Relaxed).as_mut() }
-            {
-                #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-                let cpu_id = cpu
-                    .misc_arch_info
-                    .apic_id_opt
-                    .get()
-                    .map(|e| e.get())
-                    .unwrap();
+        for cpu in percpu::all_percpu_blocks() {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            let cpu_id = cpu
+                .misc_arch_info
+                .apic_id_opt
+                .get()
+                .map(|e| e.get())
+                .unwrap();
 
-                #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-                let cpu_id = 0; // TODO
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            let cpu_id = 0; // TODO
 
-                let n = numa_nodes
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, node)| {
-                        if node.cpus & 1u128 << cpu_id != 0 {
-                            Some((i, node))
-                        } else {
-                            None
-                        }
-                    })
-                    .map(|(i, node)| (i as u32, node));
-                cpu.numa_node.set(n);
-            } else {
-                break;
-            }
+            let n = numa_nodes
+                .iter()
+                .enumerate()
+                .find_map(|(i, node)| {
+                    if node.cpus & 1u128 << cpu_id != 0 {
+                        Some((i, node))
+                    } else {
+                        None
+                    }
+                })
+                .map(|(i, node)| (i as u32, node));
+            cpu.numa_node.set(n);
         }
 
         NUMA_NODES.call_once(|| numa_nodes);

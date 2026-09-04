@@ -23,11 +23,10 @@ use crate::{
             GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
         unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1,
-        Status, WeakContextRef,
+        Status,
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
-    percpu::PercpuBlock,
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{

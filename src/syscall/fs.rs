@@ -13,7 +13,7 @@ use crate::{
         },
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
-    scheme::{self, FileHandle, KernelScheme, OpenResult, StrOrBytes},
+    scheme::{FileHandle, KernelScheme, OpenResult, StrOrBytes},
     sync::{CleanLockToken, RwLock},
     syscall::{data::Stat, error::*, flag::*},
 };

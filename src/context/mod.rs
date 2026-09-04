@@ -18,7 +18,7 @@ use crate::{
     cpu_stats::CpuStatsData,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
-    percpu::PercpuBlock,
+    percpu::{get_percpu_block, PercpuBlock},
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
         RwLockWriteGuard, L0, L1, L2, L3, L4,
@@ -26,8 +26,6 @@ use crate::{
     syscall::error::Result,
     Ordering,
 };
-
-use crate::percpu::ALL_PERCPU_BLOCKS;
 
 use self::context::Kstack;
 pub use self::{
@@ -144,21 +142,17 @@ pub fn wakeup_context(
 
     let target_cpu = cpu_id.unwrap_or(curr_cpu);
 
-    if target_cpu != curr_cpu {
-        if let Some(percpu) = unsafe {
-            ALL_PERCPU_BLOCKS[target_cpu.get() as usize]
-                .load(Ordering::Acquire)
-                .as_ref()
-        } {
-            // non-local wakeup
-            percpu
-                .switch_internals
-                .ipi_context_wakeup_list
-                .lock(token.token())
-                .push(weak);
-            ipi(IpiKind::Wakeup, IpiTarget::Other);
-            return;
-        }
+    if target_cpu != curr_cpu
+        && let Some(percpu) = get_percpu_block(target_cpu)
+    {
+        // non-local wakeup
+        percpu
+            .switch_internals
+            .ipi_context_wakeup_list
+            .lock(token.token())
+            .push(weak);
+        ipi(IpiKind::Wakeup, IpiTarget::Other);
+        return;
     }
 
     // local wakeup
@@ -393,17 +387,11 @@ pub fn get_contexts_stats(token: &mut CleanLockToken) -> [usize; 5] {
     let mut switches = 0;
     let mut syscall_switches = 0;
 
-    for i in 0..crate::cpu_count() {
-        if let Some(percpu) = unsafe {
-            ALL_PERCPU_BLOCKS[i as usize]
-                .load(Ordering::Acquire)
-                .as_ref()
-        } {
-            running += percpu.switch_internals.run_queue.lock().queue.len();
-            let data = CpuStatsData::from(&percpu.stats);
-            switches += data.context_switches as usize;
-            syscall_switches += data.syscall_switches as usize;
-        }
+    for percpu in crate::percpu::all_percpu_blocks() {
+        running += percpu.switch_internals.run_queue.lock().queue.len();
+        let data = CpuStatsData::from(&percpu.stats);
+        switches += data.context_switches as usize;
+        syscall_switches += data.syscall_switches as usize;
     }
 
     let blocked = alive.saturating_sub(running);
