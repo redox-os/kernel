@@ -19,9 +19,13 @@ use crate::context::file::InternalFlags;
 
 use super::{CallerCtx, HandleMap, OpenResult, SchemeExt, StrOrBytes};
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-use crate::arch::interrupt::{available_irqs_iter, irq::acknowledge, is_reserved, set_reserved};
+use crate::arch::interrupt::{
+    available_irqs_iter, free_reserved, irq::acknowledge, try_set_reserved,
+};
 #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-use crate::dtb::irqchip::{acknowledge, available_irqs_iter, is_reserved, set_reserved, IRQ_CHIP};
+use crate::dtb::irqchip::{
+    acknowledge, available_irqs_iter, free_reserved, try_set_reserved, IRQ_CHIP,
+};
 use crate::{
     cpu_set::LogicalCpuId,
     event,
@@ -163,10 +167,9 @@ impl IrqScheme {
                     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
                     {
                         let index = irq_to_vector(irq_number);
-                        if is_reserved(cpu_id, index) {
+                        if !try_set_reserved(cpu_id, index) {
                             return Err(Error::new(EEXIST));
                         }
-                        set_reserved(cpu_id, index, true);
                         Some(IrqReservation { cpu_id, index })
                     }
                     #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
@@ -189,54 +192,51 @@ impl IrqScheme {
     }
 
     #[cfg(dtb)]
-    unsafe fn open_phandle_irq(
+    fn open_phandle_irq(
         flags: usize,
         phandle: usize,
         path_str: &str,
     ) -> Result<(Handle, InternalFlags)> {
-        unsafe {
-            let addr: Vec<u32> = path_str
-                .split(',')
-                .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
-                .collect::<Result<_, _>>()?;
-            let ic_idx = IRQ_CHIP
-                .phandle_to_ic_idx(phandle as u32)
-                .ok_or(Error::new(ENOENT))?;
-            Ok({
-                if flags & O_CREAT == 0 && flags & O_STAT == 0 {
-                    return Err(Error::new(EINVAL));
+        let addr: Vec<u32> = path_str
+            .split(',')
+            .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
+            .collect::<Result<_, _>>()?;
+        let ic_idx = IRQ_CHIP
+            .phandle_to_ic_idx(phandle as u32)
+            .ok_or(Error::new(ENOENT))?;
+        Ok({
+            if flags & O_CREAT == 0 && flags & O_STAT == 0 {
+                return Err(Error::new(EINVAL));
+            }
+            let irq_number = IRQ_CHIP
+                .irq_xlate(ic_idx, addr.as_slice())
+                .or(Err(Error::new(ENOENT)))?;
+            let irq_number = u8::try_from(irq_number).or(Err(Error::new(ENOENT)))?;
+            if irq_number >= TOTAL_IRQ_COUNT {
+                return Err(Error::new(ENOENT));
+            }
+            debug!("open_phandle_irq  virq={}", irq_number);
+            let reservation = if flags & O_STAT == 0 {
+                let cpu_id = LogicalCpuId::BSP;
+                if !try_set_reserved(cpu_id, irq_number) {
+                    return Err(Error::new(EEXIST));
                 }
-                let irq_number = IRQ_CHIP
-                    .irq_xlate(ic_idx, addr.as_slice())
-                    .or(Err(Error::new(ENOENT)))?;
-                let irq_number = u8::try_from(irq_number).or(Err(Error::new(ENOENT)))?;
-                if irq_number >= TOTAL_IRQ_COUNT {
-                    return Err(Error::new(ENOENT));
-                }
-                debug!("open_phandle_irq  virq={}", irq_number);
-                let reservation = if flags & O_STAT == 0 {
-                    let cpu_id = LogicalCpuId::BSP;
-                    if is_reserved(cpu_id, irq_number) {
-                        return Err(Error::new(EEXIST));
-                    }
-                    set_reserved(cpu_id, irq_number, true);
-                    Some(IrqReservation {
-                        cpu_id,
-                        index: irq_number,
-                    })
-                } else {
-                    None
-                };
-                (
-                    Handle::Irq {
-                        ack: AtomicUsize::new(0),
-                        irq: irq_number,
-                        reservation,
-                    },
-                    InternalFlags::empty(),
-                )
-            })
-        }
+                Some(IrqReservation {
+                    cpu_id,
+                    index: irq_number,
+                })
+            } else {
+                None
+            };
+            (
+                Handle::Irq {
+                    ack: AtomicUsize::new(0),
+                    irq: irq_number,
+                    reservation,
+                },
+                InternalFlags::empty(),
+            )
+        })
     }
 }
 
@@ -319,7 +319,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             }
         } else if cfg!(dtb) && path_str.starts_with("phandle-") {
             #[cfg(dtb)]
-            unsafe {
+            {
                 let (phandle_str, path_str) =
                     path_str[8..].split_once('/').unwrap_or((path_str, ""));
                 let phandle = usize::from_str(phandle_str).or(Err(Error::new(ENOENT)))?;
@@ -462,7 +462,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             ..
         } = handle
         {
-            set_reserved(reservation.cpu_id, reservation.index, false);
+            free_reserved(reservation.cpu_id, reservation.index);
         }
         Ok(())
     }

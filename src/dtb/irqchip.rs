@@ -155,11 +155,6 @@ impl IrqDescItem {
     }
 
     #[inline]
-    pub fn used(&self) -> bool {
-        self.used.load(Ordering::Acquire)
-    }
-
-    #[inline]
     pub fn set_used(&self, used: bool) {
         self.used.store(used, Ordering::Release);
     }
@@ -607,24 +602,6 @@ pub fn try_set_reserved(_cpu_id: LogicalCpuId, index: u8) -> bool {
     mmio_after_acquire();
     IRQ_CHIP.irq_enable(index as u32);
     true
-}
-
-/// Compatibility helper for users that still perform the reservation check
-/// separately. New users should call [`try_set_reserved`] instead.
-#[inline]
-pub fn is_reserved(_cpu_id: LogicalCpuId, index: u8) -> bool {
-    IRQ_CHIP.irq_desc[index as usize].basic.used()
-}
-
-/// Compatibility helper for users that still reserve in two steps. New users
-/// should use [`try_set_reserved`] and [`free_reserved`] directly.
-#[inline]
-pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
-    if reserved {
-        let _ = try_set_reserved(cpu_id, index);
-    } else {
-        free_reserved(cpu_id, index);
-    }
 }
 
 /// Release a reservation taken by [`try_set_reserved`].
