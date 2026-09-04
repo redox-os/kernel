@@ -424,6 +424,7 @@ impl GdtEntry {
     }
 }
 
+#[cfg(not(test))]
 impl PercpuBlock {
     pub fn current() -> &'static Self {
         unsafe { &*core::ptr::addr_of!((*pcr()).percpu) }

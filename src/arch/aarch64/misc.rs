@@ -4,6 +4,7 @@ use crate::{
     percpu::PercpuBlock,
 };
 
+#[cfg(not(test))]
 impl PercpuBlock {
     pub fn current() -> &'static Self {
         unsafe { &*(crate::arch::device::cpu::registers::control_regs::tpidr_el1() as *const Self) }

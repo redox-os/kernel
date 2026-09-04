@@ -15,6 +15,7 @@ pub struct ArchPercpu {
     pub percpu: PercpuBlock,
 }
 
+#[cfg(not(test))]
 impl PercpuBlock {
     pub fn current() -> &'static Self {
         unsafe {

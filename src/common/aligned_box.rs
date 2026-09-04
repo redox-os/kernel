@@ -52,6 +52,7 @@ impl<T, const ALIGN: usize> AlignedBox<T, ALIGN> {
     }
 }
 impl<T, const ALIGN: usize> AlignedBox<[T], ALIGN> {
+    #[cfg(not(test))]
     #[inline]
     pub fn try_zeroed_slice(len: usize) -> Result<Self, Enomem>
     where
@@ -70,6 +71,18 @@ impl<T, const ALIGN: usize> AlignedBox<[T], ALIGN> {
             }
         })
     }
+    #[cfg(test)]
+    pub fn try_zeroed_slice(len: usize) -> Result<Self, Enomem>
+    where
+        T: ValidForZero,
+    {
+        let boxed: &mut [T] = Box::leak(Vec::with_capacity(len).into_boxed_slice());
+        Ok(unsafe {
+            Self {
+                inner: core::ptr::slice_from_raw_parts_mut(core::ptr::from_mut(boxed).cast(), len),
+            }
+        })
+    }
 }
 
 impl<T: ?Sized, const ALIGN: usize> core::fmt::Debug for AlignedBox<T, ALIGN> {
@@ -83,6 +96,7 @@ impl<T: ?Sized, const ALIGN: usize> core::fmt::Debug for AlignedBox<T, ALIGN> {
         )
     }
 }
+#[cfg(not(test))]
 impl<T: ?Sized, const ALIGN: usize> Drop for AlignedBox<T, ALIGN> {
     fn drop(&mut self) {
         unsafe {

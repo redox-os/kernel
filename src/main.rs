@@ -124,6 +124,7 @@ fn publish_cpu(cpu_id: crate::cpu_set::LogicalCpuId) -> bool {
         .is_ok()
 }
 
+#[cfg(not(test))]
 macro_rules! linker_offsets(
     ($($name:ident),*) => {
         $(
@@ -139,6 +140,20 @@ macro_rules! linker_offsets(
         )*
     }
 );
+
+#[cfg(test)]
+macro_rules! linker_offsets(
+    ($($name:ident),*) => {
+        $(
+        #[inline(always)]
+        #[allow(non_snake_case)]
+        pub fn $name() -> usize {
+            unreachable!()
+        }
+        )*
+    }
+);
+
 mod kernel_executable_offsets {
     linker_offsets!(
         KERNEL_OFFSET,
