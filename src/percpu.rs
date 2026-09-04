@@ -135,6 +135,25 @@ impl PercpuBlock {
         }
     }
 }
+
+#[cfg(test)]
+impl PercpuBlock {
+    pub fn current() -> &'static Self {
+        let ptr = MOCK_CURRENT_PERCPU.with(|p| p.get());
+        assert!(!ptr.is_null());
+        unsafe { &*ptr }
+    }
+
+    pub fn set_mock_current(block: *const PercpuBlock) {
+        MOCK_CURRENT_PERCPU.with(|p| p.set(block));
+    }
+}
+
+#[cfg(test)]
+std::thread_local! {
+    pub static MOCK_CURRENT_PERCPU: std::cell::Cell<*const PercpuBlock> = std::cell::Cell::new(core::ptr::null());
+}
+
 pub unsafe fn switch_arch_hook() {
     unsafe {
         let percpu = PercpuBlock::current();
