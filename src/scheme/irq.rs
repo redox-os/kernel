@@ -294,8 +294,8 @@ impl crate::scheme::KernelScheme for IrqScheme {
             }
 
             #[cfg(dtb)]
-            unsafe {
-                for chip in &IRQ_CHIP.irq_chip_list.chips {
+            {
+                for chip in IRQ_CHIP.chips() {
                     writeln!(bytes, "phandle-{}", chip.phandle).unwrap();
                 }
             }

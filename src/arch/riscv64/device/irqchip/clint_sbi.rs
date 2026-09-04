@@ -34,7 +34,7 @@ struct ClintConnector {
 }
 
 impl InterruptHandler for ClintConnector {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
+    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {
         CLINT
             .lock()
             .as_mut()
@@ -82,14 +82,11 @@ impl Clint {
                 phandle1, phandle2,
                 "Invalid interrupts-extended property for CLINT"
             );
-            let hlic = unsafe {
-                IRQ_CHIP
-                    .irq_chip_list
-                    .chips
-                    .iter()
-                    .find(|x| x.phandle == phandle1)
-                    .expect("Couldn't find HLIC in irqchip list for CLINT")
-            };
+            let hlic = IRQ_CHIP
+                .chips()
+                .iter()
+                .find(|x| x.phandle == phandle1)
+                .expect("Couldn't find HLIC in irqchip list for CLINT");
 
             // FIXME dirty hack map M-mode interrupts (handled by SBI) to S-mode interrupts we get from SBI
             // Why aren't S-mode interrupts in the DTB already?
