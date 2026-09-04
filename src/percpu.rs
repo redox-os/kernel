@@ -25,6 +25,8 @@ use crate::{
 };
 
 /// The percpu block, that stored all percpu variables.
+// TODO: consider splitting this struct into a !Sync part (which safe code is not allowed to get
+// references to for other hw threads' blocks) and a Sync part
 pub struct PercpuBlock {
     /// A unique immutable number that identifies the current CPU - used for scheduling
     pub cpu_id: LogicalCpuId,
@@ -57,15 +59,25 @@ pub struct PercpuBlock {
 pub static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
     [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_CPU_COUNT as usize];
 
+#[inline]
+pub fn get_percpu_block(idx: LogicalCpuId) -> Option<&'static PercpuBlock> {
+    let ptr = ALL_PERCPU_BLOCKS
+        .get(idx.get() as usize)?
+        .load(Ordering::Relaxed);
+    unsafe { ptr.as_ref() }
+}
+pub fn all_percpu_blocks() -> impl Iterator<Item = &'static PercpuBlock> {
+    (0..ALL_PERCPU_BLOCKS.len()).filter_map(|i| get_percpu_block(LogicalCpuId::new(i as u32)))
+}
+
 #[allow(unused)]
 pub unsafe fn init_tlb_shootdown(id: LogicalCpuId, block: *mut PercpuBlock) {
     ALL_PERCPU_BLOCKS[id.get() as usize].store(block, Ordering::Release)
 }
 
 pub fn get_all_stats() -> Vec<(LogicalCpuId, CpuStatsData)> {
-    let mut res = ALL_PERCPU_BLOCKS
-        .iter()
-        .filter_map(|block| unsafe { block.load(Ordering::Relaxed).as_ref() })
+    let mut res = (0..ALL_PERCPU_BLOCKS.len())
+        .filter_map(|i| get_percpu_block(LogicalCpuId::new(i as u32)))
         .map(|block| {
             let stats = &block.stats;
             (block.cpu_id, stats.into())
@@ -86,11 +98,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
         let my_percpublock = PercpuBlock::current();
         assert_ne!(target, my_percpublock.cpu_id);
 
-        let Some(percpublock) = (unsafe {
-            ALL_PERCPU_BLOCKS[target.get() as usize]
-                .load(Ordering::Acquire)
-                .as_ref()
-        }) else {
+        let Some(percpublock) = (get_percpu_block(target)) else {
             warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };

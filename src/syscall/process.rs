@@ -20,8 +20,7 @@ use crate::{
     context::{self, context::FdTbl},
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{
-        FileHandle, KernelScheme, SchemeExt, SchemeId, SchemeList, ALL_KERNEL_SCHEMES,
-        KERNEL_SCHEMES_COUNT,
+        FileHandle, KernelScheme, SchemeExt, SchemeList, ALL_KERNEL_SCHEMES, KERNEL_SCHEMES_COUNT,
     },
     startup::Bootstrap,
     syscall::{error::*, flag::MapFlags},

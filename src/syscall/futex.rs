@@ -14,7 +14,7 @@ use syscall::EINTR;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, AddrSpace, AddrSpaceWrapper, Provider},
+        memory::{AccessMode, AddrSpace, Provider},
         unblock_context, ContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
