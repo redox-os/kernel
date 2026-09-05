@@ -246,32 +246,104 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         }
         crate::arch::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
-        core::arch::asm!(
-            alternative2!(
-                feature1: "xsaveopt",
-                then1: ["
-                mov eax, 0xffffffff
-                mov edx, eax
-                xsaveopt64 [{prev_fx}]
-                xrstor64 [{next_fx}]
-            "],
-                feature2: "xsave",
-                then2: ["
-                mov eax, 0xffffffff
-                mov edx, eax
-                xsave64 [{prev_fx}]
-                xrstor64 [{next_fx}]
-            "],
-                default: ["
-                fxsave64 [{prev_fx}]
-                fxrstor64 [{next_fx}]
-            "]
-            ),
-            prev_fx = in(reg) prev.kfx.as_mut_ptr(),
-            next_fx = in(reg) next.kfx.as_ptr(),
-            out("eax") _,
-            out("edx") _,
-        );
+        // The syscall ABI allows the kernel to clobber the xmm/ymm/zmm registers. Hence, if the
+        // kernel is later going to zero those registers when switching back, there's no need to
+        // save them. However, MXCSR and the x87 status word will be saved. This saves unnecessary
+        // cache writes and the slow xsave/xsaveopt instructions (200-300 cycles on zen3/zen4).
+        //
+        // When not inside a syscall, the context switch was (mostly likely) caused by preemption,
+        // in which case the slower full path is needed.
+        if !prev.inside_syscall {
+            core::arch::asm!(
+                alternative2!(
+                    feature1: "xsaveopt",
+                    then1: ["
+                    xsaveopt64 [{prev_fx}]
+                "],
+                    feature2: "xsave",
+                    then2: ["
+                    xsave64 [{prev_fx}]
+                "],
+                    default: ["
+                    fxsave64 [{prev_fx}]
+                "]
+                ),
+                prev_fx = in(reg) prev.kfx.as_mut_ptr(),
+                in("eax") 0xffff_ffff_u32,
+                in("edx") 0xffff_ffff_u32,
+            );
+        } else {
+            // TODO: Depending on whether we choose to avoid mapping `long double` to x87 in
+            // userspace, it may be possible to ignore saving the FCW and just zero it as with all
+            // the other float registers.
+            core::arch::asm!("
+                fnstcw [{prev_fx}+{FCW_OFFSET}]
+                stmxcsr [{prev_fx}+{MXCSR_OFFSET}]
+            ",
+                prev_fx = in(reg) prev.kfx.as_mut_ptr(),
+                FCW_OFFSET = const(0),
+                MXCSR_OFFSET = const(24),
+            );
+        }
+
+        // As mentioned above, there's a fast path when switching to the return of a syscall, where
+        // vector registers can be zeroed. This avoids unnecessary cache fetches and the slow
+        // XRSTOR instruction (>200 cycles on zen3 and >300 on zen4 with avx512 according to Agner
+        // Fog's instruction tables).
+        if next.inside_syscall {
+            core::arch::asm!(concat!(
+                alternative!(
+                    feature: "xsave",
+                    // AVX is available
+                    then: [
+                        "vzeroall"
+                    ],
+                    // TODO: when AVX512 is available, zmm15-zmm31 must be zeroed manually
+
+                    // AVX is not available
+                    default: ["
+                        pxor xmm0, xmm0
+                        pxor xmm1, xmm1
+                        pxor xmm2, xmm2
+                        pxor xmm3, xmm3
+                        pxor xmm4, xmm4
+                        pxor xmm5, xmm5
+                        pxor xmm6, xmm6
+                        pxor xmm7, xmm7
+                        pxor xmm8, xmm8
+                        pxor xmm9, xmm9
+                        pxor xmm10, xmm10
+                        pxor xmm11, xmm11
+                        pxor xmm12, xmm12
+                        pxor xmm13, xmm13
+                        pxor xmm14, xmm14
+                        pxor xmm15, xmm15
+                    "]
+                ), "
+                    emms
+                    fldcw [{next_fx}+{FCW_OFFSET}]
+                    ldmxcsr [{next_fx}+{MXCSR_OFFSET}]
+                "),
+                next_fx = in(reg) next.kfx.as_ptr(),
+                FCW_OFFSET = const(0),
+                MXCSR_OFFSET = const(24),
+            );
+        } else {
+            core::arch::asm!(
+                alternative!(
+                    feature: "xsave",
+                    then: ["
+                    xrstor64 [{next_fx}]
+                    "],
+                    default: ["
+                    fxrstor64 [{next_fx}]
+                    "]
+                ),
+                next_fx = in(reg) next.kfx.as_ptr(),
+                in("eax") 0xffff_ffff_u32,
+                in("edx") 0xffff_ffff_u32,
+            );
+        }
 
         {
             core::arch::asm!(
