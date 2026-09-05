@@ -9,7 +9,6 @@ use core::{
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
-use bitfield::Bit;
 pub use kernel_mapper::KernelMapper;
 use spin::{once::Once, Mutex};
 use syscall::NumaMemoryPolicy;
@@ -18,7 +17,7 @@ pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, AddrSpace, PfError},
+        memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     numa::{self, FreeListMask},
@@ -80,10 +79,9 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
     for i in 0..numreg {
         if mask.is_enabled(i)
             && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+            && let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i)
         {
-            if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
-                return Some(frame);
-            }
+            return Some(frame);
         }
     }
 
@@ -102,10 +100,9 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
             for i in 0..numreg {
                 if !mask.is_enabled(i)
                     && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+                    && let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i)
                 {
-                    if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
-                        return Some(frame);
-                    }
+                    return Some(frame);
                 }
             }
         }
@@ -605,7 +602,7 @@ const _: () = {
 };
 
 #[cold]
-fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
+fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
     let number_of_memory_regions = numa::number_of_memory_regions();
 
     let (free_areas, offset_into_first_free_area) = allocator.free_areas();
@@ -633,16 +630,15 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                     .next_multiple_of(MAX_SECTION_SIZE);
                 let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
-                if number_of_memory_regions > 0 {
-                    if let Some(next_memory_region) =
+                if number_of_memory_regions > 0
+                    && let Some(next_memory_region) =
                         numa::nearest_next_memory_region(area.base.data(), false)
-                        && next_memory_region.start < area.base.add(area.size).data()
-                        && next_memory_region.start + next_memory_region.length
-                            > area.base.add(area.size).data()
-                        && !next_memory_region.start.is_multiple_of(MAX_SECTION_SIZE)
-                    {
-                        return (aligned_end - aligned_start) / MAX_SECTION_SIZE + 1;
-                    }
+                    && next_memory_region.start < area.base.add(area.size).data()
+                    && next_memory_region.start + next_memory_region.length
+                        > area.base.add(area.size).data()
+                    && !next_memory_region.start.is_multiple_of(MAX_SECTION_SIZE)
+                {
+                    return (aligned_end - aligned_start) / MAX_SECTION_SIZE + 1;
                 }
 
                 (aligned_end - aligned_start) / MAX_SECTION_SIZE
@@ -662,7 +658,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
         }
     };
 
-    let mut iter = free_areas_iter().peekable();
+    let _iter = free_areas_iter().peekable();
 
     let mut sections_fill = |region: Option<MemoryArea>,
                              i: &mut usize, // out parameter
@@ -779,7 +775,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                 }
             }
         }
-        return None;
+        None
     };
     let mut i = 0;
 
@@ -790,7 +786,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
             let mut sections_fill_result = Some(region);
             let mut force = false;
 
-            while let Some(mut region) = sections_fill_result {
+            while let Some(region) = sections_fill_result {
                 sections_fill_result = sections_fill(Some(region), &mut i, force);
                 force = true;
             }
@@ -820,12 +816,12 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
         }
     }
 
-    let mut append_page = |page: Frame,
-                           info: &'static PageInfo,
-                           order,
-                           first_pages: &mut [Option<(Frame, &'static PageInfo)>; 11],
-                           last_pages: &mut [Option<(Frame, &PageInfo)>; 11],
-                           allocator: &mut BumpAllocator<RmmA>| {
+    let append_page = |page: Frame,
+                       info: &'static PageInfo,
+                       order,
+                       first_pages: &mut [Option<(Frame, &'static PageInfo)>; 11],
+                       last_pages: &mut [Option<(Frame, &PageInfo)>; 11],
+                       allocator: &mut BumpAllocator<RmmA>| {
         let this_page = (page, info);
 
         if page.base() < allocator.abs_offset() {
@@ -861,8 +857,8 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
         };
     }
 
-    let mut free_list_fill = |region: Option<MemoryArea>,
-                              allocator: &mut BumpAllocator<RmmA>|
+    let free_list_fill = |region: Option<MemoryArea>,
+                          allocator: &mut BumpAllocator<RmmA>|
      -> [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] {
         let mut first_pages: [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] =
             [None; ORDER_COUNT as usize];
@@ -984,7 +980,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                 upper_limit: region.base.add(region.size).data(),
                 lower_limit: region.base.data(),
                 free_list_inner: Mutex::new(FreeListInner {
-                    for_orders: free_list_fill(Some(region), &mut allocator)
+                    for_orders: free_list_fill(Some(region), allocator)
                         .map(|pair| pair.map(|(frame, _)| frame)),
                     used_frames: 0,
                 }),
@@ -1001,7 +997,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
             upper_limit: usize::MAX,
             lower_limit: 0,
             free_list_inner: Mutex::new(FreeListInner {
-                for_orders: free_list_fill(None, &mut allocator)
+                for_orders: free_list_fill(None, allocator)
                     .map(|pair| pair.map(|(frame, _)| frame)),
                 used_frames: 0,
             }),

@@ -24,9 +24,8 @@ use crate::{
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
         TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
-    numa,
     percpu::PercpuBlock,
-    scheme::{self, KernelSchemes},
+    scheme::KernelSchemes,
     sync::{
         CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockUpgradableGuard,
         RwLockWriteGuard, L4, L5,

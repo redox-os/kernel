@@ -799,7 +799,7 @@ impl UserInner {
             }
             ParsedCqe::ObtainFd {
                 tag,
-                flags,
+                flags: _,
                 dst_fd_or_ptr,
             } => {
                 let description = {
@@ -1231,7 +1231,7 @@ impl UserInner {
         &self,
         payload: UserSliceRw,
         request_id: usize,
-        flags: FobtainFdFlags,
+        _flags: FobtainFdFlags,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let descriptions = match self
@@ -1287,9 +1287,8 @@ impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
         let unpin = true;
         if let Some(addrsp) = self.addrsp.take() {
             if !self.span.is_empty() {
-                res = addrsp.munmap(self.span, unpin, token).and_then(|res| {
+                res = addrsp.munmap(self.span, unpin, token).map(|res| {
                     handle_notify_files(res, token);
-                    Ok(())
                 });
             }
             if let Some(addrsp) = Arc::into_inner(addrsp) {

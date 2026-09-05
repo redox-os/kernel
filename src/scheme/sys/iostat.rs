@@ -4,7 +4,7 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, Grant, PageSpan},
     },
     memory::PAGE_SIZE,
-    scheme::{self, SchemeId},
+    scheme::SchemeId,
     sync::CleanLockToken,
     syscall::{
         error::Result,
@@ -12,7 +12,7 @@ use crate::{
         usercopy::{UserSlice, UserSliceRw},
     },
 };
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::{fmt::Write, num::NonZeroUsize, str};
 
 fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>> {

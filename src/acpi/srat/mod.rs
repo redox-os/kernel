@@ -2,14 +2,13 @@
 
 use core::slice;
 
-use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, FrameAllocator};
 use spin::once::Once;
 
 use crate::{
-    acpi::{find_sdt, get_sdt_signature, rxsdt::Rxsdt, sdt::Sdt, srat, RXSDT_ENUM},
+    acpi::{rxsdt::Rxsdt, sdt::Sdt, RXSDT_ENUM},
     cpu_set::MAX_CPU_COUNT,
-    find_one_sdt, memory,
+    memory,
     numa::{self, NumaMemory},
 };
 

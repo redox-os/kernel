@@ -1,4 +1,3 @@
-use alloc::boxed::Box;
 use rmm::PhysicalAddress;
 
 use crate::acpi::{sdt::Sdt, RxsdtEnum};

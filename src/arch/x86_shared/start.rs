@@ -109,7 +109,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             let mut bump_allocator =
                 crate::startup::memory::init(&args, Some(0x100000), Some(0x40000000));
             #[cfg(target_arch = "x86_64")]
-            let mut bump_allocator = crate::startup::memory::init(&args, Some(0x100000), None);
+            let bump_allocator = crate::startup::memory::init(&args, Some(0x100000), None);
 
             // Initialize paging
             paging::init();
