@@ -141,9 +141,9 @@ impl SigProcControl {
     /// * `sig` - The signal to check (e.g. `SIGCHLD`).
     ///
     /// * `stop_or_continue` - Whether the signal is generated because a child
-    /// process stopped (`SIGSTOP`, `SIGTSTP`) or continued (`SIGCONT`). If
-    /// `true` and `sig` is `SIGCHLD`, the signal shall not be delivered if the
-    /// `SA_NOCLDSTOP` flag is set for `SIGCHLD`.
+    ///   process stopped (`SIGSTOP`, `SIGTSTP`) or continued (`SIGCONT`). If
+    ///   `true` and `sig` is `SIGCHLD`, the signal shall not be delivered if the
+    ///   `SA_NOCLDSTOP` flag is set for `SIGCHLD`.
     pub fn signal_will_ign(&self, sig: usize, stop_or_continue: bool) -> bool {
         let flags = self.actions[sig - 1].first.load(Ordering::Relaxed);
         let will_ign = flags & (1 << 63) != 0;

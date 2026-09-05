@@ -201,7 +201,6 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
         return;
     }
 
-    #[expect(clippy::overly_complex_bool_expr)]
     #[expect(clippy::needless_bool)]
     let do_debug = if true && {
         let ctx = crate::context::current();
