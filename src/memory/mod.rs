@@ -1319,6 +1319,11 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
     }
 }
 
+// TODO: From profiling, this function appears to have a relatively significant overhead for some
+// I/O, with the majority being from zeroing frames. It may be good to track such information in
+// the `PageInfo`s, potentially clear pages while idle, and look for cheap optimizations (such as
+// avoiding zeroing when it will immediately be overwritten). However, fast userspace that uses
+// statically allocated buffers, will not be affected much by this.
 pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
     let new_frame = allocate_frame().ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).unwrap_or_else(|| {

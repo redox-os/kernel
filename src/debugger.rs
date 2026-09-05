@@ -87,6 +87,10 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
             if !context.status_reason.is_empty() {
                 println!("reason: {}", context.status_reason);
             }
+            println!(
+                "running {} scheduled {}",
+                context.running, context.currently_scheduled
+            );
             if let Some([a, b, c, d, e, f, g]) = context.current_syscall() {
                 println!(
                     "syscall: {}",
@@ -159,7 +163,7 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
                     unsafe {
                         x86::bits64::rflags::stac();
                     }
-                    dump_stack(&*context, regs.iret.rsp);
+                    //dump_stack(&*context, regs.iret.rsp);
                     unsafe {
                         x86::bits64::rflags::clac();
                     }
