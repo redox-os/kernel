@@ -3,10 +3,6 @@ use spin::Mutex;
 use spin::MutexGuard;
 
 use crate::devices::serial::SerialKind;
-#[cfg(feature = "lpss_debug")]
-use crate::devices::uart_16550::SerialPort;
-#[cfg(feature = "lpss_debug")]
-use crate::syscall::io::Mmio;
 #[cfg(feature = "qemu_debug")]
 use crate::syscall::io::Pio;
 #[cfg(feature = "qemu_debug")]

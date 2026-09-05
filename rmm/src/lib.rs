@@ -1,8 +1,6 @@
 #![no_std]
 #![allow(clippy::new_without_default)]
 
-use core::ops::Add;
-
 pub use crate::{allocator::*, arch::*, page::*};
 
 mod allocator;

@@ -563,9 +563,7 @@ impl<L: Level, T> RwLock<L, T> {
 
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
-        let Some(guard) = self.inner.try_write() else {
-            return None;
-        };
+        let guard = self.inner.try_write();
         core::mem::forget(guard);
         Some(ArcRwLockWriteGuard {
             rwlock: self.clone(),

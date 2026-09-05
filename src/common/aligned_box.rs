@@ -77,11 +77,10 @@ impl<T, const ALIGN: usize> AlignedBox<[T], ALIGN> {
         T: ValidForZero,
     {
         let boxed: &mut [T] = Box::leak(Vec::with_capacity(len).into_boxed_slice());
-        Ok(unsafe {
-            Self {
+        Ok(Self {
                 inner: core::ptr::slice_from_raw_parts_mut(core::ptr::from_mut(boxed).cast(), len),
             }
-        })
+        )
     }
 }
 

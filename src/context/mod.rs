@@ -3,28 +3,23 @@
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
 use alloc::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Weak},
 };
-use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
-use syscall::NumaMemoryPolicy;
+use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
-    context::{
-        memory::AddrSpaceWrapper,
-        switch::{BASE_SLICE_TICKS, NANOS_PER_TICK, SCALE, SCHED_PRIO_TO_WEIGHT, TICK_INTERVAL},
-    },
+    context::memory::AddrSpaceWrapper,
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats::CpuStatsData,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::{get_percpu_block, PercpuBlock},
     sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L3, L4,
+        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        L1, L2, L3, L4,
     },
     syscall::error::Result,
-    Ordering,
 };
 
 use self::context::Kstack;
@@ -216,7 +211,7 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
         .switch_internals
         .current_context_raw()
         .as_ref()
-        .map_or(false, |current| Arc::ptr_eq(current, context))
+        .is_some_and(|current| Arc::ptr_eq(current, context))
 }
 
 #[derive(Clone)]
@@ -292,7 +287,7 @@ pub fn spawn(
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
-    let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
+    let _run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
     contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)

@@ -31,7 +31,7 @@ impl Error {
     pub fn text(&self) -> &'static str {
         STR_ERROR
             .get(self.errno as usize)
-            .map(|&x| x)
+            .copied()
             .unwrap_or("Unknown Error")
     }
 }
@@ -190,7 +190,7 @@ pub const EOWNERDEAD: i32 = 130; /* Owner died */
 pub const ENOTRECOVERABLE: i32 = 131; /* State not recoverable */
 pub const ERSVD: i32 = 132; /* Reserved (formerly "scheme-kernel message code") */
 
-pub static STR_ERROR: [&'static str; 133] = [
+pub static STR_ERROR: [&str; 133] = [
     "Success",
     "Operation not permitted",
     "No such file or directory",

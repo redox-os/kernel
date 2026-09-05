@@ -1,5 +1,5 @@
 use core::{
-    hint, slice,
+    hint,
     sync::atomic::{AtomicU8, Ordering},
 };
 
@@ -8,7 +8,7 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
-    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    cpu_set::LogicalCpuId,
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,
@@ -103,7 +103,6 @@ pub(super) fn init(madt: Madt) {
                     ap_ready.write(0);
                     ap_args_ptr.write(&args as *const _ as u64);
                     ap_page_table.write(page_table_physaddr as u64);
-                    #[expect(clippy::fn_to_numeric_cast)]
                     ap_code.write(kstart_ap as *const () as u64);
 
                     // TODO: Is this necessary (this fence)?

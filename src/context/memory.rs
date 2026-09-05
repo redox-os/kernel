@@ -24,9 +24,8 @@ use crate::{
         Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
         TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
-    numa,
     percpu::PercpuBlock,
-    scheme::{self, KernelSchemes},
+    scheme::KernelSchemes,
     sync::{
         CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockUpgradableGuard,
         RwLockWriteGuard, L4, L5,
@@ -794,7 +793,10 @@ pub struct AddrSpaceSwitchReadGuard {
 impl AddrSpaceSwitchReadGuard {
     pub fn new(guard: RwLockReadGuard<'_, L5, AddrSpace>) -> Self {
         Self {
-            lock: unsafe { core::mem::transmute(guard) },
+            // extend lifetime
+            lock: unsafe {
+                core::mem::transmute::<RwLockReadGuard<'_, _, _>, RwLockReadGuard<'_, _, _>>(guard)
+            },
         }
     }
 }

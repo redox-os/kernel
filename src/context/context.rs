@@ -6,7 +6,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
-use syscall::{NumaMemoryPolicy, SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
+use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
     arch::interrupt::InterruptStack,
@@ -17,7 +17,6 @@ use crate::{
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
-    ipi::{ipi, IpiKind, IpiTarget},
     memory::{
         allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame, RmmA, RmmArch, PAGE_SIZE,
     },
@@ -757,9 +756,9 @@ impl FdTbl {
             .find(|&context_fd| {
                 let desc = context_fd.description.read(token.token());
                 // TODO: possibly quite slow
-                desc.scheme_ref.upgrade().map_or(false, |s| {
-                    s.scheme_id() == scheme_id && desc.number == scheme_number
-                })
+                desc.scheme_ref
+                    .upgrade()
+                    .is_ok_and(|s| s.scheme_id() == scheme_id && desc.number == scheme_number)
             })
             .cloned()
             .ok_or(Error::new(EBADF))
@@ -841,7 +840,7 @@ pub fn bulk_insert_fds(
 
     let handles: Vec<FileHandle> = payload
         .usizes()
-        .map(|res| res.map(|i| FileHandle::from(i)))
+        .map(|res| res.map(FileHandle::from))
         .collect::<Result<_, _>>()?;
     let files = files_iter.collect::<Vec<_>>();
     current.bulk_insert_files(files, &handles, &mut token)?;

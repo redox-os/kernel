@@ -102,7 +102,7 @@ impl EventQueue {
         };
 
         let bytes_copied = buf.copy_common_bytes_from_slice(&event)?;
-        return Ok(bytes_copied);
+        Ok(bytes_copied)
     }
 
     pub fn write(&self, events: &[Event], token: &mut CleanLockToken) -> Result<usize> {
