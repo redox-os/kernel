@@ -21,6 +21,9 @@ mod arch;
 #[path = "x86.rs"]
 mod arch;
 
+/// Length of the reserved space after the standard SDT header, before subtables.
+const SRAT_RESERVED_LEN: usize = 12;
+
 #[repr(C, packed)]
 pub struct Srat {
     sdt: &'static Sdt,
@@ -82,7 +85,7 @@ impl Srat {
     pub fn new(sdt: &'static Sdt) -> Self {
         Self {
             sdt,
-            entries: (sdt.data_address() + 12) as *const u8,
+            entries: sdt.data_address() as *const u8,
         }
     }
 }
@@ -93,12 +96,15 @@ impl<'a> IntoIterator for &'a Srat {
     type IntoIter = SratIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        SratIter { i: 0, srat: self }
+        SratIter {
+            i: SRAT_RESERVED_LEN,
+            srat: self,
+        }
     }
 }
 
 pub struct SratIter<'a> {
-    i: u32,
+    i: usize,
     srat: &'a Srat,
 }
 
@@ -106,35 +112,35 @@ impl<'a> Iterator for SratIter<'a> {
     type Item = SratEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.i < self.srat.sdt.data_len() as u32 {
-            let entry = unsafe { self.srat.entries.add(self.i as usize) };
-            let entry_len = unsafe { *self.srat.entries.add(self.i as usize + 1) };
+        while self.i < self.srat.sdt.data_len() {
+            let entry = unsafe { self.srat.entries.add(self.i) };
+            let entry_len = unsafe { *self.srat.entries.add(self.i + 1) } as usize;
 
             let entry = Some(match unsafe { *entry } {
                 0 => SratEntry::LegacyProcessorLocalAffinity(unsafe {
-                    assert!(entry_len as usize == size_of::<LegacyProcessorLocalAffinity>() + 2);
+                    assert!(entry_len == size_of::<LegacyProcessorLocalAffinity>() + 2);
                     *(entry.add(2) as *const LegacyProcessorLocalAffinity)
                 }),
 
                 1 => SratEntry::MemoryAffinity(unsafe {
-                    assert!(entry_len as usize == size_of::<MemoryAffinity>() + 10);
+                    assert!(entry_len == size_of::<MemoryAffinity>() + 10);
                     *(entry.add(2) as *const MemoryAffinity)
                 }),
                 2 => SratEntry::ProcessorLocalAffinity(unsafe {
-                    assert!(entry_len as usize == size_of::<ProcessorLocalAffinity>() + 8);
+                    assert!(entry_len == size_of::<ProcessorLocalAffinity>() + 8);
                     *(entry.add(4) as *const ProcessorLocalAffinity)
                 }),
                 3 => SratEntry::GiccAffinity(unsafe {
-                    assert!(entry_len as usize == size_of::<GiccAffinity>() + 2);
+                    assert!(entry_len == size_of::<GiccAffinity>() + 2);
                     *(entry.add(2) as *const GiccAffinity)
                 }),
                 // ignore GIC ITS Affinity and Generic Initiator Affinity
                 _ => {
-                    self.i += entry_len as u32;
+                    self.i += entry_len;
                     continue;
                 }
             });
-            self.i += entry_len as u32;
+            self.i += entry_len;
             return entry;
         }
         None
