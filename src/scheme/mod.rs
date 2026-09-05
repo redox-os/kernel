@@ -228,6 +228,10 @@ impl SchemeList {
     }
 
     /// Get the UserInner
+    // TODO(opt): Based on profiling data, such as https://gitlab.redox-os.org/-/snippets/2246,
+    // this function is more than 3% of base IPC overhead. One optimization, requiring a bit of
+    // refactoring, would be to move `FileDescription`'s `number` into the enum and make it typed,
+    // thus eliminating the hashmap lookup and potentially some other atomic operations.
     fn get_user_inner(&self, id: usize, token: &mut CleanLockToken) -> Option<Arc<UserInner>> {
         match handles().read(token.token()).get(&SchemeId(id)) {
             Some(Handle::Scheme(KernelSchemes::User(UserScheme { inner }))) => Some(inner.clone()),
@@ -333,6 +337,7 @@ impl KernelScheme for SchemeList {
         ))
     }
 
+    // TODO: remove?
     fn kfpath(&self, _id: usize, buf: UserSliceWo, _token: &mut CleanLockToken) -> Result<usize> {
         buf.copy_common_bytes_from_slice("/scheme".as_bytes())
     }
@@ -349,18 +354,12 @@ impl KernelScheme for SchemeList {
         }
     }
 
-    fn fsync(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        match self.get_user_inner(id, token) {
-            Some(inner) => inner.fsync(),
-            None => Err(Error::new(EBADF)),
-        }
-    }
-
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         self.remove(id, token);
         Ok(())
     }
 
+    // TODO: deprecate?
     fn kreadoff(
         &self,
         id: usize,
@@ -376,6 +375,7 @@ impl KernelScheme for SchemeList {
         }
     }
 
+    // TODO: deprecate?
     fn kwrite(
         &self,
         id: usize,
@@ -388,6 +388,64 @@ impl KernelScheme for SchemeList {
             Some(inner) => inner.write(buf, token),
             None => Err(Error::new(EBADF)),
         }
+    }
+
+    /// Allows simultaneous write of CQEs and read of SQEs. Needs to write all entries before
+    /// starting to read, which means the caller can easily detect EOF at either side.
+    fn kcall(
+        &self,
+        fds: &[usize],
+        payload: UserSliceRw,
+        flags: CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let [id]: [usize; 1] = fds.try_into().map_err(|_| Error::new(EINVAL))?;
+        let inner = self.get_user_inner(id, token).ok_or(Error::new(EBADF))?;
+
+        // TODO: "verb"?
+        if metadata.get(0).copied() != Some(0) {
+            return Err(Error::new(EINVAL));
+        }
+
+        let num_write = metadata
+            .get(1)
+            .and_then(|n| usize::try_from(*n).ok())
+            .ok_or(Error::new(EINVAL))?;
+        let num_read = metadata
+            .get(2)
+            .and_then(|n| usize::try_from(*n).ok())
+            .ok_or(Error::new(EINVAL))?;
+
+        let mut num_processed = 0;
+
+        let wrote_all = if flags.contains(CallFlags::WRITE) {
+            let write_buf = payload
+                .limit(num_write * size_of::<syscall::schemev2::Cqe>())
+                .ok_or(Error::new(EINVAL))?;
+            let num_wrote = inner.write(write_buf.reinterpret_unchecked(), token)?
+                / size_of::<syscall::schemev2::Cqe>();
+            num_processed += num_wrote;
+            num_wrote == num_write
+        } else {
+            true
+        };
+        if wrote_all && flags.contains(CallFlags::READ) {
+            let read_buf = payload
+                .limit(num_read * size_of::<syscall::schemev2::Sqe>())
+                .ok_or(Error::new(EINVAL))?;
+            let flags = 0; // TODO: allow specifying nonblock
+            match inner.read(read_buf.reinterpret_unchecked(), flags, token) {
+                Ok(bytes_read) => {
+                    let num_read = bytes_read / size_of::<syscall::schemev2::Sqe>();
+                    num_processed += num_read;
+                }
+                Err(e) if num_processed > 0 => (),
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(num_processed)
     }
 
     fn kfdwrite(

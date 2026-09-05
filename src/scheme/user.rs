@@ -1000,10 +1000,6 @@ impl UserInner {
         })
     }
 
-    pub fn fsync(&self) -> Result<()> {
-        Ok(())
-    }
-
     fn fmap_inner(
         &self,
         dst_addr_space: Arc<AddrSpaceWrapper>,
