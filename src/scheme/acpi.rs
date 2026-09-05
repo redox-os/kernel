@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::ordered::{Mutex, L4};
 use spin::Once;
 
-use syscall::{data::GlobalSchemes, EOPNOTSUPP};
+use syscall::data::GlobalSchemes;
 
 use crate::{
     acpi::{RxsdtEnum, RXSDT_ENUM},
@@ -145,7 +145,7 @@ impl KernelScheme for AcpiScheme {
             .map_err(|_| Error::new(EINVAL))?
             .map(HandleBits::from_bits_retain);
         let verb = metadata
-            .get(0)
+            .first()
             .copied()
             .and_then(AcpiVerb::try_from_raw)
             .ok_or(Error::new(EINVAL))?;

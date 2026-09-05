@@ -1,5 +1,5 @@
 use core::{
-    hint, slice,
+    hint,
     sync::atomic::{AtomicU8, Ordering},
 };
 
@@ -8,7 +8,7 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
-    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    cpu_set::LogicalCpuId,
     memory::{
         allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
         VirtualAddress, PAGE_SIZE,

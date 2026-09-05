@@ -1,6 +1,4 @@
-use alloc::boxed::Box;
 use core::convert::TryFrom;
-use rmm::PhysicalAddress;
 
 use crate::acpi::{rxsdt::RxsdtIter, RxsdtEnum};
 

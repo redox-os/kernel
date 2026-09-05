@@ -3,7 +3,7 @@
 
 use core::ptr::NonNull;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 
 use hashbrown::HashMap;
 use rmm::{BumpAllocator, FrameAllocator, PageMapper};
@@ -11,7 +11,7 @@ use spin::{Once, RwLock};
 
 use crate::{
     acpi::rxsdt::RxsdtIter,
-    memory::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
+    memory::{PageFlags, PhysicalAddress, RmmA, RmmArch},
 };
 
 use self::{hpet::Hpet, madt::Madt, rsdp::Rsdp, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
@@ -153,14 +153,13 @@ pub unsafe fn init_before_mem(
             }
         } else {
             error!("NO RSDP FOUND");
-            return;
         }
     }
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information. The code performs allocations, so
 /// it must be called only after the allocator is set up.
-pub unsafe fn init_after_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
+pub unsafe fn init_after_mem(_already_supplied_rsdp: Option<NonNull<u8>>) {
     if let Some(rxsdt) = RXSDT_ENUM.get() {
         unsafe {
             {

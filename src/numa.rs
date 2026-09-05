@@ -1,17 +1,10 @@
-use core::{mem, ops::Add, ptr::write_bytes, slice};
+use core::{ops::Add, ptr::write_bytes, slice};
 
-use crate::{
-    acpi,
-    cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
-    percpu,
-    sync::{CleanLockToken, Mutex, L0},
-};
-use alloc::{sync::Arc, vec::Vec};
+use crate::{acpi, percpu};
 use bitfield::Bit;
-use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, NumaMemoryPolicy, Result, ENODATA, EOPNOTSUPP};
+use syscall::NumaMemoryPolicy;
 
 pub const MAX_DOMAINS: usize = 128;
 
@@ -104,14 +97,14 @@ pub fn init_arch() {
             slice::from_raw_parts_mut(ptr as *mut NumaNode, MAX_DOMAINS)
         };
 
-        for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
+        for (i, _cpu) in cpus.iter().enumerate().filter(|(_i, e)| **e != u32::MAX) {
             numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
         }
 
         for (i, memory) in memories
             .iter()
             .enumerate()
-            .filter(|(i, memory)| memory.length != 0)
+            .filter(|(_i, memory)| memory.length != 0)
         {
             numa_nodes[memory.node_id as usize].memories.enable_index(i);
         }
@@ -182,7 +175,7 @@ pub fn cpu_belongs_to_which_node(cpu_id: usize) -> Option<u32> {
 /// A helper function that prints information about NUMA - available nodes, cpus and memory blocks in them
 /// their starts and lengths
 pub fn dump_info() {
-    if let Some(map) = DOMAIN_NODE_MAP.get()
+    if let Some(_map) = DOMAIN_NODE_MAP.get()
         && let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
     {
@@ -241,11 +234,7 @@ pub fn number_of_memory_regions() -> usize {
 }
 
 pub fn memory_regions() -> Option<NumaMemoryIter> {
-    if let Some(mem) = NUMA_MEMORY.get() {
-        Some(NumaMemoryIter { i: 0, mem })
-    } else {
-        None
-    }
+    NUMA_MEMORY.get().map(|mem| NumaMemoryIter { i: 0, mem })
 }
 
 pub fn nearest_next_memory_region(addr: usize, overlap: bool) -> Option<&'static NumaMemory> {
@@ -328,10 +317,10 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     let distances = DISTANCES.get()?;
     let num_nodes = NUMA_NODES.get().unwrap().len();
 
-    for (i, node) in NUMA_NODES.get()?.iter().enumerate() {
-        others[i] = (i as u32, distances[num_nodes * node_id as usize + i]);
+    for (i, _node) in NUMA_NODES.get()?.iter().enumerate() {
+        others[i] = (i as u32, distances[num_nodes * node_id + i]);
     }
-    others.sort_by_key(|(node_id, distance)| *distance);
+    others.sort_by_key(|(_node_id, distance)| *distance);
     let others = others.map(|e| e.0);
     iter.others = others;
 

@@ -1,7 +1,6 @@
 use crate::{
     arch::CurrentRmmArch,
     memory::PAGE_SIZE,
-    numa,
     startup::{memory::BootloaderMemoryKind::Null, KernelArgs},
 };
 use core::{

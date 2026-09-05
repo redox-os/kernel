@@ -404,7 +404,7 @@ impl KernelScheme for SchemeList {
         let inner = self.get_user_inner(id, token).ok_or(Error::new(EBADF))?;
 
         // TODO: "verb"?
-        if metadata.get(0).copied() != Some(0) {
+        if metadata.first().copied() != Some(0) {
             return Err(Error::new(EINVAL));
         }
 
@@ -440,7 +440,7 @@ impl KernelScheme for SchemeList {
                     let num_read = bytes_read / size_of::<syscall::schemev2::Sqe>();
                     num_processed += num_read;
                 }
-                Err(e) if num_processed > 0 => (),
+                Err(_e) if num_processed > 0 => (),
                 Err(e) => return Err(e),
             }
         }

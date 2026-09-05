@@ -24,11 +24,11 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
         let mut contexts = contexts(token.downgrade());
         let (contexts, mut token) = contexts.token_split();
         for context_arc in contexts.iter() {
-            if target_id.map_or(false, |target_id| Arc::as_ptr(&context_arc) != target_id) {
+            if target_id.is_some_and(|target_id| Arc::as_ptr(context_arc) != target_id) {
                 continue;
             }
             let context = context_arc.read(token.token());
-            println!("{:p}: {}", Arc::as_ptr(&context_arc), context.name);
+            println!("{:p}: {}", Arc::as_ptr(context_arc), context.name);
 
             let mut mark_frame_use = |frame| {
                 tree.entry(frame).or_insert((0, false)).0 += 1;
@@ -159,7 +159,7 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
                     unsafe {
                         x86::bits64::rflags::stac();
                     }
-                    dump_stack(&*context, regs.iret.rsp);
+                    dump_stack(&context, regs.iret.rsp);
                     unsafe {
                         x86::bits64::rflags::clac();
                     }
@@ -185,7 +185,7 @@ pub unsafe fn debugger(target_id: Option<*const ContextLock>, token: &mut CleanL
         );
         unsafe {
             check_page_table_consistency(
-                &mut *addrsp.acquire_write(token.downgrade()),
+                &mut addrsp.acquire_write(token.downgrade()),
                 was_new,
                 &mut tree,
             )
@@ -220,7 +220,7 @@ fn dump_stack(context: &Context, mut sp: usize) {
     let mut token = unsafe { CleanLockToken::new() };
     //Maximum 64 usizes
     for _ in 0..64 {
-        if context.addr_space.as_ref().map_or(false, |space| {
+        if context.addr_space.as_ref().is_some_and(|space| {
             space
                 .acquire_read(token.downgrade())
                 .table

@@ -240,7 +240,7 @@ impl KernelScheme for DebugScheme {
         &self,
         fds: &[usize],
         payload: UserSliceRw,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
@@ -250,7 +250,7 @@ impl KernelScheme for DebugScheme {
             return Err(Error::new(EBADF));
         }
         let src = crate::profiling::lookup_dbg_id(
-            metadata.get(0).copied().unwrap_or(u64::MAX) as u32,
+            metadata.first().copied().unwrap_or(u64::MAX) as u32,
             token,
         )
         .ok_or(Error::new(ENOENT))?;
