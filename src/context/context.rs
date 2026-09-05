@@ -258,23 +258,6 @@ impl Context {
         }
     }
 
-    /// Unblock context, and return true if it was blocked before being marked runnable
-    pub fn unblock(&mut self) -> bool {
-        if self.unblock_no_ipi() {
-            // TODO: Only send IPI if currently running?
-            if let Some(cpu_id) = self.cpu_id
-                && cpu_id != crate::cpu_id()
-            {
-                // Send IPI if not on current CPU
-                ipi(IpiKind::Wakeup, IpiTarget::Other);
-            }
-
-            true
-        } else {
-            false
-        }
-    }
-
     /// Unblock context without IPI, and return true if it was blocked before being marked runnable
     pub fn unblock_no_ipi(&mut self) -> bool {
         if self.status.is_soft_blocked() {

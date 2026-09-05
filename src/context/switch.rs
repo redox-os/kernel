@@ -9,7 +9,7 @@ use crate::{
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
-    percpu::{self, PercpuBlock, ALL_PERCPU_BLOCKS},
+    percpu::{self, get_percpu_block, PercpuBlock},
     sync::{ArcRwLockWriteGuard, CleanLockToken, Mutex, L4},
 };
 use alloc::{
@@ -697,11 +697,7 @@ fn select_next_context(
                         continue;
                     }
 
-                    if let Some(p) = unsafe {
-                        ALL_PERCPU_BLOCKS[i as usize]
-                            .load(Ordering::Acquire)
-                            .as_ref()
-                    } {
+                    if let Some(p) = get_percpu_block(LogicalCpuId::new(i as u32)) {
                         let neighbour_len = p.switch_internals.queue_len.load(Ordering::Relaxed);
 
                         if neighbour_len > max_neighbour {
@@ -723,11 +719,7 @@ fn select_next_context(
                 if target_cpu == curr_cpu {
                     continue;
                 }
-                let Some(target_percpu) = (unsafe {
-                    ALL_PERCPU_BLOCKS[target_cpu as usize]
-                        .load(Ordering::Acquire)
-                        .as_ref()
-                }) else {
+                let Some(target_percpu) = get_percpu_block(LogicalCpuId::new(target_cpu)) else {
                     continue;
                 };
 
