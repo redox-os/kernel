@@ -1,7 +1,6 @@
 use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
-    cmp::Reverse,
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
@@ -32,6 +31,7 @@ use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE
 use super::{
     empty_cr3,
     memory::{AddrSpaceWrapper, GrantFileRef},
+    ContextQueueKey,
 };
 
 /// The status of a context - used for scheduling
@@ -153,7 +153,7 @@ pub struct Context {
     /// Is currently active?
     pub is_active: bool,
     /// Key for the RunQueue
-    pub queue_key: Option<(u64, Reverse<u64>, u32)>,
+    pub queue_key: Option<ContextQueueKey>,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,

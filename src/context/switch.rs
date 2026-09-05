@@ -4,8 +4,13 @@
 
 use crate::{
     context::{
+<<<<<<< HEAD
         self, arch, memory::AddrSpaceSwitchReadGuard, wakeup_context, ArcContextLockWriteGuard,
         Context, ContextLock, RunContextData, WeakContextRef,
+=======
+        arch, memory::AddrSpaceSwitchReadGuard, ArcContextLockWriteGuard, Context, ContextLock,
+        ContextQueueKey, ContextQueueValue, RunContextData, WeakContextRef,
+>>>>>>> 453e3e3b (Use structs instead of tuples for keys and values of RunContextData::queue)
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -316,13 +321,22 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
 
                 guard.vd = new_vtime + scaled_slice as u64;
                 guard.rem_slice = BASE_SLICE_TICKS * SCALE as u64;
-                let key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
+                let key = ContextQueueKey {
+                    vd: guard.vd,
+                    rem_slice: Reverse(guard.rem_slice),
+                    ctxt_id: guard.debug_id,
+                };
                 guard.queue_key = Some(key);
                 drop(guard);
 
-                run_queue
-                    .queue
-                    .insert(key, (new_vtime, weight, context_ref));
+                run_queue.queue.insert(
+                    key,
+                    ContextQueueValue {
+                        vtime: new_vtime,
+                        weight,
+                        context_ref,
+                    },
+                );
                 percpu
                     .switch_internals
                     .queue_len
@@ -549,9 +563,19 @@ fn select_next_context(
 
     // New BTreeMap based walk
     let mut weight_change: u64 = 0;
-    let mut contexts_to_remove: SmallVec<[(u64, Reverse<u64>, u32); 16]> = SmallVec::new();
-    for ((vd, rem_slice, ctxt_id), (vtime, context_weight, context_ref)) in
-        contexts_data.queue.iter()
+    let mut contexts_to_remove: SmallVec<[ContextQueueKey; 16]> = SmallVec::new();
+    for (
+        ContextQueueKey {
+            vd,
+            rem_slice,
+            ctxt_id,
+        },
+        ContextQueueValue {
+            vtime,
+            weight: context_weight,
+            context_ref,
+        },
+    ) in contexts_data.queue.iter()
     {
         if *vtime > ineligible_min_vtime && *vtime > contexts_data.v {
             continue;
@@ -559,7 +583,11 @@ fn select_next_context(
 
         let Some(context_lock) = context_ref.upgrade() else {
             weight_change += *context_weight as u64;
-            contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
+            contexts_to_remove.push(ContextQueueKey {
+                vd: *vd,
+                rem_slice: *rem_slice,
+                ctxt_id: *ctxt_id,
+            });
             continue;
         };
 
@@ -583,7 +611,11 @@ fn select_next_context(
             guard.rem_slice = 0;
             guard.queue_key = None;
 
-            contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
+            contexts_to_remove.push(ContextQueueKey {
+                vd: *vd,
+                rem_slice: *rem_slice,
+                ctxt_id: *ctxt_id,
+            });
             drop(guard);
             continue;
         }
@@ -748,7 +780,15 @@ fn select_next_context(
                 let mut stolen = percpu.switch_internals.tmp_steal.borrow_mut();
                 stolen.clear();
 
-                for (key, (_, weight, context_ref)) in target_queue.queue.iter().step_by(2) {
+                for (
+                    key,
+                    ContextQueueValue {
+                        vtime: _,
+                        weight,
+                        context_ref,
+                    },
+                ) in target_queue.queue.iter().step_by(2)
+                {
                     if stolen.len() >= want {
                         break;
                     }
@@ -800,13 +840,22 @@ fn select_next_context(
                     if final_winner.is_none() && !prev_runnable {
                         final_winner = Some((guard, addr_space));
                     } else {
-                        let new_key = (guard.vd, Reverse(guard.rem_slice), guard.debug_id);
+                        let new_key = ContextQueueKey {
+                            vd: guard.vd,
+                            rem_slice: Reverse(guard.rem_slice),
+                            ctxt_id: guard.debug_id,
+                        };
                         guard.queue_key = Some(new_key);
                         contexts_data.total_weight =
                             contexts_data.total_weight.saturating_add(weight);
-                        contexts_data
-                            .queue
-                            .insert(new_key, (guard.vtime, weight, context_ref));
+                        contexts_data.queue.insert(
+                            new_key,
+                            ContextQueueValue {
+                                vtime: guard.vtime,
+                                weight,
+                                context_ref,
+                            },
+                        );
                     }
                 }
 
@@ -860,16 +909,24 @@ fn select_next_context(
                         .store(contexts_data.queue.len(), Ordering::Relaxed);
                 }
 
-                prev_context_guard.queue_key = Some((vd, Reverse(rem_slice), ctxt_id));
+                prev_context_guard.queue_key = Some(ContextQueueKey {
+                    vd,
+                    rem_slice: Reverse(rem_slice),
+                    ctxt_id,
+                });
 
                 let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
                 contexts_data.queue.insert(
-                    (vd, Reverse(rem_slice), ctxt_id),
-                    (
+                    ContextQueueKey {
+                        vd,
+                        rem_slice: Reverse(rem_slice),
+                        ctxt_id,
+                    },
+                    ContextQueueValue {
                         vtime,
                         weight,
-                        WeakContextRef(Arc::downgrade(&prev_context_lock)),
-                    ),
+                        context_ref: WeakContextRef(Arc::downgrade(&prev_context_lock)),
+                    },
                 );
                 percpu
                     .switch_internals
@@ -935,8 +992,8 @@ pub struct ContextSwitchPercpu {
     /// (key, weight, context_ref, guard, addr_space)
     tmp_steal: RefCell<
         Vec<(
-            (u64, Reverse<u64>, u32), // key (vd, rem_slice, ctxt_id)
-            u64,                      // weight
+            ContextQueueKey,
+            u64, // weight
             WeakContextRef,
             ArcRwLockWriteGuard<L4, Context>,
             Option<AddrSpaceSwitchReadGuard>,
@@ -1100,8 +1157,8 @@ mod tests {
             mut queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,
         ) {
             queue.queue.insert(
-                (vtime, Reverse(vtime), id),
-                (vtime, 1024, WeakContextRef(Arc::downgrade(task))),
+                ContextQueueKey { vd: vtime, rem_slice: Reverse(vtime), ctxt_id: id },
+                ContextQueueValue { vtime, weight: 1024, context_ref: WeakContextRef(Arc::downgrade(task)) },
             );
         }
         fn check_and_reset_steal(cpu0: &mut PercpuBlock) {
