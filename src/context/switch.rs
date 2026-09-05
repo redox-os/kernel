@@ -1017,7 +1017,10 @@ impl ContextSwitchPercpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{Context, ContextLock, Status, WeakContextRef};
+    use crate::{
+        context::{Context, ContextLock, Status, WeakContextRef},
+        percpu::ALL_PERCPU_BLOCKS,
+    };
     use alloc::sync::Arc;
     use core::{cmp::Reverse, sync::atomic::Ordering};
 
