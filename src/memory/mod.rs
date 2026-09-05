@@ -445,10 +445,19 @@ pub struct RaiiFrame {
     inner: Frame,
 }
 impl RaiiFrame {
+    #[cfg(not(test))]
     pub fn allocate() -> Result<Self, Enomem> {
         init_frame(RefCount::One)
             .map_err(|_| Enomem)
             .map(|inner| Self { inner })
+    }
+    #[cfg(test)]
+    pub fn allocate() -> Result<Self, Enomem> {
+        Ok(RaiiFrame {
+            inner: Frame {
+                physaddr: NonZeroUsize::new(1).unwrap(),
+            },
+        })
     }
     pub unsafe fn new_unchecked(inner: Frame) -> Self {
         Self { inner }
@@ -463,6 +472,7 @@ impl RaiiFrame {
     }
 }
 
+#[cfg(not(test))]
 impl Drop for RaiiFrame {
     fn drop(&mut self) {
         if get_page_info(self.inner)
