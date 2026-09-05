@@ -270,7 +270,6 @@ unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
 unsafe fn walk_kstack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
     // Runs inside an NMI handler!
 
-    #[expect(clippy::needless_range_loop)]
     for i in *len..32 {
         if bp < CurrentRmmArch::PHYS_OFFSET
             || bp.saturating_add(16) >= CurrentRmmArch::PHYS_OFFSET + crate::PML4_SIZE

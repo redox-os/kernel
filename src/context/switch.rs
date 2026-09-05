@@ -22,7 +22,6 @@ use core::{
     hint, matches, mem,
     option::Option::{None, Some},
     sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-    u64,
 };
 use smallvec::SmallVec;
 use spin::mutex::SpinMutex;
@@ -50,7 +49,7 @@ pub const STEAL_INTERVAL: usize = 2;
 pub const MAX_STEAL: usize = 2;
 
 unsafe fn opportunistic_write_arc(lock: &Arc<ContextLock>) -> Option<ArcContextLockWriteGuard> {
-    if cfg!(opportunistic_context_locking) {
+    if cfg!(feature = "opportunistic_context_locking") {
         unsafe { lock.try_write_arc() }
     } else {
         Some(unsafe { lock.write_arc() })
@@ -258,7 +257,7 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
                     continue;
                 };
                 // TODO: can this happen?
-                if !cfg!(opportunistic_context_locking)
+                if !cfg!(feature = "opportunistic_context_locking")
                     && Weak::as_ptr(&context_ref.0)
                         == Arc::as_ptr(ArcRwLockWriteGuard::rwlock(&prev_context_guard))
                 {

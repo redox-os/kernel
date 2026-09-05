@@ -793,7 +793,10 @@ pub struct AddrSpaceSwitchReadGuard {
 impl AddrSpaceSwitchReadGuard {
     pub fn new(guard: RwLockReadGuard<'_, L5, AddrSpace>) -> Self {
         Self {
-            lock: unsafe { core::mem::transmute(guard) },
+            // extend lifetime
+            lock: unsafe {
+                core::mem::transmute::<RwLockReadGuard<'_, _, _>, RwLockReadGuard<'_, _, _>>(guard)
+            },
         }
     }
 }

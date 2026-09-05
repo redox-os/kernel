@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::{
-    Arch, FrameAllocator, FrameCount, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress,
+    Arch, FrameAllocator, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress,
     TableKind, VirtualAddress,
 };
 

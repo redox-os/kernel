@@ -235,7 +235,7 @@ impl Call for &[usize] {
                 len,
                 metadata.len() | combined_flags.bits(),
                 metadata.as_ptr() as usize,
-                self.len() * mem::size_of::<usize>(),
+                mem::size_of_val(*self),
             )
         }
     }

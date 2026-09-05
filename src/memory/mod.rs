@@ -973,7 +973,7 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
                     .div_ceil(PAGE_SIZE),
             ))
             .expect("Failed to allocate free list page");
-        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
+        let va = RmmA::phys_to_virt(free_list_page).data() as *mut FreeList;
         free_lists = unsafe { slice::from_raw_parts_mut(va, numa::number_of_memory_regions()) };
         for (i, region) in regions.enumerate() {
             let free_list = FreeList {
@@ -991,7 +991,7 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
         let free_list_page = allocator
             .allocate(FrameCount::new(size_of::<FreeList>().div_ceil(PAGE_SIZE)))
             .expect("Failed to allocate free list page");
-        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
+        let va = RmmA::phys_to_virt(free_list_page).data() as *mut FreeList;
         free_lists = unsafe { slice::from_raw_parts_mut(va, 1) };
         let free_list = FreeList {
             upper_limit: usize::MAX,

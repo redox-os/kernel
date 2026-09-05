@@ -241,15 +241,11 @@ pub fn nearest_next_memory_region(addr: usize, overlap: bool) -> Option<&'static
     NUMA_MEMORY
         .get()?
         .iter()
-        .filter_map(|e| {
-            if if overlap {
+        .filter(|e| {
+            if overlap {
                 e.start >= addr
             } else {
                 e.start > addr
-            } {
-                Some(e)
-            } else {
-                None
             }
         })
         .min_by_key(|e| e.start)
@@ -259,15 +255,11 @@ pub fn nearest_preceding_memory_region(addr: usize, overlap: bool) -> Option<&'s
     NUMA_MEMORY
         .get()?
         .iter()
-        .filter_map(|e| {
-            if if overlap {
+        .filter(|e| {
+            if overlap {
                 e.start <= addr
             } else {
                 e.start < addr
-            } {
-                Some(e)
-            } else {
-                None
             }
         })
         .max_by_key(|e| e.start)
