@@ -19,7 +19,8 @@ use crate::{
     cpu_stats,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{
-        allocate_p2frame, deallocate_p2frame, Enomem, Frame, RaiiFrame, RmmA, RmmArch, PAGE_SIZE,
+        allocate_p2frame, deallocate_p2frame, Enomem, Frame, FrameAllocated, RaiiFrame, RmmA,
+        RmmArch, PAGE_SIZE,
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
@@ -27,7 +28,7 @@ use crate::{
     syscall::usercopy::UserSliceRw,
 };
 
-use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ESRCH};
+use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE, ENOMEM, ESRCH};
 
 use super::{
     empty_cr3,
@@ -581,10 +582,10 @@ impl core::fmt::Debug for Kstack {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct FdTbl {
-    pub lower_fdtbl: Vec<Option<FileDescriptor>>,
-    pub upper_fdtbl: Vec<Option<FileDescriptor>>,
+    pub lower_fdtbl: RadixFdTbl,
+    pub upper_fdtbl: RadixFdTbl,
     active_count: usize,
 }
 
@@ -593,10 +594,18 @@ pub type LockedFdTbl = RwLock<L5, FdTbl>;
 impl FdTbl {
     pub fn new() -> Self {
         Self {
-            lower_fdtbl: Vec::new(),
-            upper_fdtbl: Vec::new(),
+            lower_fdtbl: RadixFdTbl::new(),
+            upper_fdtbl: RadixFdTbl::new(),
             active_count: 0,
         }
+    }
+
+    pub fn try_clone(&self) -> Result<Self> {
+        Ok(Self {
+            lower_fdtbl: self.lower_fdtbl.try_clone()?,
+            upper_fdtbl: self.upper_fdtbl.try_clone()?,
+            active_count: self.active_count,
+        })
     }
 
     pub fn resize(&mut self, which: usize, size: usize) -> Result<()> {
@@ -604,19 +613,15 @@ impl FdTbl {
         if super::CONTEXT_MAX_FILES < size {
             return Err(Error::new(EMFILE));
         }
-        if size < fdtbl.len() {
-            return Err(Error::new(EINVAL));
-        }
 
-        fdtbl.resize(size, None);
-        Ok(())
+        fdtbl.resize(size)
     }
 
     fn strip_tags(index: usize) -> usize {
         index & !UPPER_FDTBL_TAG
     }
 
-    fn select_fdtbl(&self, index: usize) -> (&Vec<Option<FileDescriptor>>, usize) {
+    fn select_fdtbl(&self, index: usize) -> (&RadixFdTbl, usize) {
         if index & UPPER_FDTBL_TAG == 0 {
             (&self.lower_fdtbl, index)
         } else {
@@ -624,7 +629,7 @@ impl FdTbl {
         }
     }
 
-    fn select_fdtbl_mut(&mut self, index: usize) -> (&mut Vec<Option<FileDescriptor>>, usize) {
+    fn select_fdtbl_mut(&mut self, index: usize) -> (&mut RadixFdTbl, usize) {
         if index & UPPER_FDTBL_TAG == 0 {
             (&mut self.lower_fdtbl, index)
         } else {
@@ -642,7 +647,7 @@ impl FdTbl {
             if !checked_handles.insert(index) {
                 return Err(Error::new(EBADF)); // Duplicate handle
             }
-            if !matches!(self.get(index), Some(Some(_))) {
+            if !self.is_occupied(index) {
                 return Err(Error::new(EBADF));
             }
         }
@@ -660,7 +665,7 @@ impl FdTbl {
             if !checked_slots.insert(index) {
                 return Err(Error::new(EINVAL)); // Duplicate slots
             }
-            if matches!(self.get(index), Some(Some(_))) {
+            if self.is_occupied(index) {
                 return Err(Error::new(EEXIST));
             }
         }
@@ -669,27 +674,21 @@ impl FdTbl {
     }
 
     fn insert_file(&mut self, i: FileHandle, file: FileDescriptor) -> Option<FileHandle> {
-        if self.active_count >= super::CONTEXT_MAX_FILES {
-            return None;
-        }
         let index = i.get();
-        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
+        let is_occupied = self.is_occupied(index);
 
-        if real_index >= super::CONTEXT_MAX_FILES {
+        if !is_occupied && self.active_count >= super::CONTEXT_MAX_FILES {
             return None;
         }
 
-        if real_index >= fdtbl.len() {
-            fdtbl.resize_with(real_index + 1, || None);
+        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
+        let old = fdtbl.insert(real_index, file)?;
+
+        if old.is_none() {
+            self.active_count += 1;
         }
 
-        if let Some(slot @ None) = fdtbl.get_mut(real_index) {
-            *slot = Some(file);
-            self.active_count += 1;
-            Some(i)
-        } else {
-            None
-        }
+        Some(i)
     }
 
     fn bulk_insert_files(
@@ -715,20 +714,19 @@ impl FdTbl {
         Ok(())
     }
 
-    pub fn get(&self, index: usize) -> Option<&Option<FileDescriptor>> {
+    pub fn is_occupied(&self, index: usize) -> bool {
         let (fdtbl, real_index) = self.select_fdtbl(index);
-
-        fdtbl.get(real_index)
-    }
-
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut Option<FileDescriptor>> {
-        let (fdtbl, real_index) = self.select_fdtbl_mut(index);
-
-        fdtbl.get_mut(real_index)
+        fdtbl.is_occupied(real_index)
     }
 
     pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
-        self.get(i.get()).cloned().flatten()
+        let (fdtbl, real_index) = self.select_fdtbl(i.get());
+        fdtbl.get(real_index).cloned()
+    }
+
+    pub fn get_file_mut(&mut self, i: FileHandle) -> Option<&mut FileDescriptor> {
+        let (fdtbl, real_index) = self.select_fdtbl_mut(i.get());
+        fdtbl.get_mut(real_index)
     }
 
     fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
@@ -752,24 +750,33 @@ impl FdTbl {
         scheme_number: usize,
         token: &mut LockToken<L5>,
     ) -> Result<FileDescriptor> {
-        self.iter()
-            .flatten()
-            .find(|&context_fd| {
-                let desc = context_fd.description.read(token.token());
-                // TODO: possibly quite slow
-                desc.scheme_ref.upgrade().map_or(false, |s| {
-                    s.scheme_id() == scheme_id && desc.number == scheme_number
-                })
-            })
-            .cloned()
-            .ok_or(Error::new(EBADF))
+        let mut found = None;
+        self.for_each(|fd_opt| {
+            if found.is_some() {
+                return;
+            }
+            let Some(context_fd) = fd_opt else {
+                return;
+            };
+            let desc = context_fd.description.read(token.token());
+            // TODO: possibly quite slow
+            if let Ok(s) = desc.scheme_ref.upgrade() {
+                if s.scheme_id() == scheme_id && desc.number == scheme_number {
+                    found = Some(context_fd.clone());
+                }
+            }
+        });
+        found.ok_or(Error::new(EBADF))
     }
 
     pub fn remove_file(&mut self, i: FileHandle) -> Option<FileDescriptor> {
         let index = i.get();
         let (fdtbl, real_index) = self.select_fdtbl_mut(index);
+        if real_index >= super::CONTEXT_MAX_FILES {
+            return None;
+        }
 
-        let removed_file_opt = fdtbl.get_mut(real_index).and_then(|opt| opt.take());
+        let removed_file_opt = fdtbl.remove(real_index);
         if removed_file_opt.is_some() {
             self.active_count -= 1;
         }
@@ -789,34 +796,39 @@ impl FdTbl {
         Ok(files)
     }
 
+    pub fn for_each<F>(&self, mut f: F)
+    where
+        F: FnMut(&Option<FileDescriptor>),
+    {
+        self.lower_fdtbl.for_each(&mut f);
+        self.upper_fdtbl.for_each(&mut f);
+    }
+
+    pub fn for_each_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Option<FileDescriptor>),
+    {
+        self.lower_fdtbl.for_each_mut(&mut f);
+        self.upper_fdtbl.for_each_mut(&mut f);
+    }
+
     pub fn force_close_all(&mut self, token: &mut CleanLockToken) {
-        for file_opt in self.iter_mut() {
+        self.for_each_mut(|file_opt| {
             if let Some(file) = file_opt.take() {
                 let _ = file.close(token);
             }
-        }
+        });
         self.active_count = 0;
     }
 }
 
 impl FdTbl {
-    pub fn enumerate(&self) -> impl Iterator<Item = (usize, &Option<FileDescriptor>)> {
-        self.lower_fdtbl.iter().enumerate().chain(
+    pub fn enumerate_fds(&self) -> impl Iterator<Item = (usize, &FileDescriptor)> {
+        self.lower_fdtbl.enumerate_fds().chain(
             self.upper_fdtbl
-                .iter()
-                .enumerate()
+                .enumerate_fds()
                 .map(|(i, fd)| (i | UPPER_FDTBL_TAG, fd)),
         )
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Option<FileDescriptor>> {
-        self.lower_fdtbl.iter().chain(self.upper_fdtbl.iter())
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Option<FileDescriptor>> {
-        self.lower_fdtbl
-            .iter_mut()
-            .chain(self.upper_fdtbl.iter_mut())
     }
 }
 
@@ -846,4 +858,340 @@ pub fn bulk_insert_fds(
     let files = files_iter.collect::<Vec<_>>();
     current.bulk_insert_files(files, &handles, &mut token)?;
     Ok(handles.len())
+}
+
+#[cfg(target_pointer_width = "64")]
+pub const NODE_BITS: usize = 9; // 512 entries
+
+#[cfg(target_pointer_width = "32")]
+pub const NODE_BITS: usize = 10; // 1024 entries
+
+pub const NODE_SIZE: usize = 1 << NODE_BITS;
+pub const NODE_MASK: usize = NODE_SIZE - 1;
+
+#[derive(Debug)]
+pub enum Node {
+    Leaf([Option<FileDescriptor>; NODE_SIZE]),
+    Branch([Option<FrameAllocated<Node>>; NODE_SIZE]),
+}
+
+impl Node {
+    pub const fn empty_leaf() -> Self {
+        Self::Leaf([const { None }; NODE_SIZE])
+    }
+
+    pub const fn empty_branch() -> Self {
+        Self::Branch([const { None }; NODE_SIZE])
+    }
+
+    pub fn get(&self, handle: usize, shift: usize) -> Option<&Option<FileDescriptor>> {
+        let index = (handle >> shift) & NODE_MASK;
+        match self {
+            Self::Leaf(slots) => slots.get(index),
+            Self::Branch(children) => {
+                let child = children.get(index)?.as_deref()?;
+                child.get(handle, shift.checked_sub(NODE_BITS)?)
+            }
+        }
+    }
+
+    pub fn get_mut(&mut self, handle: usize, shift: usize) -> Option<&mut Option<FileDescriptor>> {
+        let index = (handle >> shift) & NODE_MASK;
+        match self {
+            Self::Leaf(slots) => slots.get_mut(index),
+            Self::Branch(children) => {
+                let child = children.get_mut(index)?.as_deref_mut()?;
+                child.get_mut(handle, shift.checked_sub(NODE_BITS)?)
+            }
+        }
+    }
+
+    pub fn ensure_path(&mut self, max_index: usize, shift: usize) -> Result<()> {
+        let max_idx = (max_index >> shift) & NODE_MASK;
+        let next_shift = shift.saturating_sub(NODE_BITS);
+
+        if let Self::Branch(children) = self {
+            for i in 0..max_idx {
+                let child = match &mut children[i] {
+                    Some(child) => child,
+                    slot @ None => {
+                        let child = FrameAllocated::try_new(if next_shift == 0 {
+                            Node::empty_leaf()
+                        } else {
+                            Node::empty_branch()
+                        })
+                        .ok_or(Error::new(ENOMEM))?;
+                        slot.insert(child)
+                    }
+                };
+                if next_shift > 0 {
+                    let sub_max = (1 << shift) - 1;
+                    child.ensure_path(sub_max, next_shift)?;
+                }
+            }
+
+            let child = match &mut children[max_idx] {
+                Some(child) => child,
+                slot @ None => {
+                    let child = FrameAllocated::try_new(if next_shift == 0 {
+                        Node::empty_leaf()
+                    } else {
+                        Node::empty_branch()
+                    })
+                    .ok_or(Error::new(ENOMEM))?;
+                    slot.insert(child)
+                }
+            };
+            if next_shift > 0 {
+                child.ensure_path(max_index, next_shift)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn for_each<F>(&self, f: &mut F)
+    where
+        F: FnMut(&Option<FileDescriptor>),
+    {
+        match self {
+            Self::Leaf(slots) => {
+                for slot in slots.iter() {
+                    f(slot);
+                }
+            }
+            Self::Branch(children) => {
+                for child in children.iter().flatten() {
+                    child.for_each(f);
+                }
+            }
+        }
+    }
+
+    pub fn for_each_mut<F>(&mut self, f: &mut F)
+    where
+        F: FnMut(&mut Option<FileDescriptor>),
+    {
+        match self {
+            Self::Leaf(slots) => {
+                for slot in slots.iter_mut() {
+                    f(slot);
+                }
+            }
+            Self::Branch(children) => {
+                for child in children.iter_mut().flatten() {
+                    child.for_each_mut(f);
+                }
+            }
+        }
+    }
+
+    pub fn try_clone(&self) -> Result<Self> {
+        match self {
+            Self::Leaf(fds) => Ok(Self::Leaf(core::array::from_fn(|i| fds[i].clone()))),
+            Self::Branch(nodes) => {
+                let mut new_nodes = [const { None }; NODE_SIZE];
+                for (i, node_opt) in nodes.iter().enumerate() {
+                    if let Some(node) = node_opt {
+                        new_nodes[i] = Some(
+                            FrameAllocated::try_new(node.try_clone()?).ok_or(Error::new(ENOMEM))?,
+                        );
+                    }
+                }
+                Ok(Self::Branch(new_nodes))
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct RadixFdTbl {
+    root: Option<FrameAllocated<Node>>,
+    levels: usize,
+    allocated_size: usize,
+}
+
+impl Default for RadixFdTbl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RadixFdTbl {
+    pub const fn new() -> Self {
+        Self {
+            root: None,
+            levels: 0,
+            allocated_size: 0,
+        }
+    }
+
+    pub fn try_clone(&self) -> Result<Self> {
+        Ok(Self {
+            root: match &self.root {
+                None => None,
+                Some(root) => {
+                    Some(FrameAllocated::try_new(root.try_clone()?).ok_or(Error::new(ENOMEM))?)
+                }
+            },
+            levels: self.levels,
+            allocated_size: self.allocated_size,
+        })
+    }
+
+    #[inline]
+    fn root_shift(&self) -> usize {
+        self.levels.saturating_sub(1) * NODE_BITS
+    }
+
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        if self.levels == 0 {
+            0
+        } else {
+            1 << (self.levels * NODE_BITS)
+        }
+    }
+
+    #[inline]
+    pub fn allocated_size(&self) -> usize {
+        self.allocated_size
+    }
+
+    pub fn get(&self, handle: usize) -> Option<&FileDescriptor> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        self.root
+            .as_deref()?
+            .get(handle, self.root_shift())?
+            .as_ref()
+    }
+
+    pub fn get_mut(&mut self, handle: usize) -> Option<&mut FileDescriptor> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root.as_deref_mut()?.get_mut(handle, shift)?.as_mut()
+    }
+
+    pub fn get_slot(&self, handle: usize) -> Option<&Option<FileDescriptor>> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        self.root.as_deref()?.get(handle, self.root_shift())
+    }
+
+    pub fn get_slot_mut(&mut self, handle: usize) -> Option<&mut Option<FileDescriptor>> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root.as_deref_mut()?.get_mut(handle, shift)
+    }
+
+    #[inline]
+    pub fn is_occupied(&self, handle: usize) -> bool {
+        self.get(handle).is_some()
+    }
+
+    pub fn insert(&mut self, handle: usize, fd: FileDescriptor) -> Option<Option<FileDescriptor>> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root
+            .as_deref_mut()?
+            .get_mut(handle, shift)
+            .map(|slot| slot.replace(fd))
+    }
+
+    pub fn remove(&mut self, handle: usize) -> Option<FileDescriptor> {
+        if handle >= self.allocated_size {
+            return None;
+        }
+        let shift = self.root_shift();
+        self.root.as_deref_mut()?.get_mut(handle, shift)?.take()
+    }
+
+    pub fn resize(&mut self, size: usize) -> Result<()> {
+        if size < self.allocated_size {
+            return Err(Error::new(EINVAL));
+        }
+        let max_index = size - 1;
+
+        if self.root.is_none() {
+            self.root =
+                Some(FrameAllocated::try_new(Node::empty_leaf()).ok_or(Error::new(ENOMEM))?);
+            self.levels = 1;
+        }
+
+        while max_index >= self.capacity() {
+            let old_root = self.root.take().unwrap();
+            let mut new_branch = Node::empty_branch();
+            if let Node::Branch(ref mut children) = new_branch {
+                children[0] = Some(old_root);
+            }
+            self.root = Some(FrameAllocated::try_new(new_branch).ok_or(Error::new(ENOMEM))?);
+            self.levels += 1;
+        }
+
+        let shift = self.root_shift();
+        if let Some(ref mut root) = self.root {
+            if self.levels > 1 {
+                root.ensure_path(max_index, shift)?;
+            }
+        }
+
+        self.allocated_size = size;
+        Ok(())
+    }
+
+    pub fn for_each<F>(&self, mut f: F)
+    where
+        F: FnMut(&Option<FileDescriptor>),
+    {
+        if let Some(ref root) = self.root {
+            root.for_each(&mut f);
+        }
+    }
+
+    pub fn for_each_mut<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Option<FileDescriptor>),
+    {
+        if let Some(ref mut root) = self.root {
+            root.for_each_mut(&mut f);
+        }
+    }
+
+    #[inline]
+    pub fn enumerate_fds(&self) -> RadixFdTblEnumerateFds<'_> {
+        RadixFdTblEnumerateFds {
+            tbl: self,
+            cur: 0,
+            max: self.allocated_size,
+        }
+    }
+}
+
+pub struct RadixFdTblEnumerateFds<'a> {
+    tbl: &'a RadixFdTbl,
+    cur: usize,
+    max: usize,
+}
+
+impl<'a> Iterator for RadixFdTblEnumerateFds<'a> {
+    type Item = (usize, &'a FileDescriptor);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.cur < self.max {
+            let handle = self.cur;
+            self.cur += 1;
+            if let Some(fd) = self.tbl.get(handle) {
+                return Some((handle, fd));
+            }
+        }
+        None
+    }
 }
