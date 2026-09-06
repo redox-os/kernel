@@ -375,7 +375,9 @@ pub fn allocate_and_init_pcr(
         .next_power_of_two()
         .trailing_zeros();
 
-    let pcr_frame = crate::memory::allocate_p2frame(alloc_order).expect("failed to allocate PCR");
+    let must_be_zero = true;
+    let pcr_frame =
+        crate::memory::allocate_p2frame(alloc_order, must_be_zero).expect("failed to allocate PCR");
     let pcr_ptr = RmmA::phys_to_virt(pcr_frame.base()).data() as *mut ProcessorControlRegion;
     unsafe { core::ptr::write(pcr_ptr, ProcessorControlRegion::new_partial_init(cpu_id)) };
 

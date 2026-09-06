@@ -74,8 +74,9 @@ pub(super) fn init(madt: Madt) {
                 let cpu_id = LogicalCpuId::next();
 
                 // Allocate a stack
+                let must_be_zero = true;
                 let stack_start = RmmA::phys_to_virt(
-                    allocate_p2frame(4)
+                    allocate_p2frame(4, must_be_zero)
                         .expect("no more frames in acpi stack_start")
                         .base(),
                 )
