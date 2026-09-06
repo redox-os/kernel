@@ -1032,8 +1032,6 @@ mod tests {
             unsafe {
                 crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_mut(cpu));
 
-                ALL_PERCPU_BLOCKS[i as usize].store(cpu as *mut _, Ordering::Release);
-
                 let idle_context = Arc::new(ContextLock::new(Context::new(None).unwrap()));
                 cpu.switch_internals.set_idle_context(idle_context);
             }
