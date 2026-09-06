@@ -555,8 +555,9 @@ pub struct Kstack {
 }
 impl Kstack {
     pub fn new() -> Result<Self, Enomem> {
+        let must_be_zero = true;
         Ok(Self {
-            base: allocate_p2frame(4).ok_or(Enomem)?,
+            base: allocate_p2frame(4, must_be_zero).ok_or(Enomem)?,
         })
     }
     pub fn initial_top(&self) -> *mut u8 {

@@ -1804,7 +1804,9 @@ impl Grant {
                         Frame::containing(phys)
                     } else {
                         // TODO: Omit the unnecessary subsequent add_ref call.
-                        let new_frame = init_frame(RefCount::One).expect("TODO: handle OOM");
+                        let must_be_zero = true;
+                        let new_frame =
+                            init_frame(RefCount::One, must_be_zero).expect("TODO: handle OOM");
                         let src_flush = unsafe {
                             src_mapper
                                 .map_phys(src_page.start_address(), new_frame.base(), flags)
@@ -2482,13 +2484,19 @@ fn cow(
         });
     }
 
-    let new_frame = init_frame(initial_rc)?;
+    let must_be_zero = false;
+    let new_frame;
 
-    if old_frame != the_zeroed_frame().0 {
+    if old_frame == the_zeroed_frame().0 {
+        let must_be_zero = true;
+        new_frame = init_frame(initial_rc, must_be_zero)?;
+    } else {
+        let must_be_zero = false;
+        new_frame = init_frame(initial_rc, must_be_zero)?;
         unsafe {
             copy_frame_to_frame_directly(new_frame, old_frame);
         }
-    }
+    };
 
     Ok(CowResult {
         new_frame,
@@ -2502,7 +2510,8 @@ fn map_zeroed(
     page_flags: PageFlags<RmmA>,
     _writable: bool,
 ) -> Result<Frame, PfError> {
-    let new_frame = init_frame(RefCount::One)?;
+    let must_be_zero = true;
+    let new_frame = init_frame(RefCount::One, must_be_zero)?;
 
     unsafe {
         mapper
