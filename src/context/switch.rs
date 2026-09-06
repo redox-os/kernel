@@ -1017,10 +1017,7 @@ impl ContextSwitchPercpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        context::{Context, ContextLock, Status, WeakContextRef},
-        percpu::ALL_PERCPU_BLOCKS,
-    };
+    use crate::context::{Context, ContextLock, Status, WeakContextRef};
     use alloc::sync::Arc;
     use core::{cmp::Reverse, sync::atomic::Ordering};
 
@@ -1034,8 +1031,6 @@ mod tests {
 
             unsafe {
                 crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_mut(cpu));
-
-                ALL_PERCPU_BLOCKS[i as usize].store(cpu as *mut _, Ordering::Release);
 
                 let idle_context = Arc::new(ContextLock::new(Context::new(None).unwrap()));
                 cpu.switch_internals.set_idle_context(idle_context);
