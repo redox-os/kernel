@@ -730,7 +730,7 @@ impl FdTbl {
         fdtbl.get_mut(real_index)
     }
 
-    pub fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+    fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
         // Validate that all handles are valid before proceeding to avoid partial results.
         self.validate_handles(handles)?;
 

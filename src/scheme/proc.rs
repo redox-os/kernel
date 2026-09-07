@@ -935,16 +935,12 @@ impl KernelScheme for ProcScheme {
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
-    let (context, mut split_token) = current.token_split();
+    let (context, mut token) = current.token_split();
+    let file_descriptor = context
+        .get_file(FileHandle::from(fd), &mut token)
+        .ok_or(Error::new(EBADF))?;
 
-    let desc_arc = {
-        let files = context.files.read(split_token.token());
-        let file = files
-            .get_file(FileHandle::from(fd))
-            .ok_or(Error::new(EBADF))?;
-        file.description
-    };
-    let desc = desc_arc.read(split_token.token());
+    let desc = file_descriptor.description.read(token.token());
     Ok((desc.scheme_ref.upgrade()?, desc.number))
 }
 fn verify_scheme(scheme: KernelSchemes) -> Result<()> {
