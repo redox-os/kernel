@@ -289,7 +289,7 @@ impl Context {
         i: FileHandle,
         lock_token: &mut LockToken<L4>,
     ) -> Option<FileDescriptor> {
-        self.files.read(lock_token.token()).get_file(i)
+        self.files.read(lock_token.token()).get_file(i).cloned()
     }
 
     /// Bulk get files
@@ -298,7 +298,10 @@ impl Context {
         handles: &[FileHandle],
         lock_token: &mut LockToken<L4>,
     ) -> Result<Vec<FileDescriptor>> {
-        self.files.read(lock_token.token()).bulk_get_files(handles)
+        self.files
+            .read(lock_token.token())
+            .bulk_get_files(handles)
+            .map(|files| files.into_iter().cloned().collect())
     }
 
     /// Insert a file with a specific handle number. This is used by dup2
@@ -720,9 +723,9 @@ impl FdTbl {
         fdtbl.is_occupied(real_index)
     }
 
-    pub fn get_file(&self, i: FileHandle) -> Option<FileDescriptor> {
+    pub fn get_file(&self, i: FileHandle) -> Option<&FileDescriptor> {
         let (fdtbl, real_index) = self.select_fdtbl(i.get());
-        fdtbl.get(real_index).cloned()
+        fdtbl.get(real_index)
     }
 
     pub fn get_file_mut(&mut self, i: FileHandle) -> Option<&mut FileDescriptor> {
@@ -730,7 +733,7 @@ impl FdTbl {
         fdtbl.get_mut(real_index)
     }
 
-    fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<FileDescriptor>> {
+    fn bulk_get_files(&self, handles: &[FileHandle]) -> Result<Vec<&FileDescriptor>> {
         // Validate that all handles are valid before proceeding to avoid partial results.
         self.validate_handles(handles)?;
 
