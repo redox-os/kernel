@@ -1350,10 +1350,10 @@ pub struct TheFrameAllocator(pub NumaMemoryPolicy);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
-        let _must_be_zero = true;
+        let must_be_zero = true;
         let order = count.data().next_power_of_two().trailing_zeros();
         if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
-            allocate_p2frame_with_mask(mask, order, fallback, true).map(|f| f.base())
+            allocate_p2frame_with_mask(mask, order, fallback, must_be_zero).map(|f| f.base())
         } else {
             allocate_p2frame(order, true).map(|f| f.base())
         }
