@@ -524,7 +524,7 @@ impl<T> FrameAllocated<T> {
 
     pub fn try_new(val: T) -> Option<Self> {
         let order = const { Self::order().unwrap() };
-        let frame = crate::memory::allocate_p2frame(order)?;
+        let frame = crate::memory::allocate_p2frame(order, false)?;
 
         let this = Self {
             frame,
