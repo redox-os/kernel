@@ -146,7 +146,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 
             // Read ACPI tables, starts APs
             if cfg!(feature = "acpi") {
-                crate::acpi::init_after_mem(args.acpi_rsdp());
+                crate::acpi::init_after_mem();
                 device::init_after_acpi();
             }
             crate::profiling::init();

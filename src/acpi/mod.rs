@@ -159,7 +159,7 @@ pub unsafe fn init_before_mem(
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information. The code performs allocations, so
 /// it must be called only after the allocator is set up.
-pub unsafe fn init_after_mem(_already_supplied_rsdp: Option<NonNull<u8>>) {
+pub unsafe fn init_after_mem() {
     if let Some(rxsdt) = RXSDT_ENUM.get() {
         unsafe {
             {
