@@ -235,7 +235,11 @@ impl Call for &[usize] {
                 len,
                 metadata.len() | combined_flags.bits(),
                 metadata.as_ptr() as usize,
-                mem::size_of_val(*self),
+                #[allow(clippy::manual_slice_size_calculation)]
+                // avoid mem::size_of_val to be explicit here because of the auto-deref rules
+                {
+                    self.len() * mem::size_of::<usize>()
+                },
             )
         }
     }

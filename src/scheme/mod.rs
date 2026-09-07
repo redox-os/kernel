@@ -165,7 +165,6 @@ enum Handle {
     Scheme(KernelSchemes),
 }
 
-
 // TODO: Depending on whether we actually want to expose scheme IDs to userspace, a faster way
 // could be to just take the static scheme ID or pointer of Weak<UserInner> and use that directly.
 /// Schemes list
