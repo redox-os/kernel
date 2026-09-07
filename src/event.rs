@@ -116,23 +116,22 @@ impl EventQueue {
 
                 continue;
             }
-            let file = {
-                let context_ref = context::current();
-                let mut context = context_ref.read(token.token());
-                let (context, mut token) = context.token_split();
-                let files = context.files.read(token.token());
-                files
-                    .get_file(FileHandle::new(event.id))
-                    .ok_or(Error::new(EBADF))?
-            };
 
             let (scheme, number) = {
-                let description = file.description.read(token.token());
+                let current_lock = context::current();
+                let mut current = current_lock.read(token.token());
+                let (context, mut split_token) = current.token_split();
+
+                let desc_arc = {
+                    let files = context.files.read(split_token.token());
+                    let file = files
+                        .get_file(FileHandle::new(event.id))
+                        .ok_or(Error::new(EBADF))?;
+                    file.description
+                };
+                let desc = desc_arc.read(split_token.token());
                 // TODO: possibly slower than needed
-                (
-                    description.scheme_ref.upgrade()?.scheme_id(),
-                    description.number,
-                )
+                (desc.scheme_ref.upgrade()?.scheme_id(), desc.number)
             };
 
             if scheme == GlobalSchemes::Event.scheme_id() && number == self.id.into() {
