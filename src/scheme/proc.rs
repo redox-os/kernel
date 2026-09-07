@@ -371,8 +371,8 @@ impl ProcScheme {
                     let mut data = Vec::new();
                     for index in filetable
                         .read(token.token())
-                        .enumerate()
-                        .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                        .enumerate_fds()
+                        .map(|(i, _)| i)
                     {
                         data.extend((index as u64).to_le_bytes());
                     }
@@ -383,8 +383,8 @@ impl ProcScheme {
                     let mut data = String::new();
                     for index in filetable
                         .read(token.token())
-                        .enumerate()
-                        .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                        .enumerate_fds()
+                        .map(|(i, _)| i)
                     {
                         writeln!(data, "{}", index).unwrap();
                     }
@@ -782,7 +782,7 @@ impl KernelScheme for ProcScheme {
                             let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
                             let new_filetable =
-                                Arc::new(RwLock::new(filetable.read(token.token()).clone()));
+                                Arc::new(RwLock::new(filetable.read(token.token()).try_clone()?));
 
                             Handle {
                                 kind: ContextHandle::NewFiletable {
@@ -800,8 +800,8 @@ impl KernelScheme for ProcScheme {
                                 let mut data = Vec::new();
                                 for index in filetable
                                     .read(token.token())
-                                    .enumerate()
-                                    .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                                    .enumerate_fds()
+                                    .map(|(i, _)| i)
                                 {
                                     data.extend((index as u64).to_le_bytes());
                                 }
@@ -811,8 +811,8 @@ impl KernelScheme for ProcScheme {
                                 let mut data = String::new();
                                 for index in filetable
                                     .read(token.token())
-                                    .enumerate()
-                                    .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                                    .enumerate_fds()
+                                    .map(|(i, _)| i)
                                 {
                                     writeln!(data, "{}", index).unwrap();
                                 }
