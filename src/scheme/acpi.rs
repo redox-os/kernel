@@ -5,6 +5,8 @@ use crate::sync::ordered::{Mutex, L4};
 use spin::Once;
 
 use syscall::data::GlobalSchemes;
+#[cfg(not(target_arch = "x86_64"))]
+use syscall::EOPNOTSUPP;
 
 use crate::{
     acpi::{RxsdtEnum, RXSDT_ENUM},
