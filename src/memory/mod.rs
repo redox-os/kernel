@@ -523,7 +523,7 @@ impl<T> FrameAllocated<T> {
     }
 
     pub fn try_new(val: T) -> Option<Self> {
-        let order = Self::order()?;
+        let order = const { Self::order().unwrap() };
         let frame = crate::memory::allocate_p2frame(order)?;
 
         let this = Self {
@@ -566,9 +566,8 @@ impl<T> Drop for FrameAllocated<T> {
         unsafe {
             core::ptr::drop_in_place(self.as_ptr());
 
-            if let Some(order) = Self::order() {
-                crate::memory::deallocate_p2frame(self.frame, order);
-            }
+            let order = const { Self::order().unwrap() };
+            crate::memory::deallocate_p2frame(self.frame, order);
         }
     }
 }
