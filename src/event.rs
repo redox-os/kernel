@@ -120,9 +120,8 @@ impl EventQueue {
                 let context_ref = context::current();
                 let mut context = context_ref.read(token.token());
                 let (context, mut token) = context.token_split();
-                let files = context.files.read(token.token());
-                files
-                    .get_file(FileHandle::new(event.id))
+                context
+                    .get_file(FileHandle::new(event.id), &mut token)
                     .ok_or(Error::new(EBADF))?
             };
 
