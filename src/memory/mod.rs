@@ -671,8 +671,6 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
         }
     };
 
-    let _iter = free_areas_iter().peekable();
-
     let mut sections_fill = |region: Option<MemoryArea>,
                              i: &mut usize, // out parameter
                              force: bool|

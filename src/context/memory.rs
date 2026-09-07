@@ -2486,7 +2486,6 @@ fn cow(
         });
     }
 
-    let _must_be_zero = false;
     let new_frame;
 
     if old_frame == the_zeroed_frame().0 {
