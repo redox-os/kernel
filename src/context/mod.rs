@@ -287,7 +287,6 @@ pub fn spawn(
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
-    let _run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
     contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)
