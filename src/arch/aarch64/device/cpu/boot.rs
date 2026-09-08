@@ -297,6 +297,7 @@ fn prepare_trampoline() -> Option<(RaiiFrame, PhysicalAddress)> {
             VirtualAddress::new(trampoline_phys.data()),
             trampoline_phys,
             PageFlags::new().execute(true),
+            0, // non-huge-page (PAGE_SIZE bytes)
         )
     }?;
     unsafe { flush.ignore() };
