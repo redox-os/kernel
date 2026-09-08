@@ -415,7 +415,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                 }
                 F_GET_SCHEMEID => Ok(file
                     .description
-                    .write(token.token())
+                    .read(token.token())
                     .scheme_ref
                     .upgrade()?
                     .scheme_id()
