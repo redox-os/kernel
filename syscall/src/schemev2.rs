@@ -102,6 +102,7 @@ pub enum CqeOpcode {
     /// "detached" from a file descriptor. Not done by default to avoid unnecessary IPC.
     RespondAndNotifyOnDetach,
     // TODO: ProvideMmap
+    CapRights,
 }
 
 impl CqeOpcode {
@@ -114,6 +115,7 @@ impl CqeOpcode {
             3 => Self::ObtainFd,
             4 => Self::RespondWithMultipleFds,
             5 => Self::RespondAndNotifyOnDetach,
+            6 => Self::CapRights,
             _ => return None,
         })
     }
@@ -162,6 +164,8 @@ pub enum Opcode {
     StdFsCall = 33,
 
     Detach = 34,
+
+    CapRights = 35,
 }
 
 impl Opcode {
@@ -206,6 +210,8 @@ impl Opcode {
             32 => UnlinkAt,
             33 => StdFsCall,
             34 => Detach,
+
+            35 => CapRights,
 
             _ => return None,
         })
