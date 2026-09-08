@@ -7,6 +7,7 @@ use crate::{
 use core::{
     cell::SyncUnsafeCell,
     cmp::{max, min},
+    num::NonZeroU8,
     slice::{self, Iter},
 };
 use rmm::{
@@ -326,22 +327,122 @@ fn kernel_page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
     .global(cfg!(all(target_arch = "x86_64", not(feature = "pti"))))
 }
 
+// TODO: use this function at more places
+unsafe fn map_phys_contiguous_inactive<A: Arch, Alloc: rmm::FrameAllocator>(
+    mapper: &mut PageMapper<A, Alloc>,
+    mut phys_base: PhysicalAddress,
+    mut virt_base: VirtualAddress,
+    flags: PageFlags<A>,
+    mut page_count: usize,
+    highest_supported_level: u8,
+) {
+    assert_eq!(phys_base.data() % A::PAGE_SIZE, 0);
+    assert_eq!(virt_base.data() % A::PAGE_SIZE, 0);
+
+    // `phys_base` and `virt_base` needs to have the same misalignment wrt the highest level they
+    // can be mapped with
+    let highest_map_level: u8 = ((phys_base.data() ^ virt_base.data()).trailing_zeros()
+        - A::PAGE_SHIFT as u32)
+        .div_ceil(A::PAGE_ENTRY_SHIFT as u32)
+        .min(u32::from(highest_supported_level))
+        .try_into()
+        .expect("unrealistic page table depth");
+
+    debug!(
+        "Contiguously mapping {:x} => {:x}, {page_count} pages, level {highest_map_level}",
+        phys_base.data(),
+        virt_base.data()
+    );
+
+    // head and middle
+    for level in 0..=highest_map_level {
+        let next_level = (level + 1).min(highest_map_level);
+        let pages_this_level = 1 << (A::PAGE_ENTRY_SHIFT * usize::from(level));
+        let pages_next_level = 1 << (A::PAGE_ENTRY_SHIFT * usize::from(next_level));
+        debug!(
+            "head+middle lvl {level} next {next_level} pages {pages_this_level} base {:x}",
+            phys_base.data()
+        );
+
+        while page_count >= pages_this_level {
+            if level != highest_map_level
+                && phys_base
+                    .data()
+                    .is_multiple_of(A::PAGE_SIZE * pages_next_level)
+            {
+                // Always use highest possible level.
+                break;
+            }
+            debug!(
+                "level {level} mapping {:x} => {:x}",
+                phys_base.data(),
+                virt_base.data()
+            );
+            let flusher = unsafe {
+                mapper
+                    .map_phys(virt_base, phys_base, flags, level)
+                    .expect("failed to map frame")
+            };
+            unsafe {
+                flusher.ignore();
+            }
+            phys_base = phys_base.add(A::PAGE_SIZE * pages_this_level);
+            virt_base = virt_base.add(A::PAGE_SIZE * pages_this_level);
+            page_count -= pages_this_level;
+        }
+    }
+    // tail
+    for level in (0..highest_map_level).rev() {
+        let pages_this_level = 1 << (A::PAGE_ENTRY_SHIFT * usize::from(level));
+        debug!(
+            "tail lvl {level} pages {pages_this_level} base {:x}",
+            phys_base.data()
+        );
+
+        while page_count >= pages_this_level {
+            let flusher = mapper
+                .map_phys(virt_base, phys_base, flags, level)
+                .expect("failed to map frame");
+            unsafe {
+                flusher.ignore();
+            }
+            phys_base = phys_base.add(A::PAGE_SIZE * pages_this_level);
+            virt_base = virt_base.add(A::PAGE_SIZE * pages_this_level);
+            page_count -= pages_this_level;
+        }
+    }
+    assert_eq!(page_count, 0);
+}
+
 unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut BumpAllocator<A>) {
     unsafe {
         let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut bump_allocator)
             .expect("failed to create Mapper");
 
+        let highest_huge_level = (NonZeroU8::new(1).unwrap()..NonZeroU8::MAX)
+            .position(|lvl| A::entry_flag_large(lvl).is_none())
+            .map_or(0, |i| u8::try_from(i).unwrap());
+        info!("Highest huge page level: {highest_huge_level}");
+
         // Map all physical areas at PHYS_OFFSET
         for area in areas.iter() {
-            for i in 0..area.size / PAGE_SIZE {
-                let phys = area.base.add(i * PAGE_SIZE);
-                let virt = A::phys_to_virt(phys);
-                let flags = kernel_page_flags::<A>(virt);
-                let flush = mapper
-                    .map_phys(virt, phys, flags)
-                    .expect("failed to map frame");
-                flush.ignore(); // Not the active table
+            let page_count = area.size / PAGE_SIZE;
+            if area.size % PAGE_SIZE != 0 || area.base.data() % PAGE_SIZE != 0 {
+                error!("Unaligned area: {area:?}");
             }
+            let virt_base = A::phys_to_virt(area.base);
+            let flags = PageFlags::new()
+                .write(true)
+                .global(cfg!(all(target_arch = "x86_64", not(feature = "pti"))));
+
+            map_phys_contiguous_inactive(
+                &mut mapper,
+                area.base,
+                virt_base,
+                flags,
+                page_count,
+                highest_huge_level,
+            );
         }
 
         let kernel_area = (*MEMORY_MAP.get()).kernel().unwrap();
@@ -355,7 +456,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
             );
             let flags = kernel_page_flags::<A>(virt);
             let flush = mapper
-                .map_phys(virt, phys, flags)
+                .map_phys(virt, phys, flags, 0)
                 .expect("failed to map frame");
             flush.ignore(); // Not the active table
         }
@@ -368,7 +469,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let virt = A::phys_to_virt(phys);
                 let flags = kernel_page_flags::<A>(virt);
                 let flush = mapper
-                    .map_phys(virt, phys, flags)
+                    .map_phys(virt, phys, flags, 0)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }
@@ -383,7 +484,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let virt = A::phys_to_virt(phys);
                 let flags = kernel_page_flags::<A>(virt).device_memory(true);
                 let flush = mapper
-                    .map_phys(virt, phys, flags)
+                    .map_phys(virt, phys, flags, 0)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }
@@ -401,7 +502,8 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], mut bump_allocator: &mut Bum
                 let virt = VirtualAddress::new(virt + i * PAGE_SIZE);
                 let flags = PageFlags::new().write(true).write_combining(true);
                 let flush = mapper
-                    .map_phys(virt, phys, flags)
+                    // TODO: support large/huge pages
+                    .map_phys(virt, phys, flags, 0)
                     .expect("failed to map frame");
                 flush.ignore(); // Not the active table
             }

@@ -354,6 +354,8 @@ pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAdd
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new().write(true).device_memory(true),
+                    // TODO: Huge pages, reuse function from startup/memory.
+                    0,
                 )
                 .expect("failed to linearly map device memory");
             flush.flush();

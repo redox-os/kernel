@@ -1,4 +1,4 @@
-use core::marker::PhantomData;
+use core::{marker::PhantomData, num::NonZeroU8};
 
 use crate::{
     Arch, FrameAllocator, FrameCount, PageEntry, PageFlags, PageFlush, PageTable, PhysicalAddress,
@@ -61,10 +61,20 @@ impl<A: Arch, F> PageMapper<A, F> {
         let mut table = self.table();
         loop {
             let i = table.index_of(virt)?;
-            if table.level() == 0 {
-                return Some(f(&mut table, i));
-            } else {
-                table = unsafe { table.next(i)? };
+
+            match (NonZeroU8::new(table.level().try_into().unwrap()), unsafe {
+                table.entry(i)
+            }) {
+                // leaf
+                (None, _) => return Some(f(&mut table, i)),
+                // leaf (large/huge page)
+                (Some(level), Some(entry))
+                    if A::entry_flag_large(level).is_some_and(|f| f & entry.data() != 0) =>
+                {
+                    return Some(f(&mut table, i))
+                }
+                // intermediate; continue to the next-level paging structure
+                _ => table = unsafe { table.next(i)? },
             }
         }
     }
@@ -86,6 +96,7 @@ impl<A: Arch, F> PageMapper<A, F> {
                 let old_flags = old_entry.flags();
                 let (new_phys, new_flags) = f(old_phys, old_flags)?;
                 // TODO: Higher-level PageEntry::new interface?
+                // TODO: check this can't break alignment for large/huge pages
                 let new_entry = PageEntry::new(new_phys.data(), new_flags.data());
                 p1.set_entry(i, new_entry);
                 Some((old_flags, old_phys, PageFlush::new(virt)))
@@ -160,18 +171,49 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         virt: VirtualAddress,
         phys: PhysicalAddress,
         flags: PageFlags<A>,
+        requested_level: u8,
     ) -> Option<PageFlush<A>> {
         unsafe {
-            //TODO: verify virt and phys are aligned
-            //TODO: verify flags have correct bits
-            let entry = PageEntry::new(phys.data(), flags.data());
+            // TODO: verify flags have correct bits, and that these are valid for the specific
+            // level
+
+            let required_align = A::PAGE_SHIFT + usize::from(requested_level) * A::PAGE_ENTRY_SHIFT;
+            assert_eq!(
+                (virt.data() >> required_align) << required_align,
+                virt.data(),
+                "unaligned virtual address"
+            );
+            assert_eq!(
+                (phys.data() >> required_align) << required_align,
+                phys.data(),
+                "unaligned physical address"
+            );
+
+            let mut entry = PageEntry::new(phys.data(), flags.data());
+            if let Some(level_nz) = NonZeroU8::new(requested_level) {
+                let flag = A::entry_flag_large(level_nz)
+                    .expect("trying to map at a level not supported by hw");
+                entry.set_flags(entry.flags().custom_flag(flag, true));
+            }
+
             let mut table = self.table();
             loop {
                 let i = table.index_of(virt)?;
-                if table.level() == 0 {
+                if table.level() == usize::from(requested_level) {
                     //TODO: check for overwriting entry
                     table.set_entry(i, entry);
                     return Some(PageFlush::new(virt));
+                }
+
+                if let Some(entry) = table.entry(i)
+                    && let Some(flag) = NonZeroU8::new(table.level().try_into().unwrap())
+                        .and_then(A::entry_flag_large)
+                {
+                    assert_eq!(
+                        entry.flags().data() & flag,
+                        0,
+                        "trying to interpret huge page as subtable"
+                    );
                 }
 
                 let next = match table.next(i) {
@@ -198,17 +240,19 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
         &mut self,
         phys: PhysicalAddress,
         flags: PageFlags<A>,
+        requested_level: u8,
     ) -> Option<(VirtualAddress, PageFlush<A>)> {
         unsafe {
             let virt = A::phys_to_virt(phys);
-            self.map_phys(virt, phys, flags).map(|flush| (virt, flush))
+            self.map_phys(virt, phys, flags, requested_level)
+                .map(|flush| (virt, flush))
         }
     }
 
     pub unsafe fn unmap_phys(
         &mut self,
         virt: VirtualAddress,
-    ) -> Option<(PhysicalAddress, PageFlags<A>, PageFlush<A>)> {
+    ) -> Option<(PhysicalAddress, u8, PageFlags<A>, PageFlush<A>)> {
         //TODO: verify virt is aligned
         let mut table = self.table();
 
@@ -216,7 +260,8 @@ impl<A: Arch, F: FrameAllocator> PageMapper<A, F> {
 
         unsafe {
             unmap_phys_inner(virt, &mut table, unmap_parents, &mut self.allocator)
-                .map(|(pa, pf)| (pa, pf, PageFlush::new(virt)))
+                // FIXME: may need to construct multiple page flushes if the level is higher
+                .map(|(pa, lvl, pf)| (pa, lvl, pf, PageFlush::new(virt)))
         }
     }
 }
@@ -226,19 +271,28 @@ unsafe fn unmap_phys_inner<A: Arch>(
     table: &mut PageTable<A>,
     unmap_parents: bool,
     allocator: &mut impl FrameAllocator,
-) -> Option<(PhysicalAddress, PageFlags<A>)> {
+) -> Option<(PhysicalAddress, u8, PageFlags<A>)> {
     unsafe {
         let i = table.index_of(virt)?;
+        let entry_opt = table.entry(i);
 
-        if table.level() == 0 {
-            let entry_opt = table.entry(i);
-            table.set_entry(i, PageEntry::new(0, 0));
-            let entry = entry_opt?;
+        let mut subtable = match (NonZeroU8::new(table.level().try_into().unwrap()), entry_opt) {
+            (None, _) => {
+                table.set_entry(i, PageEntry::new(0, 0));
+                let entry = entry_opt?;
 
-            return Some((entry.address().ok()?, entry.flags()));
-        }
+                return Some((entry.address().ok()?, 0, entry.flags()));
+            }
+            (Some(lvl), Some(entry))
+                if A::entry_flag_large(lvl).is_some_and(|f| f & entry.flags().data() != 0) =>
+            {
+                table.set_entry(i, PageEntry::new(0, 0));
+                let entry = entry_opt?;
 
-        let mut subtable = table.next(i)?;
+                return Some((entry.address().ok()?, lvl.get(), entry.flags()));
+            }
+            (Some(_), _) => table.next(i)?,
+        };
 
         let res = unmap_phys_inner(virt, &mut subtable, unmap_parents, allocator)?;
 

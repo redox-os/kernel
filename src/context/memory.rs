@@ -1278,7 +1278,7 @@ impl Grant {
 
         unsafe {
             mapper
-                .map_phys(page.start_address(), frame.base(), flags)
+                .map_phys(page.start_address(), frame.base(), flags, 0)
                 .ok_or(Error::new(ENOMEM))?
                 .ignore();
 
@@ -1318,7 +1318,7 @@ impl Grant {
             let frame = phys.next_by(i);
             unsafe {
                 let Some(result) =
-                    mapper.map_phys(page.start_address(), frame.base(), flags.write(false))
+                    mapper.map_phys(page.start_address(), frame.base(), flags.write(false), 0)
                 else {
                     break;
                 };
@@ -1367,7 +1367,7 @@ impl Grant {
 
             unsafe {
                 let result = mapper
-                    .map_phys(page.start_address(), frame.base(), flags)
+                    .map_phys(page.start_address(), frame.base(), flags, 0)
                     .expect("TODO: page table OOM");
                 result.ignore();
 
@@ -1409,9 +1409,12 @@ impl Grant {
                     .add_ref(RefKind::Cow)
                     .expect("the static zeroed frame cannot be shared!");
 
-                let Some(result) =
-                    mapper.map_phys(page.start_address(), the_frame.base(), flags.write(false))
-                else {
+                let Some(result) = mapper.map_phys(
+                    page.start_address(),
+                    the_frame.base(),
+                    flags.write(false),
+                    0,
+                ) else {
                     break;
                 };
                 result.ignore();
@@ -1612,6 +1615,7 @@ impl Grant {
                                 .write_combining(
                                     page_flags.has_flag(RmmA::ENTRY_FLAG_WRITE_COMBINING),
                                 ),
+                            0,
                         )
                         .unwrap();
                     flush.ignore();
@@ -1732,6 +1736,7 @@ impl Grant {
                             dst_base.next_by(i).start_address(),
                             phys,
                             flags.write(flags.has_write() && writable),
+                            0,
                         )
                         .ok_or(Error::new(ENOMEM))?;
                     flush.ignore();
@@ -1809,7 +1814,7 @@ impl Grant {
                             init_frame(RefCount::One, must_be_zero).expect("TODO: handle OOM");
                         let src_flush = unsafe {
                             src_mapper
-                                .map_phys(src_page.start_address(), new_frame.base(), flags)
+                                .map_phys(src_page.start_address(), new_frame.base(), flags, 0)
                                 .expect("TODO: handle OOM")
                         };
                         unsafe {
@@ -1888,6 +1893,8 @@ impl Grant {
                     dst_page,
                     src_frame.base(),
                     flags.write(flags.has_write() && allows_writable),
+                    // TODO: huge pages?
+                    0,
                 )
             }) else {
                 break;
@@ -1933,7 +1940,7 @@ impl Grant {
             let dst_page = dst_base.next_by(src_page.offset_from(self.base));
 
             // TODO: Validate flags?
-            let Some((phys, _flags, flush)) =
+            let Some((phys, lvl, _flags, flush)) =
                 (unsafe { src_mapper.unmap_phys(src_page.start_address()) })
             else {
                 continue;
@@ -1941,6 +1948,9 @@ impl Grant {
             unsafe {
                 flush.ignore();
             }
+            // TODO: huge pages
+            debug_assert_eq!(lvl, 0, "no userspace pages have huge mappings");
+
             src_flusher.queue(Frame::containing(phys), None, TlbShootdownActions::MOVE);
 
             let dst_mapper = dst_mapper.as_deref_mut().unwrap_or(&mut *src_mapper);
@@ -1948,7 +1958,7 @@ impl Grant {
             // TODO: Preallocate to handle OOM?
             let flush = unsafe {
                 dst_mapper
-                    .map_phys(dst_page.start_address(), phys, flags)
+                    .map_phys(dst_page.start_address(), phys, flags, 0)
                     .expect("TODO: OOM")
             };
             unsafe {
@@ -2061,10 +2071,12 @@ impl Grant {
 
             for i in 0..self.info.page_count {
                 unsafe {
-                    let (phys, _, flush) = mapper
+                    let (phys, lvl, _, flush) = mapper
                         .unmap_phys(self.base.next_by(i).start_address())
                         .expect("all physborrowed grants must be fully Present in the page tables");
                     flush.ignore();
+                    // TODO: huge pages
+                    debug_assert_eq!(lvl, 0);
 
                     assert_eq!(phys, base_frame.next_by(i).base());
                 }
@@ -2078,10 +2090,15 @@ impl Grant {
         } else {
             for page in self.span().pages() {
                 // Lazy mappings do not need to be unmapped.
-                let Some((phys, _, flush)) = (unsafe { mapper.unmap_phys(page.start_address()) })
+                let Some((phys, lvl, _, flush)) =
+                    (unsafe { mapper.unmap_phys(page.start_address()) })
                 else {
                     continue;
                 };
+
+                // TODO: huge pages
+                debug_assert_eq!(lvl, 0);
+
                 unsafe {
                     flush.ignore();
                 }
@@ -2515,7 +2532,8 @@ fn map_zeroed(
 
     unsafe {
         mapper
-            .map_phys(page.start_address(), new_frame.base(), page_flags)
+            // TODO: huge pages?
+            .map_phys(page.start_address(), new_frame.base(), page_flags, 0)
             .ok_or(PfError::Oom)?
             .ignore();
     }
@@ -2842,7 +2860,8 @@ fn correct_inner<'l>(
         addr_space
             .table
             .utable
-            .map_phys(faulting_page.start_address(), frame.base(), new_flags)
+            // TODO: huge pages?
+            .map_phys(faulting_page.start_address(), frame.base(), new_flags, 0)
     }) else {
         // TODO
         return Err(PfError::Oom);
