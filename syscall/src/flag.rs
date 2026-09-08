@@ -571,3 +571,47 @@ pub const MAX_CPU_COUNT: u32 = 128;
 pub const MAX_CPU_COUNT: u32 = 32;
 
 pub const CPU_SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct CapRights: u64 {
+        const CAP_MMAP      = 1 << 0;
+        const CAP_MMAP_X    = 1 << 1;
+        const CAP_READ      = 1 << 2;
+        const CAP_WRITE     = 1 << 3;
+        const CAP_SEEK      = 1 << 4;
+        const CAP_CREATE    = 1 << 5;
+        const CAP_LOOKUP    = 1 << 6;
+        const CAP_FCNTL     = 1 << 7;
+        const CAP_EVENT     = 1 << 8;
+
+        // Redox-specific rights
+        const CAP_SYS_CALL  = 1 << 9;
+        const CAP_NAMED_DUP = 1 << 10;
+
+        const KERNEL_MASK   = 0x0000_0000_0000_FFFF;
+        const SCHEME_MASK   = 0xFFFF_FFFF_FFFF_0000;
+    }
+}
+
+impl CapRights {
+    #[inline]
+    pub fn kernel_bits(self) -> Self {
+        self & Self::KERNEL_MASK
+    }
+
+    #[inline]
+    pub fn scheme_bits(self) -> Self {
+        self & Self::SCHEME_MASK
+    }
+
+    #[inline]
+    pub fn scheme_rights(self) -> u64 {
+        (self & Self::SCHEME_MASK).bits() >> 16
+    }
+
+    #[inline]
+    pub fn from_scheme_rights(rights: u64) -> Self {
+        Self::from_bits_truncate((rights << 16) & Self::SCHEME_MASK.bits())
+    }
+}
