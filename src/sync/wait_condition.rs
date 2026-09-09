@@ -6,13 +6,13 @@ use alloc::{
 };
 
 use crate::{
-    context::{self, unblock_context, ContextLock, PreemptGuardL2},
+    context::{self, unblock_context, ContextLock, PreemptGuardL2, WeakContextLock},
     sync::{CleanLockToken, LockToken, Mutex, L1, L2, L3},
 };
 
 #[derive(Debug)]
 pub struct WaitCondition {
-    contexts: Mutex<L3, Vec<Weak<ContextLock>>>,
+    contexts: Mutex<L3, Vec<WeakContextLock>>,
 }
 
 impl WaitCondition {

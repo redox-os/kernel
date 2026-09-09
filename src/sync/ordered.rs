@@ -51,7 +51,10 @@
 //! *g2 = 11;
 //! *g1 = 12;
 //! ```
-use alloc::sync::Arc;
+use alloc::{
+    alloc::{Allocator, Global},
+    sync::Arc,
+};
 use core::marker::PhantomData;
 
 use crate::percpu::PercpuBlock;
@@ -554,7 +557,9 @@ impl<L: Level, T> RwLock<L, T> {
     }
 
     // Unsafe due to not using token, currently required by context::switch
-    pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
+    pub unsafe fn write_arc<A: Allocator + Clone>(
+        self: &Arc<Self, A>,
+    ) -> ArcRwLockWriteGuard<L, T, A> {
         core::mem::forget(self.inner.write());
         ArcRwLockWriteGuard {
             rwlock: self.clone(),
@@ -562,7 +567,9 @@ impl<L: Level, T> RwLock<L, T> {
     }
 
     // Unsafe due to not using token, currently required by context::switch
-    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
+    pub unsafe fn try_write_arc<A: Allocator + Clone>(
+        self: &Arc<Self, A>,
+    ) -> Option<ArcRwLockWriteGuard<L, T, A>> {
         let Some(guard) = self.inner.try_write() else {
             return None;
         };
@@ -708,17 +715,17 @@ impl<L: Level, T> Drop for ArcRwLockReadGuard<L, T> {
     }
 }
 
-pub struct ArcRwLockWriteGuard<L: Level + 'static, T> {
-    rwlock: Arc<RwLock<L, T>>,
+pub struct ArcRwLockWriteGuard<L: Level + 'static, T, A: Allocator = Global> {
+    rwlock: Arc<RwLock<L, T>, A>,
 }
 
-impl<L: Level, T> ArcRwLockWriteGuard<L, T> {
-    pub fn rwlock(s: &Self) -> &Arc<RwLock<L, T>> {
+impl<L: Level, T, A: Allocator> ArcRwLockWriteGuard<L, T, A> {
+    pub fn rwlock(s: &Self) -> &Arc<RwLock<L, T>, A> {
         &s.rwlock
     }
 }
 
-impl<L: Level, T> core::ops::Deref for ArcRwLockWriteGuard<L, T> {
+impl<L: Level, T, A: Allocator> core::ops::Deref for ArcRwLockWriteGuard<L, T, A> {
     type Target = T;
 
     #[inline]
@@ -727,14 +734,14 @@ impl<L: Level, T> core::ops::Deref for ArcRwLockWriteGuard<L, T> {
     }
 }
 
-impl<L: Level, T> core::ops::DerefMut for ArcRwLockWriteGuard<L, T> {
+impl<L: Level, T, A: Allocator> core::ops::DerefMut for ArcRwLockWriteGuard<L, T, A> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe { &mut *self.rwlock.inner.as_mut_ptr() }
     }
 }
 
-impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
+impl<L: Level, T, A: Allocator> Drop for ArcRwLockWriteGuard<L, T, A> {
     #[inline]
     fn drop(&mut self) {
         unsafe {

@@ -3,6 +3,8 @@
 //! The Redox OS Kernel is a microkernel that supports `x86_64` systems and
 //! provides Unix-like syscalls for primarily Rust applications
 
+#![feature(allocator_api)]
+#![feature(arbitrary_self_types)] // TODO: consider refactoring away usages
 #![feature(int_roundings)]
 #![cfg_attr(dtb, feature(iter_next_chunk))]
 #![feature(sync_unsafe_cell)]

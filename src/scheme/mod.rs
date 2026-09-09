@@ -27,7 +27,7 @@ use crate::{
         self,
         file::{FileDescription, InternalFlags, KernelSchemeRef, LockedFileDescription},
         memory::AddrSpaceWrapper,
-        ContextLock,
+        ContextLock, WeakContextLock,
     },
     sync::{CleanLockToken, LockToken, RwLock, L0, L1},
     syscall::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
@@ -240,7 +240,7 @@ impl SchemeList {
     }
 
     /// Create a new scheme.
-    fn insert(&self, context: Weak<ContextLock>, token: &mut CleanLockToken) -> Result<SchemeId> {
+    fn insert(&self, context: WeakContextLock, token: &mut CleanLockToken) -> Result<SchemeId> {
         let mut handles = handles().write(token.token());
         let id = loop {
             let mut id = SCHEME_LIST_NEXT_ID.fetch_add(1, Ordering::Relaxed);

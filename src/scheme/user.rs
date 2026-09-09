@@ -23,7 +23,7 @@ use crate::{
             GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
         unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1,
-        Status,
+        Status, WeakContextLock,
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
@@ -42,7 +42,7 @@ use super::{CallerCtx, FileHandle, KernelScheme, OpenResult};
 pub struct UserInner {
     root_id: SchemeId,
     pub scheme_id: SchemeId,
-    context: Weak<ContextLock>,
+    context: WeakContextLock,
     todo: WaitQueue<Sqe>,
 
     // TODO: custom packed radix tree data structure
@@ -51,13 +51,13 @@ pub struct UserInner {
 
 enum State {
     Waiting {
-        context: Weak<ContextLock>,
+        context: WeakContextLock,
         fds: Vec<Arc<LockedFileDescription>>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
     Responded(Response),
-    Fmap(Weak<ContextLock>),
+    Fmap(WeakContextLock),
     Placeholder,
 }
 
@@ -155,7 +155,7 @@ impl ParsedCqe {
 }
 
 impl UserInner {
-    pub fn new(root_id: SchemeId, scheme_id: SchemeId, context: Weak<ContextLock>) -> UserInner {
+    pub fn new(root_id: SchemeId, scheme_id: SchemeId, context: WeakContextLock) -> UserInner {
         UserInner {
             root_id,
             scheme_id,
@@ -453,7 +453,7 @@ impl UserInner {
     // TODO: Hypothetical accept_head_leak, accept_tail_leak options might be useful for
     // libc-controlled buffer pools.
     fn capture_inner<const READ: bool, const WRITE: bool>(
-        context_weak: &Weak<ContextLock>,
+        context_weak: &WeakContextLock,
         user_buf: UserSlice<READ, WRITE>,
         token: &mut CleanLockToken,
     ) -> Result<CaptureGuard<READ, WRITE>> {

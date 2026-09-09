@@ -15,7 +15,7 @@ use crate::{
     context::{
         self,
         memory::{AccessMode, AddrSpace, Provider},
-        unblock_context, ContextLock,
+        unblock_context, ContextLock, WeakContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
     sync::{CleanLockToken, Mutex, L1},
@@ -35,7 +35,7 @@ type FutexList = HashMap<PhysicalAddress, Vec<FutexEntry>>;
 
 pub struct FutexEntry {
     // Context to wake up, and compare address spaces.
-    context_lock: Weak<ContextLock>,
+    context_lock: WeakContextLock,
 }
 
 // TODO: Process-private futexes? In that case, put the futex table in each AddrSpace, or just

@@ -4,8 +4,8 @@
 
 use crate::{
     context::{
-        self, arch, memory::AddrSpaceSwitchReadGuard, wakeup_context, ArcContextLockWriteGuard,
-        Context, ContextLock, RunContextData, WeakContextRef,
+        self, arch, memory::AddrSpaceSwitchReadGuard, wakeup_context, ArcContextLock,
+        ArcContextLockWriteGuard, Context, ContextLock, RunContextData, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -28,6 +28,8 @@ use smallvec::SmallVec;
 use spin::mutex::SpinMutex;
 use syscall::PtraceFlags;
 
+use super::pool::CONTEXT_POOL;
+
 enum UpdateResult {
     CanSwitch,
     Skip,
@@ -49,7 +51,7 @@ pub const STEAL_THRESHOLD: usize = 2;
 pub const STEAL_INTERVAL: usize = 2;
 pub const MAX_STEAL: usize = 2;
 
-unsafe fn opportunistic_write_arc(lock: &Arc<ContextLock>) -> Option<ArcContextLockWriteGuard> {
+unsafe fn opportunistic_write_arc(lock: &ArcContextLock) -> Option<ArcContextLockWriteGuard> {
     if cfg!(feature = "opportunistic_context_locking") {
         unsafe { lock.try_write_arc() }
     } else {
@@ -227,7 +229,11 @@ pub fn switch(token: &mut CleanLockToken) -> SwitchResult {
         timers.clear();
         {
             let mut run_queue = percpu.switch_internals.run_queue.lock();
-            let split_key = (switch_time.saturating_add(1), WeakContextRef(Weak::new()));
+            // TODO: reuse Weak allocation
+            let split_key = (
+                switch_time.saturating_add(1),
+                WeakContextRef(Weak::new_in(CONTEXT_POOL)),
+            );
 
             timers.extend(run_queue.timers.extract_if(..split_key, |_| true));
         }
@@ -478,7 +484,7 @@ fn select_next_context(
     switch_time: u128,
     elapsed_time: u64,
     was_idle: bool,
-    prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
+    prev_context_guard: &mut ArcContextLockWriteGuard,
 ) -> Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)> {
     let mut contexts_data = percpu.switch_internals.run_queue.lock();
     let idle_context = percpu.switch_internals.idle_context();
@@ -915,14 +921,14 @@ pub struct ContextSwitchPercpu {
     switch_time: Cell<u128>,
     pit_ticks: Cell<usize>,
 
-    current_ctxt: RefCell<Option<Arc<ContextLock>>>,
+    current_ctxt: RefCell<Option<ArcContextLock>>,
 
     // TODO: just access current_ctxt directly?
     #[cfg(feature = "profiling")]
     pub(crate) current_dbg_id: core::sync::atomic::AtomicU32,
 
     /// The idle process.
-    idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
+    idle_ctxt: RefCell<Option<ArcContextLock>>,
     pub(crate) being_sigkilled: Cell<bool>,
 
     // wakeups
@@ -938,7 +944,7 @@ pub struct ContextSwitchPercpu {
             (u64, Reverse<u64>, u32), // key (vd, rem_slice, ctxt_id)
             u64,                      // weight
             WeakContextRef,
-            ArcRwLockWriteGuard<L4, Context>,
+            ArcContextLockWriteGuard,
             Option<AddrSpaceSwitchReadGuard>,
         )>,
     >,
@@ -978,13 +984,13 @@ impl ContextSwitchPercpu {
     }
 
     /// Gets a reference to the raw current context slot.
-    pub fn current_context_raw(&self) -> Ref<'_, Option<Arc<ContextLock>>> {
+    pub fn current_context_raw(&self) -> Ref<'_, Option<ArcContextLock>> {
         self.current_ctxt.borrow()
     }
 
     /// Gets a reference to the current context, which will always be populated after the startup
     /// code (unless there are kernel bugs).
-    pub fn current_context(&self) -> Ref<'_, Arc<ContextLock>> {
+    pub fn current_context(&self) -> Ref<'_, ArcContextLock> {
         Ref::map(self.current_ctxt.borrow(), |c| {
             c.as_ref().expect("no current context present")
         })
@@ -994,7 +1000,7 @@ impl ContextSwitchPercpu {
     ///
     /// # Safety
     /// This function is unsafe as it modifies the context state directly.
-    pub unsafe fn set_current_context(&self, new: Arc<ContextLock>) {
+    pub unsafe fn set_current_context(&self, new: ArcContextLock) {
         *self.current_ctxt.borrow_mut() = Some(new);
     }
 
@@ -1002,12 +1008,12 @@ impl ContextSwitchPercpu {
     ///
     /// # Safety
     /// This function is unsafe as it modifies the idle context state directly.
-    pub unsafe fn set_idle_context(&self, new: Arc<ContextLock>) {
+    pub unsafe fn set_idle_context(&self, new: ArcContextLock) {
         *self.idle_ctxt.borrow_mut() = Some(new);
     }
 
     /// Retrieves the current idle context.
-    pub fn idle_context(&self) -> Ref<'_, Arc<ContextLock>> {
+    pub fn idle_context(&self) -> Ref<'_, ArcContextLock> {
         Ref::map(self.idle_ctxt.borrow(), |opt| {
             opt.as_ref().expect("no idle context present")
         })
@@ -1032,7 +1038,8 @@ mod tests {
             unsafe {
                 crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_mut(cpu));
 
-                let idle_context = Arc::new(ContextLock::new(Context::new(None).unwrap()));
+                let idle_context =
+                    Arc::new_in(ContextLock::new(Context::new(None).unwrap()), CONTEXT_POOL);
                 cpu.switch_internals.set_idle_context(idle_context);
             }
 
@@ -1055,12 +1062,12 @@ mod tests {
     }
 
     #[cfg(test)]
-    pub fn new_context() -> Arc<ContextLock> {
-        Arc::new(ContextLock::new(Context::new(None).unwrap()))
+    pub fn new_context() -> ArcContextLock {
+        Arc::new_in(ContextLock::new(Context::new(None).unwrap()), CONTEXT_POOL)
     }
 
     #[cfg(test)]
-    pub fn setup_contexts(count: usize) -> alloc::vec::Vec<Arc<ContextLock>> {
+    pub fn setup_contexts(count: usize) -> alloc::vec::Vec<ArcContextLock> {
         let mut tasks = alloc::vec::Vec::new();
         for _ in 0..count {
             let task = new_context();
@@ -1092,7 +1099,7 @@ mod tests {
         prev_guard_0.status = Status::Blocked;
 
         fn push_queue(
-            task: &Arc<ContextLock>,
+            task: &ArcContextLock,
             id: u32,
             vtime: u64,
             mut queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,

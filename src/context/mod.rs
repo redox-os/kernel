@@ -23,18 +23,20 @@ use crate::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
         RwLockWriteGuard, L0, L1, L2, L3, L4,
     },
-    syscall::error::Result,
+    syscall::error::{Error, Result, ENOMEM},
     Ordering,
 };
 
-use self::context::Kstack;
+use self::{context::Kstack, pool::CONTEXT_POOL};
 pub use self::{
     context::{BorrowedHtBuf, Context, Status},
     switch::switch,
 };
 
 pub type ContextLock = RwLock<L4, Context>;
-pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L4, Context>;
+pub type ArcContextLock = Arc<ContextLock, pool::ContextPool>;
+pub type WeakContextLock = Weak<ContextLock, pool::ContextPool>;
+pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L4, Context, pool::ContextPool>;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
@@ -63,6 +65,8 @@ pub mod file;
 
 /// Memory struct - contains a set of pages for a context
 pub mod memory;
+
+pub mod pool;
 
 /// Signal handling
 pub mod signal;
@@ -111,7 +115,7 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
     CONTEXTS.write(token)
 }
 
-pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
+pub fn unblock_context(context_lock: &ArcContextLock, token: &mut LockToken<'_, L3>) -> bool {
     let cpu_id = {
         let mut guard = context_lock.write(token.token());
         if !guard.unblock_no_ipi() {
@@ -133,7 +137,7 @@ pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_
 }
 
 pub fn wakeup_context(
-    context_lock: &Arc<ContextLock>,
+    context_lock: &ArcContextLock,
     cpu_id: Option<LogicalCpuId>,
     token: &mut LockToken<'_, L3>,
 ) {
@@ -185,7 +189,8 @@ pub fn init(token: &mut CleanLockToken) {
     context.running = true;
     context.cpu_id = Some(crate::cpu_id());
 
-    let context_lock = Arc::new(ContextLock::new(context));
+    let context_lock = ArcContextLock::try_new_in(ContextLock::new(context), CONTEXT_POOL)
+        .expect("failed to allocate context struct for kmain");
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
     contexts_mut(token.token().downgrade()).insert(context_ref.clone());
@@ -202,16 +207,16 @@ pub fn init(token: &mut CleanLockToken) {
 // TODO: Maybe use lock tokens to forbid holding this reference across context::switch (where the
 // RefCell's borrow_mut will fail if the reference is kept?)? If so, maybe even avoid `RefCell`
 // entirely, if it can be done sufficiently rigorously and without breaking soundness?
-pub fn current() -> Ref<'static, Arc<ContextLock>> {
+pub fn current() -> Ref<'static, ArcContextLock> {
     PercpuBlock::current().switch_internals.current_context()
 }
 
-pub fn try_current() -> Ref<'static, Option<Arc<ContextLock>>> {
+pub fn try_current() -> Ref<'static, Option<ArcContextLock>> {
     PercpuBlock::current()
         .switch_internals
         .current_context_raw()
 }
-pub fn is_current(context: &Arc<ContextLock>) -> bool {
+pub fn is_current(context: &ArcContextLock) -> bool {
     PercpuBlock::current()
         .switch_internals
         .current_context_raw()
@@ -220,9 +225,9 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
 }
 
 #[derive(Clone)]
-pub struct ContextRef(pub Arc<ContextLock>);
+pub struct ContextRef(pub ArcContextLock);
 impl Deref for ContextRef {
-    type Target = Arc<ContextLock>;
+    type Target = ArcContextLock;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -246,9 +251,9 @@ impl PartialEq for ContextRef {
 impl Eq for ContextRef {}
 
 #[derive(Clone)]
-pub struct WeakContextRef(pub Weak<ContextLock>);
+pub struct WeakContextRef(pub WeakContextLock);
 impl WeakContextRef {
-    pub fn upgrade(&self) -> Option<Arc<ContextLock>> {
+    pub fn upgrade(&self) -> Option<ArcContextLock> {
         self.0.upgrade()
     }
 }
@@ -276,7 +281,7 @@ pub fn spawn(
     owner_proc_id: Option<NonZeroUsize>,
     func: extern "C" fn(),
     token: &mut CleanLockToken,
-) -> Result<Arc<ContextLock>> {
+) -> Result<ArcContextLock> {
     let stack = Kstack::new()?;
 
     let mut context = Context::new(owner_proc_id)?;
@@ -290,7 +295,8 @@ pub fn spawn(
     context.userspace = userspace_allowed;
     context.queue_key = Some((context.vd, Reverse(context.rem_slice), context.debug_id));
 
-    let context_lock = Arc::new(ContextLock::new(context));
+    let context_lock = ArcContextLock::try_new_in(ContextLock::new(context), CONTEXT_POOL)
+        .map_err(|_| Error::new(ENOMEM))?;
     let context_ref = ContextRef(Arc::clone(&context_lock));
     let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
     contexts_mut(token.downgrade()).insert(context_ref);
