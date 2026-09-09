@@ -27,8 +27,6 @@ pub const KFX_ALIGN: usize = 16;
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Context {
-    /// EFLAGS register
-    eflags: usize,
     /// EBX register
     ebx: usize,
     /// EDI register
@@ -55,7 +53,6 @@ pub struct Context {
 impl Context {
     pub fn new() -> Context {
         Context {
-            eflags: 0,
             ebx: 0,
             edi: 0,
             esi: 0,
@@ -283,16 +280,6 @@ unsafe extern "cdecl" fn switch_to_inner() {
         mov [ecx + {off_esp}], esp
         mov esp, [edx + {off_esp}]
 
-        // push EFLAGS (can only be modified via stack)
-        pushfd
-        // pop EFLAGS into `self.eflags`
-        pop DWORD PTR [ecx + {off_eflags}]
-
-        // push `next.eflags`
-        push DWORD PTR [edx + {off_eflags}]
-        // pop into EFLAGS
-        popfd
-
         // When we return, we cannot even guarantee that the return address on the stack, points to
         // the calling function, `context::switch`. Thus, we have to execute this Rust hook by
         // ourselves, which will unlock the contexts before the later switch.
@@ -301,8 +288,6 @@ unsafe extern "cdecl" fn switch_to_inner() {
         jmp {switch_hook}
 
         ",
-
-        off_eflags = const(offset_of!(Cx, eflags)),
 
         off_ebx = const(offset_of!(Cx, ebx)),
         off_edi = const(offset_of!(Cx, edi)),
