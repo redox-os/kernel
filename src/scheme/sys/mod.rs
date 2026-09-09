@@ -5,7 +5,7 @@
 
 use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
-    EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
+    CapRights, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
 use alloc::{sync::Arc, vec::Vec};
 use core::str;
@@ -132,7 +132,11 @@ impl KernelScheme for SysScheme {
         if path.is_empty() {
             let id = HANDLES.write(token.token()).insert(Handle::TopLevel);
 
-            Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
+            Ok(OpenResult::SchemeLocal(
+                id,
+                InternalFlags::POSITIONED,
+                CapRights::ALL,
+            ))
         } else {
             //Have to iterate to get the path without allocation
             let entry = FILES
@@ -150,7 +154,11 @@ impl KernelScheme for SysScheme {
                 kind: entry.1,
                 data: Arc::new(RwLock::new(None)),
             });
-            Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED))
+            Ok(OpenResult::SchemeLocal(
+                id,
+                InternalFlags::POSITIONED,
+                CapRights::ALL,
+            ))
         }
     }
 

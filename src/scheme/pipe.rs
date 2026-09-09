@@ -1,7 +1,7 @@
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use syscall::{data::GlobalSchemes, CallFlags};
+use syscall::{data::GlobalSchemes, CallFlags, CapRights};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
@@ -205,6 +205,7 @@ impl KernelScheme for PipeScheme {
         Ok(OpenResult::SchemeLocal(
             key | WRITE_NOT_READ_BIT,
             InternalFlags::empty(),
+            CapRights::ALL,
         ))
     }
     fn kopenat(
@@ -236,6 +237,7 @@ impl KernelScheme for PipeScheme {
                 return Ok(OpenResult::SchemeLocal(
                     key | WRITE_NOT_READ_BIT,
                     InternalFlags::empty(),
+                    CapRights::ALL,
                 ));
             } else {
                 return Err(Error::new(EBADF));
@@ -248,14 +250,22 @@ impl KernelScheme for PipeScheme {
             "scheme-root" => {
                 let id = PIPE_NEXT_ID.fetch_add(2, Ordering::Relaxed);
                 PIPES.write(token.token()).insert(id, Handle::SchemeRoot);
-                return Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()));
+                return Ok(OpenResult::SchemeLocal(
+                    id,
+                    InternalFlags::empty(),
+                    CapRights::ALL,
+                ));
             }
             _ => return Err(Error::new(ENOENT)),
         };
 
         let (read_id, _) = pipe(token)?;
 
-        Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            read_id,
+            InternalFlags::empty(),
+            CapRights::ALL,
+        ))
     }
 
     fn kread(

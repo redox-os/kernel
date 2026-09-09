@@ -15,6 +15,7 @@ use spin::{Mutex, Once};
 use syscall::{
     data::GlobalSchemes,
     dirent::{DirEntry, DirentBuf, DirentKind},
+    CapRights,
 };
 
 use crate::context::file::InternalFlags;
@@ -360,7 +361,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             return Err(Error::new(ENOENT));
         };
         let fd = HANDLES.write(token.token()).insert(handle);
-        Ok(OpenResult::SchemeLocal(fd, int_flags))
+        Ok(OpenResult::SchemeLocal(fd, int_flags, CapRights::ALL))
     }
     fn getdents(
         &self,

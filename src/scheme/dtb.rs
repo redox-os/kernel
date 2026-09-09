@@ -80,7 +80,11 @@ impl KernelScheme for DtbScheme {
                 kind: HandleKind::RawData,
                 stat: _flags & O_STAT == O_STAT,
             });
-            return Ok(OpenResult::SchemeLocal(id, InternalFlags::POSITIONED));
+            return Ok(OpenResult::SchemeLocal(
+                id,
+                InternalFlags::POSITIONED,
+                syscall::CapRights::ALL,
+            ));
         }
 
         Err(Error::new(ENOENT))

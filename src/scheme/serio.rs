@@ -105,7 +105,11 @@ impl KernelScheme for SerioScheme {
             kind: HandleKind::Device(index),
         });
 
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            id,
+            InternalFlags::empty(),
+            CapRights::ALL,
+        ))
     }
 
     fn fevent(

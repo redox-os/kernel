@@ -5,7 +5,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
-use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
+use syscall::{CapRights, SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
     arch::interrupt::InterruptStack,
@@ -894,9 +894,10 @@ pub fn bulk_insert_fds(
     if descriptions.is_empty() {
         return Ok(0);
     }
-    let files_iter = descriptions
-        .into_iter()
-        .map(|description| FileDescriptor { description });
+    let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
+        description,
+        cap_rights: CapRights::ALL,
+    });
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();

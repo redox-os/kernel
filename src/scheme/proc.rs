@@ -40,7 +40,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, CpuSet, Error, NumaMemoryPolicy};
+use syscall::{data::GlobalSchemes, CapRights, CpuSet, Error, NumaMemoryPolicy};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -636,6 +636,7 @@ impl KernelScheme for ProcScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         if fds.len() != 1 {
@@ -747,7 +748,7 @@ impl KernelScheme for ProcScheme {
                             O_RDWR,
                             token,
                         )
-                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL))
                 }
                 Handle {
                     kind: ContextHandle::OpenViaDup,
@@ -761,7 +762,7 @@ impl KernelScheme for ProcScheme {
                             O_RDWR,
                             token,
                         )
-                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl));
+                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL));
                 }
 
                 Handle {
@@ -866,6 +867,7 @@ impl KernelScheme for ProcScheme {
                                 info.file_ref()
                                     .map(|r| Arc::clone(&r.description))
                                     .ok_or(Error::new(EBADF))?,
+                                CapRights::ALL,
                             ));
                         }
 
@@ -878,7 +880,7 @@ impl KernelScheme for ProcScheme {
             },
             token,
         )
-        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL))
     }
     fn kfdwrite(
         &self,
@@ -920,6 +922,7 @@ impl KernelScheme for ProcScheme {
                 FileHandle(usize::try_from(*target_fd).map_err(|_| Error::new(EBADFD))?),
                 context::file::FileDescriptor {
                     description: file.clone(),
+                    cap_rights: syscall::CapRights::ALL,
                 },
                 &mut token,
             )

@@ -239,6 +239,7 @@ impl UserInner {
                     a
                 },
             },
+            None,
             caller_responsible,
             token,
             allow_direct_switch,
@@ -249,6 +250,7 @@ impl UserInner {
         &self,
         fds: Vec<Arc<LockedFileDescription>>,
         sqe: Sqe,
+        extra_sqe: Option<Sqe>,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
         allow_direct_switch: bool,
@@ -1001,7 +1003,10 @@ impl UserInner {
                 let (context, mut token) = current.token_split();
                 context.insert_file(
                     FileHandle::from(dst_fd_or_ptr),
-                    FileDescriptor { description },
+                    FileDescriptor {
+                        description,
+                        cap_rights: CapRights::ALL,
+                    },
                     &mut token,
                 );
             }

@@ -133,6 +133,7 @@ impl KernelScheme for AcpiScheme {
         Ok(OpenResult::SchemeLocal(
             new_bits.bits(),
             InternalFlags::empty(),
+            syscall::CapRights::ALL,
         ))
     }
     fn kcall(
@@ -141,6 +142,7 @@ impl KernelScheme for AcpiScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: syscall::CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let [handle] = <&[usize; 1]>::try_from(fds)

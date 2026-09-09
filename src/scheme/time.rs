@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use core::{fmt, str};
-use syscall::data::GlobalSchemes;
+use syscall::{data::GlobalSchemes, CapRights};
 
 use crate::{
     context::{file::InternalFlags, timeout},
@@ -97,7 +97,11 @@ impl KernelScheme for TimeScheme {
             .write(token.token())
             .insert(Handle::Clock(TimeSchemeHandle { clock, kind }));
 
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            id,
+            InternalFlags::empty(),
+            CapRights::ALL,
+        ))
     }
 
     fn fcntl(

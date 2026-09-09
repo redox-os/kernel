@@ -1,4 +1,4 @@
-use syscall::data::GlobalSchemes;
+use syscall::{data::GlobalSchemes, CapRights};
 
 use crate::{
     devices::graphical_debug,
@@ -101,7 +101,11 @@ impl KernelScheme for DebugScheme {
 
         let id = HANDLES.write(token.token()).insert(Handle { num });
 
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            id,
+            InternalFlags::empty(),
+            CapRights::ALL,
+        ))
     }
 
     fn fevent(
@@ -242,6 +246,7 @@ impl KernelScheme for DebugScheme {
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let &[fd] = <&[usize; 1]>::try_from(fds).map_err(|_| Error::new(EBADF))?;
