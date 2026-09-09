@@ -30,7 +30,11 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
 
         // Allows reading performance counters in userspace. This in itself should be harmless, as
         // the counters won't do anything unless explicitly configured through the MSRs.
-        if cfg!(feature = "profiling") {
+        // TODO: enable on GenuineIntel CPUs too, but requires CPUID unlike on AMD (IIUC the APM vol 2).
+        if cpuid()
+            .get_vendor_info()
+            .is_some_and(|v| v.as_str() == "AuthenticAMD")
+        {
             x86::controlregs::cr4_write(x86::controlregs::cr4() | Cr4::CR4_ENABLE_PPMC);
         }
     }

@@ -31,8 +31,6 @@ pub const KFX_ALIGN: usize = 64;
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Context {
-    /// RFLAGS register
-    rflags: usize,
     /// RBX register
     rbx: usize,
     /// R12 register
@@ -63,7 +61,6 @@ pub struct Context {
 impl Context {
     pub fn new() -> Context {
         Context {
-            rflags: 0,
             rbx: 0,
             r12: 0,
             r13: 0,
@@ -433,16 +430,6 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
         mov [rdi + {off_rsp}], rsp
         mov rsp, [rsi + {off_rsp}]
 
-        // push RFLAGS (can only be modified via stack)
-        pushfq
-        // pop RFLAGS into `self.rflags`
-        pop QWORD PTR [rdi + {off_rflags}]
-
-        // push `next.rflags`
-        push QWORD PTR [rsi + {off_rflags}]
-        // pop into RFLAGS
-        popfq
-
         // When we return, we cannot even guarantee that the return address on the stack, points to
         // the calling function, `context::switch`. Thus, we have to execute this Rust hook by
         // ourselves, which will unlock the contexts before the later switch.
@@ -451,8 +438,6 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
         jmp {switch_hook}
 
         "),
-
-        off_rflags = const(offset_of!(Cx, rflags)),
 
         off_rbx = const(offset_of!(Cx, rbx)),
         off_r12 = const(offset_of!(Cx, r12)),
