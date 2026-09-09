@@ -89,7 +89,7 @@ pub fn openat_into(
         Ok((caller_ctx, desc.scheme_ref.upgrade()?, desc.number))
     })?;
 
-    let new_description = {
+    let (new_description, cap_rights) = {
         let res = scheme.kopenat(
             number,
             StrOrBytes::from_str(&path_buf),
@@ -100,16 +100,17 @@ pub fn openat_into(
         );
 
         match res? {
-            OpenResult::SchemeLocal(number, internal_flags) => {
+            OpenResult::SchemeLocal(number, internal_flags, cap_rights) => (
                 Arc::new(RwLock::new(FileDescription {
                     offset: 0,
                     internal_flags,
                     scheme_ref: scheme.downgrade(),
                     number,
                     flags: flags as u32,
-                }))
-            }
-            OpenResult::External(desc) => desc,
+                })),
+                cap_rights,
+            ),
+            OpenResult::External(desc, cap_rights) => (desc, cap_rights),
         }
     };
 
@@ -119,6 +120,7 @@ pub fn openat_into(
                 new_fd,
                 FileDescriptor {
                     description: new_description,
+                    cap_rights,
                 },
                 token,
             )
@@ -144,6 +146,7 @@ fn duplicate_file(
     if user_buf.is_empty() {
         return Ok(FileDescriptor {
             description: Arc::clone(&file.description),
+            cap_rights: file.cap_rights,
         });
     }
 
@@ -151,19 +154,24 @@ fn duplicate_file(
     let description = { file.description.read(token.token()).clone() };
     let scheme = description.scheme_ref.upgrade()?;
 
-    let new_description = match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
-        OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
-            offset: 0,
-            internal_flags,
-            scheme_ref: scheme.downgrade(),
-            number,
-            flags: description.flags,
-        })),
-        OpenResult::External(desc) => desc,
-    };
+    let (new_description, cap_rights) =
+        match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
+            OpenResult::SchemeLocal(number, internal_flags, cap_rights) => (
+                Arc::new(RwLock::new(FileDescription {
+                    offset: 0,
+                    internal_flags,
+                    scheme_ref: scheme.downgrade(),
+                    number,
+                    flags: description.flags,
+                })),
+                cap_rights,
+            ),
+            OpenResult::External(desc, cap_rights) => (desc, cap_rights),
+        };
 
     Ok(FileDescriptor {
         description: new_description,
+        cap_rights,
     })
 }
 
@@ -287,10 +295,18 @@ fn call_normal(
             payload,
             flags,
             metadata,
+            target_file.cap_rights,
             token,
         )
     } else {
-        scheme.kcall(&nums, payload, flags, metadata, token)
+        scheme.kcall(
+            &nums,
+            payload,
+            flags,
+            metadata,
+            target_file.cap_rights,
+            token,
+        )
     }
 }
 

@@ -290,6 +290,7 @@ fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockTo
                     flags: (O_CREAT | O_RDWR) as u32,
                     internal_flags: InternalFlags::empty(),
                 })),
+                cap_rights: syscall::CapRights::ALL,
             },
             &mut token,
         )
