@@ -8,9 +8,9 @@ use core::{
 };
 use slab::Slab;
 use syscall::{
-    schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
-    CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
-    SendFdFlags, StdFsCallKind, EVENT_HUP, MAP_FIXED_NOREPLACE,
+    schemev2::{Cqe, CqeFlags, CqeOpcode, Opcode, Sqe, SqeFlags},
+    CallFlags, CapRights, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
+    SendFdFlags, StdFsCallKind, MAP_FIXED_NOREPLACE,
 };
 
 use crate::{
@@ -55,15 +55,28 @@ enum State {
         callee_responsible: PageSpan,
         canceling: bool,
     },
+    AwaitingExtra {
+        context: Weak<ContextLock>,
+        fds: Vec<Arc<LockedFileDescription>>,
+        callee_responsible: PageSpan,
+        canceling: bool,
+        pending: PendingCqe,
+    },
     Responded(Response),
     Fmap(Weak<ContextLock>),
     Placeholder,
 }
 
+enum PendingCqe {
+    Fd(Arc<LockedFileDescription>, CapRights),
+    Regular(Result<usize>, u8, bool),
+}
+
 #[derive(Debug)]
 enum Response {
     Regular(Result<usize>, u8, bool),
-    Fd(Arc<LockedFileDescription>),
+    SchemeLocal(Result<usize>, u8, bool, CapRights),
+    Fd(Arc<LockedFileDescription>, CapRights),
     MultipleFds(Option<Vec<Arc<LockedFileDescription>>>),
 }
 
@@ -71,7 +84,9 @@ impl Response {
     fn into_regular(self) -> Result<usize> {
         match self {
             Response::Regular(res, _, _) => res,
-            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
+            Response::Fd(_, _) | Response::MultipleFds(_) | Response::SchemeLocal(_, _, _, _) => {
+                Err(Error::new(EIO))
+            }
         }
     }
 }
@@ -115,6 +130,10 @@ enum ParsedCqe {
         res: Result<usize>,
         extra0: u8,
     },
+    CapRights {
+        tag: u32,
+        cap_rights: CapRights,
+    },
 }
 impl ParsedCqe {
     fn parse_cqe(cqe: &Cqe) -> Result<Self> {
@@ -147,6 +166,10 @@ impl ParsedCqe {
                     flags: FobtainFdFlags::from_bits(cqe.extra() as usize)
                         .ok_or(Error::new(EINVAL))?,
                     dst_fd_or_ptr: cqe.result as usize,
+                },
+                CqeOpcode::CapRights => Self::CapRights {
+                    tag: cqe.tag,
+                    cap_rights: CapRights::from_bits_retain(cqe.result),
                 },
             },
         )
@@ -248,7 +271,11 @@ impl UserInner {
                     callee_responsible: PageSpan::empty(),
                 };
             }
-            self.todo.send(sqe, token);
+            if let Some(extra) = extra_sqe {
+                self.todo.send_batch([sqe, extra], token);
+            } else {
+                self.todo.send(sqe, token);
+            }
 
             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
         }
@@ -292,6 +319,13 @@ impl UserInner {
                             mut callee_responsible,
                             context,
                             fds,
+                        }
+                        | State::AwaitingExtra {
+                            canceling: true,
+                            mut callee_responsible,
+                            context,
+                            fds,
+                            pending: _,
                         } => {
                             let maybe_eintr =
                                 eintr_if_sigkill(&mut callee_responsible, &mut token.token());
@@ -319,6 +353,13 @@ impl UserInner {
                             fds,
                             context,
                             mut callee_responsible,
+                        }
+                        | State::AwaitingExtra {
+                            canceling: false,
+                            fds,
+                            context,
+                            mut callee_responsible,
+                            pending: _,
                         } => {
                             let maybe_eintr = eintr_if_sigkill(&mut callee_responsible, &mut token);
                             let current_context = context::current();
@@ -743,9 +784,9 @@ impl UserInner {
     pub fn write(&self, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
         let mut bytes_read = 0;
         for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
-            match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
-                .and_then(|p| self.handle_parsed(&p, token))
-            {
+            let cqe = &unsafe { chunk.read_exact::<Cqe>()? };
+            let flags = CqeFlags::from_bits_truncate(cqe.flags);
+            match ParsedCqe::parse_cqe(cqe).and_then(|p| self.handle_parsed(&p, flags, token)) {
                 Ok(()) => bytes_read += size_of::<Cqe>(),
                 Err(_) if bytes_read > 0 => break,
                 Err(error) => return Err(error),
@@ -791,31 +832,147 @@ impl UserInner {
 
         Ok(())
     }
-    fn handle_parsed(&self, cqe: &ParsedCqe, token: &mut CleanLockToken) -> Result<()> {
+    fn transition_to_awaiting_extra(
+        &self,
+        tag: u32,
+        pending: PendingCqe,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
+        let mut states = self.states.lock(token.token());
+        match states.get_mut(tag as usize) {
+            Some(o) => match mem::replace(o, State::Placeholder) {
+                State::Waiting {
+                    context,
+                    fds,
+                    canceling,
+                    callee_responsible,
+                } => {
+                    *o = State::AwaitingExtra {
+                        context,
+                        fds,
+                        canceling,
+                        callee_responsible,
+                        pending,
+                    };
+                    Ok(())
+                }
+                State::Placeholder => Err(Error::new(EBADFD)),
+                _ => Err(Error::new(EINVAL)),
+            },
+            None => Err(Error::new(EBADFD)),
+        }
+    }
+    fn handle_parsed(
+        &self,
+        cqe: &ParsedCqe,
+        flags: CqeFlags,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
         match *cqe {
             ParsedCqe::RegularResponse { tag, res, extra0 } => {
-                self.respond(tag, Response::Regular(res, extra0, false), token)?
-            }
-            ParsedCqe::RespondAndNotifyOnDetach { tag, res, extra0 } => {
-                self.respond(tag, Response::Regular(res, extra0, true), token)?
-            }
-            ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
-                tag,
-                Response::Fd({
-                    {
-                        let current_lock = context::current();
-                        let mut current = current_lock.read(token.token());
-                        let (context, mut token) = current.token_split();
-                        context.remove_file(FileHandle::from(fd), &mut token)
+                {
+                    let mut states = self.states.lock(token.token());
+                    if let Some(State::AwaitingExtra { .. }) = states.get(tag as usize) {
+                        if res == Err(Error::new(EOPNOTSUPP)) {
+                            if let Some(State::AwaitingExtra {
+                                context,
+                                fds,
+                                canceling,
+                                callee_responsible,
+                                pending,
+                            }) = states
+                                .get_mut(tag as usize)
+                                .map(|o| mem::replace(o, State::Placeholder))
+                            {
+                                drop(states);
+                                let response = match pending {
+                                    PendingCqe::Regular(first_res, extra0, notify) => {
+                                        Response::Regular(first_res, extra0, notify)
+                                    }
+                                    PendingCqe::Fd(desc, orig_rights) => {
+                                        Response::Fd(desc, orig_rights)
+                                    }
+                                };
+                                return self.respond(tag, response, token);
+                            }
+                        }
                     }
-                    .ok_or(Error::new(EINVAL))?
-                    .description
-                }),
-                token,
-            )?,
+                }
+                if flags.contains(CqeFlags::NEXT_EXTRA) {
+                    self.transition_to_awaiting_extra(
+                        tag,
+                        PendingCqe::Regular(res, extra0, false),
+                        token,
+                    )?;
+                } else {
+                    self.respond(tag, Response::Regular(res, extra0, false), token)?;
+                }
+            }
+
+            ParsedCqe::RespondAndNotifyOnDetach { tag, res, extra0 } => {
+                if flags.contains(CqeFlags::NEXT_EXTRA) {
+                    self.transition_to_awaiting_extra(
+                        tag,
+                        PendingCqe::Regular(res, extra0, true),
+                        token,
+                    )?;
+                } else {
+                    self.respond(tag, Response::Regular(res, extra0, true), token)?;
+                }
+            }
+
+            ParsedCqe::ResponseWithFd { tag, fd } => {
+                let file = {
+                    let current_lock = context::current();
+                    let mut current = current_lock.read(token.token());
+                    let (context, mut token) = current.token_split();
+                    context
+                        .remove_file(FileHandle::from(fd), &mut token)
+                        .ok_or(Error::new(EINVAL))?
+                };
+
+                if flags.contains(CqeFlags::NEXT_EXTRA) {
+                    self.transition_to_awaiting_extra(
+                        tag,
+                        PendingCqe::Fd(file.description, file.cap_rights),
+                        token,
+                    )?;
+                } else {
+                    self.respond(tag, Response::Fd(file.description, file.cap_rights), token)?;
+                }
+            }
+
+            ParsedCqe::CapRights { tag, cap_rights } => {
+                let response = {
+                    let mut states = self.states.lock(token.token());
+                    match states.get_mut(tag as usize) {
+                        Some(o) => match o {
+                            State::AwaitingExtra { pending, .. } => match mem::replace(
+                                pending,
+                                PendingCqe::Regular(Err(Error::new(EBADFD)), 0, false),
+                            ) {
+                                PendingCqe::Regular(res, extra0, notify) => {
+                                    Response::SchemeLocal(res, extra0, notify, cap_rights)
+                                }
+                                PendingCqe::Fd(desc, orig_rights) => {
+                                    let new_rights = orig_rights & cap_rights;
+                                    Response::Fd(desc, new_rights)
+                                }
+                            },
+                            State::Placeholder => return Err(Error::new(EBADFD)),
+                            _ => return Err(Error::new(EINVAL)),
+                        },
+                        None => return Err(Error::new(EBADFD)),
+                    }
+                };
+
+                self.respond(tag, response, token)?;
+            }
+
             ParsedCqe::ResponseWithMultipleFds { tag, num_fds: _ } => {
                 self.respond(tag, Response::MultipleFds(None), token)?;
             }
+
             ParsedCqe::ObtainFd {
                 tag,
                 flags: _,
@@ -880,7 +1037,9 @@ impl UserInner {
                                 return Err(Error::new(EBADFD));
                             }
                             // invalid kernel to scheme call
-                            old_state @ (State::Waiting { .. } | State::Responded(_)) => {
+                            old_state @ (State::Waiting { .. }
+                            | State::AwaitingExtra { .. }
+                            | State::Responded(_)) => {
                                 *o = old_state;
                                 return Err(Error::new(EINVAL));
                             }
@@ -946,10 +1105,18 @@ impl UserInner {
                         fds,
                         canceling,
                         callee_responsible,
+                    }
+                    | State::AwaitingExtra {
+                        context,
+                        fds,
+                        canceling,
+                        callee_responsible,
+                        ..
                     } => {
                         // Convert ECANCELED to EINTR if a request was being canceled (currently always
                         // due to signals).
-                        if let Response::Regular(ref mut res, _, _) = response
+                        if let Response::Regular(ref mut res, _, _)
+                        | Response::SchemeLocal(ref mut res, _, _, _) = response
                             && canceling
                             && *res == Err(Error::new(ECANCELED))
                         {
@@ -1389,6 +1556,7 @@ impl UserScheme {
         fds: &[usize],
         slice: UserSlice<READ, WRITE>,
         metadata: &[u64],
+        cap_rights: CapRights,
         mut on_response: impl FnMut(bool, &mut CleanLockToken),
         allow_direct_switch: bool,
         token: &mut CleanLockToken,
@@ -1398,7 +1566,14 @@ impl UserScheme {
         let mut address = inner.capture_user(slice, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
-        let mut sqe_flags = SqeFlags::empty();
+        let has_extra = cap_rights.contains(CapRights::SCHEME_MASK);
+
+        let mut sqe_flags = if has_extra {
+            SqeFlags::NEXT_EXTRA
+        } else {
+            SqeFlags::empty()
+        };
+
         let mut last_arg = 0;
         if fds.len() == 2 {
             sqe_flags |= SqeFlags::MULTIPLE_IDS;
@@ -1407,11 +1582,13 @@ impl UserScheme {
             return Err(Error::new(EINVAL));
         }
 
+        let tag = inner.next_id(token)?;
+
         let mut sqe = Sqe {
             opcode: opcode as u8,
             sqe_flags,
             _rsvd: 0,
-            tag: inner.next_id(token)?,
+            tag,
             caller: ctx.pid as u64,
             args: [
                 fds[0] as u64,
@@ -1433,7 +1610,23 @@ impl UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
 
-        match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch) {
+        let extra_sqe = has_extra.then_some(Sqe {
+            opcode: Opcode::CapRights as u8,
+            sqe_flags: SqeFlags::empty(),
+            _rsvd: 0,
+            tag,
+            caller: ctx.pid as u64,
+            args: [cap_rights.bits(), 0, 0, 0, 0, 0],
+        });
+
+        match inner.call_inner(
+            Vec::new(),
+            sqe,
+            extra_sqe,
+            address.span(),
+            token,
+            allow_direct_switch,
+        ) {
             Ok(Response::Regular(res, _, notify_on_detach)) => {
                 address.release(token)?;
                 on_response(notify_on_detach, token);
@@ -1480,9 +1673,18 @@ impl KernelScheme for UserScheme {
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                    CapRights::ALL,
                 )
             }),
-            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::SchemeLocal(res, fl, _, cap_rights) => Ok({
+                let fd = res?;
+                OpenResult::SchemeLocal(
+                    fd,
+                    InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                    cap_rights,
+                )
+            }),
+            Response::Fd(desc, cap_rights) => Ok(OpenResult::External(desc, cap_rights)),
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
@@ -1715,9 +1917,18 @@ impl KernelScheme for UserScheme {
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                    CapRights::ALL,
                 )
             }),
-            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::SchemeLocal(res, fl, _, cap_rights) => Ok({
+                let fd = res?;
+                OpenResult::SchemeLocal(
+                    fd,
+                    InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                    cap_rights,
+                )
+            }),
+            Response::Fd(desc, cap_rights) => Ok(OpenResult::External(desc, cap_rights)),
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
@@ -1892,6 +2103,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let allow_direct_switch =
@@ -1903,6 +2115,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 payload,
                 metadata,
+                cap_rights,
                 |_, _| {},
                 allow_direct_switch,
                 token,
@@ -1914,6 +2127,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 ro_slice,
                 metadata,
+                cap_rights,
                 |_, _| {},
                 allow_direct_switch,
                 token,
@@ -1928,6 +2142,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: StdFsCallMeta,
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let allow_direct_switch =
@@ -1945,6 +2160,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 payload,
                 &metadata,
+                cap_rights,
                 on_response,
                 allow_direct_switch,
                 token,
@@ -1956,6 +2172,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 ro_slice,
                 &metadata,
+                cap_rights,
                 on_response,
                 allow_direct_switch,
                 token,
@@ -2032,13 +2249,13 @@ impl KernelScheme for UserScheme {
         )?;
 
         let descriptions_opt = match res {
-            Response::Regular(res, _, _) => {
+            Response::Regular(res, ..) => {
                 return match res {
                     Ok(_) => Err(Error::new(EIO)),
                     Err(e) => Err(e),
                 }
             }
-            Response::Fd(_) => return Err(Error::new(EIO)),
+            Response::Fd(..) | Response::SchemeLocal(..) => return Err(Error::new(EIO)),
             Response::MultipleFds(fds) => fds,
         };
 
@@ -2059,6 +2276,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let &[kind, arg1, arg2, ..] = metadata else {
@@ -2068,7 +2286,7 @@ impl KernelScheme for UserScheme {
             return Err(Error::new(EOPNOTSUPP));
         };
         let metadata = StdFsCallMeta::new(kind, arg1, arg2);
-        self.kstdfscall(fds, kind, desc, payload, flags, metadata, token)
+        self.kstdfscall(fds, kind, desc, payload, flags, metadata, cap_rights, token)
     }
 }
 
