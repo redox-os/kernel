@@ -595,6 +595,8 @@ bitflags::bitflags! {
 }
 
 impl CapRights {
+    pub const ALL: Self = Self::from_bits_retain(!0);
+
     #[inline]
     pub fn kernel_bits(self) -> Self {
         self & Self::KERNEL_MASK
@@ -612,6 +614,6 @@ impl CapRights {
 
     #[inline]
     pub fn from_scheme_rights(rights: u64) -> Self {
-        Self::from_bits_truncate((rights << 16) & Self::SCHEME_MASK.bits())
+        Self::from_bits_retain((rights << 16) & Self::SCHEME_MASK.bits())
     }
 }
