@@ -10,7 +10,9 @@ use crate::{
     syscall::error::Result,
 };
 use alloc::sync::{Arc, Weak};
-use syscall::{schemev2::NewFdFlags, Error, GlobalSchemes, RwFlags, ENODEV, O_APPEND, O_NONBLOCK};
+use syscall::{
+    schemev2::NewFdFlags, CapRights, Error, GlobalSchemes, RwFlags, ENODEV, O_APPEND, O_NONBLOCK,
+};
 
 pub type LockedFileDescription = RwLock<L6, FileDescription>;
 
@@ -111,6 +113,9 @@ impl InternalFlags {
 pub struct FileDescriptor {
     /// Corresponding file description
     pub description: Arc<LockedFileDescription>,
+
+    /// Capability rights
+    pub cap_rights: CapRights,
 }
 
 impl FileDescription {
