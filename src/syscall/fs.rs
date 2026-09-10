@@ -32,13 +32,17 @@ fn with_current_ctx<T>(
 
 pub fn file_op_generic<T>(
     fd: FileHandle,
+    required_caps: CapRights,
     token: &mut CleanLockToken,
     op: impl FnOnce(&dyn KernelScheme, usize, &mut CleanLockToken) -> Result<T>,
 ) -> Result<T> {
-    file_op_generic_ext(fd, token, |s, _, desc, token| op(s, desc.number, token))
+    file_op_generic_ext(fd, required_caps, token, |s, _, desc, token| {
+        op(s, desc.number, token)
+    })
 }
 pub fn file_op_generic_ext<T>(
     fd: FileHandle,
+    required_caps: CapRights,
     token: &mut CleanLockToken,
     op: impl FnOnce(
         &dyn KernelScheme,
@@ -49,6 +53,7 @@ pub fn file_op_generic_ext<T>(
 ) -> Result<T> {
     let (file, desc) = with_current_ctx(token, |context, token| {
         let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        file.cap_rights.require(required_caps)?;
         // TODO: potential unnecessary clone
         let desc = file.description.read(token.token()).clone();
         Ok((file, desc))
@@ -82,11 +87,22 @@ pub fn openat_into(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (caller_ctx, scheme, number) = with_current_ctx(token, |context, token| {
+    let mut required_caps = CapRights::CAP_LOOKUP;
+    if flags & O_CREAT != 0 {
+        required_caps |= CapRights::CAP_CREATE;
+    }
+
+    let (caller_ctx, scheme, number, parent_caps) = with_current_ctx(token, |context, token| {
         let caller_ctx = context.caller_ctx();
         let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
+        pipe.cap_rights.require(required_caps)?;
         let desc = pipe.description.read(token.token());
-        Ok((caller_ctx, desc.scheme_ref.upgrade()?, desc.number))
+        Ok((
+            caller_ctx,
+            desc.scheme_ref.upgrade()?,
+            desc.number,
+            pipe.cap_rights,
+        ))
     })?;
 
     let (new_description, cap_rights) = {
@@ -108,7 +124,7 @@ pub fn openat_into(
                     number,
                     flags: flags as u32,
                 })),
-                cap_rights,
+                cap_rights.restrict(parent_caps),
             ),
             OpenResult::External(desc, cap_rights) => (desc, cap_rights),
         }
@@ -149,6 +165,8 @@ fn duplicate_file(
             cap_rights: file.cap_rights,
         });
     }
+
+    file.cap_rights.require(CapRights::CAP_NAMED_DUP)?;
 
     // TODO: potential unnecessary clone
     let description = { file.description.read(token.token()).clone() };
@@ -251,6 +269,13 @@ fn call_normal(
     let mut nums = arrayvec::ArrayVec::<_, 2>::new();
 
     let consume = flags.contains(CallFlags::CONSUME);
+    let mut required_caps = CapRights::CAP_SYS_CALL;
+    if flags.contains(CallFlags::WRITE) {
+        required_caps |= CapRights::CAP_WRITE;
+    }
+    if flags.contains(CallFlags::READ) {
+        required_caps |= CapRights::CAP_READ;
+    }
     let mut fds = fds.iter();
 
     let fd = FileHandle::from(fds.next().copied().unwrap());
@@ -261,6 +286,8 @@ fn call_normal(
             context.get_file(fd, token)
         }
         .ok_or(Error::new(EBADF))?;
+
+        file.cap_rights.require(required_caps)?;
 
         let desc = file.description.read(token.token());
         let scheme = desc.scheme_ref.upgrade()?;
@@ -279,6 +306,7 @@ fn call_normal(
             }
             .ok_or(Error::new(EBADF))?;
 
+            file.cap_rights.require(required_caps)?;
             let desc = file.description.read(token.token());
             if !desc.scheme_ref.same_ref_as(&scheme) {
                 return Err(Error::new(EXDEV));
@@ -331,6 +359,9 @@ fn call_fdwrite(
     let (scheme, number, descs_to_send) = {
         let (scheme, number) = with_current_ctx(token, |context, token| {
             let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+            file_descriptor
+                .cap_rights
+                .require(CapRights::CAP_SYS_CALL | CapRights::CAP_WRITE)?;
             let desc = file_descriptor.description.read(token.token());
             Ok((desc.scheme_ref.upgrade()?, desc.number))
         })?;
@@ -380,6 +411,9 @@ fn call_fdread(
 ) -> Result<usize> {
     let (scheme, number) = with_current_ctx(token, |context, token| {
         let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        file_descriptor
+            .cap_rights
+            .require(CapRights::CAP_SYS_CALL | CapRights::CAP_READ)?;
         let desc = file_descriptor.description.read(token.token());
         Ok((desc.scheme_ref.upgrade()?, desc.number))
     })?;
@@ -399,6 +433,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     };
 
     // Communicate fcntl with scheme
+    if cmd != F_GETCAP {
+        file.cap_rights.require(CapRights::CAP_FCNTL)?;
+    }
+
     if cmd != F_GET_SCHEMEID && cmd != F_GETCAP && cmd != F_SETCAP {
         scheme.fcntl(number, cmd, arg, token)?;
     }
@@ -433,7 +471,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                         UserSlice::ro(arg, size_of::<CapRights>())?.read_exact::<CapRights>()?
                     };
 
-                    if !file.cap_rights.contains(new_cap_rights) {
+                    if !new_cap_rights.is_subset_of(file.cap_rights) {
                         return Err(Error::new(EPERM));
                     }
 
@@ -563,13 +601,18 @@ pub fn mremap(
 }
 
 pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken) -> Result<usize> {
-    let (fsize, desc) = file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
-        Ok(if whence == SEEK_END {
-            (Some(scheme.fsize(desc.number, token)?), desc_arc)
-        } else {
-            (None, desc_arc)
-        })
-    })?;
+    let (fsize, desc) = file_op_generic_ext(
+        fd,
+        CapRights::CAP_SEEK,
+        token,
+        |scheme, desc_arc, desc, token| {
+            Ok(if whence == SEEK_END {
+                (Some(scheme.fsize(desc.number, token)?), desc_arc)
+            } else {
+                (None, desc_arc)
+            })
+        },
+    )?;
 
     let mut guard = desc.write(token.token());
 
@@ -588,8 +631,11 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken
     Ok(guard.offset as usize)
 }
 pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-    let (bytes_read, desc_arc, desc) =
-        file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
+    let (bytes_read, desc_arc, desc) = file_op_generic_ext(
+        fd,
+        CapRights::CAP_READ,
+        token,
+        |scheme, desc_arc, desc, token| {
             let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) {
                 desc.offset
             } else {
@@ -600,7 +646,8 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) ->
                 desc_arc,
                 desc,
             ))
-        })?;
+        },
+    )?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
         let offset = &mut desc_arc.write(token.token()).offset;
         *offset = offset.saturating_add(bytes_read as u64)
@@ -608,8 +655,11 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) ->
     Ok(bytes_read)
 }
 pub fn sys_write(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
-    let (bytes_written, desc_arc, desc) =
-        file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
+    let (bytes_written, desc_arc, desc) = file_op_generic_ext(
+        fd,
+        CapRights::CAP_WRITE,
+        token,
+        |scheme, desc_arc, desc, token| {
             let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) {
                 desc.offset
             } else {
@@ -620,7 +670,8 @@ pub fn sys_write(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -
                 desc_arc,
                 desc,
             ))
-        })?;
+        },
+    )?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
         let offset = &mut desc_arc.write(token.token()).offset;
         *offset = offset.saturating_add(bytes_written as u64)

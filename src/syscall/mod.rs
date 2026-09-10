@@ -76,26 +76,31 @@ pub fn syscall(
         let fd = FileHandle::from(b);
         //SYS_* is declared in kernel/syscall/src/number.rs
         match a {
-            SYS_WRITE2 => file_op_generic_ext(fd, token, |scheme, _, desc, token| {
-                let flags = if f == usize::MAX {
-                    None
-                } else {
-                    Some(
-                        u32::try_from(f)
-                            .ok()
-                            .and_then(RwFlags::from_bits)
-                            .ok_or(Error::new(EINVAL))?,
+            SYS_WRITE2 => file_op_generic_ext(
+                fd,
+                flag::CapRights::CAP_WRITE,
+                token,
+                |scheme, _, desc, token| {
+                    let flags = if f == usize::MAX {
+                        None
+                    } else {
+                        Some(
+                            u32::try_from(f)
+                                .ok()
+                                .and_then(RwFlags::from_bits)
+                                .ok_or(Error::new(EINVAL))?,
+                        )
+                    };
+                    scheme.kwriteoff(
+                        desc.number,
+                        UserSlice::ro(c, d)?,
+                        e as u64,
+                        flags.map_or(desc.flags, |f| desc.rw_flags(f)),
+                        desc.flags,
+                        token,
                     )
-                };
-                scheme.kwriteoff(
-                    desc.number,
-                    UserSlice::ro(c, d)?,
-                    e as u64,
-                    flags.map_or(desc.flags, |f| desc.rw_flags(f)),
-                    desc.flags,
-                    token,
-                )
-            }),
+                },
+            ),
             SYS_WRITE => sys_write(fd, UserSlice::ro(c, d)?, token),
             SYS_FMAP => {
                 let addrspace = AddrSpace::current()?;
@@ -109,50 +114,79 @@ pub fn syscall(
                         token,
                     )
                 } else {
-                    file_op_generic(fd, token, |scheme, number, token| {
+                    let mut required_caps = flag::CapRights::CAP_MMAP | flag::CapRights::CAP_SEEK;
+
+                    if map.flags.contains(MapFlags::PROT_READ) {
+                        required_caps |= flag::CapRights::CAP_READ;
+                    }
+                    if map.flags.contains(MapFlags::PROT_WRITE) {
+                        required_caps |= flag::CapRights::CAP_WRITE;
+                    }
+                    if map.flags.contains(MapFlags::PROT_EXEC) {
+                        required_caps |= flag::CapRights::CAP_MMAP_X;
+                    }
+                    file_op_generic(fd, required_caps, token, |scheme, number, token| {
                         scheme.kfmap(number, &addrspace, &map, false, token)
                     })
                 }
             }
-            SYS_READ2 => file_op_generic_ext(fd, token, |scheme, _, desc, token| {
-                let flags = if f == usize::MAX {
-                    None
-                } else {
-                    Some(
-                        u32::try_from(f)
-                            .ok()
-                            .and_then(RwFlags::from_bits)
-                            .ok_or(Error::new(EINVAL))?,
+            SYS_READ2 => file_op_generic_ext(
+                fd,
+                flag::CapRights::CAP_READ,
+                token,
+                |scheme, _, desc, token| {
+                    let flags = if f == usize::MAX {
+                        None
+                    } else {
+                        Some(
+                            u32::try_from(f)
+                                .ok()
+                                .and_then(RwFlags::from_bits)
+                                .ok_or(Error::new(EINVAL))?,
+                        )
+                    };
+                    scheme.kreadoff(
+                        desc.number,
+                        UserSlice::wo(c, d)?,
+                        e as u64,
+                        flags.map_or(desc.flags, |f| desc.rw_flags(f)),
+                        desc.flags,
+                        token,
                     )
-                };
-                scheme.kreadoff(
-                    desc.number,
-                    UserSlice::wo(c, d)?,
-                    e as u64,
-                    flags.map_or(desc.flags, |f| desc.rw_flags(f)),
-                    desc.flags,
-                    token,
-                )
-            }),
+                },
+            ),
             SYS_READ => sys_read(fd, UserSlice::wo(c, d)?, token),
-            SYS_FPATH => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.kfpath(number, UserSlice::wo(c, d)?, token)
-            }),
+            SYS_FPATH => file_op_generic(
+                fd,
+                flag::CapRights::CAP_READ,
+                token,
+                |scheme, number, token| scheme.kfpath(number, UserSlice::wo(c, d)?, token),
+            ),
 
             SYS_DUP_INTO => {
                 dup_into(fd, FileHandle::from(e), UserSlice::ro(c, d)?, token).map(FileHandle::into)
             }
 
             SYS_LSEEK => lseek(fd, c as i64, d, token),
-            SYS_FCHOWN => file_op_generic(fd, token, |scheme, number, token| {
-                scheme.fchown(number, c as u32, d as u32, token).map(|()| 0)
-            }),
+            SYS_FCHOWN => file_op_generic(
+                fd,
+                flag::CapRights::CAP_WRITE,
+                token,
+                |scheme, number, token| {
+                    scheme.fchown(number, c as u32, d as u32, token).map(|()| 0)
+                },
+            ),
             SYS_FCNTL => fcntl(fd, c, d, token),
-            SYS_FEVENT => file_op_generic(fd, token, |scheme, number, token| {
-                Ok(scheme
-                    .fevent(number, EventFlags::from_bits_truncate(c), token)?
-                    .bits())
-            }),
+            SYS_FEVENT => file_op_generic(
+                fd,
+                flag::CapRights::CAP_EVENT,
+                token,
+                |scheme, number, token| {
+                    Ok(scheme
+                        .fevent(number, EventFlags::from_bits_truncate(c), token)?
+                        .bits())
+                },
+            ),
             SYS_FUNMAP => funmap(b, c, token),
 
             // TODO: This can't be removed yet, since the pre-libredox softbuffer crate is a blocker.
@@ -160,9 +194,12 @@ pub fn syscall(
                 //let ctxt_name = crate::context::current().read(token.token()).name;
                 //warn!("Context `{ctxt_name}` is using deprecated SYS_FSYNC");
 
-                file_op_generic(fd, token, |scheme, number, token| {
-                    scheme.fsync(number, token).map(|()| 0)
-                })
+                file_op_generic(
+                    fd,
+                    flag::CapRights::CAP_WRITE,
+                    token,
+                    |scheme, number, token| scheme.fsync(number, token).map(|()| 0),
+                )
             }
 
             SYS_CLOSE => close(fd, token).map(|()| 0),
