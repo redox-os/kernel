@@ -1,7 +1,7 @@
 use super::InterruptController;
 use crate::{
     dtb::{
-        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc},
         translate_mmio_address,
     },
     sync::CleanLockToken,
@@ -212,16 +212,17 @@ impl GenericInterruptController {
 }
 
 impl InterruptHandler for GenericInterruptController {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for GenericInterruptController {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &mut [IrqDesc; 1024],
+        irq_desc: &[IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        _chips: &[IrqChipItem],
     ) -> Result<()> {
         if let Some(fdt) = fdt_opt {
             let (dist_addr, _dist_size, cpu_addr, _cpu_size) =
@@ -244,9 +245,8 @@ impl InterruptController for GenericInterruptController {
         let mut i: usize = 0;
         //only support linear irq map now.
         while i < cnt && (idx + i < 1024) {
-            irq_desc[idx + i].basic.ic_idx = ic_idx;
-            irq_desc[idx + i].basic.ic_irq = i as u32;
-            irq_desc[idx + i].basic.used = true;
+            irq_desc[idx + i].basic.set_mapping(ic_idx, i as u32);
+            irq_desc[idx + i].basic.set_used(true);
 
             i += 1;
         }
@@ -258,19 +258,19 @@ impl InterruptController for GenericInterruptController {
         init_current_cpu()?;
         Ok(())
     }
-    fn irq_ack(&mut self) -> u32 {
+    fn irq_ack(&self) -> u32 {
         unsafe { self.gic_cpu_if.irq_ack() }
     }
-    fn irq_eoi(&mut self, irq_num: u32) {
+    fn irq_eoi(&self, irq_num: u32) {
         unsafe { self.gic_cpu_if.irq_eoi(irq_num) }
     }
-    fn irq_enable(&mut self, irq_num: u32) {
+    fn irq_enable(&self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_enable(irq_num) }
     }
-    fn irq_disable(&mut self, irq_num: u32) {
+    fn irq_disable(&self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
     }
-    fn irq_configure(&mut self, irq_data: IrqCell) -> Result<()> {
+    fn irq_configure(&self, irq_data: IrqCell) -> Result<()> {
         let (irq, flags) = match irq_data {
             IrqCell::L3(0, irq, flags) => (irq, flags), // SPI
             _ => return Err(Error::new(EINVAL)),
@@ -354,7 +354,7 @@ impl GicDistIf {
         }
     }
 
-    pub unsafe fn irq_enable(&mut self, irq: u32) {
+    pub unsafe fn irq_enable(&self, irq: u32) {
         unsafe {
             let offset = GICD_ISENABLER + (4 * (irq / 32));
             let shift = 1 << (irq % 32);
@@ -364,7 +364,7 @@ impl GicDistIf {
         }
     }
 
-    pub unsafe fn irq_disable(&mut self, irq: u32) {
+    pub unsafe fn irq_disable(&self, irq: u32) {
         unsafe {
             let offset = GICD_ICENABLER + (4 * (irq / 32));
             let shift = 1 << (irq % 32);
@@ -374,7 +374,7 @@ impl GicDistIf {
         }
     }
 
-    pub unsafe fn irq_configure(&mut self, irq: u32, flags: u32) -> Result<()> {
+    pub unsafe fn irq_configure(&self, irq: u32, flags: u32) -> Result<()> {
         // GIC SPIs support level-sensitive or edge-triggered signaling.
         // Devicetree flags for active-low or falling-edge signaling cannot be
         // represented directly by this GIC configuration and are rejected.
@@ -407,7 +407,7 @@ impl GicDistIf {
         }
     }
 
-    unsafe fn write(&mut self, reg: u32, value: u32) {
+    unsafe fn write(&self, reg: u32, value: u32) {
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }
@@ -432,7 +432,7 @@ impl GicCpuIf {
         }
     }
 
-    unsafe fn irq_ack(&mut self) -> u32 {
+    unsafe fn irq_ack(&self) -> u32 {
         unsafe {
             let irq = self.read(GICC_IAR);
             if irq & 0x3ff == 1023 {
@@ -442,7 +442,7 @@ impl GicCpuIf {
         }
     }
 
-    unsafe fn irq_eoi(&mut self, irq: u32) {
+    unsafe fn irq_eoi(&self, irq: u32) {
         unsafe {
             self.write(GICC_EOIR, irq);
         }
@@ -455,7 +455,7 @@ impl GicCpuIf {
         }
     }
 
-    unsafe fn write(&mut self, reg: u32, value: u32) {
+    unsafe fn write(&self, reg: u32, value: u32) {
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }

@@ -6,7 +6,7 @@ use crate::{
         gic::{GenericInterruptController, GicCpuIf, GicDistIf},
         gicv3::{GicV3, GicV3CpuIf},
     },
-    dtb::irqchip::{IrqChipItem, IRQ_CHIP},
+    dtb::irqchip::{init_with_chips, IrqChipItem},
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
 
@@ -33,6 +33,7 @@ pub(super) fn init(madt: Madt) {
         warn!("No GICD found");
         return;
     };
+    let mut chips = Vec::new();
     let mut gic_dist_if = GicDistIf::default();
     unsafe {
         let phys = PhysicalAddress::new(gicd.physical_base_address as usize);
@@ -56,13 +57,12 @@ pub(super) fn init(madt: Madt) {
                     gic_cpu_if,
                     irq_range: (0, 0),
                 };
-                let chip = IrqChipItem {
+                chips.push(IrqChipItem {
                     phandle: 0,
                     parents: Vec::new(),
                     children: Vec::new(),
                     ic: Box::new(gic),
-                };
-                unsafe { IRQ_CHIP.irq_chip_list.chips.push(chip) };
+                });
                 //TODO: support more GICCs
                 break;
             }
@@ -80,13 +80,12 @@ pub(super) fn init(madt: Madt) {
                     gicrs: Vec::new(),
                     irq_range: (0, 0),
                 };
-                let chip = IrqChipItem {
+                chips.push(IrqChipItem {
                     phandle: 0,
                     parents: Vec::new(),
                     children: Vec::new(),
                     ic: Box::new(gic),
-                };
-                unsafe { IRQ_CHIP.irq_chip_list.chips.push(chip) };
+                });
                 //TODO: support more GICCs
                 break;
             }
@@ -95,5 +94,5 @@ pub(super) fn init(madt: Madt) {
             warn!("unsupported GIC version {}", gicd.gic_version);
         }
     }
-    unsafe { IRQ_CHIP.init(None) };
+    init_with_chips(chips);
 }

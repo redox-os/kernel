@@ -5,7 +5,7 @@ use super::InterruptController;
 use crate::{
     dtb::{
         get_interrupt, get_mmio_address,
-        irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc, IRQ_CHIP},
     },
     sync::CleanLockToken,
 };
@@ -66,41 +66,40 @@ impl Bcm2835ArmInterruptController {
             irq_range: (0, 0),
         }
     }
-    pub fn parse(fdt: &Fdt) -> Result<(usize, usize, Option<usize>)> {
+    pub fn parse(fdt: &Fdt, chips: &[IrqChipItem]) -> Result<(usize, usize, Option<usize>)> {
         if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-armctrl-ic"]) {
-            return unsafe { Bcm2835ArmInterruptController::parse_inner(fdt, &node) };
+            return Bcm2835ArmInterruptController::parse_inner(fdt, &node, chips);
         } else {
             return Err(Error::new(EINVAL));
         }
     }
-    unsafe fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
-        unsafe {
-            //assert address_cells == 0x1, size_cells == 0x1
-            let mem = node.reg().unwrap().nth(0).unwrap();
-            let base = get_mmio_address(fdt, node, &mem).unwrap();
-            let size = mem.size.unwrap() as u32;
-            let mut ret_virq = None;
+    fn parse_inner(
+        fdt: &Fdt,
+        node: &FdtNode,
+        chips: &[IrqChipItem],
+    ) -> Result<(usize, usize, Option<usize>)> {
+        //assert address_cells == 0x1, size_cells == 0x1
+        let mem = node.reg().unwrap().nth(0).unwrap();
+        let base = get_mmio_address(fdt, node, &mem).unwrap();
+        let size = mem.size.unwrap() as u32;
+        let mut ret_virq = None;
 
-            if let Some(interrupt_parent) = node.property("interrupt-parent") {
-                let phandle = interrupt_parent.as_usize().unwrap() as u32;
-                let irq = get_interrupt(fdt, node, 0).unwrap();
-                let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
-                //PHYS_NONSECURE_PPI only
-                let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                    .ic
-                    .irq_xlate(irq)
-                    .unwrap();
-                info!(
-                    "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
-                    ic_idx, virq
-                );
-                ret_virq = Some(virq);
-            }
-            Ok((base as usize, size as usize, ret_virq))
+        if let Some(interrupt_parent) = node.property("interrupt-parent") {
+            let phandle = interrupt_parent.as_usize().unwrap() as u32;
+            let irq = get_interrupt(fdt, node, 0).unwrap();
+            let ic_idx = chips.iter().position(|x| x.phandle == phandle).unwrap();
+            //PHYS_NONSECURE_PPI only
+            let virq = chips[ic_idx].ic.irq_xlate(irq).unwrap();
+            info!(
+                "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
+                ic_idx, virq
+            );
+            ret_virq = Some(virq);
         }
+        Ok((base as usize, size as usize, ret_virq))
     }
 
-    unsafe fn init(&mut self) {
+    unsafe fn init(&self) {
         unsafe {
             debug!("IRQ BCM2835 INIT");
             //disable all interrupt
@@ -119,7 +118,7 @@ impl Bcm2835ArmInterruptController {
         }
     }
 
-    unsafe fn write(&mut self, reg: u32, value: u32) {
+    unsafe fn write(&self, reg: u32, value: u32) {
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }
@@ -130,14 +129,16 @@ impl InterruptController for Bcm2835ArmInterruptController {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &mut [IrqDesc; 1024],
+        irq_desc: &[IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        chips: &[IrqChipItem],
     ) -> Result<()> {
-        let (base, _size, _virq) = match Bcm2835ArmInterruptController::parse(fdt_opt.unwrap()) {
-            Ok((a, b, c)) => (a, b, c),
-            Err(_) => return Err(Error::new(EINVAL)),
-        };
+        let (base, _size, _virq) =
+            match Bcm2835ArmInterruptController::parse(fdt_opt.unwrap(), chips) {
+                Ok((a, b, c)) => (a, b, c),
+                Err(_) => return Err(Error::new(EINVAL)),
+            };
         unsafe {
             self.address = base + crate::PHYS_OFFSET;
 
@@ -147,9 +148,8 @@ impl InterruptController for Bcm2835ArmInterruptController {
             let mut i: usize = 0;
             //only support linear irq map now.
             while i < cnt && (idx + i < 1024) {
-                irq_desc[idx + i].basic.ic_idx = ic_idx;
-                irq_desc[idx + i].basic.ic_irq = i as u32;
-                irq_desc[idx + i].basic.used = true;
+                irq_desc[idx + i].basic.set_mapping(ic_idx, i as u32);
+                irq_desc[idx + i].basic.set_used(true);
 
                 i += 1;
             }
@@ -162,7 +162,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
         Ok(())
     }
 
-    fn irq_ack(&mut self) -> u32 {
+    fn irq_ack(&self) -> u32 {
         //TODO: support smp self.read(LOCAL_IRQ_PENDING + 4 * cpu)
         let sources = unsafe { self.read(PENDING_0) };
         let pending_num = ffs(sources) - 1;
@@ -208,9 +208,9 @@ impl InterruptController for Bcm2835ArmInterruptController {
         }
     }
 
-    fn irq_eoi(&mut self, _irq_num: u32) {}
+    fn irq_eoi(&self, _irq_num: u32) {}
 
-    fn irq_enable(&mut self, irq_num: u32) {
+    fn irq_enable(&self, irq_num: u32) {
         debug!("bcm2835 enable {} {}", irq_num, irq_num & 0x1f);
         match irq_num {
             num @ 0..=31 => {
@@ -235,7 +235,7 @@ impl InterruptController for Bcm2835ArmInterruptController {
         }
     }
 
-    fn irq_disable(&mut self, irq_num: u32) {
+    fn irq_disable(&self, irq_num: u32) {
         match irq_num {
             num @ 0..=31 => {
                 let val = 1 << num;
@@ -281,19 +281,17 @@ impl InterruptController for Bcm2835ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2835ArmInterruptController {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
-        unsafe {
-            let irq = self.irq_ack();
-            if let Some(virq) = self.irq_to_virq(irq)
-                && virq < 1024
-            {
-                if let Some(handler) = &mut IRQ_CHIP.irq_desc[virq].handler {
-                    handler.irq_handler(virq as u32, token);
-                }
-            } else {
-                error!("unexpected irq num {}", irq);
+    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {
+        let irq = self.irq_ack();
+        if let Some(virq) = self.irq_to_virq(irq)
+            && virq < 1024
+        {
+            if let Some(handler) = IRQ_CHIP.irq_desc[virq].handler() {
+                handler.irq_handler(virq as u32, token);
             }
-            self.irq_eoi(irq);
+        } else {
+            error!("unexpected irq num {}", irq);
         }
+        self.irq_eoi(irq);
     }
 }
