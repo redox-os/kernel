@@ -620,6 +620,11 @@ impl CapRights {
     }
 
     #[inline]
+    pub fn from_kernel_and_scheme(kernel_caps: Self, scheme_rights: u64) -> Self {
+        kernel_caps.kernel_bits() | Self::from_scheme_rights(scheme_rights)
+    }
+
+    #[inline]
     pub fn require(self, required: Self) -> crate::error::Result<()> {
         if self.contains(required) {
             Ok(())
