@@ -511,6 +511,10 @@ pub enum NumaMemoryPolicy {
 
     /// Allocates from local node; falls back to allocating from other nodes in the increasing order of distance from the current node
     NodeLocalLeniant = 2,
+
+    FromPreferredNodes = 3,
+
+    FromPreferredNodesStrict = 4,
 }
 
 impl TryFrom<u64> for NumaMemoryPolicy {
