@@ -55,6 +55,8 @@ bitflags! {
 pub const F_GETFL: usize = 3;
 pub const F_SETFL: usize = 4;
 pub const F_GET_SCHEMEID: usize = 0x1000 | 1;
+pub const F_GETCAP: usize = 0x1000 | 2;
+pub const F_SETCAP: usize = 0x1000 | 3;
 
 pub const FUTEX_WAIT: usize = 0;
 pub const FUTEX_WAKE: usize = 1;
