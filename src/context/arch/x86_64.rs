@@ -28,9 +28,8 @@ pub const KFX_ALIGN: usize = 64;
 
 // TODO: stack guarding?
 
-#[derive(Clone, Debug)]
 #[repr(C)]
-pub struct Context {
+struct InFxsaveAvailable {
     /// RBX register
     rbx: usize,
     /// R12 register
@@ -43,6 +42,11 @@ pub struct Context {
     r15: usize,
     /// Base pointer
     rbp: usize,
+}
+
+#[derive(Clone, Debug)]
+#[repr(C)]
+pub struct Context {
     /// Stack pointer
     pub(crate) rsp: usize,
     /// FSBASE.
@@ -61,12 +65,6 @@ pub struct Context {
 impl Context {
     pub fn new() -> Context {
         Context {
-            rbx: 0,
-            r12: 0,
-            r13: 0,
-            r14: 0,
-            r15: 0,
-            rbp: 0,
             rsp: 0,
             fsbase: 0,
             gsbase: 0,
@@ -391,41 +389,49 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
         (*pcr).percpu.new_addrsp_tmp.set(next.addr_space.clone());
 
-        switch_to_inner(&mut prev.arch, &mut next.arch)
+        switch_to_inner(
+            &mut prev.arch,
+            &mut next.arch,
+            prev.kfx.as_mut_ptr().byte_add(464).cast(),
+            next.kfx.as_mut_ptr().byte_add(464).cast(),
+        )
     }
 }
 
 // Check disassembly!
 #[unsafe(naked)]
-unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Context) {
-    use Context as Cx;
-
+unsafe extern "sysv64" fn switch_to_inner(
+    _prev: &mut Context,
+    _next: &mut Context,
+    _prev_fxavail: *mut InFxsaveAvailable,
+    _next_fxavail: *mut InFxsaveAvailable,
+) {
     core::arch::naked_asm!(
-        // As a quick reminder for those who are unfamiliar with the System V ABI (extern "C"):
+        // System V ABI:
         //
-        // - the current parameters are passed in the registers `rdi`, `rsi`,
+        // - the current parameters are passed in the registers `rdi`, `rsi`, `rdx`, `rcx`,
         // - we can modify scratch registers, e.g. rax
         // - we cannot change callee-preserved registers arbitrarily, e.g. rbx, which is why we
         //   store them here in the first place.
         concat!("
         // Save old registers, and load new ones
-        mov [rdi + {off_rbx}], rbx
-        mov rbx, [rsi + {off_rbx}]
+        mov [rdx + {off_rbx}], rbx
+        mov rbx, [rcx + {off_rbx}]
 
-        mov [rdi + {off_r12}], r12
-        mov r12, [rsi + {off_r12}]
+        mov [rdx + {off_r12}], r12
+        mov r12, [rcx + {off_r12}]
 
-        mov [rdi + {off_r13}], r13
-        mov r13, [rsi + {off_r13}]
+        mov [rdx + {off_r13}], r13
+        mov r13, [rcx + {off_r13}]
 
-        mov [rdi + {off_r14}], r14
-        mov r14, [rsi + {off_r14}]
+        mov [rdx + {off_r14}], r14
+        mov r14, [rcx + {off_r14}]
 
-        mov [rdi + {off_r15}], r15
-        mov r15, [rsi + {off_r15}]
+        mov [rdx + {off_r15}], r15
+        mov r15, [rcx + {off_r15}]
 
-        mov [rdi + {off_rbp}], rbp
-        mov rbp, [rsi + {off_rbp}]
+        mov [rdx + {off_rbp}], rbp
+        mov rbp, [rcx + {off_rbp}]
 
         mov [rdi + {off_rsp}], rsp
         mov rsp, [rsi + {off_rsp}]
@@ -439,13 +445,13 @@ unsafe extern "sysv64" fn switch_to_inner(_prev: &mut Context, _next: &mut Conte
 
         "),
 
-        off_rbx = const(offset_of!(Cx, rbx)),
-        off_r12 = const(offset_of!(Cx, r12)),
-        off_r13 = const(offset_of!(Cx, r13)),
-        off_r14 = const(offset_of!(Cx, r14)),
-        off_r15 = const(offset_of!(Cx, r15)),
-        off_rbp = const(offset_of!(Cx, rbp)),
-        off_rsp = const(offset_of!(Cx, rsp)),
+        off_rbx = const offset_of!(InFxsaveAvailable, rbx),
+        off_r12 = const offset_of!(InFxsaveAvailable, r12),
+        off_r13 = const offset_of!(InFxsaveAvailable, r13),
+        off_r14 = const offset_of!(InFxsaveAvailable, r14),
+        off_r15 = const offset_of!(InFxsaveAvailable, r15),
+        off_rbp = const offset_of!(InFxsaveAvailable, rbp),
+        off_rsp = const offset_of!(Context, rsp),
 
         switch_hook = sym crate::context::switch_finish_hook,
     );
