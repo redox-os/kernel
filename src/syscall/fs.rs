@@ -18,7 +18,7 @@ use crate::{
     syscall::{error::*, flag::*},
 };
 
-use super::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo};
+use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
 
 fn with_current_ctx<T>(
     token: &mut CleanLockToken,
@@ -399,7 +399,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     };
 
     // Communicate fcntl with scheme
-    if cmd != F_GET_SCHEMEID {
+    if cmd != F_GET_SCHEMEID && cmd != F_GETCAP && cmd != F_SETCAP {
         scheme.fcntl(number, cmd, arg, token)?;
     }
 
@@ -422,6 +422,24 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                     .upgrade()?
                     .scheme_id()
                     .get()),
+                F_GETCAP => {
+                    let buf = UserSlice::wo(arg, size_of::<CapRights>())?;
+                    let bits = file.cap_rights.bits().to_ne_bytes();
+                    buf.copy_exactly(&bits)?;
+                    Ok(0)
+                }
+                F_SETCAP => {
+                    let new_cap_rights = unsafe {
+                        UserSlice::ro(arg, size_of::<CapRights>())?.read_exact::<CapRights>()?
+                    };
+
+                    if !file.cap_rights.contains(new_cap_rights) {
+                        return Err(Error::new(EPERM));
+                    }
+
+                    file.cap_rights = new_cap_rights;
+                    Ok(0)
+                }
                 _ => Err(Error::new(EINVAL)),
             },
             None => Err(Error::new(EBADF)),
