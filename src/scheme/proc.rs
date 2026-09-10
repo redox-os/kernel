@@ -37,6 +37,7 @@ use alloc::{
 use core::{
     mem::size_of,
     num::NonZeroUsize,
+    ops::Not,
     slice, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -1818,11 +1819,18 @@ impl ContextHandle {
                 .ok_or(Error::new(EINVAL))?;
 
                 match op {
-                    NumaVerb::MemPolicy => (), // actions performed below from line 1838
+                    NumaVerb::MemPolicy => (), // actions performed below from line 1837
                     NumaVerb::ReplicatePageTables => {
+                        if flags.contains(CallFlags::READ) {
+                            let addrspace = addrspace.acquire_read(token.downgrade());
+                            return Ok(addrspace.replicate_on_node_switch as usize);
+                        }
+                        if !flags.contains(CallFlags::WRITE) {
+                            return Err(Error::new(EINVAL));
+                        }
                         let mut addrspace = addrspace.acquire_write(token.downgrade());
-                        addrspace.replicate_on_node_switch = false;
-                        return Ok(0);
+                        addrspace.replicate_on_node_switch = !addrspace.replicate_on_node_switch;
+                        return Ok(addrspace.replicate_on_node_switch as usize);
                     }
                 }
 

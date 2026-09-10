@@ -8,7 +8,7 @@ use core::{
 use crate::{
     acpi,
     cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
-    percpu,
+    numa, percpu,
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
