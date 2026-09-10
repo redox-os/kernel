@@ -618,4 +618,42 @@ impl CapRights {
     pub fn from_scheme_rights(rights: u64) -> Self {
         Self::from_bits_retain((rights << 16) & Self::SCHEME_MASK.bits())
     }
+
+    #[inline]
+    pub fn require(self, required: Self) -> crate::error::Result<()> {
+        if self.contains(required) {
+            Ok(())
+        } else {
+            Err(crate::error::Error::new(crate::error::EPERM))
+        }
+    }
+
+    #[inline]
+    pub fn is_subset_of(self, superset: Self) -> bool {
+        superset.contains(self)
+    }
+
+    #[inline]
+    pub fn restrict(self, max_allowed: Self) -> Self {
+        self & max_allowed
+    }
+
+    pub fn from_open_flags(flags: usize) -> Self {
+        let mut caps = Self::empty();
+
+        let accmode = flags & O_ACCMODE;
+        if accmode == O_RDONLY || accmode == O_RDWR {
+            caps |= Self::CAP_READ;
+        }
+        if accmode == O_WRONLY || accmode == O_RDWR {
+            caps |= Self::CAP_WRITE;
+        }
+        if flags & O_CREAT != 0 {
+            caps |= Self::CAP_CREATE;
+        }
+
+        caps |= Self::CAP_SEEK | Self::CAP_FCNTL | Self::CAP_EVENT;
+
+        caps
+    }
 }
