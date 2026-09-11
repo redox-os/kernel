@@ -1,7 +1,10 @@
 use core::fmt::Write as _;
 
 use crate::{
-    context::get_contexts_stats,
+    context::{
+        context::FDTBL_POOL, file::FILE_DESCRIPTION_POOL, get_contexts_stats,
+        memory::ADDR_SPACE_POOL, pool::CONTEXT_POOL,
+    },
     cpu_stats::{get_contexts_count, irq_counts},
     event::get_event_stat,
     percpu::get_all_stats,
@@ -35,12 +38,20 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         futex_registries: {futex_keys}\n\
         futex_subcribers: {futex_subs}\n\
         pipe_subcribers: {pipe_subs}\n\
-        timeout_subscribers: {timeout_subs}\n",
+        timeout_subscribers: {timeout_subs}\n\
+        context_pool: {}\n\
+        addrsp_pool: {}\n\
+        fdtbl_pool: {}\n\
+        file_description_pool: {}\n",
         get_cpu_stats(),
         get_irq_stats(),
         context_switches,
         syscall_switches,
         get_contexts_count(),
+        CONTEXT_POOL,
+        ADDR_SPACE_POOL,
+        FDTBL_POOL,
+        FILE_DESCRIPTION_POOL,
     );
 
     Ok(res.into_bytes())

@@ -214,7 +214,7 @@ impl Context {
             kstack: None,
             addr_space: None,
             name: ArrayString::new(),
-            files: Arc::try_new_in(RwLock::new(FdTbl::new()), FD_POOL)
+            files: Arc::try_new_in(RwLock::new(FdTbl::new()), FDTBL_POOL)
                 .map_err(|_| Error::new(ENOMEM))?,
             userspace: false,
             fmap_ret: None,
@@ -600,10 +600,11 @@ pub struct FdTbl {
 }
 
 pub type LockedFdTbl = RwLock<L5, FdTbl>;
-pub type FdPool = super::pool::Pool<Arc<LockedFdTbl>>;
-pub const FD_POOL: FdPool = super::pool::Pool::new();
-pub type ArcLockedFdTbl = Arc<LockedFdTbl, FdPool>;
-pub type WeakLockedFdTbl = Weak<LockedFdTbl, FdPool>;
+pub type FdTblPool = super::pool::Pool<Arc<LockedFdTbl>>;
+pub const FDTBL_POOL: FdTblPool = super::pool::Pool::new();
+pub type ArcLockedFdTbl = Arc<LockedFdTbl, FdTblPool>;
+pub type WeakLockedFdTbl = Weak<LockedFdTbl, FdTblPool>;
+impl_pool_type_arc!(LockedFdTbl);
 
 impl FdTbl {
     pub fn new() -> Self {

@@ -110,6 +110,7 @@ impl InternalFlags {
 pub type FileDescriptionPool = Pool<Arc<LockedFileDescription>>;
 pub const FILE_DESCRIPTION_POOL: FileDescriptionPool = Pool::new();
 pub type ArcLockedFileDescription = Arc<LockedFileDescription, FileDescriptionPool>;
+impl_pool_type_arc!(LockedFileDescription);
 
 /// A file descriptor
 #[derive(Clone, Debug)]

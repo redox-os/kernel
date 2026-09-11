@@ -54,3 +54,33 @@ macro_rules! trace {
         }
     };
 }
+
+#[macro_export]
+macro_rules! impl_pool_type_arc(
+    ($name:ident) => {
+        mod impl_pool_type_arc {
+            use super::*;
+            pub static STATE: ::spin::Mutex<$crate::context::pool::State<::alloc::sync::Arc<$name>>> = ::spin::Mutex::new($crate::context::pool::State::new());
+        }
+        unsafe impl $crate::context::pool::PoolType for ::alloc::sync::Arc<$name> {
+            const ITEM_SIZE: usize =
+                (::core::mem::size_of::<$name>().next_multiple_of(::core::mem::size_of::<usize>()) + 2 * core::mem::size_of::<usize>()).next_multiple_of(Self::ITEM_ALIGN);
+            const ITEM_ALIGN: usize = ::core::mem::align_of::<$name>();
+
+            fn state() -> &'static ::spin::Mutex<$crate::context::pool::State<Self>> {
+                const {
+                    assert!(Self::ITEM_SIZE <= 4 * $crate::memory::PAGE_SIZE);
+                    assert!(Self::ITEM_SIZE >= size_of::<usize>());
+                    assert!(Self::ITEM_SIZE % size_of::<usize>() == 0);
+
+                    assert!(Self::ITEM_ALIGN <= 4 * $crate::memory::PAGE_SIZE);
+                };
+
+                &impl_pool_type_arc::STATE
+            }
+            fn name() -> &'static str {
+                ::core::any::type_name::<$name>()
+            }
+        }
+    };
+);

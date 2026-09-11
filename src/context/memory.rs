@@ -94,6 +94,7 @@ impl UnmapResult {
 
 pub type AddrSpacePool = Pool<Arc<AddrSpaceWrapper>>;
 pub const ADDR_SPACE_POOL: AddrSpacePool = Pool::new();
+impl_pool_type_arc!(AddrSpaceWrapper);
 
 pub type ArcAddrSpaceWrapper = Arc<AddrSpaceWrapper, AddrSpacePool>;
 

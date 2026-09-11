@@ -2,7 +2,8 @@ use crate::{
     context::{
         self,
         context::{
-            ArcLockedFdTbl, HardBlockedReason, LockedFdTbl, SignalState, WeakLockedFdTbl, FD_POOL,
+            ArcLockedFdTbl, HardBlockedReason, LockedFdTbl, SignalState, WeakLockedFdTbl,
+            FDTBL_POOL,
         },
         file::{ArcLockedFileDescription, InternalFlags},
         memory::{
@@ -788,7 +789,7 @@ impl KernelScheme for ProcScheme {
 
                             let new_filetable = Arc::try_new_in(
                                 RwLock::new(filetable.read(token.token()).try_clone()?),
-                                FD_POOL,
+                                FDTBL_POOL,
                             )
                             .map_err(|_| Error::new(ENOMEM))?;
 
