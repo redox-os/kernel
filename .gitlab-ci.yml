@@ -16,6 +16,11 @@ x86_64:
   variables:
     ARCH: "x86_64"
 
+unit_tests:
+  stage: build
+  script:
+    - cargo test
+
 aarch64:
   stage: cross-build
   image: "registry.redox-os.org/redox-os/redoxer:aarch64"
@@ -95,3 +100,8 @@ x86_64:profiling:
   variables:
     ARCH: "x86_64"
     KERNEL_CHECK_FEATURES: profiling
+
+miri:
+  stage: test
+  script:
+    - cargo miri test
