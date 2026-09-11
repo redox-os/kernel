@@ -25,7 +25,10 @@ use syscall::{
 use crate::{
     context::{
         self,
-        file::{FileDescription, InternalFlags, KernelSchemeRef, LockedFileDescription},
+        file::{
+            ArcLockedFileDescription, FileDescription, InternalFlags, KernelSchemeRef,
+            LockedFileDescription, FILE_DESCRIPTION_POOL,
+        },
         memory::{AddrSpaceWrapper, ArcAddrSpaceWrapper},
         ContextLock, WeakContextLock,
     },
@@ -302,16 +305,20 @@ impl KernelScheme for SchemeList {
                 let scheme_ref = KernelSchemeRef::User(Arc::downgrade(inner));
                 let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
 
-                return Ok(OpenResult::External(Arc::new(RwLock::new(
-                    FileDescription {
+                let arc = Arc::try_new_in(
+                    RwLock::new(FileDescription {
                         scheme_ref,
                         number: params.number,
                         offset: params.offset,
                         flags: params.flags as u32,
                         internal_flags: InternalFlags::from_extra0(params.internal_flags)
                             .ok_or(Error::new(EINVAL))?,
-                    },
-                ))));
+                    }),
+                    FILE_DESCRIPTION_POOL,
+                )
+                .map_err(|_| Error::new(ENOMEM))?;
+
+                return Ok(OpenResult::External(arc));
             }
             Handle::SchemeCreationCapability => (),
             _ => return Err(Error::new(EBADF)),
@@ -451,7 +458,7 @@ impl KernelScheme for SchemeList {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<ArcLockedFileDescription>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -777,7 +784,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         &self,
         fds: &[usize],
         kind: StdFsCallKind,
-        desc: Arc<LockedFileDescription>,
+        desc: ArcLockedFileDescription,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: StdFsCallMeta,
@@ -788,7 +795,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<ArcLockedFileDescription>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -809,7 +816,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn translate_std_fs_call(
         &self,
         fds: &[usize],
-        desc: Arc<LockedFileDescription>,
+        desc: ArcLockedFileDescription,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -864,7 +871,7 @@ pub trait KernelScheme: Send + Sync + 'static {
 #[derive(Debug)]
 pub enum OpenResult {
     SchemeLocal(usize, InternalFlags),
-    External(Arc<LockedFileDescription>),
+    External(ArcLockedFileDescription),
 }
 pub struct CallerCtx {
     pub pid: usize,

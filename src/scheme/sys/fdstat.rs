@@ -5,7 +5,7 @@ use crate::{
     },
     context::{
         contexts,
-        file::LockedFileDescription,
+        file::{FileDescriptionPool, LockedFileDescription},
         memory::{AddrSpacePool, AddrSpaceWrapper},
     },
     scheme::{self, handles, KernelSchemes, SchemeId},
@@ -38,7 +38,7 @@ struct Descr {
 
 #[cfg_attr(not(feature = "sys_fdstat"), expect(dead_code))]
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
-    let mut map = HashMap::<Ref<LockedFileDescription>, Descr>::new();
+    let mut map = HashMap::<Ref<LockedFileDescription, FileDescriptionPool>, Descr>::new();
     let mut report = String::new();
     let mut schemes_guard = handles().read(token.token());
     let (schemes, mut token) = schemes_guard.token_split();

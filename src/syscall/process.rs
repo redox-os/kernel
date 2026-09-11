@@ -7,7 +7,9 @@ use syscall::data::GlobalSchemes;
 use crate::{
     context::{
         context::SyscallFrame,
-        file::{FileDescription, FileDescriptor, InternalFlags, KernelSchemeRef},
+        file::{
+            FileDescription, FileDescriptor, InternalFlags, KernelSchemeRef, FILE_DESCRIPTION_POOL,
+        },
         memory::{AddrSpace, Grant, PageSpan},
         ContextRef,
     },
@@ -158,7 +160,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                         Ok(fd) => fd,
                         Err(_) => usize::MAX,
                     };
-                    insert_fd(KernelSchemeRef::Global(*scheme), cap_fd, token)
+                    insert_fd_bootstrap(KernelSchemeRef::Global(*scheme), cap_fd, token)
                 };
             }
         }
@@ -170,7 +172,7 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
                 Err(_) => usize::MAX,
             };
             // Second, retrieve the scheme ID.
-            insert_fd(KernelSchemeRef::SchemeMgr, cap_fd, token)
+            insert_fd_bootstrap(KernelSchemeRef::SchemeMgr, cap_fd, token)
         };
 
         let mut lock_token = token.token();
@@ -264,7 +266,11 @@ unsafe fn bootstrap_mem(bootstrap: &crate::startup::Bootstrap) -> &'static [u8] 
     }
 }
 
-fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockToken) -> usize {
+fn insert_fd_bootstrap(
+    scheme_ref: KernelSchemeRef,
+    number: usize,
+    token: &mut CleanLockToken,
+) -> usize {
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (context, mut token) = current.token_split();
@@ -283,13 +289,16 @@ fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockTo
         .insert_file(
             FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | id.get()),
             FileDescriptor {
-                description: Arc::new(RwLock::new(FileDescription {
-                    scheme_ref,
-                    number,
-                    offset: 0,
-                    flags: (O_CREAT | O_RDWR) as u32,
-                    internal_flags: InternalFlags::empty(),
-                })),
+                description: Arc::new_in(
+                    RwLock::new(FileDescription {
+                        scheme_ref,
+                        number,
+                        offset: 0,
+                        flags: (O_CREAT | O_RDWR) as u32,
+                        internal_flags: InternalFlags::empty(),
+                    }),
+                    FILE_DESCRIPTION_POOL,
+                ),
             },
             &mut token,
         )

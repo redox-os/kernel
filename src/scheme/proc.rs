@@ -4,7 +4,7 @@ use crate::{
         context::{
             ArcLockedFdTbl, HardBlockedReason, LockedFdTbl, SignalState, WeakLockedFdTbl, FD_POOL,
         },
-        file::InternalFlags,
+        file::{ArcLockedFileDescription, InternalFlags},
         memory::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, ArcAddrSpaceWrapper, Grant, PageSpan,
             UnmapVec,
@@ -893,7 +893,7 @@ impl KernelScheme for ProcScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<context::file::LockedFileDescription>>,
+        descs: Vec<ArcLockedFileDescription>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,

@@ -17,7 +17,10 @@ use crate::{
     context::{
         self,
         context::{bulk_insert_fds, HardBlockedReason},
-        file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
+        file::{
+            ArcLockedFileDescription, FileDescription, FileDescriptor, InternalFlags,
+            LockedFileDescription,
+        },
         memory::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, ArcAddrSpaceWrapper,
             BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
@@ -52,7 +55,7 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: WeakContextLock,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<ArcLockedFileDescription>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
@@ -64,8 +67,8 @@ enum State {
 #[derive(Debug)]
 enum Response {
     Regular(Result<usize>, u8, bool),
-    Fd(Arc<LockedFileDescription>),
-    MultipleFds(Option<Vec<Arc<LockedFileDescription>>>),
+    Fd(ArcLockedFileDescription),
+    MultipleFds(Option<Vec<ArcLockedFileDescription>>),
 }
 
 impl Response {
@@ -178,7 +181,7 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<ArcLockedFileDescription>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
@@ -205,7 +208,7 @@ impl UserInner {
 
     fn call_inner(
         &self,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<ArcLockedFileDescription>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
@@ -1134,7 +1137,7 @@ impl UserInner {
 
     pub fn call_fdwrite(
         &self,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<ArcLockedFileDescription>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -1166,7 +1169,7 @@ impl UserInner {
 
     fn handle_movefd(
         &self,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<ArcLockedFileDescription>,
         request_id: usize,
         _flags: FmoveFdFlags,
         token: &mut CleanLockToken,
@@ -1877,7 +1880,7 @@ impl KernelScheme for UserScheme {
         &self,
         fds: &[usize],
         _kind: StdFsCallKind,
-        desc: Arc<LockedFileDescription>,
+        desc: ArcLockedFileDescription,
         payload: UserSliceRw,
         _flags: CallFlags,
         metadata: StdFsCallMeta,
@@ -1939,7 +1942,7 @@ impl KernelScheme for UserScheme {
     fn kfdwrite(
         &self,
         number: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<ArcLockedFileDescription>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -2027,7 +2030,7 @@ impl KernelScheme for UserScheme {
     fn translate_std_fs_call(
         &self,
         fds: &[usize],
-        desc: Arc<LockedFileDescription>,
+        desc: ArcLockedFileDescription,
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],

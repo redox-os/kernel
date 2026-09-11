@@ -36,6 +36,7 @@ use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE
 
 use super::{
     empty_cr3,
+    file::ArcLockedFileDescription,
     memory::{AddrSpaceWrapper, ArcAddrSpaceWrapper, GrantFileRef},
 };
 
@@ -843,7 +844,7 @@ impl FdTbl {
 }
 
 pub fn bulk_insert_fds(
-    descriptions: Vec<Arc<LockedFileDescription>>,
+    descriptions: Vec<ArcLockedFileDescription>,
     payload: UserSliceRw,
     token: &mut LockToken<L1>,
 ) -> Result<usize> {

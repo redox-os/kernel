@@ -33,7 +33,7 @@ use crate::{
     },
 };
 
-use super::{context::HardBlockedReason, pool::Pool};
+use super::{context::HardBlockedReason, file::ArcLockedFileDescription, pool::Pool};
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
@@ -1238,7 +1238,7 @@ pub struct Grant {
 
 #[derive(Clone, Debug)]
 pub struct GrantFileRef {
-    pub description: Arc<LockedFileDescription>,
+    pub description: ArcLockedFileDescription,
     pub base_offset: usize,
 }
 

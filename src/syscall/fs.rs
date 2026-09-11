@@ -7,7 +7,10 @@ use alloc::{string::String, sync::Arc, vec::Vec};
 use crate::{
     context::{
         self,
-        file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
+        file::{
+            ArcLockedFileDescription, FileDescription, FileDescriptor, InternalFlags,
+            LockedFileDescription, FILE_DESCRIPTION_POOL,
+        },
         memory::{
             handle_notify_files, AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions,
         },
@@ -32,7 +35,7 @@ pub fn file_op_generic_ext<T>(
     token: &mut CleanLockToken,
     op: impl FnOnce(
         &dyn KernelScheme,
-        Arc<LockedFileDescription>,
+        ArcLockedFileDescription,
         FileDescription,
         &mut CleanLockToken,
     ) -> Result<T>,
@@ -96,15 +99,17 @@ pub fn openat_into(
         );
 
         match res? {
-            OpenResult::SchemeLocal(number, internal_flags) => {
-                Arc::new(RwLock::new(FileDescription {
+            OpenResult::SchemeLocal(number, internal_flags) => Arc::try_new_in(
+                RwLock::new(FileDescription {
                     offset: 0,
                     internal_flags,
                     scheme_ref: scheme.downgrade(),
                     number,
                     flags: flags as u32,
-                }))
-            }
+                }),
+                FILE_DESCRIPTION_POOL,
+            )
+            .map_err(|_| Error::new(ENOMEM))?,
             OpenResult::External(desc) => desc,
         }
     };
@@ -190,15 +195,17 @@ fn duplicate_file(
             let scheme = description.scheme_ref.upgrade()?;
 
             match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
-                OpenResult::SchemeLocal(number, internal_flags) => {
-                    Arc::new(RwLock::new(FileDescription {
+                OpenResult::SchemeLocal(number, internal_flags) => Arc::try_new_in(
+                    RwLock::new(FileDescription {
                         offset: 0,
                         internal_flags,
                         scheme_ref: scheme.downgrade(),
                         number,
                         flags: description.flags,
-                    }))
-                }
+                    }),
+                    FILE_DESCRIPTION_POOL,
+                )
+                .map_err(|_| Error::new(ENOMEM))?,
                 OpenResult::External(desc) => desc,
             }
         };

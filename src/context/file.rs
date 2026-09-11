@@ -13,6 +13,8 @@ use crate::{
 use alloc::sync::{Arc, Weak};
 use syscall::{schemev2::NewFdFlags, Error, GlobalSchemes, RwFlags, ENODEV, O_APPEND, O_NONBLOCK};
 
+use super::pool::Pool;
+
 pub type LockedFileDescription = RwLock<L6, FileDescription>;
 
 #[derive(Clone, Debug)]
@@ -105,13 +107,16 @@ impl InternalFlags {
         )
     }
 }
+pub type FileDescriptionPool = Pool<Arc<LockedFileDescription>>;
+pub const FILE_DESCRIPTION_POOL: FileDescriptionPool = Pool::new();
+pub type ArcLockedFileDescription = Arc<LockedFileDescription, FileDescriptionPool>;
 
 /// A file descriptor
 #[derive(Clone, Debug)]
 #[must_use = "File descriptors must be closed"]
 pub struct FileDescriptor {
     /// Corresponding file description
-    pub description: Arc<LockedFileDescription>,
+    pub description: ArcLockedFileDescription,
 }
 
 impl FileDescription {
