@@ -1,4 +1,8 @@
-use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
+use alloc::{
+    collections::BTreeSet,
+    sync::{Arc, Weak},
+    vec::Vec,
+};
 use arrayvec::ArrayString;
 use core::{
     cmp::Reverse,
@@ -137,7 +141,7 @@ pub struct Context {
     /// The name of the context
     pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
-    pub files: Arc<LockedFdTbl>,
+    pub files: ArcLockedFdTbl,
     /// All contexts except kmain will primarily live in userspace, and enter the kernel only when
     /// interrupts or syscalls occur. This flag is set for all contexts but kmain.
     pub userspace: bool,
@@ -209,7 +213,8 @@ impl Context {
             kstack: None,
             addr_space: None,
             name: ArrayString::new(),
-            files: Arc::new(RwLock::new(FdTbl::new())),
+            files: Arc::try_new_in(RwLock::new(FdTbl::new()), FD_POOL)
+                .map_err(|_| Error::new(ENOMEM))?,
             userspace: false,
             fmap_ret: None,
             prio: 20,
@@ -594,6 +599,10 @@ pub struct FdTbl {
 }
 
 pub type LockedFdTbl = RwLock<L5, FdTbl>;
+pub type FdPool = super::pool::Pool<Arc<LockedFdTbl>>;
+pub const FD_POOL: FdPool = super::pool::Pool::new();
+pub type ArcLockedFdTbl = Arc<LockedFdTbl, FdPool>;
+pub type WeakLockedFdTbl = Weak<LockedFdTbl, FdPool>;
 
 impl FdTbl {
     pub fn new() -> Self {

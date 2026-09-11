@@ -1,7 +1,9 @@
 use crate::{
     context::{
         self,
-        context::{HardBlockedReason, LockedFdTbl, SignalState},
+        context::{
+            ArcLockedFdTbl, HardBlockedReason, LockedFdTbl, SignalState, WeakLockedFdTbl, FD_POOL,
+        },
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
         unblock_context, wakeup_context, ArcContextLock, Context, ContextLock, Status,
@@ -127,12 +129,12 @@ enum ContextHandle {
     Sighandler,
     Start,
     NewFiletable {
-        filetable: Arc<LockedFdTbl>,
+        filetable: ArcLockedFdTbl,
         binary_format: bool,
         data: Box<[u8]>,
     },
     Filetable {
-        filetable: Weak<LockedFdTbl>,
+        filetable: WeakLockedFdTbl,
         binary_format: bool,
         data: Box<[u8]>,
     },
@@ -151,7 +153,7 @@ enum ContextHandle {
     CurrentFiletable,
 
     AwaitingFiletableChange {
-        new_ft: Arc<LockedFdTbl>,
+        new_ft: ArcLockedFdTbl,
     },
 
     // TODO: Remove this once openat is implemented, or allow openat-via-dup via e.g. the top-level
@@ -781,8 +783,11 @@ impl KernelScheme for ProcScheme {
                         b"copy" => {
                             let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
-                            let new_filetable =
-                                Arc::new(RwLock::new(filetable.read(token.token()).try_clone()?));
+                            let new_filetable = Arc::try_new_in(
+                                RwLock::new(filetable.read(token.token()).try_clone()?),
+                                FD_POOL,
+                            )
+                            .map_err(|_| Error::new(ENOMEM))?;
 
                             Handle {
                                 kind: ContextHandle::NewFiletable {

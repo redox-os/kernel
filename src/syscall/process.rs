@@ -38,8 +38,8 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
     let (addrspace_opt, mut close_files) = {
         let mut context = context_lock.write(token.token());
         let (context, token) = context.token_split();
-        let close_files = Arc::try_unwrap(mem::take(&mut context.files))
-            .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
+        let close_files = Arc::get_mut(&mut context.files)
+            .map_or_else(FdTbl::new, |files| mem::take(files.get_mut()));
         let addrspace_opt = context.set_addr_space(None, token);
         drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
         drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));

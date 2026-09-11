@@ -51,6 +51,11 @@ impl<T> Pool<T> {
         }
     }
 }
+impl<T> Default for Pool<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub struct State {
     head: Option<NonNull<()>>,
