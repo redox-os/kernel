@@ -1363,6 +1363,72 @@ impl UserScheme {
     pub fn new(inner: Arc<UserInner>) -> UserScheme {
         UserScheme { inner }
     }
+
+    fn call_generic<const READ: bool, const WRITE: bool>(
+        &self,
+        opcode: Opcode,
+        fds: &[usize],
+        slice: UserSlice<READ, WRITE>,
+        metadata: &[u64],
+        mut on_response: impl FnMut(bool, &mut CleanLockToken),
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        let inner = self.inner.clone();
+
+        let mut address = inner.capture_user(slice, token)?;
+        let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let mut sqe_flags = SqeFlags::empty();
+        let mut last_arg = 0;
+        if fds.len() == 2 {
+            sqe_flags |= SqeFlags::MULTIPLE_IDS;
+            last_arg = fds[1] as u64;
+        } else if fds.len() > 2 || fds.is_empty() {
+            return Err(Error::new(EINVAL));
+        }
+
+        let mut sqe = Sqe {
+            opcode: opcode as u8,
+            sqe_flags,
+            _rsvd: 0,
+            tag: inner.next_id(token)?,
+            caller: ctx.pid as u64,
+            args: [
+                fds[0] as u64,
+                address.base() as u64,
+                address.len() as u64,
+                0,
+                0,
+                last_arg,
+            ],
+        };
+
+        if fds.len() == 2 {
+            let dst = &mut sqe.args[3..5];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        } else {
+            let dst = &mut sqe.args[3..];
+            let len = dst.len().min(metadata.len());
+            dst[..len].copy_from_slice(&metadata[..len]);
+        }
+
+        match inner.call_inner(Vec::new(), sqe, address.span(), token) {
+            Ok(Response::Regular(res, _, notify_on_detach)) => {
+                address.release(token)?;
+                on_response(notify_on_detach, token);
+                res
+            }
+            Ok(_) => {
+                let _ = address.release(token);
+                Err(Error::new(EIO))
+            }
+            Err(e) => {
+                let _ = address.release(token);
+                Err(e)
+            }
+        }
+    }
 }
 
 impl KernelScheme for UserScheme {
@@ -1819,58 +1885,15 @@ impl KernelScheme for UserScheme {
         &self,
         fds: &[usize],
         payload: UserSliceRw,
-        _flags: CallFlags,
+        flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.clone();
-
-        let mut address = inner.capture_user(payload, token)?;
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-
-        let mut sqe_flags = SqeFlags::empty();
-        let mut last_arg = 0;
-        if fds.len() == 2 {
-            sqe_flags |= SqeFlags::MULTIPLE_IDS;
-            last_arg = fds[1] as u64;
-        } else if fds.len() > 2 || fds.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let mut sqe = Sqe {
-            opcode: Opcode::Call as u8,
-            sqe_flags,
-            _rsvd: 0,
-            tag: inner.next_id(token)?,
-            caller: ctx.pid as u64,
-            args: [
-                fds[0] as u64,
-                address.base() as u64,
-                address.len() as u64,
-                0,
-                0,
-                last_arg,
-            ],
-        };
-
-        if fds.len() == 2 {
-            let dst = &mut sqe.args[3..5];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
+        if flags.contains(CallFlags::READ) {
+            self.call_generic(Opcode::Call, fds, payload, metadata, |_, _| {}, token)
         } else {
-            let dst = &mut sqe.args[3..];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
-        }
-        match inner.call_inner(Vec::new(), sqe, address.span(), token) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(e) => {
-                let _ = address.release(token);
-                Err(e)
-            }
+            let ro_slice = payload.reinterpret_unchecked::<true, false>();
+            self.call_generic(Opcode::Call, fds, ro_slice, metadata, |_, _| {}, token)
         }
     }
     fn kstdfscall(
@@ -1879,60 +1902,35 @@ impl KernelScheme for UserScheme {
         _kind: StdFsCallKind,
         desc: Arc<LockedFileDescription>,
         payload: UserSliceRw,
-        _flags: CallFlags,
+        flags: CallFlags,
         metadata: StdFsCallMeta,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.clone();
-
-        let mut address = inner.capture_user(payload, token)?;
-        let ctx = { context::current().read(token.token()).caller_ctx() };
-
-        let mut sqe_flags = SqeFlags::empty();
-        let mut last_arg = 0;
-        if fds.len() == 2 {
-            sqe_flags |= SqeFlags::MULTIPLE_IDS;
-            last_arg = fds[1] as u64;
-        } else if fds.len() > 2 || fds.is_empty() {
-            return Err(Error::new(EINVAL));
-        }
-
-        let mut sqe = Sqe {
-            opcode: Opcode::StdFsCall as u8,
-            sqe_flags,
-            _rsvd: 0,
-            tag: inner.next_id(token)?,
-            caller: ctx.pid as u64,
-            args: [
-                fds[0] as u64,
-                address.base() as u64,
-                address.len() as u64,
-                0,
-                0,
-                last_arg,
-            ],
+        let on_response = |notify_on_detach: bool, token: &mut CleanLockToken| {
+            desc.write(token.token())
+                .internal_flags
+                .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
         };
-        if fds.len() == 2 {
-            let dst = &mut sqe.args[3..5];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
+
+        if flags.contains(CallFlags::READ) {
+            self.call_generic(
+                Opcode::StdFsCall,
+                fds,
+                payload,
+                &metadata,
+                on_response,
+                token,
+            )
         } else {
-            let dst = &mut sqe.args[3..];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
-        }
-        match inner.call_inner(Vec::new(), sqe, address.span(), token)? {
-            Response::Regular(res, _, notify_on_detach) => {
-                address.release(token)?;
-                desc.write(token.token())
-                    .internal_flags
-                    .set(InternalFlags::NOTIFY_ON_NEXT_DETACH, notify_on_detach);
-                res
-            }
-            _ => {
-                let _ = address.release(token);
-                Err(Error::new(EIO))
-            }
+            let ro_slice = payload.reinterpret_unchecked::<true, false>();
+            self.call_generic(
+                Opcode::StdFsCall,
+                fds,
+                ro_slice,
+                &metadata,
+                on_response,
+                token,
+            )
         }
     }
 
