@@ -1852,6 +1852,7 @@ impl KernelScheme for UserScheme {
         res.into_regular()?;
         Ok(())
     }
+
     fn kcall(
         &self,
         fds: &[usize],
@@ -1867,6 +1868,7 @@ impl KernelScheme for UserScheme {
             self.call_generic(Opcode::Call, fds, ro_slice, metadata, |_, _| {}, token)
         }
     }
+
     fn kstdfscall(
         &self,
         fds: &[usize],
