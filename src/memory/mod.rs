@@ -635,7 +635,7 @@ struct PageInfoFree<'info> {
 // Indicates whether the page is free (and thus managed by the allocator), or owned (and thus
 // managed by the kernel heap, or most commonly, the virtual memory system). The refcount may
 // increase or decrease with fetch_add, but must never flip this bit.
-const RC_USED_NOT_FREE: usize = 1 << (usize::BITS - 1);
+pub(crate) const RC_USED_NOT_FREE: usize = 1 << (usize::BITS - 1);
 
 // Only valid if RC_USED. Controls whether the page is CoW (map readonly, on page fault, copy and
 // remap writable) or shared (mapped writable in the first place).
