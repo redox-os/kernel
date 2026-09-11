@@ -125,8 +125,13 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
 
         let ret = match state.head.take() {
             Some(head) => {
-                let next_head = unsafe { head.cast::<FreeListEntry>().read() };
-                state.head = next_head.next;
+                let FreeListEntry { prev, next } = unsafe { head.cast().read() };
+                debug_assert_eq!(prev, None);
+
+                if let Some(next) = next.map(|mut nn| unsafe { nn.as_mut() }) {
+                    next.prev = None;
+                }
+                state.head = next;
                 state.num_allocs += 1;
 
                 let ptr = head.cast::<()>();
@@ -224,6 +229,7 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
             let mut offset = 0;
             while offset + T::ITEM_SIZE <= PAGE_SIZE * 4 {
                 let entry_ptr: NonNull<FreeListEntry> = unsafe { base.byte_add(offset) };
+                offset += T::ITEM_SIZE;
 
                 if entry_ptr.cast::<u8>() == ptr {
                     continue;
@@ -236,8 +242,6 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
                 if let Some(next) = next.map(|mut nn| unsafe { nn.as_mut() }) {
                     next.prev = prev;
                 }
-
-                offset += T::ITEM_SIZE;
             }
             if let Some(head) = state.head
                 && head >= base
@@ -245,8 +249,25 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
             {
                 state.head = None;
             }
+            meta.num_used.store(0, Ordering::Relaxed);
 
-            //crate::memory::deallocate_p2frame();
+            #[cfg(test)]
+            {
+                // TODO: don't hardcode?
+                #[repr(align(16384))]
+                struct Align([u8; 16384]);
+
+                drop(unsafe { Box::from_raw(base.as_ptr().cast::<Align>()) });
+            }
+            #[cfg(not(test))]
+            {
+                let frame =
+                    Frame::containing(PhysicalAddress::new(base.addr().get() - RmmA::PHYS_OFFSET));
+                unsafe {
+                    crate::memory::deallocate_p2frame(frame, 2);
+                }
+            }
+            state.num_p2frames -= 1;
         } else {
             meta.num_used
                 .store(meta.num_used.load(Ordering::Relaxed) - 1, Ordering::Relaxed);
@@ -260,6 +281,5 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
         }
 
         state.num_allocs -= 1;
-        // TODO: free pages when possible
     }
 }
