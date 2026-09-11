@@ -1,7 +1,9 @@
 use core::{
     alloc::{AllocError, Allocator, Layout},
     marker::PhantomData,
+    num::NonZeroUsize,
     ptr::NonNull,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use rmm::{Arch, PhysicalAddress};
@@ -9,7 +11,7 @@ use spin::Mutex;
 
 use crate::{
     context::ContextLock,
-    memory::{allocate_p2frame, RmmA, PAGE_SIZE},
+    memory::{allocate_p2frame, Frame, RmmA, PAGE_SIZE},
 };
 
 pub unsafe trait PoolType: 'static + Sized {
@@ -58,7 +60,7 @@ impl<T> Default for Pool<T> {
 }
 
 pub struct State<T> {
-    head: Option<NonNull<()>>,
+    head: Option<NonNull<FreeListEntry>>,
     num_allocs: usize,
     num_p2frames: usize,
     _marker: PhantomData<fn() -> T>,
@@ -76,6 +78,40 @@ impl<T> State<T> {
 unsafe impl<T> Send for State<T> {}
 unsafe impl<T> Sync for State<T> {}
 
+struct FreeListEntry {
+    prev: Option<NonNull<FreeListEntry>>,
+    next: Option<NonNull<FreeListEntry>>,
+}
+
+struct SlabMetadata {
+    num_used: &'static AtomicUsize,
+}
+
+#[cfg(test)]
+static FAKE_METADATA_MAP: spin::Mutex<alloc::collections::BTreeMap<usize, &'static AtomicUsize>> =
+    spin::Mutex::new(alloc::collections::BTreeMap::new());
+
+fn round_down_ptr_to_page(ptr: NonNull<()>) -> NonNull<()> {
+    ptr.map_addr(|addr| NonZeroUsize::new(addr.get() & !(4 * PAGE_SIZE - 1)).unwrap())
+}
+
+#[cfg(test)]
+fn slab_metadata(ptr: NonNull<()>) -> SlabMetadata {
+    SlabMetadata {
+        num_used: FAKE_METADATA_MAP.lock().get(&ptr.addr().get()).unwrap(),
+    }
+}
+
+#[cfg(not(test))]
+fn slab_metadata(ptr: NonNull<()>) -> SlabMetadata {
+    let phys = PhysicalAddress::new(ptr.addr().get() - RmmA::PHYS_OFFSET);
+    SlabMetadata {
+        num_used: &crate::memory::get_page_info(Frame::containing(phys))
+            .expect("slab page not in memory map")
+            .next,
+    }
+}
+
 unsafe impl<T: PoolType> Allocator for Pool<T> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let chunk_size = 4 * PAGE_SIZE;
@@ -89,11 +125,17 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
 
         let ret = match state.head.take() {
             Some(head) => {
-                let next_head = unsafe { head.cast::<Option<NonNull<()>>>().read() };
-                state.head = next_head;
+                let next_head = unsafe { head.cast::<FreeListEntry>().read() };
+                state.head = next_head.next;
                 state.num_allocs += 1;
 
-                head
+                let ptr = head.cast::<()>();
+
+                let meta = slab_metadata(round_down_ptr_to_page(ptr));
+                meta.num_used
+                    .store(meta.num_used.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
+                ptr
             }
             None => {
                 #[cfg(test)]
@@ -102,6 +144,10 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
                     #[repr(align(16384))]
                     struct Align([u8; 16384]);
                     let p2 = Box::leak(unsafe { Box::<Align>::new_zeroed().assume_init() });
+                    FAKE_METADATA_MAP.lock().insert(
+                        p2 as *mut Align as usize,
+                        Box::leak(Box::new(AtomicUsize::new(1))),
+                    );
 
                     NonNull::from(p2).cast::<()>()
                 };
@@ -111,8 +157,12 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
 
                     let p2 = allocate_p2frame(2, must_be_zero).ok_or(AllocError)?;
 
-                    NonNull::new(RmmA::phys_to_virt(p2.base()).data() as *mut ())
-                        .expect("can never be NULL")
+                    let ptr = NonNull::new(RmmA::phys_to_virt(p2.base()).data() as *mut ())
+                        .expect("can never be NULL");
+
+                    slab_metadata(ptr).num_used.store(1, Ordering::Relaxed);
+
+                    ptr
                 };
                 state.num_p2frames += 1;
 
@@ -124,20 +174,29 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
                         second = Some(unsafe { base.byte_add(offset) });
                     }
                     let next = if offset + 2 * T::ITEM_SIZE <= chunk_size {
-                        Some(unsafe { base.byte_add(offset + T::ITEM_SIZE) })
+                        Some(
+                            unsafe { base.byte_add(offset + T::ITEM_SIZE) }.cast::<FreeListEntry>(),
+                        )
+                    } else {
+                        None
+                    };
+                    let prev = if offset >= 2 * T::ITEM_SIZE {
+                        Some(
+                            unsafe { base.byte_add(offset - T::ITEM_SIZE) }.cast::<FreeListEntry>(),
+                        )
                     } else {
                         None
                     };
                     unsafe {
                         base.byte_add(offset)
-                            .cast::<Option<NonNull<()>>>()
-                            .write(next);
+                            .cast::<FreeListEntry>()
+                            .write(FreeListEntry { next, prev });
                     }
 
                     offset += T::ITEM_SIZE;
                 }
 
-                state.head = second;
+                state.head = second.map(|s| s.cast::<FreeListEntry>());
 
                 state.num_allocs += 1;
                 base
@@ -155,10 +214,51 @@ unsafe impl<T: PoolType> Allocator for Pool<T> {
 
         let mut state = T::state().lock();
         //info!("T {} FREE {:?} STATE {:p} {:?}", core::any::type_name::<T>(), layout, &*state, &*state);
-        let old_head = state.head.replace(ptr.cast::<()>());
-        unsafe {
-            ptr.cast::<Option<NonNull<()>>>().write(old_head);
+
+        let meta = slab_metadata(round_down_ptr_to_page(ptr.cast()));
+        if meta.num_used.load(Ordering::Relaxed) == 1 {
+            // Return p2frame to frame allocator.
+            let base: NonNull<FreeListEntry> = round_down_ptr_to_page(ptr.cast()).cast();
+            let end = unsafe { base.byte_add(4 * PAGE_SIZE) };
+
+            let mut offset = 0;
+            while offset + T::ITEM_SIZE <= PAGE_SIZE * 4 {
+                let entry_ptr: NonNull<FreeListEntry> = unsafe { base.byte_add(offset) };
+
+                if entry_ptr.cast::<u8>() == ptr {
+                    continue;
+                }
+
+                let FreeListEntry { prev, next } = unsafe { entry_ptr.read() };
+                if let Some(prev) = prev.map(|mut nn| unsafe { nn.as_mut() }) {
+                    prev.next = next;
+                }
+                if let Some(next) = next.map(|mut nn| unsafe { nn.as_mut() }) {
+                    next.prev = prev;
+                }
+
+                offset += T::ITEM_SIZE;
+            }
+            if let Some(head) = state.head
+                && head >= base
+                && head < end
+            {
+                state.head = None;
+            }
+
+            //crate::memory::deallocate_p2frame();
+        } else {
+            meta.num_used
+                .store(meta.num_used.load(Ordering::Relaxed) - 1, Ordering::Relaxed);
+            let old_head = state.head.replace(ptr.cast::<FreeListEntry>());
+            unsafe {
+                ptr.cast::<FreeListEntry>().write(FreeListEntry {
+                    next: old_head,
+                    prev: None,
+                });
+            }
         }
+
         state.num_allocs -= 1;
         // TODO: free pages when possible
     }

@@ -1029,14 +1029,15 @@ mod tests {
 
     // FIXME: make this reusable to multiple tests
     #[cfg(test)]
-    pub fn setup_cpus(count: u32) -> alloc::vec::Vec<&'static mut PercpuBlock> {
+    pub fn setup_cpus(count: u32) -> alloc::vec::Vec<&'static PercpuBlock> {
         let mut cpus = alloc::vec::Vec::new();
 
         for i in 0..count {
-            let cpu = Box::leak(Box::new(PercpuBlock::init(LogicalCpuId::new(i))));
+            let cpu: &'static PercpuBlock =
+                Box::leak(Box::new(PercpuBlock::init(LogicalCpuId::new(i))));
 
             unsafe {
-                crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_mut(cpu));
+                crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_ref(cpu).cast_mut());
 
                 let idle_context =
                     Arc::new_in(ContextLock::new(Context::new(None).unwrap()), CONTEXT_POOL);
@@ -1050,7 +1051,7 @@ mod tests {
             if i > 0 {
                 assert!(crate::publish_cpu(cpu.cpu_id));
             } else {
-                PercpuBlock::set_mock_current(cpu as *const _);
+                PercpuBlock::set_mock_current(cpu);
             }
 
             cpus.push(cpu);
@@ -1109,7 +1110,7 @@ mod tests {
                 (vtime, 1024, WeakContextRef(Arc::downgrade(task))),
             );
         }
-        fn check_and_reset_steal(cpu0: &mut PercpuBlock) {
+        fn check_and_reset_steal(cpu0: &PercpuBlock) {
             assert_eq!(
                 cpu0.switch_internals.steal_counter.load(Ordering::Relaxed),
                 1
