@@ -33,7 +33,7 @@ use crate::{
     },
 };
 
-use super::context::HardBlockedReason;
+use super::{context::HardBlockedReason, pool::Pool};
 
 pub const MMAP_MIN_DEFAULT: usize = PAGE_SIZE;
 
@@ -92,6 +92,11 @@ impl UnmapResult {
     }
 }
 
+pub type AddrSpacePool = Pool<Arc<AddrSpaceWrapper>>;
+pub const ADDR_SPACE_POOL: AddrSpacePool = Pool::new();
+
+pub type ArcAddrSpaceWrapper = Arc<AddrSpaceWrapper, AddrSpacePool>;
+
 #[derive(Debug)]
 pub struct AddrSpaceWrapper {
     pub inner: RwLock<L5, AddrSpace>,
@@ -99,12 +104,16 @@ pub struct AddrSpaceWrapper {
     pub used_by: LogicalCpuSet,
 }
 impl AddrSpaceWrapper {
-    pub fn new() -> Result<Arc<Self>> {
-        Ok(Arc::new(Self {
-            inner: RwLock::new(AddrSpace::new()?),
-            tlb_ack: AtomicU32::new(0),
-            used_by: LogicalCpuSet::empty(),
-        }))
+    pub fn new() -> Result<ArcAddrSpaceWrapper> {
+        Arc::try_new_in(
+            Self {
+                inner: RwLock::new(AddrSpace::new()?),
+                tlb_ack: AtomicU32::new(0),
+                used_by: LogicalCpuSet::empty(),
+            },
+            ADDR_SPACE_POOL,
+        )
+        .map_err(|_| Error::new(ENOMEM))
     }
     pub fn acquire_read<'a>(
         &'a self,
@@ -153,7 +162,7 @@ pub struct AddrSpace {
 }
 impl AddrSpaceWrapper {
     /// Attempt to clone an existing address space so that all mappings are copied (CoW).
-    pub fn try_clone(&self, token: &mut CleanLockToken) -> Result<Arc<AddrSpaceWrapper>> {
+    pub fn try_clone(&self, token: &mut CleanLockToken) -> Result<ArcAddrSpaceWrapper> {
         let mut token = token.token();
         let mut guard = self.acquire_write(token.downgrade());
         let guard = &mut *guard;
@@ -526,7 +535,7 @@ impl AddrSpaceWrapper {
     /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
     /// is intended to be used for user-kernel shared memory.
     pub fn borrow_frame_enforce_rw_allocated(
-        self: &Arc<Self>,
+        self: &ArcAddrSpaceWrapper,
         page: Page,
         token: &mut CleanLockToken,
     ) -> Result<RaiiFrame> {
@@ -573,7 +582,7 @@ impl AddrSpaceWrapper {
     }
 }
 impl AddrSpace {
-    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
+    pub fn current() -> Result<ArcAddrSpaceWrapper> {
         PercpuBlock::current()
             .current_addrsp
             .borrow()
@@ -1205,7 +1214,7 @@ pub enum Provider {
 
     /// The memory is borrowed directly from another address space.
     External {
-        address_space: Arc<AddrSpaceWrapper>,
+        address_space: ArcAddrSpaceWrapper,
         src_base: Page,
         is_pinned_userscheme_borrow: bool,
     },
@@ -1445,7 +1454,7 @@ impl Grant {
     // XXX: borrow_grant is needed because of the borrow checker (iterator invalidation), maybe
     // borrow_grant/borrow can be abstracted somehow?
     pub fn borrow_grant(
-        src_address_space_lock: Arc<AddrSpaceWrapper>,
+        src_address_space_lock: ArcAddrSpaceWrapper,
         src_base: Page,
         dst_base: Page,
         src_info: &GrantInfo,
@@ -1644,7 +1653,7 @@ impl Grant {
     /// the page tables of the source pages, but once present in the destination address space,
     /// pages that are unmaped or moved will not be made visible to the destination address space.
     pub fn borrow(
-        src_address_space_lock: Arc<AddrSpaceWrapper>,
+        src_address_space_lock: ArcAddrSpaceWrapper,
         src_address_space: &mut AddrSpace,
         src_base: Page,
         dst_base: Page,
@@ -2581,7 +2590,7 @@ pub fn try_correcting_page_tables(
 /// Caller must ensure there's no other lock being held at this point.
 /// Caller also need to provide clean token for the new AddrSpace.
 fn correct_inner<'l>(
-    addr_space_lock: &'l Arc<AddrSpaceWrapper>,
+    addr_space_lock: &'l ArcAddrSpaceWrapper,
     mut addr_space: RwLockWriteGuard<'l, L5, AddrSpace>,
     faulting_page: Page,
     access: AccessMode,
@@ -2881,7 +2890,7 @@ pub struct BorrowedFmapSource<'a> {
     pub src_base: Page,
     pub mode: MmapMode,
     // TODO: There should be a method that obtains the lock from the guard.
-    pub addr_space_lock: &'a Arc<AddrSpaceWrapper>,
+    pub addr_space_lock: &'a ArcAddrSpaceWrapper,
     pub addr_space_guard: RwLockWriteGuard<'a, L5, AddrSpace>,
 }
 

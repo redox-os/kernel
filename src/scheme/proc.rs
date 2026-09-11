@@ -5,7 +5,10 @@ use crate::{
             ArcLockedFdTbl, HardBlockedReason, LockedFdTbl, SignalState, WeakLockedFdTbl, FD_POOL,
         },
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
+        memory::{
+            handle_notify_files, AddrSpace, AddrSpaceWrapper, ArcAddrSpaceWrapper, Grant, PageSpan,
+            UnmapVec,
+        },
         unblock_context, wakeup_context, ArcContextLock, Context, ContextLock, Status,
     },
     cpu_id,
@@ -139,12 +142,12 @@ enum ContextHandle {
         data: Box<[u8]>,
     },
     AddrSpace {
-        addrspace: Arc<AddrSpaceWrapper>,
+        addrspace: ArcAddrSpaceWrapper,
     },
     CurrentAddrSpace,
 
     AwaitingAddrSpaceChange {
-        new: Arc<AddrSpaceWrapper>,
+        new: ArcAddrSpaceWrapper,
         new_sp: usize,
         new_ip: usize,
         arg1: Option<usize>,
@@ -161,7 +164,7 @@ enum ContextHandle {
     OpenViaDup,
     SchedAffinity,
 
-    MmapMinAddr(Arc<AddrSpaceWrapper>),
+    MmapMinAddr(ArcAddrSpaceWrapper),
 }
 #[derive(Clone)]
 struct Handle {
@@ -178,7 +181,7 @@ static HANDLES: RwLock<L1, HashMap<usize, Handle>> =
 #[allow(dead_code)]
 pub fn foreach_addrsp(
     token: &mut CleanLockToken,
-    mut f: impl FnMut(&Arc<AddrSpaceWrapper>, LockToken<L1>),
+    mut f: impl FnMut(&ArcAddrSpaceWrapper, LockToken<L1>),
 ) {
     let mut handles_guard = HANDLES.read(token.token());
     let (handles, mut token) = handles_guard.token_split();
@@ -499,7 +502,7 @@ impl KernelScheme for ProcScheme {
     fn kfmap(
         &self,
         id: usize,
-        dst_addr_space: &Arc<AddrSpaceWrapper>,
+        dst_addr_space: &ArcAddrSpaceWrapper,
         map: &crate::syscall::data::Map,
         consume: bool,
         token: &mut CleanLockToken,

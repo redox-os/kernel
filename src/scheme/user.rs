@@ -19,8 +19,8 @@ use crate::{
         context::{bulk_insert_fds, HardBlockedReason},
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
-            handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
-            GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
+            handle_notify_files, AddrSpace, AddrSpaceWrapper, ArcAddrSpaceWrapper,
+            BorrowedFmapSource, Grant, GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
         unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuard, PreemptGuardL1,
         Status, WeakContextLock,
@@ -1002,7 +1002,7 @@ impl UserInner {
 
     fn fmap_inner(
         &self,
-        dst_addr_space: Arc<AddrSpaceWrapper>,
+        dst_addr_space: ArcAddrSpaceWrapper,
         file: usize,
         map: &Map,
         token: &mut CleanLockToken,
@@ -1258,7 +1258,7 @@ pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
 
     head: CopyInfo<READ, WRITE>,
     tail: CopyInfo<READ, WRITE>,
-    addrsp: Option<Arc<AddrSpaceWrapper>>,
+    addrsp: Option<ArcAddrSpaceWrapper>,
 }
 impl<const READ: bool, const WRITE: bool> CaptureGuard<READ, WRITE> {
     fn base(&self) -> usize {
@@ -1784,7 +1784,7 @@ impl KernelScheme for UserScheme {
     fn kfmap(
         &self,
         file: usize,
-        addr_space: &Arc<AddrSpaceWrapper>,
+        addr_space: &ArcAddrSpaceWrapper,
         map: &Map,
         _consume: bool,
         token: &mut CleanLockToken,

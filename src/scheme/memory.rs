@@ -7,7 +7,10 @@ use crate::{
     context::{
         self,
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
+        memory::{
+            handle_notify_files, AddrSpace, AddrSpaceWrapper, ArcAddrSpaceWrapper, Grant, PageSpan,
+            UnmapVec,
+        },
     },
     memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
     numa, percpu,
@@ -71,7 +74,7 @@ fn from_raw(raw: u32) -> Option<(HandleTy, MemoryType, HandleFlags)> {
 
 impl MemoryScheme {
     pub fn fmap_anonymous(
-        addr_space: &Arc<AddrSpaceWrapper>,
+        addr_space: &ArcAddrSpaceWrapper,
         map: &Map,
         is_phys_contiguous: bool,
         memory_type: MemoryType,
@@ -308,7 +311,7 @@ impl KernelScheme for MemoryScheme {
     fn kfmap(
         &self,
         id: usize,
-        addr_space: &Arc<AddrSpaceWrapper>,
+        addr_space: &ArcAddrSpaceWrapper,
         map: &Map,
         _consume: bool,
         token: &mut CleanLockToken,

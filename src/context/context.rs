@@ -36,7 +36,7 @@ use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE
 
 use super::{
     empty_cr3,
-    memory::{AddrSpaceWrapper, GrantFileRef},
+    memory::{AddrSpaceWrapper, ArcAddrSpaceWrapper, GrantFileRef},
 };
 
 /// The status of a context - used for scheduling
@@ -137,7 +137,7 @@ pub struct Context {
     /// but can be None while the context is being reaped or when a new context is created but has
     /// not yet had its address space changed. Note that these are only for user mappings; kernel
     /// mappings are universal and independent on address spaces or contexts.
-    pub addr_space: Option<Arc<AddrSpaceWrapper>>,
+    pub addr_space: Option<ArcAddrSpaceWrapper>,
     /// The name of the context
     pub name: ArrayString<CONTEXT_NAME_CAPAC>,
     /// The open files in the scheme
@@ -345,14 +345,14 @@ impl Context {
         self.running && self.cpu_id == Some(crate::cpu_id())
     }
 
-    pub fn addr_space(&self) -> Result<&Arc<AddrSpaceWrapper>> {
+    pub fn addr_space(&self) -> Result<&ArcAddrSpaceWrapper> {
         self.addr_space.as_ref().ok_or(Error::new(ESRCH))
     }
     pub fn set_addr_space(
         &mut self,
-        addr_space: Option<Arc<AddrSpaceWrapper>>,
+        addr_space: Option<ArcAddrSpaceWrapper>,
         token: LockToken<L4>,
-    ) -> Option<Arc<AddrSpaceWrapper>> {
+    ) -> Option<ArcAddrSpaceWrapper> {
         if let (Some(old), Some(new)) = (&self.addr_space, &addr_space)
             && Arc::ptr_eq(old, new)
         {

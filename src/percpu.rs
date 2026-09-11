@@ -14,7 +14,7 @@ use crate::{
     arch::device::ArchPercpuMisc,
     context::{
         empty_cr3,
-        memory::{AddrSpaceSwitchReadGuard, AddrSpaceWrapper},
+        memory::{AddrSpaceSwitchReadGuard, AddrSpaceWrapper, ArcAddrSpaceWrapper},
         switch::ContextSwitchPercpu,
     },
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
@@ -34,8 +34,8 @@ pub struct PercpuBlock {
     /// Context management
     pub switch_internals: ContextSwitchPercpu,
 
-    pub current_addrsp: RefCell<Option<Arc<AddrSpaceWrapper>>>,
-    pub new_addrsp_tmp: Cell<Option<Arc<AddrSpaceWrapper>>>,
+    pub current_addrsp: RefCell<Option<ArcAddrSpaceWrapper>>,
+    pub new_addrsp_tmp: Cell<Option<ArcAddrSpaceWrapper>>,
     pub new_addrsp_guard: Cell<Option<AddrSpaceSwitchReadGuard>>,
     pub wants_tlb_shootdown: AtomicBool,
 

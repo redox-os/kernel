@@ -26,7 +26,7 @@ use crate::{
     context::{
         self,
         file::{FileDescription, InternalFlags, KernelSchemeRef, LockedFileDescription},
-        memory::AddrSpaceWrapper,
+        memory::{AddrSpaceWrapper, ArcAddrSpaceWrapper},
         ContextLock, WeakContextLock,
     },
     sync::{CleanLockToken, LockToken, RwLock, L0, L1},
@@ -595,7 +595,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfmap(
         &self,
         number: usize,
-        addr_space: &Arc<AddrSpaceWrapper>,
+        addr_space: &ArcAddrSpaceWrapper,
         map: &crate::syscall::data::Map,
         consume: bool,
         token: &mut CleanLockToken,

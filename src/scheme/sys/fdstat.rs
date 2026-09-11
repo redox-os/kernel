@@ -1,6 +1,13 @@
 use crate::{
-    alloc::string::ToString,
-    context::{contexts, file::LockedFileDescription, memory::AddrSpaceWrapper},
+    alloc::{
+        alloc::{Allocator, Global},
+        string::ToString,
+    },
+    context::{
+        contexts,
+        file::LockedFileDescription,
+        memory::{AddrSpacePool, AddrSpaceWrapper},
+    },
     scheme::{self, handles, KernelSchemes, SchemeId},
     sync::CleanLockToken,
     syscall::error::Result,
@@ -10,21 +17,21 @@ use core::{fmt::Write, hash::Hash};
 use hashbrown::HashMap;
 
 #[derive(Debug)]
-struct Ref<T>(Arc<T>);
-impl<T> Hash for Ref<T> {
+struct Ref<T, A: Allocator = Global>(Arc<T, A>);
+impl<T, A: Allocator> Hash for Ref<T, A> {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         state.write_usize(Arc::as_ptr(&self.0) as usize);
     }
 }
-impl<T> PartialEq for Ref<T> {
+impl<T, A: Allocator> PartialEq for Ref<T, A> {
     fn eq(&self, other: &Self) -> bool {
         Arc::as_ptr(&self.0) == Arc::as_ptr(&other.0)
     }
 }
-impl<T> Eq for Ref<T> {}
+impl<T, A: Allocator> Eq for Ref<T, A> {}
 #[derive(Default)]
 struct Descr {
-    owners: HashMap<Ref<AddrSpaceWrapper>, String>,
+    owners: HashMap<Ref<AddrSpaceWrapper, AddrSpacePool>, String>,
     scheme: Cow<'static, str>,
     number: usize,
 }
