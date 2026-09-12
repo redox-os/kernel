@@ -883,7 +883,7 @@ impl FdTbl {
 }
 
 pub fn bulk_insert_fds(
-    descriptions: Vec<Arc<LockedFileDescription>>,
+    descriptions: Vec<(Arc<LockedFileDescription>, CapRights)>,
     payload: UserSliceRw,
     token: &mut LockToken<L1>,
 ) -> Result<usize> {
@@ -894,10 +894,12 @@ pub fn bulk_insert_fds(
     if descriptions.is_empty() {
         return Ok(0);
     }
-    let files_iter = descriptions.into_iter().map(|description| FileDescriptor {
-        description,
-        cap_rights: CapRights::ALL,
-    });
+    let files_iter = descriptions
+        .into_iter()
+        .map(|(description, cap_rights)| FileDescriptor {
+            description,
+            cap_rights,
+        });
     let current_lock = context::current();
     let mut current = current_lock.read(token.token());
     let (current, mut token) = current.token_split();

@@ -453,7 +453,7 @@ impl KernelScheme for SchemeList {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -782,7 +782,7 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,

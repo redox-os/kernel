@@ -411,7 +411,7 @@ impl KernelScheme for PipeScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        mut descs: Vec<Arc<LockedFileDescription>>,
+        mut descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         _flags: CallFlags,
         _metadata: &[u64],
         token: &mut CleanLockToken,
@@ -535,5 +535,5 @@ pub struct Pipe {
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
-    fd_queue: Mutex<L1, VecDeque<Arc<LockedFileDescription>>>,
+    fd_queue: Mutex<L1, VecDeque<(Arc<LockedFileDescription>, CapRights)>>,
 }

@@ -885,7 +885,7 @@ impl KernelScheme for ProcScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<context::file::LockedFileDescription>>,
+        descs: Vec<(Arc<context::file::LockedFileDescription>, CapRights)>,
         _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -914,7 +914,7 @@ impl KernelScheme for ProcScheme {
             file.close(token)?;
         }
 
-        let file = descs.first().unwrap();
+        let (file, cap_rights) = descs.first().unwrap();
         let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
@@ -922,7 +922,7 @@ impl KernelScheme for ProcScheme {
                 FileHandle(usize::try_from(*target_fd).map_err(|_| Error::new(EBADFD))?),
                 context::file::FileDescriptor {
                     description: file.clone(),
-                    cap_rights: syscall::CapRights::ALL,
+                    cap_rights: *cap_rights,
                 },
                 &mut token,
             )

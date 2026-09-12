@@ -51,13 +51,13 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<ContextLock>,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
     AwaitingExtra {
         context: Weak<ContextLock>,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         callee_responsible: PageSpan,
         canceling: bool,
         pending: PendingCqe,
@@ -77,7 +77,7 @@ enum Response {
     Regular(Result<usize>, u8, bool),
     SchemeLocal(Result<usize>, u8, bool, CapRights),
     Fd(Arc<LockedFileDescription>, CapRights),
-    MultipleFds(Option<Vec<Arc<LockedFileDescription>>>),
+    MultipleFds(Option<Vec<(Arc<LockedFileDescription>, CapRights)>>),
 }
 
 impl Response {
@@ -218,7 +218,7 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
@@ -248,7 +248,7 @@ impl UserInner {
 
     fn call_inner(
         &self,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         sqe: Sqe,
         extra_sqe: Option<Sqe>,
         caller_responsible: &mut PageSpan,
@@ -980,7 +980,7 @@ impl UserInner {
                 flags: _,
                 dst_fd_or_ptr,
             } => {
-                let description = {
+                let (description, cap_rights) = {
                     match self
                         .states
                         .lock(token.token())
@@ -1005,7 +1005,7 @@ impl UserInner {
                     FileHandle::from(dst_fd_or_ptr),
                     FileDescriptor {
                         description,
-                        cap_rights: CapRights::ALL,
+                        cap_rights,
                     },
                     &mut token,
                 );
@@ -1145,7 +1145,7 @@ impl UserInner {
                         } else {
                             to_close = fds
                                 .into_iter()
-                                .filter_map(|f| Arc::try_unwrap(f).ok())
+                                .filter_map(|(f, _)| Arc::try_unwrap(f).ok())
                                 .map(RwLock::into_inner)
                                 .collect();
                         }
@@ -1326,7 +1326,7 @@ impl UserInner {
 
     pub fn call_fdwrite(
         &self,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -1358,7 +1358,7 @@ impl UserInner {
 
     fn handle_movefd(
         &self,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         request_id: usize,
         _flags: FmoveFdFlags,
         token: &mut CleanLockToken,
@@ -2187,7 +2187,7 @@ impl KernelScheme for UserScheme {
     fn kfdwrite(
         &self,
         number: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,

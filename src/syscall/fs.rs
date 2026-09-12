@@ -376,7 +376,7 @@ fn call_fdwrite(
                     context.bulk_remove_files(&fds, token)
                 }?
                 .into_iter()
-                .map(|f| f.description)
+                .map(|f| (f.description, f.cap_rights))
                 .collect(),
             ))
         })?
@@ -386,7 +386,7 @@ fn call_fdwrite(
     //  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
     //  requested.
     let flags_to_scheme = if flags.contains(CallFlags::FD_EXCLUSIVE) {
-        for desc in &descs_to_send {
+        for (desc, _) in descs_to_send.iter() {
             if Arc::strong_count(desc) > 1 {
                 return Err(Error::new(EBUSY));
             }
