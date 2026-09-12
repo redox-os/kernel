@@ -1,9 +1,14 @@
-use core::{mem, ops::Add, ptr::write_bytes, slice};
+use core::{
+    mem,
+    ops::{Add, BitOr, BitOrAssign},
+    ptr::write_bytes,
+    slice,
+};
 
 use crate::{
     acpi,
     cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
-    percpu,
+    numa, percpu,
     sync::{CleanLockToken, Mutex, L0},
 };
 use alloc::{sync::Arc, vec::Vec};
@@ -31,6 +36,12 @@ pub fn is_supported() -> bool {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct FreeListMask {
     mask: u128,
+}
+
+impl BitOrAssign for FreeListMask {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.mask |= rhs.mask;
+    }
 }
 
 impl FreeListMask {
@@ -292,10 +303,25 @@ pub fn current_node_id() -> Option<u32> {
     Some(cpu.numa_node.get()?.0)
 }
 
-pub fn free_list_mask(mem_policy: NumaMemoryPolicy) -> Option<(FreeListMask, bool)> {
+pub fn free_list_mask(
+    mem_policy: NumaMemoryPolicy,
+    preference: Option<FreeListMask>,
+) -> Option<(FreeListMask, bool)> {
     match mem_policy {
         NumaMemoryPolicy::NodeLocalStrict => Some((current_node()?.memories, false)),
         NumaMemoryPolicy::NodeLocalLeniant => Some((current_node()?.memories, true)),
+        NumaMemoryPolicy::FromPreferredNodes => numa::is_supported().then(|| {
+            (
+                preference.expect("expected preference to be non-none"),
+                true,
+            )
+        }),
+        NumaMemoryPolicy::FromPreferredNodesStrict => numa::is_supported().then(|| {
+            (
+                preference.expect("expected preference to be non-none"),
+                false,
+            )
+        }),
     }
 }
 
@@ -334,4 +360,40 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     iter.others = others;
 
     Some(iter)
+}
+
+pub fn make_mask(nodes: u128) -> Option<FreeListMask> {
+    let mut mask = FreeListMask::default();
+    for i in 0..128 {
+        if nodes.bit(i) {
+            mask |= NUMA_NODES.get()?.get(i).unwrap().memories;
+        }
+    }
+    Some(mask)
+}
+
+pub fn exists_with_memory(node_id: u32) -> bool {
+    NUMA_NODES.get().is_some()
+        && NUMA_NODES
+            .get()
+            .unwrap()
+            .iter()
+            .filter(|e| e.memories.mask != 0)
+            .count()
+            > node_id as usize
+}
+
+pub fn exists_with_cpu(node_id: u32) -> bool {
+    NUMA_NODES.get().is_some()
+        && NUMA_NODES
+            .get()
+            .unwrap()
+            .iter()
+            .filter(|e| e.cpus != 0)
+            .count()
+            > node_id as usize
+}
+
+pub fn exists(node_id: u32) -> bool {
+    exists_with_cpu(node_id) || exists_with_memory(node_id)
 }

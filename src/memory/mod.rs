@@ -1430,13 +1430,13 @@ pub fn init_frame(init_rc: RefCount, must_be_zero: bool) -> Result<Frame, PfErro
     Ok(new_frame)
 }
 #[derive(Debug)]
-pub struct TheFrameAllocator(pub NumaMemoryPolicy);
+pub struct TheFrameAllocator(pub NumaMemoryPolicy, pub Option<FreeListMask>);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let must_be_zero = true;
         let order = count.data().next_power_of_two().trailing_zeros();
-        if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
+        if let Some((mask, fallback)) = numa::free_list_mask(self.0, self.1) {
             allocate_p2frame_with_mask(mask, order, fallback, true).map(|f| f.base())
         } else {
             allocate_p2frame(order, true).map(|f| f.base())
