@@ -202,7 +202,7 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
     }
 
     #[expect(clippy::needless_bool)]
-    let do_debug = if true && {
+    let do_debug = if false && {
         let ctx = crate::context::current();
         let guard = ctx.read(token.token());
         guard.name.contains("init") || guard.name.contains("bootstrap")

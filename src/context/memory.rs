@@ -791,7 +791,10 @@ pub struct AddrSpaceSwitchReadGuard {
 }
 
 impl AddrSpaceSwitchReadGuard {
-    pub fn new(guard: RwLockReadGuard<'_, L5, AddrSpace>) -> Self {
+    /// # Safety
+    ///
+    /// Erases the lifetime so unsafe for obvious reasons.
+    pub unsafe fn new(guard: RwLockReadGuard<'_, L5, AddrSpace>) -> Self {
         Self {
             // extend lifetime
             lock: unsafe {

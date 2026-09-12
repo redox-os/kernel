@@ -90,25 +90,48 @@ pub enum SyscallFrame {
 /// A context, which is typically mapped to a userspace thread
 #[derive(Debug)]
 pub struct Context {
+    /// Internal ID used to distinguish between contexts.
+    ///
+    /// Userspace addresses contexts only through capabilities (file descriptors), except for
+    /// profiling interfaces and some statistics.
     pub debug_id: u32,
     /// Signal handler
     pub sig: Option<SignalState>,
     /// Status of context
     pub status: Status,
     pub status_reason: &'static str,
-    /// Context running or not
+    /// Whether the context is running, i.e. some hw-thread is using its stack, registers, address
+    /// space, etc.
+    ///
+    /// Formally, true iff there exists a hw-thread such that its percpu.current_ctxt is this context
     pub running: bool,
-    /// Current CPU ID
+    /// Whether the context is currently-scheduled, i.e. has been assigned the current timeslice by
+    /// the scheduler of some hw-thread. This can differ from `running` if direct switching has
+    /// occurred.
+    ///
+    /// Same formal condition as `running` except for percpu.sched_ctxt
+    pub currently_scheduled: bool,
+    /// Current CPU ID.
+    // TODO: Define more rigorously the role of this field. Its meaning is obvious when `running`
+    // at least.
     pub cpu_id: Option<LogicalCpuId>,
-    /// Time this context was switched to
+    /// Time this context was scheduler-switched to (see `currently_scheduled`)
+    pub schedule_time: u128,
+    /// Time this context was context-switched to (see `running`)
+    // TODO: Is it mandatory to track the time of this? Unlike `schedule_time`, and unless the
+    // scheduler additionally were to use this information for decision-making, it's primarily a
+    // statistic where RDTSC does add some overhead.
     pub switch_time: u128,
-    /// Amount of CPU time used
-    pub cpu_time: u128,
-    /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything else than
-    /// this value.
+    /// Amount of CPU time while being the current context (see `running`)
+    pub active_cpu_time: u128,
+    /// Amount of CPU time while being the sched context (see `currently_scheduled`)
+    pub sched_cpu_time: u128,
+    /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything outside
+    /// this set, and hence, this context can never run on CPUs outside it.
     pub sched_affinity: LogicalCpuSet,
     /// Keeps track of whether this context is currently handling a syscall. Only up-to-date when
-    /// not running.
+    /// not running, otherwise the status must be read from the percpu (which can not be accessed
+    /// by other hw-threads, unless frozen).
     pub inside_syscall: bool,
 
     #[cfg(feature = "syscall_debug")]
@@ -152,7 +175,11 @@ pub struct Context {
     pub rem_slice: u64,
     /// Is currently active?
     pub is_active: bool,
-    /// Key for the RunQueue
+    /// Key for the RunQueue.
+    ///
+    /// This will be set to the corresponding key iff a hw-thread contains this context in its
+    /// `run_queue`.
+    // TODO: what guarantees are there that contexts are not in multiple hw-threads' run_queues?
     pub queue_key: Option<(u64, Reverse<u64>, u32)>,
 
     // TODO: id can reappear after wraparound?
@@ -166,6 +193,9 @@ pub struct Context {
     // See [`PreemptGuard`]
     //
     // When > 0, preemption is disabled.
+    // TODO: This is (and has always been) unnecessary since interrupts are disabled everywhere in
+    // the kernel except kmain. It was added to fix a userspace hang, and should be removed once a
+    // proper fix is found.
     pub(super) preempt_locks: usize,
 }
 
@@ -195,9 +225,12 @@ impl Context {
             },
             status_reason: "",
             running: false,
+            currently_scheduled: false,
             cpu_id: None,
+            schedule_time: 0,
             switch_time: 0,
-            cpu_time: 0,
+            active_cpu_time: 0,
+            sched_cpu_time: 0,
             sched_affinity: LogicalCpuSet::all(),
             inside_syscall: false,
             syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),

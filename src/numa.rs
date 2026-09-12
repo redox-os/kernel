@@ -196,9 +196,7 @@ pub fn dump_info() {
             );
         }
     } else {
-        println!(
-            "The system has either no support for NUMA or there was an error during initialisation"
-        );
+        println!("Unable to determine NUMA topology");
     }
 }
 
