@@ -203,7 +203,7 @@ pub fn dump_info() {
             );
         }
     } else {
-        println!("Unable to find NUMA");
+        println!("Unable to determine NUMA topology");
     }
 }
 
