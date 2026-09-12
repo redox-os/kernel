@@ -799,7 +799,7 @@ impl UserInner {
             }
             ParsedCqe::ObtainFd {
                 tag,
-                flags,
+                flags: _,
                 dst_fd_or_ptr,
             } => {
                 let description = {
@@ -1227,7 +1227,7 @@ impl UserInner {
         &self,
         payload: UserSliceRw,
         request_id: usize,
-        flags: FobtainFdFlags,
+        _flags: FobtainFdFlags,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let descriptions = match self
@@ -1464,35 +1464,6 @@ impl KernelScheme for UserScheme {
             Response::Fd(desc) => Ok(OpenResult::External(desc)),
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
-    }
-
-    fn unlinkat(
-        &self,
-        file: usize,
-        path: &str,
-        flags: usize,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match self.inner.call(
-            ctx,
-            Vec::new(),
-            Opcode::UnlinkAt,
-            [file, address.base(), address.len(), flags],
-            address.span(),
-            token,
-        ) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(e) => {
-                let _ = address.release(token);
-                Err(e)
-            }
-        }?;
-        Ok(())
     }
 
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
@@ -1881,6 +1852,7 @@ impl KernelScheme for UserScheme {
         res.into_regular()?;
         Ok(())
     }
+
     fn kcall(
         &self,
         fds: &[usize],
@@ -1896,6 +1868,7 @@ impl KernelScheme for UserScheme {
             self.call_generic(Opcode::Call, fds, ro_slice, metadata, |_, _| {}, token)
         }
     }
+
     fn kstdfscall(
         &self,
         fds: &[usize],

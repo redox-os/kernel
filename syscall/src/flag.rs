@@ -50,11 +50,9 @@ bitflags! {
     }
 }
 
-pub const F_DUPFD: usize = 0;
-pub const F_GETFD: usize = 1;
-pub const F_SETFD: usize = 2;
 pub const F_GETFL: usize = 3;
 pub const F_SETFL: usize = 4;
+pub const F_GET_SCHEMEID: usize = 0x1000 | 1;
 
 pub const FUTEX_WAIT: usize = 0;
 pub const FUTEX_WAKE: usize = 1;
@@ -290,6 +288,9 @@ pub enum FileTableVerb {
     Dup2 = 2,
     Reserved1 = 3,
     Resize = 4,
+    Refresh = 5,
+    Move = 6,
+    Swap = 7,
 }
 impl FileTableVerb {
     pub fn try_from_raw(value: u8) -> Option<Self> {
@@ -298,6 +299,9 @@ impl FileTableVerb {
             2 => Self::Dup2,
             3 => Self::Reserved1,
             4 => Self::Resize,
+            5 => Self::Refresh,
+            6 => Self::Move,
+            7 => Self::Swap,
             _ => return None,
         })
     }
@@ -506,11 +510,13 @@ pub enum StdFsCallKind {
     Ftruncate = 7,
     Futimens = 8,
     // 9 reserved in fscall RFC
-    // Unlinkat = 10,
+    Unlinkat = 10,
     Relpathat = 11,
     Lock = 12,
     Unlock = 13,
     GetLock = 14,
+    Frenameat = 15,
+    Flinkat = 16,
 }
 
 impl StdFsCallKind {
@@ -528,11 +534,13 @@ impl StdFsCallKind {
             7 => Ftruncate,
             8 => Futimens,
             // 9 reserved in fscall RFC
-            // 10 => Unlinkat,
+            10 => Unlinkat,
             11 => Relpathat,
             12 => Lock,
             13 => Unlock,
             14 => GetLock,
+            15 => Frenameat,
+            16 => Flinkat,
             _ => return None,
         })
     }
