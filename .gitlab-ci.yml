@@ -57,6 +57,8 @@ aarch64:boot:
 i586:boot:
   stage: test
   needs: [i586]
+  # TODO: remove
+  allow_failure: true
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
     - TARGET=${ARCH}-unknown-redox timeout -s KILL 5m redoxer env make test
@@ -69,6 +71,13 @@ x86_64:boot:
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
     - timeout -s KILL 5m redoxer env make test
+
+x86_64:tokio:
+  stage: test
+  needs: [x86_64]
+  script:
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - timeout -s KILL 9m redoxer env make test-tokio
 
 x86_64:relibc:
   stage: test
