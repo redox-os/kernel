@@ -490,6 +490,11 @@ bitflags! {
 
         /// Call is taking multiple fds as an argument
         const MULTIPLE_FDS = 1 << 17;
+
+        /// Allow current timeslice to be lent out to the callee, which will have a preference of
+        /// switching back to this context until the current timeslice is exhausted, after which
+        /// the scheduler will continue as if it was switching away from this context.
+        const ALLOW_DIRECT_SWITCH = 1 << 18;
     }
 }
 

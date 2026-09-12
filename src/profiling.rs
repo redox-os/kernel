@@ -381,6 +381,13 @@ pub fn ready_for_profiling() {
 }
 
 pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
+    // TODO: Haven't looked at Intel docs, but AMD CPUs can support Instruction-Based Sampling,
+    // which is specifically designed for this type of sampling-based profiling, and gives
+    // additional information such as TLB/cache status and other CPU-internal information.
+    // Additionally, there is specific allocated interrupt source for this (APIC500 on family 19h
+    // model 21h), which appears to be possible to be configured to send NMIs. Doing so would
+    // eliminate the need to permanently reserve one of the CPUs, as we have to do here.
+
     if cfg!(not(feature = "profiling")) {
         return;
     }
