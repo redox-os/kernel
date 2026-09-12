@@ -98,27 +98,35 @@ pub unsafe fn early_init(bsp: bool) {
             enable |= KcpuFeatures::XSAVE;
             enable.set(KcpuFeatures::XSAVEOPT, ext_state_info.has_xsaveopt());
 
+            let ymm_upper_offset = feature_info().has_avx().then(|| {
+                xcr0 |= Xcr0::XCR0_AVX_STATE;
+                x86::controlregs::xcr0_write(xcr0);
+                info!("Enabling AVX");
+
+                let state = ext_state_info
+                    .iter()
+                    .find(|state| {
+                        state.register() == ExtendedRegisterType::Avx
+                            && state.location() == ExtendedRegisterStateLocation::Xcr0
+                    })
+                    .expect("CPUID said AVX was supported but there's no state info");
+
+                // 16 * size_of::<u128>() is well below usize::MAX
+                #[expect(clippy::arithmetic_side_effects)]
+                if state.size() as usize != 16 * size_of::<u128>() {
+                    warn!("Unusual AVX state size {}", state.size());
+                }
+
+                state.offset()
+            });
+
+            // Need to rerun CPUID since XCR0 will have changed if AVX was enabled.
+            let ext_state_info = cpuid()
+                .get_extended_state_info()
+                .expect("must be present if XSAVE is supported");
+
             let info = xsave::XsaveInfo {
-                ymm_upper_offset: feature_info().has_avx().then(|| {
-                    xcr0 |= Xcr0::XCR0_AVX_STATE;
-                    x86::controlregs::xcr0_write(xcr0);
-
-                    let state = ext_state_info
-                        .iter()
-                        .find(|state| {
-                            state.register() == ExtendedRegisterType::Avx
-                                && state.location() == ExtendedRegisterStateLocation::Xcr0
-                        })
-                        .expect("CPUID said AVX was supported but there's no state info");
-
-                    // 16 * size_of::<u128>() is well below usize::MAX
-                    #[expect(clippy::arithmetic_side_effects)]
-                    if state.size() as usize != 16 * size_of::<u128>() {
-                        warn!("Unusual AVX state size {}", state.size());
-                    }
-
-                    state.offset()
-                }),
+                ymm_upper_offset,
                 xsave_size: ext_state_info.xsave_area_size_enabled_features(),
             };
             debug!("XSAVE: {:?}", info);
@@ -302,7 +310,7 @@ pub fn kfx_size() -> usize {
         // This wont overflow
         #[expect(clippy::arithmetic_side_effects)]
         match xsave::info() {
-            Some(info) => FXSAVE_SIZE + XSAVE_HEADER_SIZE + info.xsave_size as usize,
+            Some(info) => info.xsave_size as usize,
             None => FXSAVE_SIZE,
         }
     }

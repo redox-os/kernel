@@ -161,7 +161,8 @@ pub fn allocate_and_init_idt(cpu_id: LogicalCpuId) -> *mut Idt {
         .or_insert_with(|| Box::leak(Box::new(Idt::new())));
 
     use crate::memory::{RmmA, RmmArch};
-    let frames = crate::memory::allocate_p2frame(4)
+    let must_be_zero = true;
+    let frames = crate::memory::allocate_p2frame(4, must_be_zero)
         .expect("failed to allocate pages for backup interrupt stack");
 
     // Physical pages are mapped linearly. So is the linearly mapped virtual memory.

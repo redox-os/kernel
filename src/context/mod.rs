@@ -88,12 +88,14 @@ pub struct ContextQueueKey {
     ctxt_id: u32,
 }
 
+#[derive(Debug)]
 pub struct ContextQueueValue {
     vtime: u64,
     weight: u64,
     context_ref: WeakContextRef,
 }
 
+#[derive(Debug)]
 pub struct RunContextData {
     queue: BTreeMap<ContextQueueKey, ContextQueueValue>,
     timers: BTreeSet<(u128, WeakContextRef)>, // (wake, context)
@@ -208,6 +210,9 @@ pub fn init(token: &mut CleanLockToken) {
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        percpu
+            .switch_internals
+            .set_sched_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
 }
@@ -282,6 +287,11 @@ impl PartialEq for WeakContextRef {
     }
 }
 impl Eq for WeakContextRef {}
+impl core::fmt::Debug for WeakContextRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:p}", Weak::as_ptr(&self.0))
+    }
+}
 
 /// Spawn a context from a function.
 pub fn spawn(

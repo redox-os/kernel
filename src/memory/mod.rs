@@ -4,7 +4,7 @@
 use core::{
     cell::SyncUnsafeCell,
     num::NonZeroUsize,
-    ops::AddAssign,
+    ops::{AddAssign, Deref, DerefMut},
     slice,
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
@@ -71,17 +71,24 @@ pub fn total_frames() -> usize {
     sections().iter().map(|section| section.frames.len()).sum()
 }
 
-pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool) -> Option<Frame> {
+pub fn allocate_p2frame_with_mask(
+    mask: FreeListMask,
+    order: u32,
+    fallback: bool,
+    must_be_zero: bool,
+) -> Option<Frame> {
     let numreg = numa::number_of_memory_regions();
     if numreg == 0 {
-        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+        return allocate_p2frame_complex(order, (), None, order, 0, must_be_zero).map(|e| e.0);
     }
 
     for i in 0..numreg {
         if mask.is_enabled(i)
             && let Some(_) = FREE_LISTS.get().unwrap().get(i)
         {
-            if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+            if let Some((frame, _)) =
+                allocate_p2frame_complex(order, (), None, order, i, must_be_zero)
+            {
                 return Some(frame);
             }
         }
@@ -92,7 +99,7 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
         // from nodes in the increasing order of distance from current node
         if let Some(masks) = numa::free_lists_masks() {
             for mask in masks {
-                if let Some(frame) = allocate_p2frame_with_mask(mask, order, false) {
+                if let Some(frame) = allocate_p2frame_with_mask(mask, order, false, must_be_zero) {
                     return Some(frame);
                 }
             }
@@ -103,7 +110,9 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
                 if !mask.is_enabled(i)
                     && let Some(_) = FREE_LISTS.get().unwrap().get(i)
                 {
-                    if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
+                    if let Some((frame, _)) =
+                        allocate_p2frame_complex(order, (), None, order, i, must_be_zero)
+                    {
                         return Some(frame);
                     }
                 }
@@ -115,31 +124,31 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
 }
 
 /// Allocate a range of frames
-pub fn allocate_p2frame(order: u32) -> Option<Frame> {
+pub fn allocate_p2frame(order: u32, must_be_zero: bool) -> Option<Frame> {
     static RR_INDEX: AtomicU8 = AtomicU8::new(0);
     let len = FREE_LISTS.get().unwrap().len();
 
     if len == 1 {
-        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+        return allocate_p2frame_complex(order, (), None, order, 0, must_be_zero).map(|e| e.0);
     }
 
     // relaxed ordering since we only want atomicity
     let index =
         usize::from(RR_INDEX.fetch_add(1, Ordering::Relaxed)) % numa::number_of_memory_regions();
     for i in index..len {
-        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
+        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i, must_be_zero) {
             return Some(frame.0);
         }
     }
     for i in 0..index {
-        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
+        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i, must_be_zero) {
             return Some(frame.0);
         }
     }
     None
 }
-pub fn allocate_frame() -> Option<Frame> {
-    allocate_p2frame(0)
+pub fn allocate_frame(must_be_zero: bool) -> Option<Frame> {
+    allocate_p2frame(0, must_be_zero)
 }
 
 // TODO: Flags, strategy
@@ -149,6 +158,7 @@ pub fn allocate_p2frame_complex(
     _strategy: Option<()>,
     min_order: u32,
     index: usize,
+    must_be_zero: bool,
 ) -> Option<(Frame, usize)> {
     let mut freelist = FREE_LISTS.get().unwrap()[index].free_list_inner.lock();
 
@@ -214,8 +224,11 @@ pub fn allocate_p2frame_complex(
     info.mark_used();
     drop(freelist);
 
-    unsafe {
-        (RmmA::phys_to_virt(frame.base()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
+    if must_be_zero {
+        unsafe {
+            (RmmA::phys_to_virt(frame.base()).data() as *mut u8)
+                .write_bytes(0, PAGE_SIZE << min_order);
+        }
     }
 
     debug_assert!(frame.base().data() >= unsafe { ALLOCATOR_DATA.abs_off });
@@ -447,7 +460,9 @@ pub struct RaiiFrame {
 impl RaiiFrame {
     #[cfg(not(test))]
     pub fn allocate() -> Result<Self, Enomem> {
-        init_frame(RefCount::One)
+        let must_be_zero = true;
+
+        init_frame(RefCount::One, must_be_zero)
             .map_err(|_| Enomem)
             .map(|inner| Self { inner })
     }
@@ -484,6 +499,82 @@ impl Drop for RaiiFrame {
                 deallocate_frame(self.inner);
             }
         }
+    }
+}
+
+pub struct FrameAllocated<T> {
+    frame: Frame,
+    _marker: core::marker::PhantomData<T>,
+}
+
+unsafe impl<T: Send> Send for FrameAllocated<T> {}
+unsafe impl<T: Sync> Sync for FrameAllocated<T> {}
+
+impl<T> FrameAllocated<T> {
+    const fn order() -> Option<u32> {
+        let size = size_of::<T>();
+        let align = align_of::<T>();
+        if size == 0 || size > PAGE_SIZE * 4 || align > PAGE_SIZE {
+            return None;
+        }
+
+        let pages = size.div_ceil(PAGE_SIZE);
+        Some(pages.next_power_of_two().trailing_zeros())
+    }
+
+    pub fn try_new(val: T) -> Option<Self> {
+        let order = const { Self::order().unwrap() };
+        let frame = crate::memory::allocate_p2frame(order, false)?;
+
+        let this = Self {
+            frame,
+            _marker: core::marker::PhantomData,
+        };
+
+        unsafe {
+            let virt = this.as_ptr();
+            virt.write(val);
+        }
+
+        Some(this)
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *mut T {
+        unsafe { RmmA::phys_to_virt(self.frame.base()).data() as *mut T }
+    }
+}
+
+impl<T> Deref for FrameAllocated<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.as_ptr() }
+    }
+}
+
+impl<T> DerefMut for FrameAllocated<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.as_ptr() }
+    }
+}
+
+impl<T> Drop for FrameAllocated<T> {
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::drop_in_place(self.as_ptr());
+
+            let order = const { Self::order().unwrap() };
+            crate::memory::deallocate_p2frame(self.frame, order);
+        }
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for FrameAllocated<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        (**self).fmt(f)
     }
 }
 
@@ -1020,7 +1111,11 @@ pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
     init_sections(allocator);
 
     unsafe {
-        let the_frame = allocate_frame().expect("failed to allocate static zeroed frame");
+        // would have been interesting otherwise
+        let must_be_zero = true;
+
+        let the_frame =
+            allocate_frame(must_be_zero).expect("failed to allocate static zeroed frame");
         let the_info = get_page_info(the_frame).expect("static zeroed frame had no PageInfo");
         the_info
             .refcount
@@ -1319,8 +1414,8 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
     }
 }
 
-pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
-    let new_frame = allocate_frame().ok_or(PfError::Oom)?;
+pub fn init_frame(init_rc: RefCount, must_be_zero: bool) -> Result<Frame, PfError> {
+    let new_frame = allocate_frame(must_be_zero).ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).unwrap_or_else(|| {
         panic!(
             "all allocated frames need an associated page info, {:?} didn't",
@@ -1339,11 +1434,12 @@ pub struct TheFrameAllocator(pub NumaMemoryPolicy);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+        let must_be_zero = true;
         let order = count.data().next_power_of_two().trailing_zeros();
         if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
-            allocate_p2frame_with_mask(mask, order, fallback).map(|f| f.base())
+            allocate_p2frame_with_mask(mask, order, fallback, true).map(|f| f.base())
         } else {
-            allocate_p2frame(order).map(|f| f.base())
+            allocate_p2frame(order, true).map(|f| f.base())
         }
     }
 
