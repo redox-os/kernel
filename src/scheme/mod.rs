@@ -165,10 +165,9 @@ enum Handle {
     Scheme(KernelSchemes),
 }
 
-/// Schemes list
-
 // TODO: Depending on whether we actually want to expose scheme IDs to userspace, a faster way
 // could be to just take the static scheme ID or pointer of Weak<UserInner> and use that directly.
+/// Schemes list
 static HANDLES: Once<RwLock<L1, HashMap<SchemeId, Handle>>> = Once::new();
 
 static SCHEME_LIST_NEXT_ID: AtomicUsize = AtomicUsize::new(MAX_GLOBAL_SCHEMES);
@@ -404,7 +403,7 @@ impl KernelScheme for SchemeList {
         let inner = self.get_user_inner(id, token).ok_or(Error::new(EBADF))?;
 
         // TODO: "verb"?
-        if metadata.get(0).copied() != Some(0) {
+        if metadata.first().copied() != Some(0) {
             return Err(Error::new(EINVAL));
         }
 
@@ -440,7 +439,7 @@ impl KernelScheme for SchemeList {
                     let num_read = bytes_read / size_of::<syscall::schemev2::Sqe>();
                     num_processed += num_read;
                 }
-                Err(e) if num_processed > 0 => (),
+                Err(_e) if num_processed > 0 => (),
                 Err(e) => return Err(e),
             }
         }

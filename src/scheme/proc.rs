@@ -6,13 +6,11 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
         unblock_context, wakeup_context, Context, ContextLock, Status,
     },
-    cpu_id,
     memory::{Page, VirtualAddress, PAGE_SIZE},
     numa, ptrace,
     scheme::{
-        self,
         memory::{MemoryScheme, MemoryType},
-        FileHandle, KernelScheme, StrOrBytes,
+        FileHandle, KernelScheme,
     },
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
@@ -191,7 +189,7 @@ pub fn foreach_addrsp(
         else {
             continue;
         };
-        f(&addrspace, token.token());
+        f(addrspace, token.token());
     }
 }
 
@@ -886,16 +884,16 @@ impl KernelScheme for ProcScheme {
         &self,
         id: usize,
         descs: Vec<Arc<context::file::LockedFileDescription>>,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let context = {
             let mut handles = HANDLES.read(token.token());
-            let (handles, mut token) = handles.token_split();
+            let (handles, _token) = handles.token_split();
             let handle = handles.get(&id).unwrap();
 
-            let Handle { context, kind } = handle;
+            let Handle { context, kind: _ } = handle;
 
             if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
                 &handle.kind
@@ -906,7 +904,7 @@ impl KernelScheme for ProcScheme {
             }
         };
 
-        let target_fd = metadata.get(0).ok_or(Error::new(EINVAL))?;
+        let target_fd = metadata.first().ok_or(Error::new(EINVAL))?;
 
         if let Some(file) = {
             let mut context = context.read(token.token());
@@ -916,7 +914,7 @@ impl KernelScheme for ProcScheme {
             file.close(token)?;
         }
 
-        let mut file = descs.get(0).unwrap();
+        let file = descs.first().unwrap();
         let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
@@ -1596,7 +1594,7 @@ impl ContextHandle {
     }
     pub fn kcall(
         &self,
-        fds: &[usize],
+        _fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -1687,7 +1685,7 @@ impl ContextHandle {
             }
             ContextHandle::AddrSpace { addrspace } => {
                 let op = syscall::flag::NumaVerb::try_from_raw(
-                    *metadata.get(0).ok_or(Error::new(EINVAL))?,
+                    *metadata.first().ok_or(Error::new(EINVAL))?,
                 )
                 .ok_or(Error::new(EINVAL))?;
 

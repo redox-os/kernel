@@ -2,14 +2,13 @@
 
 use core::slice;
 
-use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, FrameAllocator};
 use spin::once::Once;
 
 use crate::{
-    acpi::{find_sdt, get_sdt_signature, rxsdt::Rxsdt, sdt::Sdt, srat, RXSDT_ENUM},
+    acpi::{rxsdt::Rxsdt, sdt::Sdt, RXSDT_ENUM},
     cpu_set::MAX_CPU_COUNT,
-    find_one_sdt, memory,
+    memory,
     numa::{self, NumaMemory},
 };
 
@@ -40,8 +39,7 @@ pub fn init<A: Arch>(
         .allocate(rmm::FrameCount::new(2))
         .expect("Failed to allocate memory for storing NUMA info");
 
-    let dom_node_map_ptr =
-        unsafe { crate::memory::RmmA::phys_to_virt(dom_node_map).data() as *mut u32 };
+    let dom_node_map_ptr = crate::memory::RmmA::phys_to_virt(dom_node_map).data() as *mut u32;
 
     // Occupies 512 bytes (1/8th of a page)
     let dom_node_map: &'static mut [u32] =
@@ -50,7 +48,7 @@ pub fn init<A: Arch>(
     // occupies 512 bytes (1/8th of a page)
     let cpus: &'static mut [u32] = unsafe {
         slice::from_raw_parts_mut(
-            dom_node_map_ptr.add(numa::MAX_DOMAINS) as *mut u32,
+            dom_node_map_ptr.add(numa::MAX_DOMAINS),
             MAX_CPU_COUNT as usize,
         )
     };

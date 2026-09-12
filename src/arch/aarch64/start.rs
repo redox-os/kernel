@@ -129,7 +129,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
                     #[cfg(feature = "acpi")]
                     {
-                        crate::acpi::init_after_mem(args.acpi_rsdp());
+                        crate::acpi::init_after_mem();
                     }
                 }
             }

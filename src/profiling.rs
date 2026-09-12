@@ -240,7 +240,7 @@ unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
         // the 16-byte alignedness of bp, and whether the next page is mapped at all.
 
         if bp >= crate::USER_END_OFFSET
-            || bp % 16 > 0
+            || !bp.is_multiple_of(16)
             || !CurrentRmmArch::virt_is_valid(VirtualAddress::new(bp))
         {
             break;
@@ -270,7 +270,6 @@ unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
 unsafe fn walk_kstack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
     // Runs inside an NMI handler!
 
-    #[expect(clippy::needless_range_loop)]
     for i in *len..32 {
         if bp < CurrentRmmArch::PHYS_OFFSET
             || bp.saturating_add(16) >= CurrentRmmArch::PHYS_OFFSET + crate::PML4_SIZE

@@ -6,12 +6,12 @@
 
 use crate::{
     context::{
-        self, arch, memory::AddrSpaceSwitchReadGuard, wakeup_context, ArcContextLockWriteGuard,
-        Context, ContextLock, RunContextData, WeakContextRef,
+        self, arch, memory::AddrSpaceSwitchReadGuard, ArcContextLockWriteGuard, Context, ContextLock,
+        RunContextData, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
-    percpu::{self, get_percpu_block, PercpuBlock},
+    percpu::{get_percpu_block, PercpuBlock},
     sync::{ArcRwLockWriteGuard, CleanLockToken, Mutex, L4},
 };
 use alloc::{
@@ -24,7 +24,6 @@ use core::{
     hint, matches, mem,
     option::Option::{None, Some},
     sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-    u64,
 };
 use smallvec::SmallVec;
 use spin::mutex::SpinMutex;
@@ -365,11 +364,12 @@ fn schedule(
                     continue;
                 };
 
-                if let Some(wake) = wake_opt {
-                    if guard.status.is_soft_blocked() && guard.wake == Some(wake) {
-                        guard.wake = None;
-                        guard.unblock_no_ipi();
-                    }
+                if let Some(wake) = wake_opt
+                    && guard.status.is_soft_blocked()
+                    && guard.wake == Some(wake)
+                {
+                    guard.wake = None;
+                    guard.unblock_no_ipi();
                 }
 
                 // Non-runnable contexts should obviously not be pushed to the runqueue.
@@ -571,7 +571,7 @@ fn select_next_context(
         }
 
         let Some(context_lock) = context_ref.upgrade() else {
-            weight_change += *context_weight as u64;
+            weight_change += *context_weight;
             contexts_to_remove.push((*vd, *rem_slice, *ctxt_id));
             continue;
         };
@@ -672,15 +672,14 @@ fn select_next_context(
                 eligible_best = ineligible_best.take();
             }
         }
-    } else if prev_is_eligible && eligible_best.is_some() {
-        if let Some((ref guard, _)) = eligible_best {
-            if prev_context_guard.vd < guard.vd
-                || (prev_context_guard.vd == guard.vd
-                    && prev_context_guard.rem_slice > guard.rem_slice)
-            {
-                eligible_best = None;
-            }
-        }
+    } else if prev_is_eligible
+        && eligible_best.is_some()
+        && let Some((ref guard, _)) = eligible_best
+        && (prev_context_guard.vd < guard.vd
+            || (prev_context_guard.vd == guard.vd
+                && prev_context_guard.rem_slice > guard.rem_slice))
+    {
+        eligible_best = None;
     }
 
     let mut final_winner = None;
@@ -718,7 +717,7 @@ fn select_next_context(
                         continue;
                     }
 
-                    if let Some(p) = get_percpu_block(LogicalCpuId::new(i as u32)) {
+                    if let Some(p) = get_percpu_block(LogicalCpuId::new(i)) {
                         let neighbour_len = p.switch_internals.queue_len.load(Ordering::Relaxed);
 
                         if neighbour_len > max_neighbour {
@@ -862,7 +861,7 @@ fn select_next_context(
 
     if final_winner.is_some() || prev_runnable {
         if contexts_data.total_weight > 0 {
-            let v_advance = elapsed_ticks as u128 / contexts_data.total_weight as u128;
+            let v_advance = elapsed_ticks / contexts_data.total_weight as u128;
             contexts_data.v += v_advance as u64;
         }
 
@@ -905,13 +904,13 @@ fn select_next_context(
                 .stealable
                 .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
 
-            return Some((chosen_guard, addr_space));
+            Some((chosen_guard, addr_space))
         } else {
             percpu
                 .switch_internals
                 .stealable
                 .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
-            return None;
+            None
         }
     } else {
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
@@ -925,9 +924,9 @@ fn select_next_context(
             // Since the idle context is per-cpu, then assuming its context Arc will only be
             // accessed by a "leaf" that doesn't acquire the runqueue (such as the sys scheme), it
             // should be safe to use a blocking write acquire here.
-            return Some(unsafe { (idle_context.write_arc(), None) });
+            Some(unsafe { (idle_context.write_arc(), None) })
         } else {
-            return None;
+            None
         }
     }
 }
@@ -1410,7 +1409,7 @@ mod tests {
             task: &Arc<ContextLock>,
             id: u32,
             vtime: u64,
-            mut queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,
+            queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,
         ) {
             queue.queue.insert(
                 (vtime, Reverse(vtime), id),
