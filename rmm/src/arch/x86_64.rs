@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::{arch::asm, num::NonZeroU8};
 
 use crate::{Arch, PhysicalAddress, TableKind, VirtualAddress};
 
@@ -27,6 +27,17 @@ impl Arch for X8664Arch {
     const ENTRY_FLAG_DEVICE_MEMORY: usize = PAT_UC_;
     const ENTRY_FLAG_UNCACHEABLE: usize = PAT_UC_;
     const ENTRY_FLAG_WRITE_COMBINING: usize = PAT_WC;
+
+    fn entry_flag_large(level: NonZeroU8) -> Option<usize> {
+        match level.get() {
+            1 => Some(1 << 7),
+            // TODO: should make it possible to be conditional on CPU features in this struct
+            //2 => Some(1 << 7),
+
+            // PDPs, PML4s (and PML5s) can only be mapped to paging structures
+            _ => None,
+        }
+    }
 
     const PHYS_OFFSET: usize = Self::PAGE_NEGATIVE_MASK + (Self::PAGE_ADDRESS_SIZE >> 1) as usize; // PML4 slot 256 and onwards
 

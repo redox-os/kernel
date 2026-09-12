@@ -47,6 +47,7 @@ pub(super) fn init(madt: Madt) {
                 trampoline_page.start_address(),
                 trampoline_frame.base(),
                 PageFlags::new().execute(true).write(true),
+                0,
             )
             .expect("failed to map trampoline");
 
@@ -151,10 +152,11 @@ pub(super) fn init(madt: Madt) {
     }
 
     // Unmap trampoline
-    let (_frame, _, flush) = unsafe {
+    let (_frame, lvl, _, flush) = unsafe {
         KernelMapper::lock_rw()
             .unmap_phys(trampoline_page.start_address())
             .expect("failed to unmap trampoline page")
     };
+    assert_eq!(lvl, 0, "not mapped with huge pages");
     flush.flush();
 }
