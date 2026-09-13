@@ -52,6 +52,7 @@ aarch64:boot:
   image: "registry.redox-os.org/redox-os/redoxer:aarch64"
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - export REDOXER_QEMU_ARGS="-cpu cortex-a53"
     - timeout -s KILL 5m redoxer env make test
 
 i586:boot:
@@ -59,6 +60,7 @@ i586:boot:
   needs: [i586]
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - export REDOXER_USE_KVM=false REDOXER_QEMU_ARGS="-cpu pentium"
     - TARGET=${ARCH}-unknown-redox timeout -s KILL 5m redoxer env make test
   variables:
     ARCH: "i586"
@@ -66,6 +68,14 @@ i586:boot:
 x86_64:boot:
   stage: test
   needs: [x86_64]
+  script:
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - export REDOXER_USE_KVM=false REDOXER_QEMU_ARGS="-cpu qemu64"
+    - timeout -s KILL 5m redoxer env make test
+
+riscv64gc:boot:
+  stage: test
+  needs: [riscv64gc]
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
     - timeout -s KILL 5m redoxer env make test
