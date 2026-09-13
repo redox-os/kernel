@@ -1095,7 +1095,6 @@ unsafe fn switch_to(
     // can get removed from that runqueue (as it was already running) and hence *all* runqueues. We
     // thus check if it has been removed, and if so reinsert it to the fast wakeup queue.
     {
-        let next_ptr = Arc::as_ptr(ArcRwLockWriteGuard::rwlock(&next_context_guard));
         let sched_ptr = percpu
             .switch_internals
             .sched_ctxt
@@ -1103,7 +1102,8 @@ unsafe fn switch_to(
             .as_ref()
             .map_or_else(core::ptr::null, |s| Arc::as_ptr(s));
         let current_ptr = Arc::as_ptr(ArcRwLockWriteGuard::rwlock(&prev_context_guard));
-        if sched_ptr != next_ptr
+
+        if sched_ptr != current_ptr
             && prev_context_guard.queue_key.is_none()
             && matches!(prev_context_guard.status, context::Status::Runnable)
         {
