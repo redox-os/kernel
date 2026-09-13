@@ -2836,7 +2836,7 @@ fn correct_inner<'l>(
             let Some(flush) = (unsafe {
                 current_table
                     .utable
-                    .map_phys(faulting_page.start_address(), pa, flags)
+                    .map_phys(faulting_page.start_address(), pa, flags, 0)
             }) else {
                 return Err(PfError::Oom);
             };
