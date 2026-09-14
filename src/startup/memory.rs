@@ -376,7 +376,7 @@ unsafe fn map_phys_contiguous_inactive<A: Arch>(
                 // Always use highest possible level.
                 break;
             }
-            debug!(
+            trace!(
                 "level {level} mapping {:#0x} => {:#0x}, bump alloc off {:#0x}",
                 phys_base.data(),
                 virt_base.data(),
