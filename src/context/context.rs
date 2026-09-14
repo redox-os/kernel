@@ -1,7 +1,6 @@
 use alloc::{collections::BTreeSet, sync::Arc, vec::Vec};
 use arrayvec::ArrayString;
 use core::{
-    cmp::Reverse,
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
@@ -33,6 +32,7 @@ use crate::syscall::error::{Error, Result, EAGAIN, EBADF, EEXIST, EINVAL, EMFILE
 use super::{
     empty_cr3,
     memory::{AddrSpaceWrapper, GrantFileRef},
+    ContextQueueKey,
 };
 
 /// The status of a context - used for scheduling
@@ -181,7 +181,7 @@ pub struct Context {
     /// This will be set to the corresponding key iff a hw-thread contains this context in its
     /// `run_queue`.
     // TODO: what guarantees are there that contexts are not in multiple hw-threads' run_queues?
-    pub queue_key: Option<(u64, Reverse<u64>, u32)>,
+    pub queue_key: Option<ContextQueueKey>,
 
     // TODO: id can reappear after wraparound?
     pub owner_proc_id: Option<NonZeroUsize>,
