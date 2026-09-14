@@ -1,12 +1,6 @@
-use core::{iter, slice};
-
-use hashbrown::HashMap;
-use rmm::{Arch, BumpAllocator, FrameAllocator, PhysicalAddress};
-
 use crate::{
     acpi::srat::{to_usize, Srat, SratEntry},
     cpu_set,
-    memory::{self, PAGE_SIZE},
     numa::{self, assign_memory_id, NumaMemory},
 };
 
@@ -39,10 +33,10 @@ pub fn init_srat(
             }
         }
 
-        SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
-            if processor_local_affinity.flags & 1 != 0 {
-                cpu_count += 1
-            }
+        SratEntry::ProcessorLocalAffinity(processor_local_affinity)
+            if processor_local_affinity.flags & 1 != 0 =>
+        {
+            cpu_count += 1
         }
         _ => (),
     });

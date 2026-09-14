@@ -171,14 +171,15 @@ interrupt_error!(stack_segment, |stack, code| {
 });
 
 interrupt_error!(protection, |stack, code| {
-    let mut was_failing_msr;
+    let was_failing_msr;
 
     // TODO: maybe consider just forcing userspace to handle this, but our exception handling is
     // currently limited
     #[cfg(target_arch = "x86_64")]
     {
-        was_failing_msr = stack.iret.rip == crate::arch::misc::__the_wrapped_rdmsr_instr as usize
-            || stack.iret.rip == crate::arch::misc::__the_wrapped_wrmsr_instr as usize;
+        was_failing_msr = stack.iret.rip
+            == crate::arch::misc::__the_wrapped_rdmsr_instr as *const () as usize
+            || stack.iret.rip == crate::arch::misc::__the_wrapped_wrmsr_instr as *const () as usize;
 
         if was_failing_msr {
             // 0F 30 (WRMSR) or 0F 32 (RDMSR)
