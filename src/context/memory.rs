@@ -150,8 +150,7 @@ pub struct AddrSpace {
     /// The id of the NUMA node in which the root page table resides.
     root_table_node_id: u32,
 
-    /// These tables are optionally created for subsequently spawned threads and they
-    /// **initially** inherit mappings from the root table.
+    /// These tables are optionally created for subsequently spawned threads
     replicas: hashbrown::HashMap<u32, Table>,
 
     /// These are discarded tables. These tables are not immediately deallocated,
@@ -183,7 +182,7 @@ impl AddrSpaceWrapper {
         let new =
             Arc::get_mut(&mut new_arc).expect("expected new address space Arc not to be aliased");
 
-        // It's okay to use the field directly here instead of the method `table_mut`
+        // It's okay to use the field directly here instead of the method `current_table_mut`
         // because, the grants will be copied to the new address space
         let this_mapper = &mut guard.root_table.utable;
         let mut this_flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
@@ -570,7 +569,8 @@ impl AddrSpaceWrapper {
         }
 
         let mut guard_lock = None;
-        let frame = if let Some((f, fl)) = guard.root_table.utable.translate(page.start_address())
+        let frame = if let Some((f, fl)) =
+            guard.current_table().utable.translate(page.start_address())
             && fl.has_write()
         {
             Frame::containing(f)
@@ -887,7 +887,7 @@ impl AddrSpace {
         let grant = map(
             selected_span.base,
             page_flags(flags),
-            &mut self.root_table.utable,
+            &mut self.current_table_mut().utable,
             &mut Flusher::with_cpu_set(&dst_lock.used_by, &dst_lock.tlb_ack),
         )?;
         self.grants.insert(grant);
@@ -1327,7 +1327,7 @@ pub struct GrantInfo {
     ///
     /// Example: For CoW mappings, the owner would originally be the node that CoW-mapped this grant.
     /// But after copying, the owner would be the node that did the copy.
-    owner: u32,
+    pub owner: u32,
 
     pub(crate) provider: Provider,
 }
@@ -1651,7 +1651,7 @@ impl Grant {
                     MmapMode::Shared => {
                         // TODO: Error code for "scheme responded with unmapped page"?
                         let (frame, page_flags) = match src_addrspace
-                            .root_table
+                            .current_table()
                             .utable
                             .translate(src_page.start_address())
                         {
@@ -1667,7 +1667,7 @@ impl Grant {
                                 )
                                 .map_err(|_| Error::new(EIO))?;
                                 let page_flags = new_guard
-                                    .root_table
+                                    .current_table()
                                     .utable
                                     .translate(src_page.start_address())
                                     .unwrap()
@@ -1681,7 +1681,7 @@ impl Grant {
                     }
                     MmapMode::Cow => unsafe {
                         let (frame, page_flags) = match guard
-                            .root_table
+                            .current_table_mut()
                             .utable
                             .remap_with(src_page.start_address(), |flags| flags.write(false))
                         {
@@ -1698,7 +1698,7 @@ impl Grant {
                                 .map_err(|_| Error::new(EIO))?;
                                 // FIXME correct_inner should read the page flags instead
                                 let page_flags = new_guard
-                                    .root_table
+                                    .current_table()
                                     .utable
                                     .translate(src_page.start_address())
                                     .unwrap()
@@ -1724,7 +1724,7 @@ impl Grant {
                                 .map_err(|_| Error::new(ENOMEM))?;
 
                             let (old_flags, _, _flush) = src_addrspace
-                                .root_table
+                                .current_table_mut()
                                 .utable
                                 .remap_with_full(src_page.start_address(), |_, flags| {
                                     Some((new_cow_frame.base(), flags))
@@ -1874,7 +1874,7 @@ impl Grant {
                 .take(MAX_EAGER_PAGES)
             {
                 let Some((phys, _)) = src_address_space
-                    .root_table
+                    .current_table()
                     .utable
                     .translate(page.start_address())
                 else {
@@ -2847,7 +2847,7 @@ fn correct_inner<'l>(
     let (_, grant_info) = addr_space.grants.contains(faulting_page).unwrap();
 
     let faulting_frame_opt = addr_space
-        .root_table
+        .current_table()
         .utable
         .translate(faulting_page.start_address())
         .map(|(phys, _page_flags)| Frame::containing(phys));
@@ -2880,7 +2880,7 @@ fn correct_inner<'l>(
                     }
                 }
                 _ => map_zeroed(
-                    &mut addr_space.root_table.utable,
+                    &mut addr_space.current_table_mut().utable,
                     faulting_page,
                     grant_flags,
                     true,
@@ -2932,55 +2932,58 @@ fn correct_inner<'l>(
             let src_page = src_base.next_by(pages_from_grant_start);
 
             match guard.grants.contains(src_page) {
-                Some(_) => {
-                    let src_frame =
-                        match guard.root_table.utable.translate(src_page.start_address()) {
-                            Some((phys, _)) => Frame::containing(phys),
-                            _ => {
-                                // Grant was valid (TODO check), but we need to correct the underlying page.
-                                // TODO: Access mode
+                Some((_, grant_info)) => {
+                    let owner = grant_info.owner;
+                    let src_frame = match guard
+                        .current_table()
+                        .utable
+                        .translate(src_page.start_address())
+                    {
+                        Some((phys, _)) => Frame::containing(phys),
+                        _ => {
+                            // Grant was valid (TODO check), but we need to correct the underlying page.
+                            // TODO: Access mode
 
-                                // TODO: Reasonable maximum?
-                                let new_recursion_level = recursion_level
-                                    .checked_add(1)
-                                    .filter(|new_lvl| *new_lvl < 16)
-                                    .ok_or(PfError::RecursionLimitExceeded)?;
+                            // TODO: Reasonable maximum?
+                            let new_recursion_level = recursion_level
+                                .checked_add(1)
+                                .filter(|new_lvl| *new_lvl < 16)
+                                .ok_or(PfError::RecursionLimitExceeded)?;
 
-                                let guard_token = guard.into_token();
-                                let addr_space_guard_token = addr_space.into_token();
-                                drop(flusher);
+                            let guard_token = guard.into_token();
+                            let addr_space_guard_token = addr_space.into_token();
+                            drop(flusher);
 
-                                // FIXME: Can this result in invalid address space state?
-                                let ext_addrspace = &foreign_address_space;
-                                let mut free_token = unsafe { CleanLockToken::new() };
-                                let (frame, _, _) = {
-                                    let g = ext_addrspace.acquire_write(free_token.downgrade());
-                                    correct_inner(
-                                        ext_addrspace,
-                                        g,
-                                        src_page,
-                                        AccessMode::Read,
-                                        new_recursion_level,
-                                    )?
-                                };
+                            // FIXME: Can this result in invalid address space state?
+                            let ext_addrspace = &foreign_address_space;
+                            let mut free_token = unsafe { CleanLockToken::new() };
+                            let (frame, _, _) = {
+                                let g = ext_addrspace.acquire_write(free_token.downgrade());
+                                correct_inner(
+                                    ext_addrspace,
+                                    g,
+                                    src_page,
+                                    AccessMode::Read,
+                                    new_recursion_level,
+                                )?
+                            };
 
-                                // SAFETY: Caller guarantees addr_space_guard is coming from this addr_space_lock
-                                addr_space = unsafe {
-                                    addr_space_lock.acquire_rewrite(addr_space_guard_token)
-                                };
-                                flusher = Flusher::with_cpu_set(
-                                    &addr_space_lock.used_by,
-                                    &addr_space_lock.tlb_ack,
-                                );
+                            // SAFETY: Caller guarantees addr_space_guard is coming from this addr_space_lock
+                            addr_space =
+                                unsafe { addr_space_lock.acquire_rewrite(addr_space_guard_token) };
+                            flusher = Flusher::with_cpu_set(
+                                &addr_space_lock.used_by,
+                                &addr_space_lock.tlb_ack,
+                            );
 
-                                // SAFETY: We guarantee that guard is coming from foreign_address_space
-                                guard = unsafe {
-                                    foreign_address_space.acquire_reupgradeable_read(guard_token)
-                                };
+                            // SAFETY: We guarantee that guard is coming from foreign_address_space
+                            guard = unsafe {
+                                foreign_address_space.acquire_reupgradeable_read(guard_token)
+                            };
 
-                                frame
-                            }
-                        };
+                            frame
+                        }
+                    };
 
                     let info =
                         get_page_info(src_frame).expect("all allocated frames need a PageInfo");
@@ -3003,7 +3006,7 @@ fn correct_inner<'l>(
                             // TODO: flusher
                             unsafe {
                                 guard
-                                    .root_table
+                                    .current_table_mut()
                                     .utable
                                     .remap_with_full(src_page.start_address(), |_, f| {
                                         Some((new_frame.base(), f))
@@ -3026,7 +3029,7 @@ fn correct_inner<'l>(
                     // TODO: Should this be called?
                     warn!("Mapped zero page since grant didn't exist");
                     map_zeroed(
-                        &mut guard.root_table.utable,
+                        &mut guard.current_table_mut().utable,
                         src_page,
                         grant_flags,
                         access == AccessMode::Write,
@@ -3090,7 +3093,7 @@ fn correct_inner<'l>(
     let new_flags = grant_flags.write(grant_flags.has_write() && allow_writable);
     let Some(flush) = (unsafe {
         addr_space
-            .root_table
+            .current_table_mut()
             .utable
             // TODO: huge pages?
             .map_phys(faulting_page.start_address(), frame.base(), new_flags, 0)

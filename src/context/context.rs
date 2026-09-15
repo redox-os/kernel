@@ -425,7 +425,7 @@ impl Context {
                     // and proceed as usual
 
                     let new_addrsp = if new_addrsp.replicate_on_node_switch
-                        && new_addrsp.owning_table_or(node_id).1 == new_addrsp.root_table_node_id()
+                        && new_addrsp.owning_table_or(node_id).1 != node_id
                     {
                         let mut new_addrsp = new_addrsp.upgrade();
                         if let Ok(new_table) = new_addrsp.current_table().try_clone(

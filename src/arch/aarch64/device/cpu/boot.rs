@@ -289,7 +289,7 @@ fn prepare_trampoline() -> Option<(RaiiFrame, PhysicalAddress)> {
     let mut mapper = unsafe {
         PageMapper::create(
             TableKind::User,
-            TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+            TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant, None),
         )
     }?;
     let flush = unsafe {
