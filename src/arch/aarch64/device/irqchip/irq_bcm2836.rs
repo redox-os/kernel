@@ -3,7 +3,7 @@ use crate::{
     arch::device::{ROOT_IC_IDX, ROOT_IC_IDX_IS_SET},
     dtb::{
         get_mmio_address,
-        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc},
     },
     sync::CleanLockToken,
 };
@@ -109,7 +109,7 @@ impl Bcm2836ArmInterruptController {
         }
     }
 
-    unsafe fn write(&mut self, reg: u32, value: u32) {
+    unsafe fn write(&self, reg: u32, value: u32) {
         unsafe {
             write_volatile((self.address + reg as usize) as *mut u32, value);
         }
@@ -117,16 +117,17 @@ impl Bcm2836ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2836ArmInterruptController {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &mut [IrqDesc; 1024],
+        irq_desc: &[IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        _chips: &[IrqChipItem],
     ) -> Result<()> {
         let (base, _size) = match Bcm2836ArmInterruptController::parse(fdt_opt.unwrap()) {
             Ok((a, b)) => (a, b),
@@ -144,9 +145,8 @@ impl InterruptController for Bcm2836ArmInterruptController {
             let mut i: usize = 0;
             //only support linear irq map now.
             while i < cnt && (idx + i < 1024) {
-                irq_desc[idx + i].basic.ic_idx = ic_idx;
-                irq_desc[idx + i].basic.ic_irq = i as u32;
-                irq_desc[idx + i].basic.used = true;
+                irq_desc[idx + i].basic.set_mapping(ic_idx, i as u32);
+                irq_desc[idx + i].basic.set_used(true);
 
                 i += 1;
             }
@@ -164,7 +164,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
         Ok(())
     }
 
-    fn irq_ack(&mut self) -> u32 {
+    fn irq_ack(&self) -> u32 {
         let cpuid: usize;
         unsafe {
             asm!("mrs {}, mpidr_el1", out(reg) cpuid);
@@ -174,9 +174,9 @@ impl InterruptController for Bcm2836ArmInterruptController {
         ffs(sources) - 1
     }
 
-    fn irq_eoi(&mut self, _irq_num: u32) {}
+    fn irq_eoi(&self, _irq_num: u32) {}
 
-    fn irq_enable(&mut self, irq_num: u32) {
+    fn irq_enable(&self, irq_num: u32) {
         debug!("bcm2836 enable {}", irq_num);
         match irq_num {
             LOCAL_IRQ_CNTPNSIRQ => unsafe {
@@ -196,7 +196,7 @@ impl InterruptController for Bcm2836ArmInterruptController {
         }
     }
 
-    fn irq_disable(&mut self, irq_num: u32) {
+    fn irq_disable(&self, irq_num: u32) {
         match irq_num {
             LOCAL_IRQ_CNTPNSIRQ => unsafe {
                 let cpuid: usize;

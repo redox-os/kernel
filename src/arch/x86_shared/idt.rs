@@ -51,12 +51,20 @@ impl Idt {
     }
 
     #[inline]
-    pub(crate) fn set_reserved(&self, index: u8, reserved: bool) {
+    fn try_reserve(&self, index: u8) -> bool {
+        let byte_index = index / 32;
+        let bit = index % 32;
+        let mask = 1u32 << bit;
+
+        self.reservations[usize::from(byte_index)].fetch_or(mask, Ordering::AcqRel) & mask == 0
+    }
+
+    #[inline]
+    fn free_reserved(&self, index: u8) {
         let byte_index = index / 32;
         let bit = index % 32;
 
-        self.reservations[usize::from(byte_index)]
-            .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
+        self.reservations[usize::from(byte_index)].fetch_and(!(1u32 << bit), Ordering::AcqRel);
     }
 
     #[inline]
@@ -88,16 +96,22 @@ pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
 }
 
 #[inline]
-pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
+pub fn try_set_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
     if cpu_id == LogicalCpuId::BSP {
-        unsafe { (*INIT_BSP_IDT.get()).set_reserved(index, reserved) };
+        return unsafe { (*INIT_BSP_IDT.get()).try_reserve(index) };
+    }
+
+    IDTS.read().get(&cpu_id).unwrap().try_reserve(index)
+}
+
+#[inline]
+pub fn free_reserved(cpu_id: LogicalCpuId, index: u8) {
+    if cpu_id == LogicalCpuId::BSP {
+        unsafe { (*INIT_BSP_IDT.get()).free_reserved(index) };
         return;
     }
 
-    IDTS.read()
-        .get(&cpu_id)
-        .unwrap()
-        .set_reserved(index, reserved);
+    IDTS.read().get(&cpu_id).unwrap().free_reserved(index);
 }
 
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
