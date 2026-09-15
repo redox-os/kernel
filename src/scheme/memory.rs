@@ -9,7 +9,7 @@ use crate::{
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
     },
-    memory::{free_frames, used_frames, Frame, VirtualAddress, PAGE_SIZE},
+    memory::{free_frames, used_frames, Frame, Page, VirtualAddress, PAGE_SIZE},
     numa, percpu,
     sync::CleanLockToken,
     syscall::{
@@ -290,11 +290,20 @@ impl KernelScheme for MemoryScheme {
                 let mut token = token.token();
                 let addr = AddrSpace::current()?;
                 let addr = addr.acquire_read(token.downgrade());
-                let (phys, _) = addr
-                    .current_table()
-                    .utable
-                    .translate(virt)
-                    .ok_or(Error::new(ENOENT))?;
+                let (phys, _) =
+                    if let Some((_, gi)) = addr.grants.contains(Page::containing_address(virt)) {
+                        addr.owning_table(gi.owner)
+                            .utable
+                            .translate(virt)
+                            .ok_or(Error::new(ENOENT))?
+                    }
+                    // this mapping was not done through a grant, so if present, it must be in all replicas
+                    else {
+                        addr.current_table()
+                            .utable
+                            .translate(virt)
+                            .ok_or(Error::new(ENOENT))?
+                    };
                 payload.write_usize(phys.data())?;
 
                 // could just return address directly, but physaddrs might conflict with the bit
