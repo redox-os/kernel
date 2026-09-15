@@ -957,7 +957,11 @@ impl UserInner {
                                     Response::SchemeLocal(res, extra0, notify, cap_rights)
                                 }
                                 PendingCqe::Fd(desc, orig_rights) => {
-                                    let new_rights = orig_rights & cap_rights;
+                                    let generic_mask = cap_rights & !CapRights::SCHEME_MASK;
+                                    let target_scheme_bits = orig_rights & CapRights::SCHEME_MASK;
+                                    let new_rights = (orig_rights & generic_mask)
+                                        | target_scheme_bits
+                                        | CapRights::SCHEME_MASK;
                                     Response::Fd(desc, new_rights)
                                 }
                             },
