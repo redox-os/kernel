@@ -1819,7 +1819,7 @@ impl ContextHandle {
                 .ok_or(Error::new(EINVAL))?;
 
                 match op {
-                    NumaVerb::MemPolicy => (), // actions performed below from line 1837
+                    NumaVerb::MemPolicy => (),
                     NumaVerb::ReplicatePageTables => {
                         if flags.contains(CallFlags::READ) {
                             let addrspace = addrspace.acquire_read(token.downgrade());
