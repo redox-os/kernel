@@ -37,6 +37,7 @@ unsafe fn map_linearly(
     len: usize,
     mapper: &mut PageMapper<RmmA, impl FrameAllocator>,
 ) {
+    // TODO: reuse helper in startup/memory?
     unsafe {
         let base = PhysicalAddress::new(crate::memory::round_down_pages(addr.data()));
         let aligned_len = crate::memory::round_up_pages(len + (addr.data() - base.data()));
@@ -46,6 +47,7 @@ unsafe fn map_linearly(
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new(),
+                    0,
                 )
                 .expect("failed to linearly map SDT");
             flush.flush();

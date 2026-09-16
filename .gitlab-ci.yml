@@ -27,11 +27,10 @@ aarch64:
 
 i586:
   stage: cross-build
+  image: "registry.redox-os.org/redox-os/redoxer:i586"
   script:
-    - TARGET=${ARCH}-unknown-redox redoxer env make
-    - TARGET=${ARCH}-unknown-redox redoxer clippy
-  variables:
-    ARCH: "i586"
+    - redoxer env make
+    - redoxer clippy
 
 riscv64gc:
   stage: cross-build
@@ -52,23 +51,39 @@ aarch64:boot:
   image: "registry.redox-os.org/redox-os/redoxer:aarch64"
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - export REDOXER_QEMU_ARGS="-cpu cortex-a53"
     - timeout -s KILL 5m redoxer env make test
 
 i586:boot:
   stage: test
   needs: [i586]
+  image: "registry.redox-os.org/redox-os/redoxer:i586"
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
-    - TARGET=${ARCH}-unknown-redox timeout -s KILL 5m redoxer env make test
-  variables:
-    ARCH: "i586"
+    - export REDOXER_USE_KVM=false REDOXER_QEMU_ARGS="-cpu pentium2"
+    - timeout -s KILL 5m redoxer env make test
 
 x86_64:boot:
   stage: test
   needs: [x86_64]
   script:
     - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - export REDOXER_USE_KVM=false REDOXER_QEMU_ARGS="-cpu qemu64"
     - timeout -s KILL 5m redoxer env make test
+
+riscv64gc:boot:
+  stage: test
+  needs: [riscv64gc]
+  script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends
+        ipxe-qemu
+        qemu-efi-riscv64
+        qemu-system-riscv64
+    - export COOKBOOK_SOURCE_IDENT=$CI_COMMIT_SHA
+    - TARGET=${ARCH}-unknown-redox timeout -s KILL 5m redoxer env make test
+  variables:
+    ARCH: "riscv64gc"
 
 x86_64:relibc:
   stage: test

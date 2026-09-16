@@ -1,4 +1,4 @@
-use core::ptr;
+use core::{num::NonZeroU8, ptr};
 
 use crate::{PhysicalAddress, TableKind, VirtualAddress};
 
@@ -36,6 +36,9 @@ pub trait Arch: Clone + Copy {
     const ENTRY_FLAG_READWRITE: usize;
     const ENTRY_FLAG_PAGE_USER: usize; // Leaf table user page flag
     const ENTRY_FLAG_TABLE_USER: usize = Self::ENTRY_FLAG_PAGE_USER; // Directory user page table flag
+
+    // TODO: rather than global constants, use an associated type that wraps the format of page
+    // table entries
     const ENTRY_FLAG_NO_EXEC: usize;
     const ENTRY_FLAG_EXEC: usize;
     const ENTRY_FLAG_GLOBAL: usize;
@@ -43,6 +46,12 @@ pub trait Arch: Clone + Copy {
     const ENTRY_FLAG_DEVICE_MEMORY: usize;
     const ENTRY_FLAG_UNCACHEABLE: usize;
     const ENTRY_FLAG_WRITE_COMBINING: usize;
+
+    /// Flag used to specify large/huge pages (such as 2MiB/1GiB on x86_64), not meaningful for
+    /// leaf tables obviously.
+    fn entry_flag_large(level: NonZeroU8) -> Option<usize> {
+        None
+    }
 
     const PHYS_OFFSET: usize;
 

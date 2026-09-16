@@ -685,7 +685,7 @@ pub fn mremap(
                 // The page does not get unref-ed as we call take() on the `raii_frame`.
                 unsafe {
                     mapper
-                        .map_phys(page.start_address(), frame.base(), page_flags)
+                        .map_phys(page.start_address(), frame.base(), page_flags, 0)
                         .ok_or(Error::new(ENOMEM))?
                         .ignore();
 

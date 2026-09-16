@@ -80,7 +80,7 @@ impl Sigcontrol {
         let new_a1 = new_allowset & 0xffff_ffff_0000_0000;
 
         let prev_w0 = self.word[0].fetch_add(new_a0.wrapping_sub(old_a0), Ordering::Relaxed);
-        let prev_w1 = self.word[0].fetch_add(new_a1.wrapping_sub(old_a1), Ordering::Relaxed);
+        let prev_w1 = self.word[1].fetch_add(new_a1.wrapping_sub(old_a1), Ordering::Relaxed);
         //core::sync::atomic::fence(Ordering::Acquire);
         let up0 = prev_w0 & (prev_w0 >> 32);
         let up1 = prev_w1 & (prev_w1 >> 32);
