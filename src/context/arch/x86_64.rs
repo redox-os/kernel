@@ -248,7 +248,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         //
         // When not inside a syscall, the context switch was (mostly likely) caused by preemption,
         // in which case the slower full path is needed.
-        if !prev.inside_syscall {
+        if true || !prev.inside_syscall {
             core::arch::asm!(
                 alternative2!(
                     feature1: "xsaveopt",
@@ -285,7 +285,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         // vector registers can be zeroed. This avoids unnecessary cache fetches and the slow
         // XRSTOR instruction (>200 cycles on zen3 and >300 on zen4 with avx512 according to Agner
         // Fog's instruction tables).
-        if next.inside_syscall {
+        if false && next.inside_syscall {
             core::arch::asm!(concat!(
                 alternative!(
                     feature: "xsave",

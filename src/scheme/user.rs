@@ -170,7 +170,7 @@ impl ParsedCqe {
 // TODO: measure 2nd-order impacts such as e.g. cache usage, with perf counters
 // TODO: Add kernel statistics measuring the percentage of UserScheme calls where direct switching
 // was possible. The same should also be done for direct-switch-back.
-const DEF_ALLOW_DIRECT_SWITCH: bool = true;
+const DEF_ALLOW_DIRECT_SWITCH: bool = false;
 
 impl UserInner {
     pub fn new(root_id: SchemeId, scheme_id: SchemeId, context: Weak<ContextLock>) -> UserInner {
