@@ -98,3 +98,27 @@ test-relibc: all
 	$(MAKE) install
 	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg relibc-tests-bins
 	REDOXER_SYSROOT=$(DESTDIR) redoxer exec relibc-tests-runner
+
+ifeq ($(ACID_BENCHMARKS),)
+# This tests:
+ACID_BENCHMARKS:=
+# - base syscall latency
+ACID_BENCHMARKS+=invalid_syscall
+# - roundtrip CPU cycles for the most basic practical IPC
+ACID_BENCHMARKS+=getppid_bench
+# - the time it takes to populate page tables, including the allocator
+ACID_BENCHMARKS+=pgtbl_populate_bench
+# - the lowest achievable latency for switching from context A to context B using IPC
+ACID_BENCHMARKS+=ipc_latency_simultaneous
+# - performance of fork(3), TLB misses (if perf ctr impld. by CPU), CoW time
+ACID_BENCHMARKS+=heavy_forking
+endif
+
+ACID_BENCH_REPETITIONS?=10
+
+test-acid: all
+	$(MAKE) install
+	REDOXER_SYSROOT=$(DESTDIR) redoxer pkg acid-bins
+	REDOXER_SYSROOT=$(DESTDIR) redoxer exec --artifact root:/home/root \
+		env ACID_BENCH_REPETITIONS=$(ACID_BENCH_REPETITIONS) ACID_BENCH_OUTPUT=/home/root/bench-output.txt \
+		acid $(ACID_BENCHMARKS)
