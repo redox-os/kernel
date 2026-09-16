@@ -1,7 +1,7 @@
 workflow:
   rules:
     - if: '$CI_PROJECT_NAMESPACE == "redox-os"'
-    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "master"'
+    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "test_acid_ci"'
 
 stages:
   - build
