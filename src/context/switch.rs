@@ -6,8 +6,8 @@
 
 use crate::{
     context::{
-        self, arch, memory::AddrSpaceSwitchReadGuard, ArcContextLockWriteGuard, Context, ContextLock,
-        ContextQueueKey, ContextQueueValue, RunContextData, WeakContextRef,
+        self, arch, memory::AddrSpaceSwitchReadGuard, ArcContextLockWriteGuard, Context,
+        ContextLock, ContextQueueKey, ContextQueueValue, RunContextData, WeakContextRef,
     },
     cpu_set::LogicalCpuId,
     cpu_stats::{self, CpuState},
@@ -1465,8 +1465,16 @@ mod tests {
             mut queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,
         ) {
             queue.queue.insert(
-                ContextQueueKey { vd: vtime, rem_slice: Reverse(vtime), ctxt_id: id },
-                ContextQueueValue { vtime, weight: 1024, context_ref: WeakContextRef(Arc::downgrade(task)) },
+                ContextQueueKey {
+                    vd: vtime,
+                    rem_slice: Reverse(vtime),
+                    ctxt_id: id,
+                },
+                ContextQueueValue {
+                    vtime,
+                    weight: 1024,
+                    context_ref: WeakContextRef(Arc::downgrade(task)),
+                },
             );
         }
         fn check_and_reset_steal(cpu0: &mut PercpuBlock) {
