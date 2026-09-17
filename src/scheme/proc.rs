@@ -1718,6 +1718,7 @@ impl ContextHandle {
 
                         let target_node = unsafe { payload.read_exact::<u32>()? };
 
+                        #[cfg(all(target_arch = "x86_64", feature = "numa"))]
                         if numa::exists(target_node) {
                             if !numa::exists_with_memory(target_node) {
                                 return Err(Error::new(ENOMEM));

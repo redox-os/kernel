@@ -2605,7 +2605,10 @@ impl Table {
                         } else {
                             NumaMemoryPolicy::FromPreferredNodes
                         },
+                        #[cfg(all(target_arch = "x86_64", feature = "numa"))]
                         numa::make_mask(1 << target_node),
+                        #[cfg(any(not(target_arch = "x86_64"), not(feature = "numa")))]
+                        Some(FreeListMask),
                     ),
                 )
                 .ok_or(Error::new(ENOMEM))?
