@@ -751,7 +751,7 @@ impl AddrSpace {
                 .next()
         };
         let this_grants = &mut self.grants;
-        let mut grants_to_be_unmapped = SmallVec::<[Grant; 128]>::new();
+        let mut grants_to_be_unmapped = Vec::new();
 
         while let Some(conflicting_span_res) = next(this_grants, requested_span) {
             let conflicting_span = conflicting_span_res?;
