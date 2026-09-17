@@ -143,10 +143,6 @@ enum ContextHandle {
     AddrSpace {
         addrspace: Arc<AddrSpaceWrapper>,
     },
-    PageTable {
-        addrspace: Arc<AddrSpaceWrapper>,
-        numa_node_id: u32,
-    },
     CurrentAddrSpace,
 
     AwaitingAddrSpaceChange {
@@ -236,27 +232,6 @@ impl ProcScheme {
                 },
                 true,
             ),
-            "page_table" => {
-                let addrspace = context
-                    .read(token.token())
-                    .addr_space()
-                    .map_err(|_| Error::new(ENOENT))?
-                    .clone();
-
-                let node_id = {
-                    let addrspace = addrspace.acquire_read(token.downgrade());
-                    addrspace
-                        .owning_table_or(numa::current_node_id().unwrap_or(0))
-                        .1
-                };
-                (
-                    ContextHandle::PageTable {
-                        addrspace,
-                        numa_node_id: node_id,
-                    },
-                    false,
-                )
-            }
             "filetable" => (
                 ContextHandle::Filetable {
                     filetable: Arc::downgrade(&context.read(token.token()).files),
@@ -905,81 +880,6 @@ impl KernelScheme for ProcScheme {
 
                     handle(Handle { context, kind }, true)
                 }
-                Handle {
-                    context,
-                    kind:
-                        ContextHandle::PageTable {
-                            addrspace,
-                            numa_node_id,
-                        },
-                } => {
-                    let mut addrspace_lock = addrspace.acquire_write(token.downgrade());
-
-                    let target_node = match buf {
-                        v if v.starts_with(b"replicate-to-") => {
-                            let target_node = str::from_utf8(&v[13..])
-                                .map_err(|_| Error::new(EINVAL))?
-                                .parse::<u32>()
-                                .map_err(|_| Error::new(EINVAL))?;
-
-                            if numa::exists(target_node) {
-                                if !numa::exists_with_memory(target_node) {
-                                    return Err(Error::new(ENOMEM));
-                                }
-                            } else {
-                                return Err(Error::new(ENXIO));
-                            }
-
-                            // if the target node already has a local page table
-                            if addrspace_lock.owning_table_or(target_node).1 == target_node {
-                                return Err(Error::new(EEXIST));
-                            }
-
-                            let new_table = if let Some(page_table) =
-                                addrspace_lock.replica_cache.remove(&target_node)
-                            {
-                                page_table
-                            } else {
-                                let (page_table, n) = addrspace_lock.owning_table_or(numa_node_id);
-                                // assertion checks that the table is not the root table
-                                // but the current node's table which on non-NUMA systems,
-                                // is the same as the root table
-                                debug_assert!(n == numa_node_id);
-
-                                page_table.try_clone(
-                                    target_node,
-                                    page_table.utable.allocator().0,
-                                    page_table.utable.allocator().1,
-                                    true, // when one wishes to place the page tables on a
-                                          // particular node, one generally doesn't want those
-                                          //  pages to be placed on other nodes, so strict.
-                                          // If one really wants to fallback on failure,
-                                          // one can use the implicit page table replication
-                                          // on context migration
-                                )?
-                            };
-                            // assertion checks that the node does not already have a table,
-                            // something that is already checked above where we return EEXIST
-                            // just to be extra sure
-                            debug_assert!(addrspace_lock.add_replica(new_table, target_node));
-                            target_node
-                        }
-
-                        _ => return Err(Error::new(EINVAL)),
-                    };
-                    drop(addrspace_lock);
-
-                    handle(
-                        Handle {
-                            context,
-                            kind: ContextHandle::PageTable {
-                                addrspace,
-                                numa_node_id: target_node,
-                            },
-                        },
-                        true,
-                    )
-                }
                 _ => return Err(Error::new(EINVAL)),
             },
             token,
@@ -1139,29 +1039,6 @@ impl ContextHandle {
                     _ => return Err(Error::new(EINVAL)),
                 }
                 Ok(words_read * size_of::<usize>())
-            }
-            ContextHandle::PageTable {
-                addrspace,
-                numa_node_id,
-            } => {
-                let mut arg = [0u8; 4];
-                buf.copy_to_slice(&mut arg)?;
-
-                let b"drop" = &arg else {
-                    return Err(Error::new(EINVAL));
-                };
-
-                let mut addrspace = addrspace.acquire_write(token.downgrade());
-                if let Some(table) = addrspace.remove_replica(numa_node_id) {
-                    addrspace.replica_cache.insert(numa_node_id, table);
-                    return Ok(0);
-                }
-
-                if addrspace.root_table_node_id() == numa_node_id {
-                    addrspace.swap_root_table(None).ok_or(Error::new(EPERM))?;
-                }
-
-                Ok(0)
             }
             ContextHandle::Regs(kind) => match kind {
                 RegsKind::Float => {
@@ -1831,6 +1708,68 @@ impl ContextHandle {
                         let mut addrspace = addrspace.acquire_write(token.downgrade());
                         addrspace.replicate_on_node_switch = !addrspace.replicate_on_node_switch;
                         return Ok(addrspace.replicate_on_node_switch as usize);
+                    }
+                    NumaVerb::ReplicateTo => {
+                        if !numa::is_supported() {
+                            return Err(Error::new(EOPNOTSUPP));
+                        }
+
+                        let mut addrspace_lock = addrspace.acquire_write(token.downgrade());
+
+                        let target_node = unsafe { payload.read_exact::<u32>()? };
+
+                        if numa::exists(target_node) {
+                            if !numa::exists_with_memory(target_node) {
+                                return Err(Error::new(ENOMEM));
+                            }
+                        } else {
+                            return Err(Error::new(ENXIO));
+                        }
+
+                        // if the target node already has a local page table
+                        if addrspace_lock.owning_table_or(target_node).1 == target_node {
+                            return Err(Error::new(EEXIST));
+                        }
+
+                        let new_table = if let Some(page_table) =
+                            addrspace_lock.replica_cache.remove(&target_node)
+                        {
+                            page_table
+                        } else {
+                            let page_table = addrspace_lock.current_table();
+
+                            page_table.try_clone(
+                                target_node,
+                                page_table.utable.allocator().0,
+                                page_table.utable.allocator().1,
+                                true, // when one wishes to place the page tables on a
+                                      // particular node, one generally doesn't want those
+                                      //  pages to be placed on other nodes, so strict.
+                                      // If one really wants to fallback on failure,
+                                      // one can use the implicit page table replication
+                                      // on context migration
+                            )?
+                        };
+
+                        addrspace_lock
+                            .add_replica(new_table, target_node)
+                            .then_some(())
+                            .ok_or(Error::new(EEXIST))?;
+                    }
+                    NumaVerb::Drop => {
+                        let numa_node_id = *metadata.get(1).ok_or(Error::new(EINVAL))? as u32;
+                        let mut addrspace = addrspace.acquire_write(token.downgrade());
+                        if let Some(table) = addrspace.remove_replica(numa_node_id) {
+                            addrspace.replica_cache.insert(numa_node_id, table);
+                            return Ok(0);
+                        }
+
+                        if addrspace.root_table_node_id() == numa_node_id {
+                            let (old_node, old_table) =
+                                addrspace.swap_root_table(None).ok_or(Error::new(EPERM))?;
+                            addrspace.replica_cache.insert(old_node, old_table);
+                        }
+                        return Ok(0);
                     }
                 }
 
