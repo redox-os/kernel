@@ -16,27 +16,25 @@ pub static ROOT_IC_IDX: AtomicUsize = AtomicUsize::new(0);
 pub static ROOT_IC_IDX_IS_SET: AtomicUsize = AtomicUsize::new(0);
 
 unsafe fn init_root_ic(fdt: &Fdt) {
-    unsafe {
-        let is_set = ROOT_IC_IDX_IS_SET.load(Ordering::Relaxed);
-        if is_set != 0 {
-            let ic_idx = ROOT_IC_IDX.load(Ordering::Relaxed);
-            info!("Already selected {} as root ic", ic_idx);
-            return;
-        }
-
-        let root_irqc_phandle = fdt
-            .root()
-            .property("interrupt-parent")
-            .unwrap()
-            .as_usize()
-            .unwrap();
-        let ic_idx = IRQ_CHIP
-            .phandle_to_ic_idx(root_irqc_phandle as u32)
-            .unwrap();
-        info!("select {} as root ic", ic_idx);
-        ROOT_IC_IDX.store(ic_idx, Ordering::Release);
-        ROOT_IC_IDX_IS_SET.store(1, Ordering::Release);
+    let is_set = ROOT_IC_IDX_IS_SET.load(Ordering::Relaxed);
+    if is_set != 0 {
+        let ic_idx = ROOT_IC_IDX.load(Ordering::Relaxed);
+        info!("Already selected {} as root ic", ic_idx);
+        return;
     }
+
+    let root_irqc_phandle = fdt
+        .root()
+        .property("interrupt-parent")
+        .unwrap()
+        .as_usize()
+        .unwrap();
+    let ic_idx = IRQ_CHIP
+        .phandle_to_ic_idx(root_irqc_phandle as u32)
+        .unwrap();
+    info!("select {} as root ic", ic_idx);
+    ROOT_IC_IDX.store(ic_idx, Ordering::Release);
+    ROOT_IC_IDX_IS_SET.store(1, Ordering::Release);
 }
 
 pub unsafe fn init_devicetree(fdt: &Fdt) {
