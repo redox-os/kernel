@@ -1,6 +1,6 @@
 use fdt::Fdt;
 use spin::Mutex;
-use syscall::Mmio;
+use syscall::MmioPtr;
 
 use crate::{
     devices::{serial::SerialKind, uart_16550, uart_meson, uart_pl011},
@@ -76,14 +76,14 @@ pub unsafe fn init_early(dtb: &Fdt) {
             } else if compatible.contains("ns16550a") {
                 if cfg!(target_arch = "riscv64") {
                     //TODO: get actual register size from device tree
-                    let serial_port = uart_16550::SerialPort::<Mmio<u8>>::new(virt);
+                    let mut serial_port = uart_16550::SerialPort::<MmioPtr<u8>>::new(virt);
                     if !skip_init {
                         let _ = serial_port.init();
                     }
                     Some(SerialKind::Ns16550u8(serial_port))
                 } else {
                     //TODO: get actual register size from device tree
-                    let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
+                    let mut serial_port = uart_16550::SerialPort::<MmioPtr<u32>>::new(virt);
                     if !skip_init {
                         let _ = serial_port.init();
                     }
@@ -91,7 +91,7 @@ pub unsafe fn init_early(dtb: &Fdt) {
                 }
             } else if compatible.contains("snps,dw-apb-uart") {
                 //TODO: get actual register size from device tree
-                let serial_port = uart_16550::SerialPort::<Mmio<u32>>::new(virt);
+                let mut serial_port = uart_16550::SerialPort::<MmioPtr<u32>>::new(virt);
                 if !skip_init {
                     let _ = serial_port.init();
                 }

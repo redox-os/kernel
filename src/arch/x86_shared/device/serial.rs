@@ -1,7 +1,7 @@
 use crate::{
     devices::{serial::SerialKind, uart_16550::SerialPort},
     memory::map_device_memory,
-    syscall::io::{Mmio, Pio},
+    syscall::io::{MmioPtr, Pio},
 };
 use spin::Mutex;
 
@@ -41,7 +41,7 @@ pub unsafe fn init() {
         )
     };
 
-    let lpss = unsafe { SerialPort::<Mmio<u32>>::new(virt.data()) };
+    let mut lpss = unsafe { SerialPort::<MmioPtr<u32>>::new(virt.data()) };
     if lpss.init().is_ok() {
         *LPSS.lock() = SerialKind::Ns16550u32(lpss);
     }
