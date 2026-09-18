@@ -1,4 +1,4 @@
-use syscall::Mmio;
+use syscall::MmioPtr;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use syscall::Pio;
 
@@ -13,8 +13,8 @@ pub enum SerialKind {
     NotPresent,
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     Ns16550Pio(uart_16550::SerialPort<Pio<u8>>),
-    Ns16550u8(&'static mut uart_16550::SerialPort<Mmio<u8>>),
-    Ns16550u32(&'static mut uart_16550::SerialPort<Mmio<u32>>),
+    Ns16550u8(uart_16550::SerialPort<MmioPtr<u8>>),
+    Ns16550u32(uart_16550::SerialPort<MmioPtr<u32>>),
     Meson(uart_meson::SerialPort),
     Pl011(uart_pl011::SerialPort),
 }
@@ -83,3 +83,6 @@ impl SerialKind {
         }
     }
 }
+
+// Required for use in static mutex
+unsafe impl Send for SerialKind {}

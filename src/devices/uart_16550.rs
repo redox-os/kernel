@@ -1,13 +1,10 @@
 #![allow(unused)]
 
-use core::{
-    convert::TryInto,
-    ptr::{addr_of, addr_of_mut},
-};
+use core::convert::TryInto;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::syscall::io::Pio;
-use crate::syscall::io::{Io, Mmio, ReadOnly};
+use crate::syscall::io::{Io, MmioPtr, ReadOnly};
 
 bitflags! {
     /// Interrupt enable flags
@@ -31,7 +28,6 @@ bitflags! {
 }
 
 #[allow(dead_code)]
-#[repr(C, packed(4))]
 pub struct SerialPort<T: Io> {
     /// Data register, read to receive, write to send
     data: T,
@@ -64,17 +60,24 @@ impl SerialPort<Pio<u8>> {
     }
 }
 
-impl SerialPort<Mmio<u32>> {
+impl<T> SerialPort<MmioPtr<T>>
+where
+    MmioPtr<T>: Io,
+{
     #[allow(dead_code)]
-    pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u32>> {
-        unsafe { &mut *(base as *mut Self) }
-    }
-}
-
-impl SerialPort<Mmio<u8>> {
-    #[allow(dead_code)]
-    pub unsafe fn new(base: usize) -> &'static mut SerialPort<Mmio<u8>> {
-        unsafe { &mut *(base as *mut Self) }
+    pub unsafe fn new(base: usize) -> SerialPort<MmioPtr<T>> {
+        unsafe {
+            let ptr = base as *mut T;
+            SerialPort {
+                data: MmioPtr::new(ptr),
+                int_en: MmioPtr::new(ptr.add(1)),
+                fifo_ctrl: MmioPtr::new(ptr.add(2)),
+                line_ctrl: MmioPtr::new(ptr.add(3)),
+                modem_ctrl: MmioPtr::new(ptr.add(4)),
+                line_sts: ReadOnly::new(MmioPtr::new(ptr.add(5))),
+                modem_sts: ReadOnly::new(MmioPtr::new(ptr.add(6))),
+            }
+        }
     }
 }
 
@@ -86,32 +89,50 @@ where
         unsafe {
             //TODO: Cleanup
             // FIXME: Fix UB if unaligned
+
             // Disable all interrupts
-            (*addr_of_mut!(self.int_en)).write(0x00.into());
+            self.int_en.write(0x00.into());
+
             // Set baud rate divisor
-            (*addr_of_mut!(self.line_ctrl)).write(0x80.into());
+            self.line_ctrl.write(0x80.into());
             // Set divisor to 1 (115200 baud)
-            (*addr_of_mut!(self.data)).write(0x01.into());
-            (*addr_of_mut!(self.int_en)).write(0x00.into());
+            self.data.write(0x01.into());
+            self.int_en.write(0x00.into());
+
             // Use 8 data bits, no parity, one stop bit
-            (*addr_of_mut!(self.line_ctrl)).write(0x03.into());
+            self.line_ctrl.write(0x03.into());
+
             // Enable and clear FIFOs with 14-byte threshold
-            (*addr_of_mut!(self.fifo_ctrl)).write(0xC7.into());
+            self.fifo_ctrl.write(0xC7.into());
+
+            // IRQs enabled, RTS/DSR set
+            self.modem_ctrl.write(0x0B.into());
 
             // Enable loopback
-            (*addr_of_mut!(self.modem_ctrl)).write(0x10.into());
+            self.modem_ctrl.write(0x1E.into());
             // Perform loopback test with even/odd pattern
             for &byte in &[0x55, 0xAA] {
-                (*addr_of_mut!(self.data)).write(byte.into());
-                if (*addr_of_mut!(self.data)).read() != byte.into() {
+                // Write loopback byte
+                self.data.write(byte.into());
+
+                // Wait for INPUT_FULL flag
+                for _ in 0..1_000 {
+                    if self.line_sts().contains(LineStsFlags::INPUT_FULL) {
+                        break;
+                    }
+                }
+
+                // Read loopback byte
+                let loopback = self.data.read();
+                if loopback != byte.into() {
                     return Err(());
                 }
             }
 
             // Enable DTR, RTS, OUT1, and OUT2, disable loopback
-            (*addr_of_mut!(self.modem_ctrl)).write(0x0F.into());
+            self.modem_ctrl.write(0x0F.into());
             // Enable receive interrupt
-            (*addr_of_mut!(self.int_en)).write(0x01.into());
+            self.int_en.write(0x01.into());
         }
 
         Ok(())
@@ -119,19 +140,13 @@ where
 
     fn line_sts(&self) -> LineStsFlags {
         LineStsFlags::from_bits_truncate(
-            (unsafe { &*addr_of!(self.line_sts) }.read() & 0xFF.into())
-                .try_into()
-                .unwrap_or(0),
+            (self.line_sts.read() & 0xFF.into()).try_into().unwrap_or(0),
         )
     }
 
     pub fn receive(&mut self) -> Option<u8> {
         if self.line_sts().contains(LineStsFlags::INPUT_FULL) {
-            Some(
-                (unsafe { &*addr_of!(self.data) }.read() & 0xFF.into())
-                    .try_into()
-                    .unwrap_or(0),
-            )
+            Some((self.data.read() & 0xFF.into()).try_into().unwrap_or(0))
         } else {
             None
         }
@@ -139,7 +154,7 @@ where
 
     pub fn send(&mut self, data: u8) {
         while !self.line_sts().contains(LineStsFlags::OUTPUT_EMPTY) {}
-        unsafe { &mut *addr_of_mut!(self.data) }.write(data.into())
+        self.data.write(data.into())
     }
 
     pub fn write(&mut self, buf: &[u8]) {
