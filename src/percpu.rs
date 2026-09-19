@@ -98,7 +98,7 @@ pub fn shootdown_tlb_ipi(target: Option<LogicalCpuId>) {
         let my_percpublock = PercpuBlock::current();
         assert_ne!(target, my_percpublock.cpu_id);
 
-        let Some(percpublock) = (get_percpu_block(target)) else {
+        let Some(percpublock) = get_percpu_block(target) else {
             warn!("Trying to TLB shootdown a CPU that doesn't exist or isn't initialized.");
             return;
         };
@@ -159,7 +159,7 @@ impl PercpuBlock {
 
 #[cfg(test)]
 std::thread_local! {
-    pub static MOCK_CURRENT_PERCPU: std::cell::Cell<*const PercpuBlock> = std::cell::Cell::new(core::ptr::null());
+    pub static MOCK_CURRENT_PERCPU: std::cell::Cell<*const PercpuBlock> = const { std::cell::Cell::new(core::ptr::null()) };
 }
 
 pub unsafe fn switch_arch_hook() {

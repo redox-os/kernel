@@ -3,9 +3,8 @@
 use crate::{
     event,
     scheme::{
-        self,
         user::{UserInner, UserScheme},
-        KernelSchemes, SchemeId,
+        KernelSchemes,
     },
     sync::{CleanLockToken, RwLock, L6},
     syscall::error::Result,
