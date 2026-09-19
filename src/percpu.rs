@@ -10,6 +10,8 @@ use core::{
 use rmm::Arch;
 use syscall::PtraceFlags;
 
+#[cfg(all(target_arch = "x86_64", feature = "numa"))]
+use crate::numa::NumaNode;
 use crate::{
     arch::device::ArchPercpuMisc,
     context::{
@@ -19,7 +21,6 @@ use crate::{
     },
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
-    numa::NumaNode,
     ptrace::Session,
     syscall::debug::SyscallDebugInfo,
 };
@@ -53,6 +54,7 @@ pub struct PercpuBlock {
 
     pub stats: CpuStats,
 
+    #[cfg(all(target_arch = "x86_64", feature = "numa"))]
     pub numa_node: Cell<Option<(u32, &'static NumaNode)>>,
 }
 
@@ -206,7 +208,7 @@ pub unsafe fn switch_arch_hook() {
         }
         match next_addrsp_guard {
             Some(next_addrsp) => {
-                next_addrsp.table.utable.make_current();
+                next_addrsp.current_table().utable.make_current();
                 drop(next_addrsp);
             }
             _ => {
@@ -235,6 +237,8 @@ impl PercpuBlock {
             misc_arch_info: ArchPercpuMisc::default(),
 
             stats: CpuStats::default(),
+
+            #[cfg(all(target_arch = "x86_64", feature = "numa"))]
             numa_node: Cell::new(None),
         }
     }

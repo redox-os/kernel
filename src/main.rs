@@ -69,6 +69,7 @@ mod log;
 mod memory;
 
 /// NUMA support
+#[cfg(all(target_arch = "x86_64", feature = "numa"))]
 mod numa;
 
 /// Panic
@@ -167,4 +168,31 @@ mod kernel_executable_offsets {
 
     #[cfg(target_arch = "x86_64")]
     linker_offsets!(__altrelocs_start, __altrelocs_end);
+}
+
+#[cfg(any(not(target_arch = "x86_64"), not(feature = "numa")))]
+pub mod numa {
+
+    #[inline(always)]
+    pub fn current_node_id() -> Option<u32> {
+        Some(0)
+    }
+
+    #[inline(always)]
+    pub fn number_of_memory_regions() -> usize {
+        0
+    }
+
+    #[inline(always)]
+    pub fn is_supported() -> bool {
+        false
+    }
+
+    #[inline(always)]
+    pub fn memory_regions() -> Option<()> {
+        None
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct FreeListMask;
 }

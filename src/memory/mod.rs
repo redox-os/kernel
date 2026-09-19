@@ -71,6 +71,7 @@ pub fn total_frames() -> usize {
     sections().iter().map(|section| section.frames.len()).sum()
 }
 
+#[cfg(all(target_arch = "x86_64", feature = "numa"))]
 pub fn allocate_p2frame_with_mask(
     mask: FreeListMask,
     order: u32,
@@ -727,6 +728,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                 let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
                 if number_of_memory_regions > 0 {
+                    #[cfg(all(target_arch = "x86_64", feature = "numa"))]
                     if let Some(next_memory_region) =
                         numa::nearest_next_memory_region(area.base.data(), false)
                         && next_memory_region.start < area.base.add(area.size).data()
@@ -879,6 +881,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
     if number_of_memory_regions > 0
         && let Some(regions) = numa::memory_regions()
     {
+        #[cfg(all(target_arch = "x86_64", feature = "numa"))]
         for region in regions {
             let mut sections_fill_result = Some(region);
             let mut force = false;
@@ -1063,6 +1066,7 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
     };
 
     let free_lists;
+
     if let Some(regions) = numa::memory_regions() {
         let free_list_page = allocator
             .allocate(FrameCount::new(
@@ -1072,6 +1076,8 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
             .expect("Failed to allocate free list page");
         let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
         free_lists = unsafe { slice::from_raw_parts_mut(va, numa::number_of_memory_regions()) };
+
+        #[cfg(all(target_arch = "x86_64", feature = "numa"))]
         for (i, region) in regions.enumerate() {
             let free_list = FreeList {
                 upper_limit: region.base.add(region.size).data(),
@@ -1432,17 +1438,18 @@ pub fn init_frame(init_rc: RefCount, must_be_zero: bool) -> Result<Frame, PfErro
     Ok(new_frame)
 }
 #[derive(Debug)]
-pub struct TheFrameAllocator(pub NumaMemoryPolicy);
+pub struct TheFrameAllocator(pub NumaMemoryPolicy, pub Option<FreeListMask>);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
         let must_be_zero = true;
         let order = count.data().next_power_of_two().trailing_zeros();
-        if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
-            allocate_p2frame_with_mask(mask, order, fallback, true).map(|f| f.base())
-        } else {
-            allocate_p2frame(order, true).map(|f| f.base())
+
+        #[cfg(all(target_arch = "x86_64", feature = "numa"))]
+        if let Some((mask, fallback)) = numa::free_list_mask(self.0, self.1) {
+            return allocate_p2frame_with_mask(mask, order, fallback, true).map(|f| f.base());
         }
+        return allocate_p2frame(order, true).map(|f| f.base());
     }
 
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
