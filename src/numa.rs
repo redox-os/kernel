@@ -83,7 +83,7 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
     {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
-        acpi::slit::init(allocator, &DISTANCES);
+        acpi::slit::init(&DISTANCES);
     }
 }
 
