@@ -175,7 +175,7 @@ pub fn cpu_belongs_to_which_node(cpu_id: usize) -> Option<u32> {
 /// A helper function that prints information about NUMA - available nodes, cpus and memory blocks in them
 /// their starts and lengths
 pub fn dump_info() {
-    if let Some(_map) = DOMAIN_NODE_MAP.get()
+    if let Some(map) = DOMAIN_NODE_MAP.get()
         && let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
     {
