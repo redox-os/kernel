@@ -41,6 +41,8 @@ pub struct Sigcontrol {
 
     pub saved_ip: NonatomicUsize,          // rip/eip/pc
     pub saved_archdep_reg: NonatomicUsize, // rflags(x64)/eflags(x86)/x0(aarch64)/t0(riscv64)
+    pub saved_excp_code: NonatomicUsize,   // code(x64/x86)/esr(aarch64)/scause(riscv64)
+    pub saved_excp_addr: NonatomicUsize,   // cr2(x64/x86)/far(aarch64)/stval(riscv64)
 }
 #[derive(Clone, Copy, Debug)]
 pub struct SenderInfo {

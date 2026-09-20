@@ -186,6 +186,21 @@ pub struct Exception {
     pub code: usize,
     pub address: usize,
 }
+
+impl Exception {
+    pub fn pack(&self) -> (usize, usize) {
+        let code = (self.kind << 32) | (self.code & 0xFFFF_FFFF);
+        (code, self.address)
+    }
+    pub fn unpack(code: usize, address: usize) -> Self {
+        Exception {
+            kind: code >> 32,
+            code: code & 0xFFFF_FFFF,
+            address,
+        }
+    }
+}
+
 impl Deref for Exception {
     type Target = [u8];
     fn deref(&self) -> &[u8] {

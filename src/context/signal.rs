@@ -2,7 +2,11 @@ use core::sync::atomic::Ordering;
 
 use alloc::sync::Arc;
 
-use crate::{context, sync::CleanLockToken, syscall::flag::SigcontrolFlags};
+use crate::{
+    context::{self, Context, ContextLock},
+    sync::{CleanLockToken, RwLockWriteGuard, L4},
+    syscall::flag::SigcontrolFlags,
+};
 
 pub fn signal_handler(token: &mut CleanLockToken) {
     let context_lock = context::current();
@@ -74,14 +78,16 @@ pub fn signal_handler(token: &mut CleanLockToken) {
         Ordering::Release,
     );
 }
+
+// TODO: move print logs from callers to this function
 pub fn excp_handler(excp: syscall::Exception) {
     let mut token = unsafe { CleanLockToken::new() };
 
     let current = context::current();
 
-    let context = current.write(token.token());
+    let mut context = current.write(token.token());
 
-    let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+    if !excp_handler_inner(excp, &current, &mut context) {
         // TODO: Let procmgr print this?
         info!(
             "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {:p}",
@@ -95,16 +101,54 @@ pub fn excp_handler(excp: syscall::Exception) {
         // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
         // context (closing files, dropping AddrSpace, etc)
         crate::syscall::process::exit_this_context(Some(excp), &mut token);
+    }
+}
+
+/// Return true if handled by user
+fn excp_handler_inner(
+    excp: syscall::Exception,
+    current: &Arc<ContextLock>,
+    context: &mut RwLockWriteGuard<'_, L4, Context>,
+) -> bool {
+    let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
+        return false;
     };
-    // TODO
-    /*
+
+    let control_flags = {
+        let (tctl, _pctl, _sigst) = context.sigcontrol().expect("Failed to get sigcontrol");
+        let control_flags =
+            SigcontrolFlags::from_bits_retain(tctl.control_flags.load(Ordering::Acquire));
+
+        if control_flags.contains(SigcontrolFlags::INHIBIT_EXCEPTION) {
+            // the user excp_handler is triggering another excp
+            return false;
+        }
+        control_flags
+    };
+
     let Some(regs) = context.regs_mut() else {
-        // TODO: unhandled exception in this case too?
-        return;
+        // probably a kernel exception
+        trace!("No registers upon exception, returning");
+        return false;
     };
-    let old_ip = regs.instr_pointer();
-    let old_archdep_reg = regs.ar
-    let (tctl, pctl, sigst) = context.sigcontrol().expect("already checked");
-    tctl.saved_ip.set(excp.rsp);
-    tctl.saved_archdep_reg*/
+
+    regs.set_instr_pointer(eh.get());
+
+    let (ip, archdep_reg) = (regs.instr_pointer(), regs.sig_archdep_reg());
+    {
+        let (tctl, _pctl, _sigst) = context.sigcontrol().expect("Failed to get sigcontrol");
+
+        let (code, addr) = excp.pack();
+
+        tctl.saved_ip.set(ip);
+        tctl.saved_archdep_reg.set(archdep_reg);
+        tctl.saved_excp_code.set(code);
+        tctl.saved_excp_addr.set(addr);
+        tctl.control_flags.store(
+            (control_flags | SigcontrolFlags::INHIBIT_EXCEPTION).bits(),
+            Ordering::Release,
+        );
+    };
+
+    true
 }

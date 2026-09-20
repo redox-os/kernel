@@ -191,7 +191,10 @@ unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
             _ => SIGSEGV,
         };
         */
-        excp_handler(Exception { kind: scause });
+        excp_handler(Exception {
+            code: scause,
+            address: stval,
+        });
     }
 }
 
