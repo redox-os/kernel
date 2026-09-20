@@ -457,9 +457,9 @@ bitflags! {
         /// has absolutely no effect on which signals are blocked etc. Meant to be used for
         /// short-lived critical sections inside libc.
         const INHIBIT_DELIVERY = 1;
-        /// Prevents the kernel from jumping the context to synchronous exception handler. Meant
-        /// to be used for preventing recursive loop if exception handling causes another exception.
-        const INHIBIT_EXCEPTION = 2;
+        /// Indicates userspace is running an exception handler, which means any new synchronous
+        /// exception will result in the termination of the current context ("double fault").
+        const HANDLING_EXCEPTION = 2;
     }
 }
 bitflags! {

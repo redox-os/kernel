@@ -3,8 +3,8 @@ use core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 
 use crate::{
-    context::{self, Context, ContextLock},
-    sync::{CleanLockToken, RwLockWriteGuard, L4},
+    context::{self, Context},
+    sync::CleanLockToken,
     syscall::flag::SigcontrolFlags,
 };
 
@@ -87,7 +87,7 @@ pub fn excp_handler(excp: syscall::Exception) {
 
     let mut context = current.write(token.token());
 
-    if !excp_handler_inner(excp, &current, &mut context) {
+    if !excp_handler_inner(excp, &mut context) {
         // TODO: Let procmgr print this?
         info!(
             "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {:p}",
@@ -105,11 +105,7 @@ pub fn excp_handler(excp: syscall::Exception) {
 }
 
 /// Return true if handled by user
-fn excp_handler_inner(
-    excp: syscall::Exception,
-    current: &Arc<ContextLock>,
-    context: &mut RwLockWriteGuard<'_, L4, Context>,
-) -> bool {
+fn excp_handler_inner(excp: syscall::Exception, context: &mut Context) -> bool {
     let Some(eh) = context.sig.as_ref().and_then(|s| s.excp_handler) else {
         return false;
     };
@@ -119,8 +115,8 @@ fn excp_handler_inner(
         let control_flags =
             SigcontrolFlags::from_bits_retain(tctl.control_flags.load(Ordering::Acquire));
 
-        if control_flags.contains(SigcontrolFlags::INHIBIT_EXCEPTION) {
-            // the user excp_handler is triggering another excp
+        if control_flags.contains(SigcontrolFlags::HANDLING_EXCEPTION) {
+            // double fault
             return false;
         }
         control_flags
@@ -132,9 +128,8 @@ fn excp_handler_inner(
         return false;
     };
 
-    regs.set_instr_pointer(eh.get());
-
     let (ip, archdep_reg) = (regs.instr_pointer(), regs.sig_archdep_reg());
+    regs.set_instr_pointer(eh.get());
     {
         let (tctl, _pctl, _sigst) = context.sigcontrol().expect("Failed to get sigcontrol");
 
@@ -145,7 +140,10 @@ fn excp_handler_inner(
         tctl.saved_excp_code.set(code);
         tctl.saved_excp_addr.set(addr);
         tctl.control_flags.store(
-            (control_flags | SigcontrolFlags::INHIBIT_EXCEPTION).bits(),
+            (control_flags
+                | SigcontrolFlags::INHIBIT_DELIVERY
+                | SigcontrolFlags::HANDLING_EXCEPTION)
+                .bits(),
             Ordering::Release,
         );
     };
