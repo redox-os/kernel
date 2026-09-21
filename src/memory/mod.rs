@@ -343,6 +343,29 @@ pub unsafe fn deallocate_frame(frame: Frame) {
     unsafe { deallocate_p2frame(frame, 0) }
 }
 
+/// Free `count` contiguous unreferenced frames as buddy blocks.
+///
+/// # Safety
+/// Every frame in `base..base + count` must be allocated, have no references,
+/// and not be on the freelist.
+pub unsafe fn deallocate_contiguous(base: Frame, count: usize) {
+    let mut offset = 0;
+    while offset < count {
+        let frame = base.next_by(offset);
+        let pages_left = count - offset;
+        let align = frame
+            .base()
+            .data()
+            .trailing_zeros()
+            .saturating_sub(PAGE_SIZE.trailing_zeros());
+        let order = align.min(pages_left.ilog2()).min(MAX_ORDER);
+
+        unsafe { deallocate_p2frame(frame, order) };
+
+        offset += 1usize << order;
+    }
+}
+
 // Helper function for quickly mapping device memory
 pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAddress {
     unsafe {

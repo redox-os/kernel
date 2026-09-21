@@ -20,13 +20,13 @@ use crate::{
     context::file::LockedFileDescription,
     cpu_set::LogicalCpuSet,
     memory::{
-        deallocate_frame, get_page_info, init_frame, the_zeroed_frame, AddRefError, Enomem, Frame,
-        Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount, RefKind, RmmA, TableKind,
-        TheFrameAllocator, VirtualAddress, PAGE_SIZE,
+        deallocate_contiguous, deallocate_frame, deallocate_p2frame, get_page_info, init_frame,
+        the_zeroed_frame, AddRefError, Enomem, Frame, Page, PageFlags, PageInfo, PageMapper,
+        RaiiFrame, RefCount, RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress,
+        PAGE_SIZE,
     },
-    numa,
     percpu::PercpuBlock,
-    scheme::{self, KernelSchemes},
+    scheme::KernelSchemes,
     sync::{
         CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockUpgradableGuard,
         RwLockWriteGuard, L4, L5,
@@ -1348,10 +1348,6 @@ impl Grant {
         flusher: &mut Flusher,
         mem_policy: NumaMemoryPolicy,
     ) -> Result<Grant, Enomem> {
-        if !span.count.is_power_of_two() {
-            warn!("Attempted non-power-of-two zeroed_phys_contiguous allocation, rounding up to next power of two.");
-        }
-
         let count = span.count.next_power_of_two();
         let mut frame_allocator = TheFrameAllocator(mem_policy);
         let base = Frame::containing(
@@ -1375,6 +1371,17 @@ impl Grant {
                 result.ignore();
 
                 flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
+            }
+        }
+
+        if count != span.count {
+            let mut offset = span.count;
+            while offset < count {
+                let order = offset.trailing_zeros().min((count - offset).ilog2());
+                unsafe {
+                    deallocate_p2frame(base.next_by(offset), order);
+                }
+                offset += 1usize << order;
             }
         }
 
@@ -2925,16 +2932,26 @@ impl GenericFlusher for NopFlusher {
 }
 fn handle_free_action(base: Frame, phys_contiguous_count: Option<NonZeroUsize>) {
     if let Some(count) = phys_contiguous_count {
-        for i in 0..count.get() {
-            let frame = base.next_by(i);
-            let new_rc = get_page_info(frame)
+        let count = count.get();
+        let mut all_unreferenced = true;
+
+        for i in 0..count {
+            let new_rc = get_page_info(base.next_by(i))
                 .expect("phys_contiguous frames all need PageInfos")
                 .remove_ref();
+            if new_rc.is_some() {
+                all_unreferenced = false;
+            }
+        }
 
-            if new_rc.is_none() {
-                // FIXME use a single deallocate_p2frame when possible
-                unsafe {
-                    deallocate_frame(frame);
+        if all_unreferenced {
+            unsafe { deallocate_contiguous(base, count) };
+        } else {
+            for i in 0..count {
+                let frame = base.next_by(i);
+                let info = get_page_info(frame).expect("phys_contiguous frames all need PageInfos");
+                if info.refcount().is_none() {
+                    unsafe { deallocate_frame(frame) };
                 }
             }
         }
