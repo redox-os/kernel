@@ -2,13 +2,17 @@ use crate::{
     arch::{device::irqchip::hlic, start::BOOT_HART_ID},
     dtb::{
         get_mmio_address,
-        irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        irqchip::{
+            mmio_after_acquire, mmio_before_release, InterruptController, InterruptHandler,
+            IrqCell, IrqChipItem, IrqDesc, IRQ_CHIP,
+        },
     },
     sync::CleanLockToken,
 };
-use core::{mem, num::NonZero, sync::atomic::Ordering};
+use core::{mem, num::NonZero, ptr, sync::atomic::Ordering};
 use fdt::Fdt;
-use syscall::{Error, Io, Mmio, EINVAL};
+use spin::Mutex;
+use syscall::{Error, Mmio, EINVAL};
 
 #[repr(packed(4))]
 #[repr(C)]
@@ -39,49 +43,22 @@ const _: () = assert!(0x2000 == mem::offset_of!(PlicRegs, enable));
 const _: () = assert!(0x20_0000 == mem::offset_of!(PlicRegs, thresholds));
 const _: () = assert!(0x1000 == size_of::<InterruptThresholdRegs>());
 
-impl PlicRegs {
-    pub fn set_priority(self: &mut Self, irq: usize, priority: usize) {
-        assert!(irq > 0 && irq <= 1023 && priority < 8);
-        self.source_priority[irq].write(priority as u32);
-    }
-
-    pub fn pending(self: &Self, irq_lane: usize) -> u32 {
-        assert!(irq_lane < 32);
-        self.pending[irq_lane].read()
-    }
-
-    pub fn enable(self: &mut Self, context: usize, irq: NonZero<usize>, enable: bool) {
-        assert!(irq.get() <= 1023 && context < MAX_CONTEXTS);
-        let irq_lane = irq.get() / 32;
-        let irq = irq.get() % 32;
-        self.enable[context][irq_lane].writef(1u32 << irq, enable);
-    }
-
-    pub fn set_priority_threshold(self: &mut Self, context: usize, priority: usize) {
-        assert!(context < MAX_CONTEXTS && priority <= 7);
-        self.thresholds[context].threshold.write(priority as u32);
-    }
-
-    pub fn claim(self: &mut Self, context: usize) -> Option<NonZero<usize>> {
-        assert!(context < MAX_CONTEXTS);
-        let claim = self.thresholds[context].claim_complete.read();
-        NonZero::new(claim as usize)
-    }
-
-    pub fn complete(self: &mut Self, context: usize, claim: NonZero<usize>) {
-        assert!(context < MAX_CONTEXTS);
-        self.thresholds[context]
-            .claim_complete
-            .write(claim.get() as u32);
-    }
-}
-
 pub struct Plic {
     regs: *mut PlicRegs,
     ndev: usize,
     virq_base: usize,
     context: usize,
+    enable_lock: Mutex<()>,
 }
+
+// SAFETY: `regs` points at the PLIC's device memory, which is shared by every
+// hart by design. It is never turned into a reference. The accessors below go
+// through raw volatile reads and writes, so concurrent access from two harts
+// is a hardware question and not `&mut` aliasing. The one register that has to
+// be read-modify-written, the per-context enable word, is serialized by
+// `enable_lock`. Everything else is a single load or store of one word.
+unsafe impl Send for Plic {}
+unsafe impl Sync for Plic {}
 
 impl Plic {
     pub fn new() -> Self {
@@ -90,20 +67,103 @@ impl Plic {
             ndev: 0,
             virq_base: 0,
             context: 0,
+            enable_lock: Mutex::new(()),
+        }
+    }
+
+    /// Panics if `irq_init` has not mapped the registers yet.
+    #[inline]
+    fn regs(&self) -> *mut PlicRegs {
+        assert!(!self.regs.is_null(), "PLIC registers are not mapped yet");
+        self.regs
+    }
+
+    /// # Safety
+    ///
+    /// `cell` must point at one of this PLIC's register cells.
+    ///
+    /// `Mmio<u32>` is `repr(transparent)` over the word itself, so this is the
+    /// same access `Io::read` would perform, without taking a reference that
+    /// would alias another hart's.
+    #[inline]
+    unsafe fn read_cell(cell: *mut Mmio<u32>) -> u32 {
+        unsafe { ptr::read_volatile(cell.cast::<u32>()) }
+    }
+
+    /// # Safety
+    ///
+    /// `cell` must point at one of this PLIC's register cells.
+    #[inline]
+    unsafe fn write_cell(cell: *mut Mmio<u32>, value: u32) {
+        unsafe { ptr::write_volatile(cell.cast::<u32>(), value) }
+    }
+
+    fn set_priority(&self, irq: usize, priority: usize) {
+        assert!(irq > 0 && irq <= 1023 && priority < 8);
+        unsafe {
+            Self::write_cell(
+                &raw mut (*self.regs()).source_priority[irq],
+                priority as u32,
+            );
+        }
+    }
+
+    fn set_enabled(&self, context: usize, irq: NonZero<usize>, enable: bool) {
+        assert!(irq.get() <= 1023 && context < MAX_CONTEXTS);
+        let irq_lane = irq.get() / 32;
+        let bit = 1u32 << (irq.get() % 32);
+
+        let _guard = self.enable_lock.lock();
+
+        mmio_after_acquire();
+        unsafe {
+            let cell = &raw mut (*self.regs()).enable[context][irq_lane];
+            let old = Self::read_cell(cell);
+            let new = if enable { old | bit } else { old & !bit };
+            if new != old {
+                Self::write_cell(cell, new);
+            }
+        }
+        mmio_before_release();
+    }
+
+    fn set_priority_threshold(&self, context: usize, priority: usize) {
+        assert!(context < MAX_CONTEXTS && priority <= 7);
+        unsafe {
+            Self::write_cell(
+                &raw mut (*self.regs()).thresholds[context].threshold,
+                priority as u32,
+            );
+        }
+    }
+
+    fn claim(&self, context: usize) -> Option<NonZero<usize>> {
+        assert!(context < MAX_CONTEXTS);
+        let claim =
+            unsafe { Self::read_cell(&raw mut (*self.regs()).thresholds[context].claim_complete) };
+        NonZero::new(claim as usize)
+    }
+
+    fn complete(&self, context: usize, claim: NonZero<usize>) {
+        assert!(context < MAX_CONTEXTS);
+        unsafe {
+            Self::write_cell(
+                &raw mut (*self.regs()).thresholds[context].claim_complete,
+                claim.get() as u32,
+            );
         }
     }
 }
+
 impl InterruptHandler for Plic {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
-        unsafe {
-            let irq = self.irq_ack();
-            //println!("PLIC interrupt {}", irq);
-            if let Some(virq) = self.irq_to_virq(irq) {
-                IRQ_CHIP.trigger_virq(virq as u32, token);
-            } else {
-                error!("unexpected irq num {}", irq);
-                self.irq_eoi(irq);
-            }
+    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {
+        let irq = self.irq_ack();
+        //println!("PLIC interrupt {}", irq);
+        if let Some(virq) = self.irq_to_virq(irq) {
+            IRQ_CHIP.trigger_virq(virq as u32, token);
+        } else {
+            error!("unexpected irq num {}", irq);
+            self.irq_eoi(irq);
         }
         //println!("PLIC interrupt done");
     }
@@ -113,11 +173,12 @@ impl InterruptController for Plic {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &mut [IrqDesc; 1024],
+        irq_desc: &[IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        chips: &[IrqChipItem],
     ) -> syscall::Result<()> {
-        let desc = unsafe { &IRQ_CHIP.irq_chip_list.chips[ic_idx] };
+        let desc = &chips[ic_idx];
         let fdt = fdt_opt.unwrap();
         let my_node = fdt.find_phandle(desc.phandle).unwrap();
 
@@ -135,8 +196,9 @@ impl InterruptController for Plic {
 
         self.virq_base = *irq_idx;
         for i in 0..ndev {
-            irq_desc[self.virq_base + i].basic.ic_idx = ic_idx;
-            irq_desc[self.virq_base + i].basic.ic_irq = i as u32;
+            irq_desc[self.virq_base + i]
+                .basic
+                .set_mapping(ic_idx, i as u32);
         }
         *irq_idx += ndev;
 
@@ -151,34 +213,29 @@ impl InterruptController for Plic {
             .unwrap();
         info!("PLIC: using context {}", self.context);
 
-        let regs = unsafe { self.regs.as_mut().unwrap() };
-        regs.set_priority_threshold(self.context, 0);
+        self.set_priority_threshold(self.context, 0);
 
         Ok(())
     }
 
-    fn irq_ack(&mut self) -> u32 {
-        let regs = unsafe { self.regs.as_mut().unwrap() };
-        regs.claim(self.context).unwrap().get() as u32
+    fn irq_ack(&self) -> u32 {
+        self.claim(self.context).unwrap().get() as u32
     }
 
-    fn irq_eoi(&mut self, irq_num: u32) {
-        let regs = unsafe { self.regs.as_mut().unwrap() };
-        regs.complete(self.context, NonZero::new(irq_num as usize).unwrap());
+    fn irq_eoi(&self, irq_num: u32) {
+        self.complete(self.context, NonZero::new(irq_num as usize).unwrap());
     }
 
-    fn irq_enable(&mut self, irq_num: u32) {
+    fn irq_enable(&self, irq_num: u32) {
         assert!(irq_num > 0 && irq_num as usize <= self.ndev);
-        let regs = unsafe { self.regs.as_mut().unwrap() };
-        regs.set_priority(irq_num as usize, 1);
-        regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), true);
+        self.set_priority(irq_num as usize, 1);
+        self.set_enabled(self.context, NonZero::new(irq_num as usize).unwrap(), true);
     }
 
-    fn irq_disable(&mut self, irq_num: u32) {
+    fn irq_disable(&self, irq_num: u32) {
         assert!(irq_num > 0 && irq_num as usize <= self.ndev);
-        let regs = unsafe { self.regs.as_mut().unwrap() };
-        regs.set_priority(irq_num as usize, 1);
-        regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), false);
+        self.set_priority(irq_num as usize, 1);
+        self.set_enabled(self.context, NonZero::new(irq_num as usize).unwrap(), false);
     }
 
     fn irq_xlate(&self, irq_data: IrqCell) -> syscall::Result<usize> {

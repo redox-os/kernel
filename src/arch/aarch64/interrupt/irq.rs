@@ -23,7 +23,7 @@ unsafe fn dispatch() {
     if let Some(virq) = virq
         && virq < 1024
     {
-        unsafe { IRQ_CHIP.trigger_virq(virq as u32, &mut token) };
+        IRQ_CHIP.trigger_virq(virq as u32, &mut token);
     } else {
         println!("unexpected irq num {}", hwirq);
         // IDs 1020..1023 are special/spurious GIC values and must not be
