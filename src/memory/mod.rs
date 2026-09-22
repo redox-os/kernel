@@ -9,7 +9,6 @@ use core::{
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
-use bitfield::Bit;
 pub use kernel_mapper::KernelMapper;
 use spin::{once::Once, Mutex};
 use syscall::NumaMemoryPolicy;
@@ -18,7 +17,7 @@ pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, AddrSpace, PfError},
+        memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     numa::{self, FreeListMask},
@@ -341,6 +340,56 @@ pub unsafe fn deallocate_p2frame(orig_frame: Frame, order: u32) {
 
 pub unsafe fn deallocate_frame(frame: Frame) {
     unsafe { deallocate_p2frame(frame, 0) }
+}
+
+/// Free `count` contiguous unreferenced frames as buddy blocks.
+///
+/// # Safety
+/// Every frame in `base..base + count` must be allocated, have no references,
+/// and not be on the freelist.
+pub unsafe fn deallocate_contiguous(base: Frame, count: usize) {
+    let mut offset = 0;
+    while offset < count {
+        let frame = base.next_by(offset);
+        let align = frame
+            .base()
+            .data()
+            .trailing_zeros()
+            .checked_sub(PAGE_SIZE.trailing_zeros())
+            .expect("frame is not page-aligned");
+        let order = align.min((count - offset).ilog2()).min(MAX_ORDER);
+
+        unsafe { deallocate_p2frame(frame, order) };
+
+        offset += 1usize << order;
+    }
+}
+
+/// Allocate exactly `count` contiguous frames.
+///
+/// This function allocates `count.next_power_of_two()` frames, marks the
+/// first `count` used, then frees the remainder, and returns the base of
+/// the `count` frames.
+fn allocate_frames(count: usize, alloc_order: impl FnOnce(u32) -> Option<Frame>) -> Option<Frame> {
+    if count == 0 {
+        return None;
+    }
+    let rounded = count.next_power_of_two();
+    let order = rounded.trailing_zeros();
+    if order > MAX_ORDER {
+        return None;
+    }
+    let base = alloc_order(order)?;
+
+    for i in 0..count {
+        let info = get_page_info(base.next_by(i)).expect("allocated frame missing PageInfo");
+        info.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
+        info.next.store(0, Ordering::Relaxed);
+    }
+    if count < rounded {
+        unsafe { deallocate_contiguous(base.next_by(count), rounded - count) };
+    }
+    Some(base)
 }
 
 // Helper function for quickly mapping device memory
@@ -1436,20 +1485,19 @@ pub struct TheFrameAllocator(pub NumaMemoryPolicy);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
-        let must_be_zero = true;
-        let order = count.data().next_power_of_two().trailing_zeros();
-        if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
-            allocate_p2frame_with_mask(mask, order, fallback, true).map(|f| f.base())
+        let count = count.data();
+        let frame = if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
+            allocate_frames(count, |order| {
+                allocate_p2frame_with_mask(mask, order, fallback, true)
+            })
         } else {
-            allocate_p2frame(order, true).map(|f| f.base())
-        }
+            allocate_frames(count, |order| allocate_p2frame(order, true))
+        }?;
+        Some(frame.base())
     }
 
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        unsafe {
-            let order = count.data().next_power_of_two().trailing_zeros();
-            deallocate_p2frame(Frame::containing(address), order)
-        }
+        unsafe { deallocate_contiguous(Frame::containing(address), count.data()) }
     }
     fn usage(&self) -> FrameUsage {
         FrameUsage::new(
