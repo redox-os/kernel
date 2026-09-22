@@ -20,10 +20,9 @@ use crate::{
     context::file::LockedFileDescription,
     cpu_set::LogicalCpuSet,
     memory::{
-        deallocate_contiguous, deallocate_frame, deallocate_p2frame, get_page_info, init_frame,
-        the_zeroed_frame, AddRefError, Enomem, Frame, Page, PageFlags, PageInfo, PageMapper,
-        RaiiFrame, RefCount, RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress,
-        PAGE_SIZE,
+        deallocate_contiguous, deallocate_frame, get_page_info, init_frame, the_zeroed_frame,
+        AddRefError, Enomem, Frame, Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount,
+        RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
     percpu::PercpuBlock,
     scheme::KernelSchemes,
@@ -1348,11 +1347,10 @@ impl Grant {
         flusher: &mut Flusher,
         mem_policy: NumaMemoryPolicy,
     ) -> Result<Grant, Enomem> {
-        let count = span.count.next_power_of_two();
         let mut frame_allocator = TheFrameAllocator(mem_policy);
         let base = Frame::containing(
             frame_allocator
-                .allocate(FrameCount::new(count))
+                .allocate(FrameCount::new(span.count))
                 .ok_or(Enomem)?,
         );
 
@@ -1371,17 +1369,6 @@ impl Grant {
                 result.ignore();
 
                 flusher.queue(frame, None, TlbShootdownActions::NEW_MAPPING);
-            }
-        }
-
-        if count != span.count {
-            let mut offset = span.count;
-            while offset < count {
-                let order = offset.trailing_zeros().min((count - offset).ilog2());
-                unsafe {
-                    deallocate_p2frame(base.next_by(offset), order);
-                }
-                offset += 1usize << order;
             }
         }
 
