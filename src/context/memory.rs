@@ -25,6 +25,7 @@ use crate::{
         AddRefError, Enomem, Frame, Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount,
         RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
+    numa::{self, FreeListMask},
     percpu::PercpuBlock,
     scheme::KernelSchemes,
     sync::{
@@ -607,16 +608,36 @@ impl AddrSpace {
             .ok_or(Error::new(ESRCH))
     }
 
+    #[cfg(all(feature = "numa", target_arch = "x86_64"))]
     pub fn current_table(&self) -> &Table {
-        let node_id = numa::current_node_id().unwrap_or(0);
+        if !numa::is_supported() {
+            return &self.root_table;
+        }
+        let node_id = numa::current_node_id().expect("expected node");
         self.replicas.get(&node_id).unwrap_or(&self.root_table)
     }
 
+    #[cfg(any(not(feature = "numa"), not(target_arch = "x86_64")))]
+    #[inline(always)]
+    pub fn current_table(&self) -> &Table {
+        &self.root_table
+    }
+
+    #[cfg(all(feature = "numa", target_arch = "x86_64"))]
     pub fn current_table_mut(&mut self) -> &mut Table {
-        let node_id = numa::current_node_id().unwrap_or(0);
+        if !numa::is_supported() {
+            return &mut self.root_table;
+        }
+        let node_id = numa::current_node_id().expect("expected node");
         self.replicas
             .get_mut(&node_id)
             .unwrap_or(&mut self.root_table)
+    }
+
+    #[cfg(any(not(feature = "numa"), not(target_arch = "x86_64")))]
+    #[inline(always)]
+    pub fn current_table_mut(&mut self) -> &mut Table {
+        &mut self.root_table
     }
 
     /// Unmaps from all page tables of this address space.
@@ -639,6 +660,10 @@ impl AddrSpace {
                 return None;
             }
             f_root = f;
+        }
+
+        if !numa::is_supported() {
+            return f_root;
         }
 
         unsafe {
