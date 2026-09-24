@@ -16,8 +16,15 @@ static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
 static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
 
+#[cfg(all(target_arch = "x86_64", feature = "numa"))]
 pub fn is_supported() -> bool {
     NUMA_NODES.get().is_some()
+}
+
+#[cfg(any(not(target_arch = "x86_64"), not(feature = "numa")))]
+#[inline(always)]
+pub fn is_supported() -> bool {
+    false
 }
 
 /// Each bit of this mask corresponds to an index of `FREE_LISTS`.
