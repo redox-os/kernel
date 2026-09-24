@@ -184,6 +184,7 @@ impl AddrSpaceWrapper {
         let allocator = new.inner.get_mut().root_table.utable.allocator_mut();
         allocator.0 = guard.root_table.utable.allocator().0;
         allocator.1 = guard.root_table.utable.allocator().1;
+        new.inner.get_mut().replicate_on_node_switch = guard.replicate_on_node_switch;
 
         // It's okay to use the field directly here instead of the method `current_table_mut`
         // because, the grants will be copied to the new address space
