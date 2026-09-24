@@ -206,7 +206,7 @@ pub unsafe fn switch_arch_hook() {
         }
         match next_addrsp_guard {
             Some(next_addrsp) => {
-                next_addrsp.table.utable.make_current();
+                next_addrsp.current_table().utable.make_current();
                 drop(next_addrsp);
             }
             _ => {

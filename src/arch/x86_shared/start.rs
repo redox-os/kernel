@@ -119,6 +119,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
                 crate::acpi::init_before_mem(args.acpi_rsdp(), &mut mapper);
             }
 
+            #[cfg(feature = "numa")]
             numa::init(mapper.allocator_mut());
 
             crate::memory::init_mm(mapper.allocator_mut());
@@ -142,6 +143,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             // Initialize devices
             device::init();
 
+            #[cfg(feature = "numa")]
             numa::init_arch();
 
             // Read ACPI tables, starts APs
