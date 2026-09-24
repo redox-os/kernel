@@ -188,11 +188,25 @@ impl AddrSpaceWrapper {
 
         // It's okay to use the field directly here instead of the method `current_table_mut`
         // because, the grants will be copied to the new address space
-        let this_mapper = &mut guard.root_table.utable;
         let mut this_flusher = Flusher::with_cpu_set(&self.used_by, &self.tlb_ack);
 
-        for (grant_base, grant_info) in guard.grants.iter() {
-            let new_grant = match grant_info.provider {
+        let iter = guard
+            .grants
+            .iter()
+            .map(|e| {
+                (
+                    e.0,
+                    e.1.page_count,
+                    e.1.flags(),
+                    e.1.provider.clone(),
+                    e.1.owner,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for (grant_base, page_count, flags, provider, owner) in iter {
+            let mut new_owner = owner;
+            let new_grant = match provider {
                 // No, your temporary UserScheme mappings will not be kept across forks.
                 Provider::External {
                     is_pinned_userscheme_borrow: true,
@@ -211,8 +225,8 @@ impl AddrSpaceWrapper {
 
                 Provider::PhysBorrowed { base } => Grant::physmap(
                     base,
-                    PageSpan::new(grant_base, grant_info.page_count),
-                    grant_info.flags,
+                    PageSpan::new(grant_base, page_count),
+                    flags,
                     &mut new.inner.get_mut().root_table.utable,
                     &mut NopFlusher,
                 )?,
@@ -222,15 +236,16 @@ impl AddrSpaceWrapper {
                 } => Grant::copy_mappings(
                     grant_base,
                     grant_base,
-                    grant_info.page_count,
-                    grant_info.flags,
-                    this_mapper,
+                    page_count,
+                    flags,
+                    guard,
                     &mut new.inner.get_mut().root_table.utable,
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Owned {
                         cow_file_ref: cow_file_ref.clone(),
                     },
+                    &mut new_owner,
                 )?,
                 // TODO: Merge Allocated and AllocatedShared, and make CopyMappingsMode a field?
                 Provider::AllocatedShared {
@@ -238,13 +253,14 @@ impl AddrSpaceWrapper {
                 } => Grant::copy_mappings(
                     grant_base,
                     grant_base,
-                    grant_info.page_count,
-                    grant_info.flags,
-                    this_mapper,
+                    page_count,
+                    flags,
+                    guard,
                     &mut new.inner.get_mut().root_table.utable,
                     &mut this_flusher,
                     &mut NopFlusher,
                     CopyMappingsMode::Borrowed,
+                    &mut new_owner,
                 )?,
 
                 // MAP_SHARED grants are retained by reference, across address space clones (the
@@ -257,7 +273,8 @@ impl AddrSpaceWrapper {
                     Arc::clone(address_space),
                     src_base,
                     grant_base,
-                    grant_info,
+                    page_count,
+                    flags,
                     &mut new.inner.get_mut().root_table.utable,
                     &mut NopFlusher,
                     false,
@@ -265,8 +282,18 @@ impl AddrSpaceWrapper {
                 Provider::FmapBorrowed { .. } => continue,
             };
 
+            if new_owner != owner {
+                guard
+                    .grants
+                    .contains_mut(grant_base)
+                    .expect("expected grant")
+                    .1
+                    .owner = new_owner;
+            }
+
             new.inner.get_mut().grants.insert(new_grant);
         }
+
         Ok(new_arc)
     }
     pub fn mprotect(
@@ -336,7 +363,12 @@ impl AddrSpaceWrapper {
             let mapper = &mut guard.root_table.utable;
             grant.remap(mapper, &mut flusher, new_flags);
 
-            for mapper in guard.replicas.values_mut().map(|e| &mut e.utable) {
+            for mapper in guard
+                .replicas
+                .values_mut()
+                .map(|e| &mut e.utable)
+                .chain(guard.replica_cache.values_mut().map(|e| &mut e.utable))
+            {
                 grant.remap(mapper, &mut flusher, new_flags);
             }
             //info!("Mprotect grant became {:#?}", grant);
@@ -691,6 +723,68 @@ impl AddrSpace {
             }
         };
         f_root
+    }
+
+    /// Re-maps in all page tables of this address space.
+    ///
+    /// This function returns a `Some(..)` only if the owning page table contains this mapping.
+    /// If the owning page table does not contain the mapping, then it is guaranteed that
+    /// none of the other page tables do, because all other page tables inherit their mappings
+    /// from the owner. So there is no need to check the rest of the page tables.
+    pub fn remap_in_all(
+        &mut self,
+        va: VirtualAddress,
+        owning_node_id: u32,
+        page_flags: impl Fn(PageFlags<RmmA>) -> PageFlags<RmmA>,
+        new_pa: Option<PhysicalAddress>,
+    ) -> Option<(PhysicalAddress, PageFlush<RmmA>, u32)> {
+        let mut f_root = None;
+
+        let f = unsafe {
+            self.root_table
+                .utable
+                .remap_with_full(va, |pa, flags| {
+                    Some((new_pa.unwrap_or(pa), page_flags(flags)))
+                })
+                .and_then(|e| Some((e.1, e.2)))
+        };
+
+        if self.root_table_node_id == owning_node_id {
+            if f.is_none() {
+                return None;
+            }
+            f_root = f;
+        }
+
+        if !numa::is_supported() {
+            return f_root.map(|e| (e.0, e.1, owning_node_id));
+        }
+
+        unsafe {
+            for (node_id, mapper) in self
+                .replicas
+                .iter_mut()
+                .map(|e| (*e.0, &mut e.1.utable))
+                .chain(
+                    self.replica_cache
+                        .iter_mut()
+                        .map(|e| (*e.0, &mut e.1.utable)),
+                )
+            {
+                let f = mapper
+                    .remap_with_full(va, |pa, flags| {
+                        Some((new_pa.unwrap_or(pa), page_flags(flags)))
+                    })
+                    .and_then(|e| Some((e.1, e.2)));
+                if node_id == owning_node_id {
+                    if f.is_none() {
+                        return None;
+                    }
+                    f_root = f;
+                }
+            }
+        };
+        f_root.map(|e| (e.0, e.1, owning_node_id))
     }
 
     pub fn owning_table(&self, owner: u32) -> &Table {
@@ -1361,7 +1455,7 @@ pub struct GrantInfo {
 }
 
 /// Enumeration of various types of grants.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Provider {
     /// The grant is owned, but possibly CoW-shared.
     ///
@@ -1631,7 +1725,8 @@ impl Grant {
         src_address_space_lock: Arc<AddrSpaceWrapper>,
         src_base: Page,
         dst_base: Page,
-        src_info: &GrantInfo,
+        page_count: usize,
+        flags: PageFlags<RmmA>,
         _mapper: &mut PageMapper,
         _dst_flusher: &mut impl GenericFlusher,
         _eager: bool,
@@ -1639,8 +1734,8 @@ impl Grant {
         Ok(Grant {
             base: dst_base,
             info: GrantInfo {
-                page_count: src_info.page_count,
-                flags: src_info.flags,
+                page_count: page_count,
+                flags: flags,
                 mapped: true,
                 provider: Provider::External {
                     src_base,
@@ -1955,11 +2050,12 @@ impl Grant {
         dst_base: Page,
         page_count: usize,
         flags: PageFlags<RmmA>,
-        src_mapper: &mut PageMapper,
+        src_address_space: &mut AddrSpace,
         dst_mapper: &mut PageMapper,
         src_flusher: &mut Flusher,
         dst_flusher: &mut impl GenericFlusher,
         mode: CopyMappingsMode,
+        owner: &mut u32,
     ) -> Result<Grant, Enomem> {
         let (allows_writable, rk) = match mode {
             CopyMappingsMode::Owned { .. } => (false, RefKind::Cow),
@@ -1973,8 +2069,13 @@ impl Grant {
 
             let src_frame = match rk {
                 RefKind::Cow => {
-                    let Some((_, phys, flush)) = (unsafe {
-                        src_mapper.remap_with(src_page.start_address(), |flags| flags.write(false))
+                    let Some((phys, flush, owner)) = ({
+                        src_address_space.remap_in_all(
+                            src_page.start_address(),
+                            *owner,
+                            |page_flags| page_flags.write(false),
+                            None,
+                        )
                     }) else {
                         // Page is not mapped, let the page fault handler take care of that (initializing
                         // it to zero).
@@ -1991,15 +2092,21 @@ impl Grant {
                     frame
                 }
                 RefKind::Shared => {
-                    if let Some((phys, _)) = src_mapper.translate(src_page.start_address()) {
-                        Frame::containing(phys)
+                    if let Some((pa, _)) = src_address_space
+                        .owning_table(*owner)
+                        .utable
+                        .translate(src_page.start_address())
+                    {
+                        Frame::containing(pa)
                     } else {
                         // TODO: Omit the unnecessary subsequent add_ref call.
                         let must_be_zero = true;
                         let new_frame =
                             init_frame(RefCount::One, must_be_zero).expect("TODO: handle OOM");
                         let src_flush = unsafe {
-                            src_mapper
+                            src_address_space
+                                .current_table_mut()
+                                .utable
                                 .map_phys(src_page.start_address(), new_frame.base(), flags, 0)
                                 .expect("TODO: handle OOM")
                         };
@@ -2007,6 +2114,7 @@ impl Grant {
                             src_flush.ignore();
                         }
                         src_flusher.queue(new_frame, None, TlbShootdownActions::NEW_MAPPING);
+                        *owner = numa::current_node_id().unwrap_or(0);
 
                         new_frame
                     }
@@ -2030,11 +2138,12 @@ impl Grant {
 
                         // TODO: Flusher
                         unsafe {
-                            if let Some((_flags, phys, flush)) = src_mapper
-                                .remap_with_full(src_page.start_address(), |_, f| {
-                                    Some((new_frame.base(), f))
-                                })
-                            {
+                            if let Some((phys, flush, _)) = src_address_space.remap_in_all(
+                                src_page.start_address(),
+                                *owner,
+                                |f| f,
+                                Some(new_frame.base()),
+                            ) {
                                 // TODO: flush.ignore() is correct, but seems to be amplifying a
                                 // userspace race condition
                                 //
@@ -2048,6 +2157,7 @@ impl Grant {
                                     TlbShootdownActions::MOVE,
                                 );
                             }
+                            *owner = numa::current_node_id().unwrap_or(0);
                         }
 
                         new_frame
@@ -2068,6 +2178,7 @@ impl Grant {
                         if let Some(old_frame) = old_frame {
                             src_flusher.queue(old_frame, None, TlbShootdownActions::FREE);
                         }
+                        *owner = numa::current_node_id().unwrap_or(0);
                         new_frame
                     }
                     Err(AddRefError::RcOverflow) => return Err(Enomem),
