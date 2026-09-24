@@ -87,7 +87,7 @@ pub struct NumaCpu {
 }
 
 pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
         acpi::slit::init(allocator, &DISTANCES);
@@ -146,31 +146,6 @@ pub fn init_arch() {
     }
 }
 
-pub fn assign_node_id(modify: bool) -> u8 {
-    static mut NODE_ID: u8 = 0;
-    if unsafe { NODE_ID } >= 128 {
-        panic!("Maximum number of domains supported is 128");
-    }
-    unsafe {
-        NODE_ID += 1;
-        let return_value = NODE_ID - 1;
-        if !modify {
-            NODE_ID -= 1;
-        }
-        return_value
-    }
-}
-
-pub fn assign_memory_id() -> u8 {
-    static mut MEMORY_ID: u8 = 0;
-    if unsafe { MEMORY_ID } >= 128 {
-        panic!("Maximum number of memory regions supported is 128");
-    }
-    let old = unsafe { MEMORY_ID };
-    unsafe { MEMORY_ID = MEMORY_ID.add(1) };
-    old
-}
-
 pub fn domain_to_node_id(domain_id: u32) -> Option<u32> {
     Some(*DOMAIN_NODE_MAP.get()?.get(domain_id as usize)?)
 }
@@ -185,8 +160,15 @@ pub fn dump_info() {
     if let Some(map) = DOMAIN_NODE_MAP.get()
         && let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
+        && let Some(nodes) = NUMA_NODES.get()
     {
-        println!("Number of NUMA nodes: {}", assign_node_id(false));
+        println!(
+            "Number of NUMA nodes: {}",
+            nodes
+                .iter()
+                .filter(|e| e.cpus != 0 || e.memories.mask != 0)
+                .count()
+        );
         for i in 0..cpus.len() {
             if cpus[i] == u32::MAX {
                 continue;
