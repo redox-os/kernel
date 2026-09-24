@@ -187,7 +187,8 @@ unsafe fn pf_inner(stack: &mut InterruptStack, ty: u8, from: &str) -> bool {
 
 exception_stack!(synchronous_exception_at_el0, |stack| {
     unsafe {
-        match exception_code(stack.iret.esr_el1) {
+        let code = exception_code(stack.iret.esr_el1);
+        match code {
             0b010101 => {
                 let scratch = &stack.scratch;
                 let mut token = CleanLockToken::new();
@@ -204,11 +205,13 @@ exception_stack!(synchronous_exception_at_el0, |stack| {
                         "FATAL: Not an SVC induced synchronous exception (ty={:b})",
                         ty
                     );
-                    println!("FAR_EL1: {:#0x}", far_el1());
+                    let far_el1 = far_el1();
+                    println!("FAR_EL1: {:#0x}", far_el1);
                     //crate::debugger::debugger(None);
                     stack.trace();
                     excp_handler(Exception {
-                        kind: 0, // TODO
+                        address: far_el1,
+                        code: usize::from(code),
                     });
                 }
             }
