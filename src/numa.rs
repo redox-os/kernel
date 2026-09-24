@@ -1,22 +1,12 @@
-use core::{
-    mem,
-    ops::{Add, BitOr, BitOrAssign},
-    ptr::write_bytes,
-    slice,
-};
+#![deny(warnings)]
 
-use crate::{
-    acpi,
-    cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
-    numa, percpu,
-    sync::{CleanLockToken, Mutex, L0},
-};
-use alloc::{sync::Arc, vec::Vec};
+use core::{ops::BitOrAssign, ptr::write_bytes, slice};
+
+use crate::{acpi, numa, percpu};
 use bitfield::Bit;
-use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, NumaMemoryPolicy, Result, ENODATA, EOPNOTSUPP};
+use syscall::NumaMemoryPolicy;
 
 pub const MAX_DOMAINS: usize = 128;
 
@@ -49,6 +39,7 @@ impl FreeListMask {
         self.mask.set_bit(i, true);
     }
 
+    #[allow(unused)]
     pub fn disable_index(&mut self, i: usize) {
         self.mask.set_bit(i, false);
     }
@@ -92,11 +83,6 @@ impl NumaMemory {
     }
 }
 
-#[derive(Debug)]
-pub struct NumaCpu {
-    pub id: u32,
-}
-
 pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -115,14 +101,14 @@ pub fn init_arch() {
             slice::from_raw_parts_mut(ptr as *mut NumaNode, MAX_DOMAINS)
         };
 
-        for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
+        for (i, _) in cpus.iter().enumerate().filter(|(_, e)| **e != u32::MAX) {
             numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
         }
 
         for (i, memory) in memories
             .iter()
             .enumerate()
-            .filter(|(i, memory)| memory.length != 0)
+            .filter(|(_, memory)| memory.length != 0)
         {
             numa_nodes[memory.node_id as usize].memories.enable_index(i);
         }
@@ -157,18 +143,10 @@ pub fn init_arch() {
     }
 }
 
-pub fn domain_to_node_id(domain_id: u32) -> Option<u32> {
-    Some(*DOMAIN_NODE_MAP.get()?.get(domain_id as usize)?)
-}
-
-pub fn cpu_belongs_to_which_node(cpu_id: usize) -> Option<u32> {
-    Some(*NUMA_CPUS.get()?.get(cpu_id)?)
-}
-
 /// A helper function that prints information about NUMA - available nodes, cpus and memory blocks in them
 /// their starts and lengths
 pub fn dump_info() {
-    if let Some(map) = DOMAIN_NODE_MAP.get()
+    if let Some(_) = DOMAIN_NODE_MAP.get()
         && let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
         && let Some(nodes) = NUMA_NODES.get()
@@ -257,24 +235,6 @@ pub fn nearest_next_memory_region(addr: usize, overlap: bool) -> Option<&'static
         .min_by_key(|e| e.start)
 }
 
-pub fn nearest_preceding_memory_region(addr: usize, overlap: bool) -> Option<&'static NumaMemory> {
-    NUMA_MEMORY
-        .get()?
-        .iter()
-        .filter_map(|e| {
-            if if overlap {
-                e.start <= addr
-            } else {
-                e.start < addr
-            } {
-                Some(e)
-            } else {
-                None
-            }
-        })
-        .max_by_key(|e| e.start)
-}
-
 pub fn current_node() -> Option<&'static NumaNode> {
     let cpu = percpu::PercpuBlock::current();
     Some(cpu.numa_node.get()?.1)
@@ -334,10 +294,10 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     let distances = DISTANCES.get()?;
     let num_nodes = NUMA_NODES.get().unwrap().len();
 
-    for (i, node) in NUMA_NODES.get()?.iter().enumerate() {
+    for (i, _) in NUMA_NODES.get()?.iter().enumerate() {
         others[i] = (i as u32, distances[num_nodes * node_id as usize + i]);
     }
-    others.sort_by_key(|(node_id, distance)| *distance);
+    others.sort_by_key(|(_, distance)| *distance);
     let others = others.map(|e| e.0);
     iter.others = others;
 
@@ -363,17 +323,6 @@ pub fn exists_with_memory(node_id: u32) -> bool {
             .expect("Expected valid node_id")
             .memories
             .mask
-            != 0
-}
-
-pub fn exists_with_cpu(node_id: u32) -> bool {
-    NUMA_NODES.get().is_some()
-        && NUMA_NODES
-            .get()
-            .unwrap()
-            .get(node_id as usize)
-            .expect("Expected valid node_id")
-            .cpus
             != 0
 }
 
