@@ -181,6 +181,9 @@ impl AddrSpaceWrapper {
 
         let new =
             Arc::get_mut(&mut new_arc).expect("expected new address space Arc not to be aliased");
+        let allocator = new.inner.get_mut().root_table.utable.allocator_mut();
+        allocator.0 = guard.root_table.utable.allocator().0;
+        allocator.1 = guard.root_table.utable.allocator().1;
 
         // It's okay to use the field directly here instead of the method `current_table_mut`
         // because, the grants will be copied to the new address space
