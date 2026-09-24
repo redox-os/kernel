@@ -35,15 +35,17 @@ impl BitOrAssign for FreeListMask {
 }
 
 impl FreeListMask {
+    #[allow(dead_code)]
     pub fn enable_index(&mut self, i: usize) {
         self.mask.set_bit(i, true);
     }
 
-    #[allow(unused)]
+    #[allow(dead_code)]
     pub fn disable_index(&mut self, i: usize) {
         self.mask.set_bit(i, false);
     }
 
+    #[allow(dead_code)]
     pub fn is_enabled(&self, i: usize) -> bool {
         self.mask.bit(i)
     }
@@ -83,6 +85,7 @@ impl NumaMemory {
     }
 }
 
+#[allow(dead_code)]
 pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     #[cfg(target_arch = "x86_64")]
     {
@@ -91,6 +94,7 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     }
 }
 
+#[allow(dead_code)]
 pub fn init_arch() {
     if let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
