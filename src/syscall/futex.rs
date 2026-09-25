@@ -198,10 +198,49 @@ pub fn futex(
 
             // The scheduler clears `wake` on timeout. Hence if a timeout was
             // set and `wake` is now `None`, we timed out.
-            if context::current().read(token.token()).wake.is_none() && timeout_opt.is_some() {
-                Err(Error::new(ETIMEDOUT))
-            } else {
-                Ok(0)
+            if timeout_opt.is_some() && context::current().read(token.token()).wake.is_none() {
+                return Err(Error::new(ETIMEDOUT));
+            }
+
+            let mut woken_by_wake = false;
+
+            {
+                // TODO: this doing a second search is not efficient. It probably best to have another
+                // hashtable mapping context and whether it was woken up AND where to remove index from FUTEXES
+                let mut futexes_map = FUTEXES.lock(token.token());
+                let (futexes_map, _) = futexes_map.token_split();
+
+                let Some(futexes) = futexes_map.get_mut(&target_physaddr) else {
+                    return Ok(0);
+                };
+                let current_lock = context::current();
+                let mut found = false;
+
+                let mut i = 0;
+                while i < futexes.len() {
+                    if let Some(ctx) = futexes[i].context_lock.upgrade() {
+                        if Arc::ptr_eq(&ctx, &current_lock) {
+                            // Not woken up by FUTEX_WAKE, remove our entry
+                            futexes.swap_remove(i);
+                            found = true;
+                            break;
+                        }
+                        i += 1;
+                    } else {
+                        futexes.swap_remove(i);
+                    }
+                }
+
+                if !found {
+                    return Ok(0);
+                }
+
+                if futexes.is_empty() {
+                    futexes_map.remove(&target_physaddr);
+                }
+
+                // Not woken up by FUTEX_WAKE, likely by signal
+                Err(Error::new(EINTR))
             }
         }
         FUTEX_WAKE => {
