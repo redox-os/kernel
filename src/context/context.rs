@@ -624,16 +624,16 @@ impl Kstack {
         }
     }
     pub fn initial_top_phys(&self) -> usize {
-        self.base.base().data() + self.len()
+        self.base.base().data() + Self::len()
     }
-    pub fn len(&self) -> usize {
+    pub fn len() -> usize {
         PAGE_SIZE << 4
     }
 }
 
 impl Drop for Kstack {
     fn drop(&mut self) {
-        let range = self.initial_top().wrapping_sub(self.len())..self.initial_top();
+        let range = self.initial_top().wrapping_sub(Self::len())..self.initial_top();
         assert!(
             !range.contains(&crate::arch::current_stack_ptr()),
             "trying to deallocate a currently running kstack!"

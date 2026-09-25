@@ -13,6 +13,7 @@ use x86::{
 };
 
 use crate::{
+    context::context::Kstack,
     cpu_set::LogicalCpuId,
     memory::{RmmA, RmmArch, PAGE_SIZE},
     percpu::PercpuBlock,
@@ -195,13 +196,25 @@ impl ProcessorControlRegion {
 }
 
 pub unsafe fn pcr() -> *mut ProcessorControlRegion {
-    unsafe {
+    /*unsafe {
         // Primitive benchmarking of RDFSBASE and RDGSBASE in userspace, appears to indicate that
         // obtaining FSBASE/GSBASE using mov gs:[gs_self_ref] is faster than using the (probably
         // microcoded) instructions.
         let mut ret: *mut ProcessorControlRegion;
         core::arch::asm!("mov {}, gs:[{}]", out(reg) ret, const(core::mem::offset_of!(ProcessorControlRegion, self_ref)));
         ret
+    }*/
+
+    unsafe {
+        // All kernel stacks are naturally aligned. As such, it's possible to simply align upwards
+        // from the current stack offset to get a pointer to the KPCR, without the help of GSBASE.
+        crate::arch::current_stack_ptr()
+            .map_addr(|addr| {
+                let addr_minus_one = addr | (Kstack::len() - 1);
+                addr_minus_one + 1 - size_of::<usize>()
+            })
+            .cast::<*mut ProcessorControlRegion>()
+            .read()
     }
 }
 

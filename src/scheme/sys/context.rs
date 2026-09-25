@@ -5,7 +5,11 @@ use alloc::{
 };
 use core::fmt::Write;
 
-use crate::{context, context::contexts, sync::CleanLockToken, syscall::error::Result};
+use crate::{
+    context::{self, context::Kstack, contexts},
+    sync::CleanLockToken,
+    syscall::error::Result,
+};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
@@ -38,7 +42,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             let sch_time_s = context.sched_cpu_time / crate::time::NANOS_PER_SEC;
             let sch_time_ns = context.sched_cpu_time % crate::time::NANOS_PER_SEC;
             let mut memory = context.kfx.len();
-            memory += context.kstack.len();
+            memory += Kstack::len();
             let (status, cpuid) = (context.status.clone(), context.cpu_id);
             let (pid, euid, egid) = (context.pid, context.euid, context.egid);
             let (running, is_awake) = (context.running, context.wake.is_some());

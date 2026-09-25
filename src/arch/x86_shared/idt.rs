@@ -143,7 +143,7 @@ pub unsafe fn init_bsp_after_mem(kpcr: *mut ProcessorControlRegion) {
     core::mem::forget(kstack);
 
     unsafe {
-        install_backup_stack(&mut *INIT_BSP_IDT.get(), stack_end as usize);
+        install_backup_stack(&mut *INIT_BSP_IDT.get(), stack_end as usize, kpcr);
     }
 }
 
@@ -159,7 +159,7 @@ pub fn allocate_and_init_idt(cpu_id: LogicalCpuId, kpcr: *mut ProcessorControlRe
 
     init_generic(cpu_id, idt);
     unsafe {
-        install_backup_stack(idt, backup_stack_end);
+        install_backup_stack(idt, backup_stack_end, kpcr);
     }
 
     idt
@@ -269,7 +269,11 @@ pub unsafe fn install_idt(idt_ptr: *mut Idt, cpu_id: LogicalCpuId) {
     }
 }
 #[cold]
-pub unsafe fn install_backup_stack(idt: &mut Idt, backup_stack_end: usize) {
+pub unsafe fn install_backup_stack(
+    idt: &mut Idt,
+    backup_stack_end: usize,
+    pcr: *mut ProcessorControlRegion,
+) {
     // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
     // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
     // considered the most fatal, especially Double Faults which are caused by errors __when
@@ -283,7 +287,7 @@ pub unsafe fn install_backup_stack(idt: &mut Idt, backup_stack_end: usize) {
 
     #[cfg(target_arch = "x86_64")] // TODO: x86
     unsafe {
-        (*crate::arch::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] = backup_stack_end as u64;
+        (*pcr).tss.ist[usize::from(BACKUP_IST - 1)] = backup_stack_end as u64;
     }
 }
 
