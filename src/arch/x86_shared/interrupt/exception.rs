@@ -19,7 +19,7 @@ interrupt_stack!(divide_by_zero, |stack| {
     });
 });
 
-interrupt_stack!(debug, @paranoid, |stack| {
+interrupt_stack!(debug, |stack| {
     let mut handled = false;
 
     // Disable singlestep before there is a breakpoint, since the breakpoint
@@ -49,9 +49,15 @@ interrupt_stack!(debug, @paranoid, |stack| {
     }
 });
 
-interrupt_stack!(non_maskable, @paranoid, |stack| {
+interrupt_stack!(non_maskable, |stack| {
+    // NOTE: All NMI handler code will inherently be dangerous, as this can e.g. be triggered with
+    // GSBASE and KERNEL_GSBASE reversed. NMIs must never result in context switches (until they
+    // IRETQ at least).
+
     #[cfg(target_arch = "x86_64")]
-    unsafe { crate::profiling::nmi_handler(stack) };
+    unsafe {
+        crate::profiling::nmi_handler(stack)
+    };
 
     #[cfg(not(all(target_arch = "x86_64", feature = "profiling")))]
     {
@@ -272,7 +278,7 @@ interrupt_error!(alignment_check, |stack, code| {
     });
 });
 
-interrupt_stack!(machine_check, @paranoid, |stack| {
+interrupt_stack!(machine_check, |stack| {
     println!("Machine check fault");
     stack.trace();
     unsafe {

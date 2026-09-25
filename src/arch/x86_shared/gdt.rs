@@ -351,13 +351,13 @@ pub unsafe fn install_pcr(pcr_ptr: *mut ProcessorControlRegion) {
         // GSBASE is set later.
         segmentation::load_gs(SegmentSelector::from_raw(0));
 
-        // Ensure that GSBASE always points to the PCR in kernel space.
-        x86::msr::wrmsr(x86::msr::IA32_GS_BASE, pcr as *mut _ as usize as u64);
+        // KERNEL_GSBASE is only used briefly in the syscall handler (unlike on other kernels like
+        // Linux where GSBASE is immediately swapped with KERNEL_GSBASE when entering the kernel),
+        // since this kernel instead use naturally aligned stacks for percpu.
+        x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, pcr as *mut _ as usize as u64);
 
-        // While GSBASE points to the PCR in kernel space, userspace is free to set it to other values.
-        // Zero-initialize userspace's GSBASE. The reason the GSBASE register writes are reversed, is
-        // because entering usermode will entail executing the SWAPGS instruction.
-        x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, 0);
+        // Set the userspace GSBASE to zero.
+        x86::msr::wrmsr(x86::msr::IA32_GS_BASE, 0);
 
         // Set the userspace FSBASE to zero.
         x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);

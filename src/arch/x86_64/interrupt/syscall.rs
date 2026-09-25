@@ -104,6 +104,7 @@ pub unsafe extern "C" fn syscall_instruction() {
     "push r11;",                  // Push rflags
     "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
     "push rcx;",                  // Push userspace return pointer
+    "swapgs;",                    // Restore user GSBASE by swapping GSBASE and KGSBASE.
 
     // Push context registers
     "push rax;",
@@ -122,9 +123,6 @@ pub unsafe extern "C" fn syscall_instruction() {
     // Pop context registers
     pop_preserved!(),
     pop_scratch!(),
-
-    // Restore user GSBASE by swapping GSBASE and KGSBASE.
-    "swapgs;",
 
     // TODO: Should we unconditionally jump or avoid jumping, to hint to the branch predictor that
     // singlestep is NOT set?
