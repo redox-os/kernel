@@ -1,6 +1,6 @@
 //! Global descriptor table
 
-use core::ptr;
+use core::{cell::SyncUnsafeCell, ptr};
 
 #[cfg(target_arch = "x86")]
 use x86::bits32::task::TaskStateSegment;
@@ -167,6 +167,8 @@ pub struct ProcessorControlRegion {
     pub _iobitmap: [u8; IOBITMAP_SIZE as usize],
     pub _all_ones: u8,
 }
+unsafe impl Send for ProcessorControlRegion {}
+unsafe impl Sync for ProcessorControlRegion {}
 
 const _: () = {
     if core::mem::offset_of!(ProcessorControlRegion, tss) % 16 != 0 {
@@ -208,7 +210,11 @@ pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     // aligned (64 KiB).
 
     // TODO: downgrade to debug_assert_eq
-    assert_eq!(stack % (PAGE_SIZE << 4), 0);
+
+    assert_eq!(
+        stack.wrapping_add(crate::arch::KSTACK_ADJUST) % (PAGE_SIZE << 4),
+        0
+    );
 
     #[cfg(target_arch = "x86")]
     unsafe {
@@ -283,8 +289,13 @@ fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
     // Since the TSS stack pointer is always set in context::arch::switch_to, we can safely set it
     // to 0 here, resulting in a double-fault if userspace was somehow entered without updating the
     // TSS value.
+    let tss_rsp = if pcr.percpu.cpu_id == LogicalCpuId::BSP {
+        usize::wrapping_neg(crate::arch::KSTACK_ADJUST)
+    } else {
+        stack_end
+    };
     unsafe {
-        set_tss_stack(pcr, 0);
+        set_tss_stack(pcr, tss_rsp);
     }
 }
 
@@ -347,13 +358,14 @@ pub unsafe fn install_pcr(pcr_ptr: *mut ProcessorControlRegion) {
 
 /// Initialize GDT and configure percpu for the BSP.
 #[cold]
-pub unsafe fn init_bsp(stack_end: usize) {
-    static mut BSP_PCR: ProcessorControlRegion =
-        ProcessorControlRegion::new_partial_init(LogicalCpuId::BSP);
+pub unsafe fn init_bsp(stack_end: usize) -> *mut ProcessorControlRegion {
+    static BSP_PCR: SyncUnsafeCell<ProcessorControlRegion> =
+        SyncUnsafeCell::new(ProcessorControlRegion::new_partial_init(LogicalCpuId::BSP));
 
-    init_pcr(unsafe { &mut *ptr::addr_of_mut!(BSP_PCR) }, stack_end);
+    init_pcr(unsafe { &mut *BSP_PCR.get() }, stack_end);
 
-    unsafe { install_pcr(ptr::addr_of_mut!(BSP_PCR)) };
+    unsafe { install_pcr(BSP_PCR.get()) };
+    BSP_PCR.get()
 }
 
 #[cold]

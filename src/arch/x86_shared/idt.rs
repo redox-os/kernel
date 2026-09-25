@@ -9,6 +9,7 @@ use x86::{
 
 use crate::{
     arch::{
+        gdt::ProcessorControlRegion,
         interrupt::{
             irq::{__generic_interrupts_end, __generic_interrupts_start},
             *,
@@ -133,8 +134,11 @@ pub unsafe fn init_bsp_before_mem() {
     }
 }
 #[cold]
-pub unsafe fn init_bsp_after_mem() {
-    let kstack = Kstack::new().expect("failed to allocate backup stack");
+pub unsafe fn init_bsp_after_mem(kpcr: *mut ProcessorControlRegion) {
+    let mut kstack = Kstack::new().expect("failed to allocate backup stack");
+    unsafe {
+        kstack.set_archpercpu(kpcr as usize);
+    }
     let stack_end = kstack.initial_top();
     core::mem::forget(kstack);
 
@@ -143,10 +147,13 @@ pub unsafe fn init_bsp_after_mem() {
     }
 }
 
-pub fn allocate_and_init_idt(cpu_id: LogicalCpuId) -> *mut Idt {
+pub fn allocate_and_init_idt(cpu_id: LogicalCpuId, kpcr: *mut ProcessorControlRegion) -> *mut Idt {
     let idt = Box::leak(Box::new(Idt::new()));
 
-    let backup_stack = Kstack::new().expect("failed to allocate AP's backup interrupt stack");
+    let mut backup_stack = Kstack::new().expect("failed to allocate AP's backup interrupt stack");
+    unsafe {
+        backup_stack.set_archpercpu(kpcr as usize);
+    }
     let backup_stack_end = backup_stack.initial_top() as usize;
     core::mem::forget(backup_stack);
 

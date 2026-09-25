@@ -48,3 +48,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
 pub use arch_copy_to_user as arch_copy_from_user;
 
 pub use alternative::kfx_size;
+
+// Make the stack start at top - 16 to have space for the KPCR pointer followed by a
+// noncanonical "0xbadbadbadbadbad guard".
+pub const KSTACK_ADJUST: usize = 16;

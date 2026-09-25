@@ -8,7 +8,7 @@ use core::{
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
-    arch::interrupt::InterruptStack,
+    arch::{interrupt::InterruptStack, KSTACK_ADJUST},
     common::aligned_box::AlignedBox,
     context::{
         self, arch,
@@ -602,12 +602,26 @@ pub struct Kstack {
 impl Kstack {
     pub fn new() -> Result<Self, Enomem> {
         let must_be_zero = true;
-        Ok(Self {
+        let mut this = Self {
             base: allocate_p2frame(4, must_be_zero).ok_or(Enomem)?,
-        })
+        };
+        let guard = usize::try_from(0xbadbadbadbadbad_u64).unwrap_or(0xbadbadbad as usize);
+        unsafe {
+            this.initial_top().cast::<usize>().write(guard);
+        }
+        Ok(this)
+    }
+    pub unsafe fn set_archpercpu(&mut self, archpercpu: usize) {
+        unsafe {
+            self.initial_top().cast::<usize>().add(1).write(archpercpu);
+        }
     }
     pub fn initial_top(&self) -> *mut u8 {
-        unsafe { (RmmA::phys_to_virt(self.base.base()).data() as *mut u8).add(PAGE_SIZE << 4) }
+        unsafe {
+            (RmmA::phys_to_virt(self.base.base()).data() as *mut u8)
+                .add(PAGE_SIZE << 4)
+                .sub(KSTACK_ADJUST)
+        }
     }
     pub fn initial_top_phys(&self) -> usize {
         self.base.base().data() + self.len()

@@ -93,7 +93,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
         args.print();
 
         // Set up GDT
-        gdt::init_bsp(stack_end);
+        let kpcr = gdt::init_bsp(stack_end);
 
         // Set up IDT, except its IST
         idt::init_bsp_before_mem();
@@ -118,12 +118,12 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
         crate::memory::init_mm(mapper.allocator_mut());
 
         // Set up the IDT's IST
-        idt::init_bsp_after_mem();
+        idt::init_bsp_after_mem(kpcr);
 
         let mut kstack_slot = None;
-        let kmain_kstack_top = kstack_slot
-            .insert(Kstack::new().expect("failed to allocate main kstack"))
-            .initial_top();
+        let mut kmain_kstack = Kstack::new().expect("failed to allocate main kstack");
+        kmain_kstack.set_archpercpu(kpcr as usize);
+        let kmain_kstack_top = kstack_slot.insert(kmain_kstack).initial_top();
 
         #[cfg(target_arch = "x86_64")]
         core::arch::asm!("
