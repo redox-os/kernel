@@ -641,7 +641,6 @@ impl AddrSpace {
             .ok_or(Error::new(ESRCH))
     }
 
-    #[cfg(all(feature = "numa", target_arch = "x86_64"))]
     pub fn current_table(&self) -> &Table {
         if !numa::is_supported() {
             return &self.root_table;
@@ -650,13 +649,6 @@ impl AddrSpace {
         self.replicas.get(&node_id).unwrap_or(&self.root_table)
     }
 
-    #[cfg(any(not(feature = "numa"), not(target_arch = "x86_64")))]
-    #[inline(always)]
-    pub fn current_table(&self) -> &Table {
-        &self.root_table
-    }
-
-    #[cfg(all(feature = "numa", target_arch = "x86_64"))]
     pub fn current_table_mut(&mut self) -> &mut Table {
         if !numa::is_supported() {
             return &mut self.root_table;
@@ -665,12 +657,6 @@ impl AddrSpace {
         self.replicas
             .get_mut(&node_id)
             .unwrap_or(&mut self.root_table)
-    }
-
-    #[cfg(any(not(feature = "numa"), not(target_arch = "x86_64")))]
-    #[inline(always)]
-    pub fn current_table_mut(&mut self) -> &mut Table {
-        &mut self.root_table
     }
 
     /// Unmaps from all page tables of this address space.
@@ -740,7 +726,6 @@ impl AddrSpace {
         PageFlags<RmmA>,
         Option<u32>,
     )> {
-        let owning_node_id = None;
         let mut f_root = None;
 
         let f = unsafe {
