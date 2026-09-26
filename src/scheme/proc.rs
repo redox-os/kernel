@@ -3,11 +3,13 @@ use crate::{
         self,
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
-        memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
+        memory::{
+            handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, Table, UnmapVec,
+        },
         unblock_context, wakeup_context, Context, ContextLock, Status,
     },
     cpu_id,
-    memory::{Page, VirtualAddress, PAGE_SIZE},
+    memory::{deallocate_frame, Frame, Page, VirtualAddress, PAGE_SIZE},
     numa, ptrace,
     scheme::{
         self,
@@ -35,6 +37,7 @@ use alloc::{
 use core::{
     mem::size_of,
     num::NonZeroUsize,
+    ops::Not,
     slice, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -42,6 +45,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
+use rmm::{x86_64::X8664Arch, PageTable};
 use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
@@ -1691,7 +1695,71 @@ impl ContextHandle {
                 )
                 .ok_or(Error::new(EINVAL))?;
 
-                let NumaVerb::MemPolicy = op;
+                match op {
+                    NumaVerb::MemPolicy => (),
+                    NumaVerb::ReplicateTo => {
+                        if !numa::is_supported() {
+                            return Err(Error::new(EOPNOTSUPP));
+                        }
+
+                        let mut addrspace_lock = addrspace.acquire_write(token.downgrade());
+
+                        let target_node = unsafe { payload.read_exact::<u32>()? };
+
+                        if numa::exists(target_node) {
+                            if !numa::exists_with_memory(target_node) {
+                                return Err(Error::new(ENOMEM));
+                            }
+                        } else {
+                            return Err(Error::new(ENXIO));
+                        }
+
+                        // if the target node already has a local page table
+                        if addrspace_lock.owning_table_or(target_node).1 == target_node {
+                            return Err(Error::new(EEXIST));
+                        }
+
+                        let new_table = if let Some(page_table) =
+                            addrspace_lock.replica_cache.remove(&target_node)
+                        {
+                            page_table
+                        } else {
+                            let page_table = addrspace_lock.current_table();
+
+                            page_table.try_clone(
+                                target_node,
+                                page_table.utable.allocator().0,
+                                page_table.utable.allocator().1,
+                                true, // when one wishes to place the page tables on a
+                                      // particular node, one generally doesn't want those
+                                      //  pages to be placed on other nodes, so strict.
+                                      // If one really wants to fallback on failure,
+                                      // one can use the implicit page table replication
+                                      // on context migration
+                            )?
+                        };
+
+                        addrspace_lock
+                            .add_replica(new_table, target_node)
+                            .then_some(())
+                            .ok_or(Error::new(EEXIST))?;
+                    }
+                    NumaVerb::Drop => {
+                        let numa_node_id = *metadata.get(1).ok_or(Error::new(EINVAL))? as u32;
+                        let mut addrspace = addrspace.acquire_write(token.downgrade());
+                        if let Some(table) = addrspace.remove_replica(numa_node_id) {
+                            addrspace.replica_cache.insert(numa_node_id, table);
+                            return Ok(0);
+                        }
+
+                        if addrspace.root_table_node_id() == numa_node_id {
+                            let (old_node, old_table) =
+                                addrspace.swap_root_table(None).ok_or(Error::new(EPERM))?;
+                            addrspace.replica_cache.insert(old_node, old_table);
+                        }
+                        return Ok(0);
+                    }
+                }
 
                 if !numa::is_supported() {
                     return Err(Error::new(EOPNOTSUPP));
@@ -1699,12 +1767,13 @@ impl ContextHandle {
 
                 if flags.contains(CallFlags::WRITE) {
                     let mut addrspace = addrspace.acquire_write(token.downgrade());
-                    addrspace.table.utable.allocator_mut().0 =
+                    addrspace.current_table_mut().utable.allocator_mut().0 =
                         NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
                 }
                 if flags.contains(CallFlags::READ) {
                     let addrspace = addrspace.acquire_read(token.downgrade());
-                    let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
+                    let mem_policy =
+                        (addrspace.current_table().utable.allocator().0 as u32).to_ne_bytes();
                     payload.copy_from_slice(&mem_policy)?;
                 }
                 Ok(0)

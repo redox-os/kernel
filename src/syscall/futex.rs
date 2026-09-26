@@ -18,6 +18,7 @@ use crate::{
         unblock_context, ContextLock,
     },
     memory::{Page, PhysicalAddress, VirtualAddress},
+    numa,
     sync::{CleanLockToken, Mutex, L1},
 };
 
@@ -65,7 +66,27 @@ fn validate_and_translate_virt(space: &AddrSpace, addr: VirtualAddress) -> Optio
     let page = Page::containing_address(addr);
     let off = addr.data() - page.start_address().data();
 
-    let (frame, _) = space.table.utable.translate(page.start_address())?;
+    if !numa::is_supported() {
+        return Some(
+            space
+                .current_table()
+                .utable
+                .translate(page.start_address())?
+                .0
+                .add(off),
+        );
+    }
+    let (frame, _) = if let Some((_, gi)) = space.grants.contains(Page::containing_address(addr)) {
+        space
+            .owning_table(gi.owner)
+            .utable
+            .translate(page.start_address())?
+    } else {
+        space
+            .current_table()
+            .utable
+            .translate(page.start_address())?
+    };
 
     Some(frame.add(off))
 }

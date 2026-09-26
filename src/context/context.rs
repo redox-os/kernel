@@ -21,6 +21,7 @@ use crate::{
         allocate_p2frame, deallocate_p2frame, Enomem, Frame, FrameAllocated, RaiiFrame, RmmA,
         RmmArch, PAGE_SIZE,
     },
+    numa,
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
     sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
@@ -413,8 +414,9 @@ impl Context {
                 Some(ref new) => {
                     new.used_by.atomic_set(this_percpu.cpu_id);
                     let new_addrsp = new.acquire_read(token);
+
                     unsafe {
-                        new_addrsp.table.utable.make_current();
+                        new_addrsp.current_table().utable.make_current();
                     }
                 }
                 _ => unsafe {
