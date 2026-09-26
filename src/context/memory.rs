@@ -726,8 +726,6 @@ impl AddrSpace {
         PageFlags<RmmA>,
         Option<u32>,
     )> {
-        let mut f_root = None;
-
         let f = unsafe {
             self.root_table
                 .utable
@@ -747,8 +745,8 @@ impl AddrSpace {
             if f.is_none() {
                 return None;
             }
-            f_root = f;
         }
+        let mut f_root = f;
 
         unsafe {
             for (node_id, mapper) in self
