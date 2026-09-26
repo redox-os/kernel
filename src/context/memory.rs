@@ -495,7 +495,6 @@ impl AddrSpaceWrapper {
 
         let mut prev_grant_end = src_span.base;
 
-        let dst_root_table_node_id = dst.root_table_node_id;
         //while let Some(grant_base) = next(src_opt.as_mut().map(|s| &mut **s), dst, remaining_src_span) {
         for grant_base in to_remap {
             if prev_grant_end < grant_base {
@@ -504,17 +503,14 @@ impl AddrSpaceWrapper {
                     dst_base.next_by(prev_grant_end.offset_from(src_span.base)),
                     hole_page_count,
                 );
-                dst.grants.insert({
-                    let mut grant = Grant::zeroed(
-                        hole_span,
-                        page_flags(new_flags),
-                        &mut dst.root_table.utable,
-                        &mut dst_flusher,
-                        false,
-                    )?;
-                    grant.info.owner = dst_root_table_node_id;
-                    grant
-                });
+                let grant = Grant::zeroed(
+                    hole_span,
+                    page_flags(new_flags),
+                    &mut dst.current_table_mut().utable,
+                    &mut dst_flusher,
+                    false,
+                )?;
+                dst.grants.insert(grant);
             }
 
             let src_grants = src_opt
@@ -538,7 +534,7 @@ impl AddrSpaceWrapper {
             let dst_grant_base = dst_base.next_by(middle.base.offset_from(src_span.base));
             let middle_span = middle.span();
 
-            let mut new_grant = match src_opt.as_mut() {
+            let new_grant = match src_opt.as_mut() {
                 Some((other_flusher, other)) => middle.transfer(
                     dst_grant_base,
                     page_flags(new_flags),
@@ -556,7 +552,6 @@ impl AddrSpaceWrapper {
                     &mut NopFlusher,
                 )?,
             };
-            new_grant.info.owner = dst_root_table_node_id;
 
             dst.grants.insert(new_grant);
 
@@ -572,14 +567,13 @@ impl AddrSpaceWrapper {
                 new_page_count - prev_grant_end.offset_from(src_span.base),
             );
             dst.grants.insert({
-                let mut grant = Grant::zeroed(
+                let grant = Grant::zeroed(
                     last_hole_span,
                     page_flags(new_flags),
                     &mut dst.root_table.utable,
                     &mut dst_flusher,
                     false,
                 )?;
-                grant.info.owner = dst_root_table_node_id;
                 grant
             });
         }
@@ -2289,6 +2283,8 @@ impl Grant {
         }
 
         self.base = dst_base;
+        // LPGTBL OWNER UPDATE
+        self.info.owner = numa::current_node_id().unwrap_or(0);
         Ok(self)
     }
 
