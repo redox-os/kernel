@@ -27,6 +27,7 @@ use crate::{
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
+    numa,
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{

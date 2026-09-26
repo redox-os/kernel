@@ -600,8 +600,10 @@ impl AddrSpaceWrapper {
         }
 
         let mut guard_lock = None;
-        let frame = if let Some((f, fl)) =
-            guard.current_table().utable.translate(page.start_address())
+        let frame = if let Some((f, fl)) = guard
+            .owning_table(info.owner)
+            .utable
+            .translate(page.start_address())
             && fl.has_write()
         {
             Frame::containing(f)
@@ -738,6 +740,7 @@ impl AddrSpace {
         PageFlags<RmmA>,
         Option<u32>,
     )> {
+        let owning_node_id = None;
         let mut f_root = None;
 
         let f = unsafe {
@@ -1998,11 +2001,15 @@ impl Grant {
                 .enumerate()
                 .take(MAX_EAGER_PAGES)
             {
-                let Some((phys, _)) = src_address_space
-                    .current_table()
-                    .utable
-                    .translate(page.start_address())
-                else {
+                let table = if !numa::is_supported() {
+                    src_address_space.current_table()
+                } else if let Some((_, gi)) = src_address_space.grants.contains(page) {
+                    src_address_space.owning_table(gi.owner)
+                } else {
+                    src_address_space.current_table()
+                };
+
+                let Some((phys, _)) = table.utable.translate(page.start_address()) else {
                     continue;
                 };
 
@@ -3082,7 +3089,7 @@ fn correct_inner<'l>(
                 Some((_, gi)) => {
                     let owner = gi.owner;
                     let src_frame = match guard
-                        .current_table()
+                        .owning_table(gi.owner)
                         .utable
                         .translate(src_page.start_address())
                     {

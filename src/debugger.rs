@@ -227,7 +227,7 @@ fn dump_stack(context: &Context, mut sp: usize) {
         if context.addr_space.as_ref().map_or(false, |space| {
             space
                 .acquire_read(token.downgrade())
-                .table
+                .current_table()
                 .utable
                 .translate(crate::memory::VirtualAddress::new(sp))
                 .is_some()
@@ -357,7 +357,7 @@ unsafe fn check_page_table_consistency(
     /*for (base, info) in addr_space.grants.iter() {
         let span = PageSpan::new(base, info.page_count());
         for page in span.pages() {
-            let _entry = match addr_space.table.utable.translate(page.start_address()) {
+            let _entry = match addr_space.current_table().utable.translate(page.start_address()) {
                 Some(e) => e,
                 None => {
                     error!("GRANT AT {:?} LACKING MAPPING AT PAGE {:p}", span, page.start_address().data() as *const u8);
