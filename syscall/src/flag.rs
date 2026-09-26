@@ -330,17 +330,15 @@ impl AcpiVerb {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NumaVerb {
     MemPolicy = 1,
-    ReplicatePageTables = 2,
-    ReplicateTo = 3,
-    Drop = 4,
+    ReplicateTo = 2,
+    Drop = 3,
 }
 impl NumaVerb {
     pub fn try_from_raw(value: u64) -> Option<Self> {
         Some(match value {
             1 => Self::MemPolicy,
-            2 => Self::ReplicatePageTables,
-            3 => Self::ReplicateTo,
-            4 => Self::Drop,
+            2 => Self::ReplicateTo,
+            3 => Self::Drop,
             _ => return None,
         })
     }

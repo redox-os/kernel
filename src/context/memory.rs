@@ -159,10 +159,6 @@ pub struct AddrSpace {
     /// we can simply reuse these.
     pub replica_cache: hashbrown::HashMap<u32, Table>,
 
-    /// Indicates whether page tables will be replicated when a context starts running
-    /// on another node and if the node doesn't already have a replica.
-    pub replicate_on_node_switch: bool,
-
     pub grants: UserGrants,
     /// Lowest offset for mmap invocations where the user has not already specified the offset
     /// (using MAP_FIXED/MAP_FIXED_NOREPLACE). Cf. Linux's `/proc/sys/vm/mmap_min_addr`, but with
@@ -184,7 +180,6 @@ impl AddrSpaceWrapper {
         let allocator = new.inner.get_mut().root_table.utable.allocator_mut();
         allocator.0 = guard.root_table.utable.allocator().0;
         allocator.1 = guard.root_table.utable.allocator().1;
-        new.inner.get_mut().replicate_on_node_switch = guard.replicate_on_node_switch;
 
         // It's okay to use the field directly here instead of the method `current_table_mut`
         // because, the grants will be copied to the new address space
@@ -838,7 +833,6 @@ impl AddrSpace {
             replicas: hashbrown::HashMap::new(),
             root_table_node_id: node_id,
             replica_cache: hashbrown::HashMap::new(),
-            replicate_on_node_switch: true,
         })
     }
     fn munmap_inner(

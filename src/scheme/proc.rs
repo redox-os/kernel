@@ -1697,18 +1697,6 @@ impl ContextHandle {
 
                 match op {
                     NumaVerb::MemPolicy => (),
-                    NumaVerb::ReplicatePageTables => {
-                        if flags.contains(CallFlags::READ) {
-                            let addrspace = addrspace.acquire_read(token.downgrade());
-                            return Ok(addrspace.replicate_on_node_switch as usize);
-                        }
-                        if !flags.contains(CallFlags::WRITE) {
-                            return Err(Error::new(EINVAL));
-                        }
-                        let mut addrspace = addrspace.acquire_write(token.downgrade());
-                        addrspace.replicate_on_node_switch = !addrspace.replicate_on_node_switch;
-                        return Ok(addrspace.replicate_on_node_switch as usize);
-                    }
                     NumaVerb::ReplicateTo => {
                         if !numa::is_supported() {
                             return Err(Error::new(EOPNOTSUPP));
