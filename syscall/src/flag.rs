@@ -247,11 +247,13 @@ impl ContextVerb {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum AddrSpaceVerb {
+    NumaPolicy = 1,
     MmapMin = 255,
 }
 impl AddrSpaceVerb {
     pub fn try_from_raw(verb: u8) -> Option<Self> {
         Some(match verb {
+            1 => Self::NumaPolicy,
             255 => Self::MmapMin,
 
             _ => return None,
@@ -322,19 +324,6 @@ impl AcpiVerb {
             1 => Self::ReadRxsdt,
             2 => Self::CheckShutdown,
             3 => Self::Msr,
-            _ => return None,
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NumaVerb {
-    MemPolicy = 1,
-}
-impl NumaVerb {
-    pub fn try_from_raw(value: u64) -> Option<Self> {
-        Some(match value {
-            1 => Self::MemPolicy,
             _ => return None,
         })
     }

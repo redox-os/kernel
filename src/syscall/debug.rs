@@ -223,7 +223,10 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
         let context_lock = crate::context::current();
         {
             let context = context_lock.read(token.token());
-            print!("{} (*{}*): ", context.name, context.pid,);
+            print!(
+                "{} (*{}/{}*): ",
+                context.name, context.pid, context.debug_id
+            );
         }
 
         // Do format_call outside print! so possible exception handlers cannot reentrantly
@@ -268,7 +271,10 @@ pub fn debug_end(
     let context_lock = crate::context::current();
     {
         let context = context_lock.read(token.token());
-        print!("{} (*{}*): ", context.name, context.pid,);
+        print!(
+            "{} (*{}/{}*): ",
+            context.name, context.pid, context.debug_id
+        );
     }
 
     // Do format_call outside print! so possible exception handlers cannot reentrantly
