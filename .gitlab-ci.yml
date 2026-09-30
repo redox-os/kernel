@@ -100,7 +100,9 @@ x86_64:clippy:
   stage: build
   needs: [x86_64]
   script:
-  - redoxer clippy
+  - redoxer clippy -- -- -Dwarnings --allow clippy::missing_safety_doc --allow dead_code --allow clippy::arithmetic_side_effects --allow clippy::assertions_on_constants --allow clippy::cast_ptr_alignment --allow clippy::indexing_slicing --allow clippy::unwrap_used --allow unused_variables
+  - redoxer clippy -- --features self_modifying,lpss_debug,numa,profiling,drop_panic,busy_panic,qemu_debug,system76_ec_debug,debugger,syscall_debug,sys_fdstat,numa -- -Dwarnings --allow clippy::missing_safety_doc --allow dead_code --allow clippy::arithmetic_side_effects --allow clippy::assertions_on_constants --allow clippy::cast_ptr_alignment --allow clippy::indexing_slicing --allow clippy::unwrap_used --allow unused_variables
+  - redoxer clippy  # Display warnings outside the allow list, but ignore them
   variables:
     ARCH: "x86_64"
 
