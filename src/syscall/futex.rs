@@ -248,7 +248,8 @@ pub fn futex(
                 let (futexes_map, mut token) = futexes_map.token_split();
 
                 let is_empty = if let Some(futexes) = futexes_map.get_mut(&target_physaddr) {
-                    let mut i = 0;
+                    let i = 0; // FIXME: should be mut, https://gitlab.redox-os.org/redox-os/kernel/-/work_items/209
+
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                     while i < futexes.len() && woken < val {
                         // SAFETY: already verified index is less than length
