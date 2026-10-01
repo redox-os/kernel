@@ -806,7 +806,6 @@ impl UserInner {
                 extra0,
                 meta,
             } => {
-                let cap_rights = CapRights::from_bits_retain(meta[0]);
                 let response = Response::Regular(res, extra0, false, meta);
                 self.respond(tag, response, token)?;
             }
@@ -2056,17 +2055,23 @@ impl KernelScheme for UserScheme {
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = descs.len();
+        let mut buf: [u64; 6] = [
+            number as u64,
+            sendfd_flags.bits() as u64,
+            len as u64,
+            0,
+            0,
+            0,
+        ];
+        let dst = &mut buf[3..];
+        let len = dst.len().min(metadata.len());
+        dst[..len].copy_from_slice(&metadata[..len]);
         inner
             .call(
                 ctx,
                 descs,
                 Opcode::Sendfd,
-                [
-                    number,
-                    sendfd_flags.bits(),
-                    *metadata.first().unwrap_or(&0) as usize,
-                    len,
-                ],
+                buf,
                 &mut PageSpan::empty(),
                 token,
                 DEF_ALLOW_DIRECT_SWITCH,
@@ -2092,17 +2097,15 @@ impl KernelScheme for UserScheme {
         }
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / size_of::<usize>();
+        let mut buf: [u64; 6] = [id as u64, recvfd_flags.bits() as u64, len as u64, 0, 0, 0];
+        let dst = &mut buf[3..];
+        let len = dst.len().min(metadata.len());
+        dst[..len].copy_from_slice(&metadata[..len]);
         let res = inner.call(
             ctx,
             Vec::new(),
             Opcode::Recvfd,
-            [
-                id,
-                recvfd_flags.bits(),
-                len,
-                *metadata.first().unwrap_or(&0) as usize,
-                *metadata.get(1).unwrap_or(&0) as usize,
-            ],
+            buf,
             &mut PageSpan::empty(),
             token,
             DEF_ALLOW_DIRECT_SWITCH,
