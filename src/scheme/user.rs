@@ -1701,6 +1701,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner.todo.send(
             Sqe {
                 opcode: Opcode::CloseMsg as u8,
@@ -1708,8 +1709,8 @@ impl KernelScheme for UserScheme {
                 _rsvd: 0,
                 tag: 0,
                 args: [id as u64, 0, 0, 0, 0, 0, 0, 0],
-                caller: 0,     // TODO?
-                caller_ctx: 0, // TODO?
+                caller: ctx.pid as u64,
+                caller_ctx: uid_gid_hack_merge([ctx.uid, ctx.gid]),
                 _rsvd2: [0u64; 5],
             },
             token,
