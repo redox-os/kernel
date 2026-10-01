@@ -85,28 +85,4 @@ impl<T> WaitQueue<T> {
         self.condition.notify_locked(token);
         len
     }
-
-    pub fn send_batch(
-        &self,
-        values: impl IntoIterator<Item = T>,
-        token: &mut CleanLockToken,
-    ) -> usize {
-        self.send_batch_locked(values, token.token().downgrade())
-    }
-
-    pub fn send_batch_locked(
-        &self,
-        values: impl IntoIterator<Item = T>,
-        mut token: LockToken<'_, L1>,
-    ) -> usize {
-        let len = {
-            let mut inner = self.inner.lock(token.token());
-            for v in values {
-                inner.push_back(v);
-            }
-            inner.len()
-        };
-        self.condition.notify_locked(token);
-        len
-    }
 }

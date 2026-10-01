@@ -423,10 +423,10 @@ impl KernelScheme for SchemeList {
 
         let wrote_all = if flags.contains(CallFlags::WRITE) {
             let write_buf = payload
-                .limit(num_write * size_of::<syscall::schemev2::Cqe>())
+                .limit(num_write * size_of::<syscall::schemev3::Cqe>())
                 .ok_or(Error::new(EINVAL))?;
             let num_wrote = inner.write(write_buf.reinterpret_unchecked(), token)?
-                / size_of::<syscall::schemev2::Cqe>();
+                / size_of::<syscall::schemev3::Cqe>();
             num_processed += num_wrote;
             num_wrote == num_write
         } else {
@@ -434,12 +434,12 @@ impl KernelScheme for SchemeList {
         };
         if wrote_all && flags.contains(CallFlags::READ) {
             let read_buf = payload
-                .limit(num_read * size_of::<syscall::schemev2::Sqe>())
+                .limit(num_read * size_of::<syscall::schemev3::Sqe>())
                 .ok_or(Error::new(EINVAL))?;
             let flags = 0; // TODO: allow specifying nonblock
             match inner.read(read_buf.reinterpret_unchecked(), flags, token) {
                 Ok(bytes_read) => {
-                    let num_read = bytes_read / size_of::<syscall::schemev2::Sqe>();
+                    let num_read = bytes_read / size_of::<syscall::schemev3::Sqe>();
                     num_processed += num_read;
                 }
                 Err(_e) if num_processed > 0 => (),

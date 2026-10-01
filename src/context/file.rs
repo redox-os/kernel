@@ -11,7 +11,7 @@ use crate::{
 };
 use alloc::sync::{Arc, Weak};
 use syscall::{
-    schemev2::NewFdFlags, CapRights, Error, GlobalSchemes, RwFlags, ENODEV, O_APPEND, O_NONBLOCK,
+    schemev3::NewFdFlags, CapRights, Error, GlobalSchemes, RwFlags, ENODEV, O_APPEND, O_NONBLOCK,
 };
 
 pub type LockedFileDescription = RwLock<L6, FileDescription>;
