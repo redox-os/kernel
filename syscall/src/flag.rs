@@ -531,9 +531,15 @@ pub enum StdFsCallKind {
     GetLock = 14,
     Frenameat = 15,
     Flinkat = 16,
+
+    #[doc(hidden)]
+    _MaxSentinel,
 }
 
 impl StdFsCallKind {
+    pub const fn max() -> u8 {
+        (Self::_MaxSentinel as u8) - 1
+    }
     pub fn try_from_raw(raw: u8) -> Option<Self> {
         use StdFsCallKind::*;
 
