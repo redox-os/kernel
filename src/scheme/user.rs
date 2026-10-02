@@ -8,7 +8,8 @@ use core::{
 };
 use slab::Slab;
 use syscall::{
-    schemev3::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
+    schemev2::{Opcode, SqeFlags},
+    schemev3::{Cqe, CqeOpcode, Sqe},
     CallFlags, CapRights, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
     SendFdFlags, StdFsCallKind, EVENT_HUP, MAP_FIXED_NOREPLACE,
 };
