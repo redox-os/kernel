@@ -3,7 +3,7 @@
 
 use core::ptr::NonNull;
 
-use alloc::{boxed::Box, string::String, vec::Vec};
+use alloc::{string::String, vec::Vec};
 
 use hashbrown::HashMap;
 use rmm::{BumpAllocator, FrameAllocator, PageMapper};
@@ -11,7 +11,7 @@ use spin::{Once, RwLock};
 
 use crate::{
     acpi::rxsdt::RxsdtIter,
-    memory::{KernelMapper, PageFlags, PhysicalAddress, RmmA, RmmArch},
+    memory::{PageFlags, PhysicalAddress, RmmA, RmmArch},
 };
 
 use self::{hpet::Hpet, madt::Madt, rsdp::Rsdp, rsdt::Rsdt, rxsdt::Rxsdt, sdt::Sdt, xsdt::Xsdt};
@@ -24,11 +24,11 @@ mod rsdp;
 mod rsdt;
 mod rxsdt;
 pub mod sdt;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(target_arch = "x86_64")]
 pub mod slit;
 #[cfg(target_arch = "aarch64")]
 mod spcr;
-#[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+#[cfg(target_arch = "x86_64")]
 pub mod srat;
 mod xsdt;
 
@@ -37,6 +37,7 @@ unsafe fn map_linearly(
     len: usize,
     mapper: &mut PageMapper<RmmA, impl FrameAllocator>,
 ) {
+    // TODO: reuse helper in startup/memory?
     unsafe {
         let base = PhysicalAddress::new(crate::memory::round_down_pages(addr.data()));
         let aligned_len = crate::memory::round_up_pages(len + (addr.data() - base.data()));
@@ -46,6 +47,7 @@ unsafe fn map_linearly(
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new(),
+                    0,
                 )
                 .expect("failed to linearly map SDT");
             flush.flush();
@@ -153,14 +155,13 @@ pub unsafe fn init_before_mem(
             }
         } else {
             error!("NO RSDP FOUND");
-            return;
         }
     }
 }
 
 /// Parse the ACPI tables to gather CPU, interrupt, and timer information. The code performs allocations, so
 /// it must be called only after the allocator is set up.
-pub unsafe fn init_after_mem(already_supplied_rsdp: Option<NonNull<u8>>) {
+pub unsafe fn init_after_mem() {
     if let Some(rxsdt) = RXSDT_ENUM.get() {
         unsafe {
             {

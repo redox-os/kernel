@@ -1,13 +1,7 @@
-use core::{iter, slice};
-
-use hashbrown::HashMap;
-use rmm::{Arch, BumpAllocator, FrameAllocator, PhysicalAddress};
-
 use crate::{
     acpi::srat::{to_usize, Srat, SratEntry},
     cpu_set,
-    memory::{self, PAGE_SIZE},
-    numa::{self, assign_memory_id, NumaMemory},
+    numa::{self, NumaMemory},
 };
 
 #[inline(always)]
@@ -39,10 +33,10 @@ pub fn init_srat(
             }
         }
 
-        SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
-            if processor_local_affinity.flags & 1 != 0 {
-                cpu_count += 1
-            }
+        SratEntry::ProcessorLocalAffinity(processor_local_affinity)
+            if processor_local_affinity.flags & 1 != 0 =>
+        {
+            cpu_count += 1
         }
         _ => (),
     });
@@ -59,6 +53,9 @@ pub fn init_srat(
         "Found more number of CPUs than supported"
     );
 
+    let mut node_id = 0u32;
+    let mut memory_id = 0u32;
+
     for affinity in srat {
         match affinity {
             SratEntry::LegacyProcessorLocalAffinity(legacy_processor_local_affinity) => {
@@ -71,8 +68,8 @@ pub fn init_srat(
                     legacy_processor_local_affinity.proximity_domain_low,
                 );
                 if dom_node_map[dom as usize] == u32::MAX {
-                    let node_id = numa::assign_node_id(true);
-                    dom_node_map[dom as usize] = node_id as u32;
+                    dom_node_map[dom as usize] = node_id;
+                    node_id += 1;
                 }
                 cpus[legacy_processor_local_affinity.apic_id as usize] = dom_node_map[dom as usize];
             }
@@ -95,12 +92,12 @@ pub fn init_srat(
                 );
                 let length = to_usize(memory_affinity.length_low, memory_affinity.length_high);
                 if dom_node_map[dom as usize] == u32::MAX {
-                    let node_id = numa::assign_node_id(true);
-                    dom_node_map[dom as usize] = node_id as u32;
+                    dom_node_map[dom as usize] = node_id;
+                    node_id += 1;
                 }
-                let mem_id = assign_memory_id() as u32;
-                memories[mem_id as usize] =
+                memories[memory_id as usize] =
                     numa::NumaMemory::new(start, length, dom_node_map[dom as usize]);
+                memory_id += 1;
             }
             SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
                 if processor_local_affinity.flags & 1 == 0 {
@@ -109,8 +106,8 @@ pub fn init_srat(
                 }
                 let dom = processor_local_affinity.proximity_domain;
                 if dom_node_map[dom as usize] == u32::MAX {
-                    let node_id = numa::assign_node_id(true);
-                    dom_node_map[dom as usize] = node_id as u32;
+                    dom_node_map[dom as usize] = node_id;
+                    node_id += 1;
                 }
                 cpus[processor_local_affinity.x2apic_id as usize] = dom_node_map[dom as usize];
             }

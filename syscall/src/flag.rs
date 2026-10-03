@@ -457,6 +457,9 @@ bitflags! {
         /// has absolutely no effect on which signals are blocked etc. Meant to be used for
         /// short-lived critical sections inside libc.
         const INHIBIT_DELIVERY = 1;
+        /// Indicates userspace is running an exception handler, which means any new synchronous
+        /// exception will result in the termination of the current context ("double fault").
+        const HANDLING_EXCEPTION = 2;
     }
 }
 bitflags! {
@@ -490,6 +493,11 @@ bitflags! {
 
         /// Call is taking multiple fds as an argument
         const MULTIPLE_FDS = 1 << 17;
+
+        /// Allow current timeslice to be lent out to the callee, which will have a preference of
+        /// switching back to this context until the current timeslice is exhausted, after which
+        /// the scheduler will continue as if it was switching away from this context.
+        const ALLOW_DIRECT_SWITCH = 1 << 18;
     }
 }
 

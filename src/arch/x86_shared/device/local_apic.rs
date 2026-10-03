@@ -70,12 +70,15 @@ impl LocalApic {
 
             if !self.x2 {
                 debug!("Detected xAPIC at {:#x}", physaddr.data());
-                if let Some((_entry, _, flush)) = mapper.unmap_phys(virtaddr) {
+                if let Some((_entry, lvl, _, flush)) = mapper.unmap_phys(virtaddr) {
+                    assert_eq!(lvl, 0, "huge page overlapping with lAPIC mapping");
+
                     // Unmap xAPIC page if already mapped
                     flush.flush();
                 }
+
                 mapper
-                    .map_phys(virtaddr, physaddr, PageFlags::new().write(true))
+                    .map_phys(virtaddr, physaddr, PageFlags::new().write(true), 0)
                     .expect("failed to map local APIC memory")
                     .flush();
             } else {

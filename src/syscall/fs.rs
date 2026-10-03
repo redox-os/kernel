@@ -505,7 +505,7 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
 
         let mut files = context.files.write(token.token());
         let (files, mut token) = files.token_split();
-        match *files.get_mut(fd.get()).ok_or(Error::new(EBADF))? {
+        match files.get_file_mut(fd) {
             Some(ref mut file) => match cmd {
                 F_GETFD => Ok(0),
                 F_SETFD => Ok(0),
@@ -685,7 +685,7 @@ pub fn mremap(
                 // The page does not get unref-ed as we call take() on the `raii_frame`.
                 unsafe {
                     mapper
-                        .map_phys(page.start_address(), frame.base(), page_flags)
+                        .map_phys(page.start_address(), frame.base(), page_flags, 0)
                         .ok_or(Error::new(ENOMEM))?
                         .ignore();
 

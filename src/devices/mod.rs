@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 pub mod graphical_debug;
 pub mod serial;
 pub mod uart_16550;

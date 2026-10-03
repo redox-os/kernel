@@ -8,12 +8,6 @@ use core::{mem::offset_of, ptr, sync::atomic::AtomicBool};
 use spin::Once;
 use syscall::{EnvRegisters, Result};
 
-/// This must be used by the kernel to ensure that context switches are done atomically
-/// Compare and exchange this to true when beginning a context switch on any CPU
-/// The `Context::switch_to` function will set it back to false, allowing other CPU's to switch
-/// This must be done, as no locks can be held on the stack during switch
-pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
-
 // 512 bytes for registers, extra bytes for fpcr and fpsr
 pub const KFX_ALIGN: usize = 16;
 

@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Default)]
-#[repr(packed)]
+#[repr(C, packed)]
 pub struct DirentHeader {
     pub inode: u64,
     /// A filesystem-specific opaque value used to uniquely identify directory entries. This value,

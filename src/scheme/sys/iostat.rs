@@ -4,7 +4,7 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, Grant, PageSpan},
     },
     memory::PAGE_SIZE,
-    scheme::{self, SchemeId},
+    scheme::SchemeId,
     sync::CleanLockToken,
     syscall::{
         error::Result,
@@ -12,7 +12,7 @@ use crate::{
         usercopy::{UserSlice, UserSliceRw},
     },
 };
-use alloc::{string::String, sync::Arc, vec::Vec};
+use alloc::{string::String, vec::Vec};
 use core::{fmt::Write, num::NonZeroUsize, str};
 
 fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>> {
@@ -30,7 +30,7 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
                 rows.push((
                     context.pid,
                     context.name,
-                    context.files.read(token.token()).clone(),
+                    context.files.read(token.token()).try_clone()?,
                 ));
             }
         }
@@ -39,12 +39,8 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
         for (id, name, fs) in rows.iter() {
             let _ = writeln!(string, "{}: {}", id, name);
 
-            for (fd, f) in fs.enumerate() {
-                let file = match *f {
-                    None => continue,
-                    Some(ref file) => file.clone(),
-                };
-
+            for (fd, f) in fs.enumerate_fds() {
+                let file = f.clone();
                 let (scheme_res, number, flags) = {
                     let desc = file.description.read(token.token());
                     (desc.scheme_ref.upgrade(), desc.number, desc.flags)

@@ -134,7 +134,8 @@ pub unsafe fn init() -> bool {
                 .supp_feats
                 .contains(KvmFeatureBits::CLOCKSOURCE2 | KvmFeatureBits::CLOCKSOURCE_STABLE)
         {
-            let frame = allocate_frame().expect("failed to allocate timer page");
+            let must_be_zero = true;
+            let frame = allocate_frame(must_be_zero).expect("failed to allocate timer page");
             x86::msr::wrmsr(MSR_KVM_SYSTEM_TIME_NEW, (frame.base().data() as u64) | 1);
             let ptr = crate::memory::RmmA::phys_to_virt(frame.base()).data()
                 as *const PvclockVcpuTimeInfo;

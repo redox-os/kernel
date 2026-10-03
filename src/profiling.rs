@@ -1,22 +1,26 @@
+#![cfg_attr(
+    not(feature = "profiling"),
+    allow(dead_code, unused_mut, unused_variables)
+)]
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{SyncUnsafeCell, UnsafeCell},
     mem::size_of,
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering},
 };
-#[cfg(target_arch = "x86_64")]
-use rmm::Arch;
 
 #[cfg(feature = "profiling")]
-use crate::arch::{idt::Idt, interrupt::irq::aux_timer};
+use {
+    crate::{
+        arch::{idt::Idt, interrupt::irq::aux_timer, CurrentRmmArch},
+        memory::VirtualAddress,
+    },
+    rmm::Arch,
+};
 
 use crate::{
-    arch::{
-        interrupt::{self, InterruptStack},
-        CurrentRmmArch,
-    },
+    arch::interrupt::{self, InterruptStack},
     cpu_set::LogicalCpuId,
-    memory::VirtualAddress,
     percpu::PercpuBlock,
     syscall::{error::*, usercopy::UserSliceWo},
 };
@@ -240,7 +244,7 @@ unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
         // the 16-byte alignedness of bp, and whether the next page is mapped at all.
 
         if bp >= crate::USER_END_OFFSET
-            || bp % 16 > 0
+            || !bp.is_multiple_of(16)
             || !CurrentRmmArch::virt_is_valid(VirtualAddress::new(bp))
         {
             break;
@@ -270,7 +274,6 @@ unsafe fn walk_ustack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
 unsafe fn walk_kstack(mut bp: usize, buf: &mut [usize; 32], len: &mut usize) {
     // Runs inside an NMI handler!
 
-    #[expect(clippy::needless_range_loop)]
     for i in *len..32 {
         if bp < CurrentRmmArch::PHYS_OFFSET
             || bp.saturating_add(16) >= CurrentRmmArch::PHYS_OFFSET + crate::PML4_SIZE
@@ -381,6 +384,13 @@ pub fn ready_for_profiling() {
 }
 
 pub fn maybe_run_profiling_helper_forever(cpu_id: LogicalCpuId) {
+    // TODO: Haven't looked at Intel docs, but AMD CPUs can support Instruction-Based Sampling,
+    // which is specifically designed for this type of sampling-based profiling, and gives
+    // additional information such as TLB/cache status and other CPU-internal information.
+    // Additionally, there is specific allocated interrupt source for this (APIC500 on family 19h
+    // model 21h), which appears to be possible to be configured to send NMIs. Doing so would
+    // eliminate the need to permanently reserve one of the CPUs, as we have to do here.
+
     if cfg!(not(feature = "profiling")) {
         return;
     }

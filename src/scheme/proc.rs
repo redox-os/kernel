@@ -6,13 +6,11 @@ use crate::{
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
         unblock_context, wakeup_context, Context, ContextLock, Status,
     },
-    cpu_id,
     memory::{Page, VirtualAddress, PAGE_SIZE},
     numa, ptrace,
     scheme::{
-        self,
         memory::{MemoryScheme, MemoryType},
-        FileHandle, KernelScheme, StrOrBytes,
+        FileHandle, KernelScheme,
     },
     sync::{CleanLockToken, LockToken, RwLock, L1, L4},
     syscall::{
@@ -191,7 +189,7 @@ pub fn foreach_addrsp(
         else {
             continue;
         };
-        f(&addrspace, token.token());
+        f(addrspace, token.token());
     }
 }
 
@@ -371,8 +369,8 @@ impl ProcScheme {
                     let mut data = Vec::new();
                     for index in filetable
                         .read(token.token())
-                        .enumerate()
-                        .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                        .enumerate_fds()
+                        .map(|(i, _)| i)
                     {
                         data.extend((index as u64).to_le_bytes());
                     }
@@ -383,8 +381,8 @@ impl ProcScheme {
                     let mut data = String::new();
                     for index in filetable
                         .read(token.token())
-                        .enumerate()
-                        .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                        .enumerate_fds()
+                        .map(|(i, _)| i)
                     {
                         writeln!(data, "{}", index).unwrap();
                     }
@@ -782,7 +780,7 @@ impl KernelScheme for ProcScheme {
                             let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
 
                             let new_filetable =
-                                Arc::new(RwLock::new(filetable.read(token.token()).clone()));
+                                Arc::new(RwLock::new(filetable.read(token.token()).try_clone()?));
 
                             Handle {
                                 kind: ContextHandle::NewFiletable {
@@ -800,8 +798,8 @@ impl KernelScheme for ProcScheme {
                                 let mut data = Vec::new();
                                 for index in filetable
                                     .read(token.token())
-                                    .enumerate()
-                                    .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                                    .enumerate_fds()
+                                    .map(|(i, _)| i)
                                 {
                                     data.extend((index as u64).to_le_bytes());
                                 }
@@ -811,8 +809,8 @@ impl KernelScheme for ProcScheme {
                                 let mut data = String::new();
                                 for index in filetable
                                     .read(token.token())
-                                    .enumerate()
-                                    .filter_map(|(idx, val)| val.as_ref().map(|_| idx))
+                                    .enumerate_fds()
+                                    .map(|(i, _)| i)
                                 {
                                     writeln!(data, "{}", index).unwrap();
                                 }
@@ -886,16 +884,16 @@ impl KernelScheme for ProcScheme {
         &self,
         id: usize,
         descs: Vec<Arc<context::file::LockedFileDescription>>,
-        flags: CallFlags,
+        _flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let context = {
             let mut handles = HANDLES.read(token.token());
-            let (handles, mut token) = handles.token_split();
+            let (handles, _token) = handles.token_split();
             let handle = handles.get(&id).unwrap();
 
-            let Handle { context, kind } = handle;
+            let Handle { context, kind: _ } = handle;
 
             if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
                 &handle.kind
@@ -906,7 +904,7 @@ impl KernelScheme for ProcScheme {
             }
         };
 
-        let target_fd = metadata.get(0).ok_or(Error::new(EINVAL))?;
+        let target_fd = metadata.first().ok_or(Error::new(EINVAL))?;
 
         if let Some(file) = {
             let mut context = context.read(token.token());
@@ -916,7 +914,7 @@ impl KernelScheme for ProcScheme {
             file.close(token)?;
         }
 
-        let mut file = descs.get(0).unwrap();
+        let file = descs.first().unwrap();
         let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
@@ -1596,7 +1594,7 @@ impl ContextHandle {
     }
     pub fn kcall(
         &self,
-        fds: &[usize],
+        _fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -1687,7 +1685,7 @@ impl ContextHandle {
             }
             ContextHandle::AddrSpace { addrspace } => {
                 let op = syscall::flag::NumaVerb::try_from_raw(
-                    *metadata.get(0).ok_or(Error::new(EINVAL))?,
+                    *metadata.first().ok_or(Error::new(EINVAL))?,
                 )
                 .ok_or(Error::new(EINVAL))?;
 

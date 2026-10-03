@@ -25,6 +25,8 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
                     PageFlags::new()
                         .write(true)
                         .global(cfg!(not(feature = "pti"))),
+                    // TODO: consider growing the kernel heap with huge pages?
+                    0,
                 )
                 .expect("failed to map kernel heap")
         };

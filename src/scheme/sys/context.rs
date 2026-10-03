@@ -9,8 +9,18 @@ use crate::{context, context::contexts, sync::CleanLockToken, syscall::error::Re
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
-        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{:<8}{}\n",
-        "PID", "EUID", "EGID", "STAT", "CPU", "AFFINITY", "TIME", "PRIVATE", "SHARED", "NAME"
+        "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<12}{:<8}{:<8}{}\n",
+        "PID",
+        "EUID",
+        "EGID",
+        "STAT",
+        "CPU",
+        "AFFINITY",
+        "ACTTIME",
+        "SCHTIME",
+        "PRIVATE",
+        "SHARED",
+        "NAME"
     );
 
     let mut rows = Vec::new();
@@ -22,8 +32,11 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             let addr_space = context.addr_space().cloned();
 
             let affinity = context.sched_affinity.to_string();
-            let cpu_time_s = context.cpu_time / crate::time::NANOS_PER_SEC;
-            let cpu_time_ns = context.cpu_time % crate::time::NANOS_PER_SEC;
+            // TODO: sched?
+            let cpu_time_s = context.active_cpu_time / crate::time::NANOS_PER_SEC;
+            let cpu_time_ns = context.active_cpu_time % crate::time::NANOS_PER_SEC;
+            let sch_time_s = context.sched_cpu_time / crate::time::NANOS_PER_SEC;
+            let sch_time_ns = context.sched_cpu_time % crate::time::NANOS_PER_SEC;
             let mut memory = context.kfx.len();
             if let Some(ref kstack) = context.kstack {
                 memory += kstack.len();
@@ -102,6 +115,13 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 cpu_time_s % 60,
                 cpu_time_ns / 10_000_000
             );
+            let sch_time_string = format!(
+                "{:02}:{:02}:{:02}.{:02}",
+                sch_time_s / 3600,
+                (sch_time_s / 60) % 60,
+                sch_time_s % 60,
+                sch_time_ns / 10_000_000
+            );
 
             let (priv_memory, shared_memory) = if let Some((privm, shrdm, _)) = heap {
                 (memory + privm, shrdm)
@@ -117,6 +137,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 cpu_string,
                 affinity,
                 cpu_time_string,
+                sch_time_string,
                 format_bytes(priv_memory),
                 format_bytes(shared_memory),
                 name,
@@ -133,6 +154,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         cpu_string,
         affinity,
         cpu_time_string,
+        sch_time_string,
         priv_memory_string,
         shared_memory_string,
         name,
@@ -140,7 +162,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     {
         let _ = writeln!(
             string,
-            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<8}{:<8}{}",
+            "{:<6}{:<6}{:<6}{:<6}{:<6}{:<11}{:<12}{:<12}{:<8}{:<8}{}",
             pid,
             euid,
             egid,
@@ -148,6 +170,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             cpu_string,
             affinity,
             cpu_time_string,
+            sch_time_string,
             priv_memory_string,
             shared_memory_string,
             name,

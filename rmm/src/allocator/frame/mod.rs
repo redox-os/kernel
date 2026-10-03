@@ -44,6 +44,7 @@ impl FrameUsage {
 }
 
 pub unsafe trait FrameAllocator {
+    // TODO: must_be_zero
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress>;
 
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount);

@@ -3,28 +3,23 @@
 //! For resources on contexts, please consult [wikipedia](https://en.wikipedia.org/wiki/Context_switch) and  [osdev](https://wiki.osdev.org/Context_Switching)
 
 use alloc::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Weak},
 };
-use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::AtomicUsize};
-use syscall::NumaMemoryPolicy;
+use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
-    context::{
-        memory::AddrSpaceWrapper,
-        switch::{BASE_SLICE_TICKS, NANOS_PER_TICK, SCALE, SCHED_PRIO_TO_WEIGHT, TICK_INTERVAL},
-    },
+    context::memory::AddrSpaceWrapper,
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats::CpuStatsData,
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::{get_percpu_block, PercpuBlock},
     sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, Mutex, MutexGuard, RwLock, RwLockReadGuard,
-        RwLockWriteGuard, L0, L1, L2, L3, L4,
+        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        L1, L2, L3, L4,
     },
     syscall::error::Result,
-    Ordering,
 };
 
 use self::context::Kstack;
@@ -81,9 +76,24 @@ pub use self::arch::empty_cr3;
 // the context file descriptors.
 static CONTEXTS: RwLock<L2, BTreeSet<ContextRef>> = RwLock::new(BTreeSet::new());
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ContextQueueKey {
+    vd: u64,
+    rem_slice: Reverse<u64>,
+    ctxt_id: u32,
+}
+
+#[derive(Debug)]
+pub struct ContextQueueValue {
+    vtime: u64,
+    weight: u64,
+    context_ref: WeakContextRef,
+}
+
+#[derive(Debug)]
 pub struct RunContextData {
-    queue: BTreeMap<(u64, Reverse<u64>, u32), (u64, u64, WeakContextRef)>, // ((vd, rem_slice, ctxt_id), (vtime, weight, context))
-    timers: BTreeSet<(u128, WeakContextRef)>,                              // (wake, context)
+    queue: BTreeMap<ContextQueueKey, ContextQueueValue>,
+    timers: BTreeSet<(u128, WeakContextRef)>, // (wake, context)
     v: u64,
     total_weight: u64,
     min_vtime: u64,
@@ -195,6 +205,9 @@ pub fn init(token: &mut CleanLockToken) {
         percpu
             .switch_internals
             .set_current_context(Arc::clone(&context_lock));
+        percpu
+            .switch_internals
+            .set_sched_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
 }
@@ -216,7 +229,7 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
         .switch_internals
         .current_context_raw()
         .as_ref()
-        .map_or(false, |current| Arc::ptr_eq(current, context))
+        .is_some_and(|current| Arc::ptr_eq(current, context))
 }
 
 #[derive(Clone)]
@@ -269,6 +282,11 @@ impl PartialEq for WeakContextRef {
     }
 }
 impl Eq for WeakContextRef {}
+impl core::fmt::Debug for WeakContextRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:p}", Weak::as_ptr(&self.0))
+    }
+}
 
 /// Spawn a context from a function.
 pub fn spawn(
@@ -288,11 +306,14 @@ pub fn spawn(
 
     context.kstack = Some(stack);
     context.userspace = userspace_allowed;
-    context.queue_key = Some((context.vd, Reverse(context.rem_slice), context.debug_id));
+    context.queue_key = Some(ContextQueueKey {
+        vd: context.vd,
+        rem_slice: Reverse(context.rem_slice),
+        ctxt_id: context.debug_id,
+    });
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
-    let run_ref = WeakContextRef(Arc::downgrade(&context_ref.0));
     contexts_mut(token.downgrade()).insert(context_ref);
 
     Ok(context_lock)
@@ -306,33 +327,6 @@ pub fn spawn(
 /// Because the guard must hold a mutable reference to the `CleanLockToken` to re-enable preemption
 /// in `Drop`, it consumes the token. The `token()` method allows re-borrowing the token for use
 /// within the guard's scope.
-pub struct PreemptGuard<'a> {
-    context: &'a ContextLock,
-    token: &'a mut CleanLockToken,
-}
-
-impl<'a> PreemptGuard<'a> {
-    pub fn new(context: &'a ContextLock, token: &'a mut CleanLockToken) -> PreemptGuard<'a> {
-        context.write(token.token()).preempt_locks += 1;
-        PreemptGuard { context, token }
-    }
-
-    /// Get a mutable reference to the underlying `CleanLockToken`.
-    ///
-    /// This is necessary because the `PreemptGuard` owns the mutable reference to the token
-    /// (to use it in `Drop`), so we cannot use the original `token` variable while the guard exists.
-    pub fn token(&mut self) -> &mut CleanLockToken {
-        self.token
-    }
-}
-
-impl Drop for PreemptGuard<'_> {
-    fn drop(&mut self) {
-        self.context.write(self.token.token()).preempt_locks -= 1;
-    }
-}
-
-/// Variant of PreemptGuard behind a one-level token
 pub struct PreemptGuardL1<'a> {
     context: &'a ContextLock,
     token: &'a mut LockToken<'a, L1>,
@@ -351,30 +345,6 @@ impl<'a> PreemptGuardL1<'a> {
 }
 
 impl Drop for PreemptGuardL1<'_> {
-    fn drop(&mut self) {
-        self.context.write(self.token.token()).preempt_locks -= 1;
-    }
-}
-
-/// Variant of PreemptGuard behind a one-level token
-pub struct PreemptGuardL2<'a> {
-    context: &'a ContextLock,
-    token: &'a mut LockToken<'a, L2>,
-}
-
-impl<'a> PreemptGuardL2<'a> {
-    pub fn new(context: &'a ContextLock, token: &'a mut LockToken<'a, L2>) -> PreemptGuardL2<'a> {
-        context.write(token.token()).preempt_locks += 1;
-        PreemptGuardL2 { context, token }
-    }
-
-    /// Get a mutable reference to the underlying `LockToken<L2>`.
-    pub fn token(&mut self) -> &mut LockToken<'a, L2> {
-        self.token
-    }
-}
-
-impl Drop for PreemptGuardL2<'_> {
     fn drop(&mut self) {
         self.context.write(self.token.token()).preempt_locks -= 1;
     }

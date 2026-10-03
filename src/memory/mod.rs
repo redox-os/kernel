@@ -4,12 +4,11 @@
 use core::{
     cell::SyncUnsafeCell,
     num::NonZeroUsize,
-    ops::AddAssign,
+    ops::{AddAssign, Deref, DerefMut},
     slice,
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
-use bitfield::Bit;
 pub use kernel_mapper::KernelMapper;
 use spin::{once::Once, Mutex};
 use syscall::NumaMemoryPolicy;
@@ -18,7 +17,7 @@ pub use crate::arch::CurrentRmmArch as RmmA;
 use crate::{
     context::{
         self,
-        memory::{AccessMode, AddrSpace, PfError},
+        memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     numa::{self, FreeListMask},
@@ -71,19 +70,24 @@ pub fn total_frames() -> usize {
     sections().iter().map(|section| section.frames.len()).sum()
 }
 
-pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool) -> Option<Frame> {
-    let numreg = numa::number_of_memory_regions();
-    if numreg == 0 {
-        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+pub fn allocate_p2frame_with_mask(
+    mask: FreeListMask,
+    order: u32,
+    fallback: bool,
+    must_be_zero: bool,
+) -> Option<Frame> {
+    let lists = FREE_LISTS.get().unwrap();
+    if lists.len() == 1 {
+        return allocate_p2frame_complex(order, (), None, order, 0, must_be_zero).map(|e| e.0);
     }
 
-    for i in 0..numreg {
+    for i in 0..lists.len() {
         if mask.is_enabled(i)
-            && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+            && let Some(_) = lists.get(i)
+            && let Some((frame, _)) =
+                allocate_p2frame_complex(order, (), None, order, i, must_be_zero)
         {
-            if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
-                return Some(frame);
-            }
+            return Some(frame);
         }
     }
 
@@ -92,20 +96,20 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
         // from nodes in the increasing order of distance from current node
         if let Some(masks) = numa::free_lists_masks() {
             for mask in masks {
-                if let Some(frame) = allocate_p2frame_with_mask(mask, order, false) {
+                if let Some(frame) = allocate_p2frame_with_mask(mask, order, false, must_be_zero) {
                     return Some(frame);
                 }
             }
         } else {
             // if distance info is not available, just try allocating from the remaining memory regions
             // not present in the mask
-            for i in 0..numreg {
+            for i in 0..lists.len() {
                 if !mask.is_enabled(i)
-                    && let Some(_) = FREE_LISTS.get().unwrap().get(i)
+                    && let Some(_) = lists.get(i)
+                    && let Some((frame, _)) =
+                        allocate_p2frame_complex(order, (), None, order, i, must_be_zero)
                 {
-                    if let Some((frame, _)) = allocate_p2frame_complex(order, (), None, order, i) {
-                        return Some(frame);
-                    }
+                    return Some(frame);
                 }
             }
         }
@@ -115,31 +119,31 @@ pub fn allocate_p2frame_with_mask(mask: FreeListMask, order: u32, fallback: bool
 }
 
 /// Allocate a range of frames
-pub fn allocate_p2frame(order: u32) -> Option<Frame> {
+pub fn allocate_p2frame(order: u32, must_be_zero: bool) -> Option<Frame> {
     static RR_INDEX: AtomicU8 = AtomicU8::new(0);
     let len = FREE_LISTS.get().unwrap().len();
 
-    if len == 1 {
-        return allocate_p2frame_complex(order, (), None, order, 0).map(|e| e.0);
+    if !numa::is_supported() || len == 1 {
+        return allocate_p2frame_complex(order, (), None, order, 0, must_be_zero).map(|e| e.0);
     }
 
     // relaxed ordering since we only want atomicity
     let index =
         usize::from(RR_INDEX.fetch_add(1, Ordering::Relaxed)) % numa::number_of_memory_regions();
     for i in index..len {
-        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
+        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i, must_be_zero) {
             return Some(frame.0);
         }
     }
     for i in 0..index {
-        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i) {
+        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i, must_be_zero) {
             return Some(frame.0);
         }
     }
     None
 }
-pub fn allocate_frame() -> Option<Frame> {
-    allocate_p2frame(0)
+pub fn allocate_frame(must_be_zero: bool) -> Option<Frame> {
+    allocate_p2frame(0, must_be_zero)
 }
 
 // TODO: Flags, strategy
@@ -149,6 +153,7 @@ pub fn allocate_p2frame_complex(
     _strategy: Option<()>,
     min_order: u32,
     index: usize,
+    must_be_zero: bool,
 ) -> Option<(Frame, usize)> {
     let mut freelist = FREE_LISTS.get().unwrap()[index].free_list_inner.lock();
 
@@ -214,8 +219,11 @@ pub fn allocate_p2frame_complex(
     info.mark_used();
     drop(freelist);
 
-    unsafe {
-        (RmmA::phys_to_virt(frame.base()).data() as *mut u8).write_bytes(0, PAGE_SIZE << min_order);
+    if must_be_zero {
+        unsafe {
+            (RmmA::phys_to_virt(frame.base()).data() as *mut u8)
+                .write_bytes(0, PAGE_SIZE << min_order);
+        }
     }
 
     debug_assert!(frame.base().data() >= unsafe { ALLOCATOR_DATA.abs_off });
@@ -330,6 +338,56 @@ pub unsafe fn deallocate_frame(frame: Frame) {
     unsafe { deallocate_p2frame(frame, 0) }
 }
 
+/// Free `count` contiguous unreferenced frames as buddy blocks.
+///
+/// # Safety
+/// Every frame in `base..base + count` must be allocated, have no references,
+/// and not be on the freelist.
+pub unsafe fn deallocate_contiguous(base: Frame, count: usize) {
+    let mut offset = 0;
+    while offset < count {
+        let frame = base.next_by(offset);
+        let align = frame
+            .base()
+            .data()
+            .trailing_zeros()
+            .checked_sub(PAGE_SIZE.trailing_zeros())
+            .expect("frame is not page-aligned");
+        let order = align.min((count - offset).ilog2()).min(MAX_ORDER);
+
+        unsafe { deallocate_p2frame(frame, order) };
+
+        offset += 1usize << order;
+    }
+}
+
+/// Allocate exactly `count` contiguous frames.
+///
+/// This function allocates `count.next_power_of_two()` frames, marks the
+/// first `count` used, then frees the remainder, and returns the base of
+/// the `count` frames.
+fn allocate_frames(count: usize, alloc_order: impl FnOnce(u32) -> Option<Frame>) -> Option<Frame> {
+    if count == 0 {
+        return None;
+    }
+    let rounded = count.next_power_of_two();
+    let order = rounded.trailing_zeros();
+    if order > MAX_ORDER {
+        return None;
+    }
+    let base = alloc_order(order)?;
+
+    for i in 0..count {
+        let info = get_page_info(base.next_by(i)).expect("allocated frame missing PageInfo");
+        info.refcount.store(RC_USED_NOT_FREE, Ordering::Relaxed);
+        info.next.store(0, Ordering::Relaxed);
+    }
+    if count < rounded {
+        unsafe { deallocate_contiguous(base.next_by(count), rounded - count) };
+    }
+    Some(base)
+}
+
 // Helper function for quickly mapping device memory
 pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAddress {
     unsafe {
@@ -341,6 +399,8 @@ pub unsafe fn map_device_memory(addr: PhysicalAddress, len: usize) -> VirtualAdd
                 .map_linearly(
                     base.add(page_idx * crate::memory::PAGE_SIZE),
                     PageFlags::new().write(true).device_memory(true),
+                    // TODO: Huge pages, reuse function from startup/memory.
+                    0,
                 )
                 .expect("failed to linearly map device memory");
             flush.flush();
@@ -447,7 +507,9 @@ pub struct RaiiFrame {
 impl RaiiFrame {
     #[cfg(not(test))]
     pub fn allocate() -> Result<Self, Enomem> {
-        init_frame(RefCount::One)
+        let must_be_zero = true;
+
+        init_frame(RefCount::One, must_be_zero)
             .map_err(|_| Enomem)
             .map(|inner| Self { inner })
     }
@@ -484,6 +546,82 @@ impl Drop for RaiiFrame {
                 deallocate_frame(self.inner);
             }
         }
+    }
+}
+
+pub struct FrameAllocated<T> {
+    frame: Frame,
+    _marker: core::marker::PhantomData<T>,
+}
+
+unsafe impl<T: Send> Send for FrameAllocated<T> {}
+unsafe impl<T: Sync> Sync for FrameAllocated<T> {}
+
+impl<T> FrameAllocated<T> {
+    const fn order() -> Option<u32> {
+        let size = size_of::<T>();
+        let align = align_of::<T>();
+        if size == 0 || size > PAGE_SIZE * 4 || align > PAGE_SIZE {
+            return None;
+        }
+
+        let pages = size.div_ceil(PAGE_SIZE);
+        Some(pages.next_power_of_two().trailing_zeros())
+    }
+
+    pub fn try_new(val: T) -> Option<Self> {
+        let order = const { Self::order().unwrap() };
+        let frame = crate::memory::allocate_p2frame(order, false)?;
+
+        let this = Self {
+            frame,
+            _marker: core::marker::PhantomData,
+        };
+
+        unsafe {
+            let virt = this.as_ptr();
+            virt.write(val);
+        }
+
+        Some(this)
+    }
+
+    #[inline]
+    fn as_ptr(&self) -> *mut T {
+        RmmA::phys_to_virt(self.frame.base()).data() as *mut T
+    }
+}
+
+impl<T> Deref for FrameAllocated<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.as_ptr() }
+    }
+}
+
+impl<T> DerefMut for FrameAllocated<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.as_ptr() }
+    }
+}
+
+impl<T> Drop for FrameAllocated<T> {
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::drop_in_place(self.as_ptr());
+
+            let order = const { Self::order().unwrap() };
+            crate::memory::deallocate_p2frame(self.frame, order);
+        }
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for FrameAllocated<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        (**self).fmt(f)
     }
 }
 
@@ -605,7 +743,7 @@ const _: () = {
 };
 
 #[cold]
-fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
+fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
     let number_of_memory_regions = numa::number_of_memory_regions();
 
     let (free_areas, offset_into_first_free_area) = allocator.free_areas();
@@ -633,16 +771,18 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                     .next_multiple_of(MAX_SECTION_SIZE);
                 let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
-                if number_of_memory_regions > 0 {
-                    if let Some(next_memory_region) =
+                if cfg!(feature = "numa")
+                    && cfg!(target_arch = "x86_64")
+                    && number_of_memory_regions > 1
+                    && let Some(next_memory_region) =
                         numa::nearest_next_memory_region(area.base.data(), false)
-                        && next_memory_region.start < area.base.add(area.size).data()
-                        && next_memory_region.start + next_memory_region.length
-                            > area.base.add(area.size).data()
-                        && !next_memory_region.start.is_multiple_of(MAX_SECTION_SIZE)
-                    {
-                        return (aligned_end - aligned_start) / MAX_SECTION_SIZE + 1;
-                    }
+                    && next_memory_region.start < aligned_end
+                    && next_memory_region.start + next_memory_region.length > aligned_end
+                    // when a NUMA memory boundary overlaps with a section boundary
+                    // a new section will be created anyway, so there's no need to add 1
+                    && !next_memory_region.start.is_multiple_of(MAX_SECTION_SIZE)
+                {
+                    return (aligned_end - aligned_start) / MAX_SECTION_SIZE + 1;
                 }
 
                 (aligned_end - aligned_start) / MAX_SECTION_SIZE
@@ -661,8 +801,6 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
             )
         }
     };
-
-    let mut iter = free_areas_iter().peekable();
 
     let mut sections_fill = |region: Option<MemoryArea>,
                              i: &mut usize, // out parameter
@@ -734,19 +872,22 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
                 let mut page_info_count =
                     core::cmp::min(page_info_max_count, pages_to_next_section);
 
-                if !force
-                    && let Some(region) = region
+                if let Some(region) = region
                     && base.base() >= region.base
                     && base.base().data() < region.base.data() + region.size
                     && (page_info_count * PAGE_SIZE
                         > (region.base.data() + region.size - base.base().data()))
                 {
+                    let mut end = region.base.data() + region.size;
                     page_info_count =
                         (region.base.data() + region.size - base.base().data()) / PAGE_SIZE;
+                    if page_info_count > MAX_SECTION_PAGE_COUNT {
+                        page_info_count = MAX_SECTION_PAGE_COUNT;
+                        end = base.base().data() + MAX_SECTION_PAGE_COUNT * PAGE_SIZE;
+                    }
                     return_value = Some(MemoryArea {
-                        base: PhysicalAddress::new(region.base.data() + region.size),
-                        size: (base.physaddr.get() + pages_left * PAGE_SIZE)
-                            - (region.base.data() + region.size),
+                        base: PhysicalAddress::new(end),
+                        size: (base.physaddr.get() + pages_left * PAGE_SIZE) - end,
                     });
                 }
 
@@ -774,23 +915,23 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
 
                 pages_left -= page_info_count;
                 base = base.next_by(page_info_count);
-                if let Some(return_value) = return_value {
-                    return Some(return_value);
+                if return_value.is_some() {
+                    return return_value;
                 }
             }
         }
-        return None;
+        None
     };
     let mut i = 0;
 
-    if number_of_memory_regions > 0
+    if number_of_memory_regions > 1
         && let Some(regions) = numa::memory_regions()
     {
         for region in regions {
             let mut sections_fill_result = Some(region);
             let mut force = false;
 
-            while let Some(mut region) = sections_fill_result {
+            while let Some(region) = sections_fill_result {
                 sections_fill_result = sections_fill(Some(region), &mut i, force);
                 force = true;
             }
@@ -820,12 +961,12 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
         }
     }
 
-    let mut append_page = |page: Frame,
-                           info: &'static PageInfo,
-                           order,
-                           first_pages: &mut [Option<(Frame, &'static PageInfo)>; 11],
-                           last_pages: &mut [Option<(Frame, &PageInfo)>; 11],
-                           allocator: &mut BumpAllocator<RmmA>| {
+    let append_page = |page: Frame,
+                       info: &'static PageInfo,
+                       order,
+                       first_pages: &mut [Option<(Frame, &'static PageInfo)>; 11],
+                       last_pages: &mut [Option<(Frame, &PageInfo)>; 11],
+                       allocator: &mut BumpAllocator<RmmA>| {
         let this_page = (page, info);
 
         if page.base() < allocator.abs_offset() {
@@ -861,8 +1002,8 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
         };
     }
 
-    let mut free_list_fill = |region: Option<MemoryArea>,
-                              allocator: &mut BumpAllocator<RmmA>|
+    let free_list_fill = |region: Option<MemoryArea>,
+                          allocator: &mut BumpAllocator<RmmA>|
      -> [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] {
         let mut first_pages: [Option<(Frame, &'static PageInfo)>; ORDER_COUNT as usize] =
             [None; ORDER_COUNT as usize];
@@ -970,21 +1111,23 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
     };
 
     let free_lists;
-    if let Some(regions) = numa::memory_regions() {
+    if number_of_memory_regions > 1
+        && let Some(regions) = numa::memory_regions()
+    {
         let free_list_page = allocator
             .allocate(FrameCount::new(
                 (numa::number_of_memory_regions() * size_of::<Mutex<FreeList>>())
                     .div_ceil(PAGE_SIZE),
             ))
             .expect("Failed to allocate free list page");
-        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
+        let va = RmmA::phys_to_virt(free_list_page).data() as *mut FreeList;
         free_lists = unsafe { slice::from_raw_parts_mut(va, numa::number_of_memory_regions()) };
         for (i, region) in regions.enumerate() {
             let free_list = FreeList {
                 upper_limit: region.base.add(region.size).data(),
                 lower_limit: region.base.data(),
                 free_list_inner: Mutex::new(FreeListInner {
-                    for_orders: free_list_fill(Some(region), &mut allocator)
+                    for_orders: free_list_fill(Some(region), allocator)
                         .map(|pair| pair.map(|(frame, _)| frame)),
                     used_frames: 0,
                 }),
@@ -995,13 +1138,13 @@ fn init_sections(mut allocator: &mut BumpAllocator<RmmA>) {
         let free_list_page = allocator
             .allocate(FrameCount::new(size_of::<FreeList>().div_ceil(PAGE_SIZE)))
             .expect("Failed to allocate free list page");
-        let va = unsafe { RmmA::phys_to_virt(free_list_page).data() as *mut FreeList };
+        let va = RmmA::phys_to_virt(free_list_page).data() as *mut FreeList;
         free_lists = unsafe { slice::from_raw_parts_mut(va, 1) };
         let free_list = FreeList {
             upper_limit: usize::MAX,
             lower_limit: 0,
             free_list_inner: Mutex::new(FreeListInner {
-                for_orders: free_list_fill(None, &mut allocator)
+                for_orders: free_list_fill(None, allocator)
                     .map(|pair| pair.map(|(frame, _)| frame)),
                 used_frames: 0,
             }),
@@ -1020,7 +1163,11 @@ pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
     init_sections(allocator);
 
     unsafe {
-        let the_frame = allocate_frame().expect("failed to allocate static zeroed frame");
+        // would have been interesting otherwise
+        let must_be_zero = true;
+
+        let the_frame =
+            allocate_frame(must_be_zero).expect("failed to allocate static zeroed frame");
         let the_info = get_page_info(the_frame).expect("static zeroed frame had no PageInfo");
         the_info
             .refcount
@@ -1319,8 +1466,8 @@ pub fn the_zeroed_frame() -> (Frame, &'static PageInfo) {
     }
 }
 
-pub fn init_frame(init_rc: RefCount) -> Result<Frame, PfError> {
-    let new_frame = allocate_frame().ok_or(PfError::Oom)?;
+pub fn init_frame(init_rc: RefCount, must_be_zero: bool) -> Result<Frame, PfError> {
+    let new_frame = allocate_frame(must_be_zero).ok_or(PfError::Oom)?;
     let page_info = get_page_info(new_frame).unwrap_or_else(|| {
         panic!(
             "all allocated frames need an associated page info, {:?} didn't",
@@ -1339,19 +1486,19 @@ pub struct TheFrameAllocator(pub NumaMemoryPolicy);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
-        let order = count.data().next_power_of_two().trailing_zeros();
-        if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
-            allocate_p2frame_with_mask(mask, order, fallback).map(|f| f.base())
+        let count = count.data();
+        let frame = if let Some((mask, fallback)) = numa::free_list_mask(self.0) {
+            allocate_frames(count, |order| {
+                allocate_p2frame_with_mask(mask, order, fallback, true)
+            })
         } else {
-            allocate_p2frame(order).map(|f| f.base())
-        }
+            allocate_frames(count, |order| allocate_p2frame(order, true))
+        }?;
+        Some(frame.base())
     }
 
     unsafe fn free(&mut self, address: PhysicalAddress, count: FrameCount) {
-        unsafe {
-            let order = count.data().next_power_of_two().trailing_zeros();
-            deallocate_p2frame(Frame::containing(address), order)
-        }
+        unsafe { deallocate_contiguous(Frame::containing(address), count.data()) }
     }
     fn usage(&self) -> FrameUsage {
         FrameUsage::new(

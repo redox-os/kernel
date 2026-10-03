@@ -7,8 +7,6 @@ use rmm::{Arch, VirtualAddress};
 use spin::Once;
 use syscall::{error::*, EnvRegisters};
 
-pub static CONTEXT_SWITCH_LOCK: AtomicBool = AtomicBool::new(false);
-
 pub const KFX_ALIGN: usize = 16;
 
 #[derive(Clone, Debug, Default)]

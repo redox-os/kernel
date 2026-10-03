@@ -129,7 +129,7 @@ fn visit_address_size_pairs(
         return;
     };
 
-    if stride == 0 || property.value.is_empty() || property.value.len() % stride != 0 {
+    if stride == 0 || property.value.is_empty() || !property.value.len().is_multiple_of(stride) {
         warn!("invalid reserved-memory reg property for {node_name}");
         return;
     }

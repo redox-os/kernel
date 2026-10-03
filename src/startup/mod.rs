@@ -200,6 +200,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
         }
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "numa"))]
     numa::dump_info();
     run_userspace(&mut token)
 }

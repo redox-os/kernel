@@ -1,17 +1,10 @@
-use core::{mem, ops::Add, ptr::write_bytes, slice};
+use core::{ptr::write_bytes, slice};
 
-use crate::{
-    acpi,
-    cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
-    percpu,
-    sync::{CleanLockToken, Mutex, L0},
-};
-use alloc::{sync::Arc, vec::Vec};
+use crate::{acpi, percpu};
 use bitfield::Bit;
-use hashbrown::HashMap;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, NumaMemoryPolicy, Result, ENODATA, EOPNOTSUPP};
+use syscall::NumaMemoryPolicy;
 
 pub const MAX_DOMAINS: usize = 128;
 
@@ -21,14 +14,20 @@ static NUMA_MEMORY: Once<&'static [NumaMemory]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
 static NUMA_NODES: Once<&'static [NumaNode]> = Once::new();
 
+#[inline(always)]
 pub fn is_supported() -> bool {
-    NUMA_NODES.get().is_some()
+    if cfg!(target_arch = "x86_64") && cfg!(feature = "numa") {
+        NUMA_NODES.get().is_some()
+    } else {
+        false
+    }
 }
 
 /// Each bit of this mask corresponds to an index of `FREE_LISTS`.
 ///
 /// This abstraction allows future extensions to the number of memory regions supported.
 #[derive(Default, Debug, Clone, Copy)]
+#[repr(C)]
 pub struct FreeListMask {
     mask: u128,
 }
@@ -38,6 +37,7 @@ impl FreeListMask {
         self.mask.set_bit(i, true);
     }
 
+    #[allow(unused)]
     pub fn disable_index(&mut self, i: usize) {
         self.mask.set_bit(i, false);
     }
@@ -48,12 +48,14 @@ impl FreeListMask {
 }
 
 #[derive(Debug, Default)]
+#[repr(C)]
 pub struct NumaNode {
     pub cpus: u128,
     pub memories: FreeListMask,
 }
 
 #[derive(Debug, Clone, Default)]
+#[repr(C)]
 pub struct NumaMemory {
     pub start: usize,
     pub length: usize,
@@ -81,16 +83,11 @@ impl NumaMemory {
     }
 }
 
-#[derive(Debug)]
-pub struct NumaCpu {
-    pub id: u32,
-}
-
 pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
-        acpi::slit::init(allocator, &DISTANCES);
+        acpi::slit::init(&DISTANCES);
     }
 }
 
@@ -104,14 +101,14 @@ pub fn init_arch() {
             slice::from_raw_parts_mut(ptr as *mut NumaNode, MAX_DOMAINS)
         };
 
-        for (i, cpu) in cpus.iter().enumerate().filter(|(i, e)| **e != u32::MAX) {
+        for (i, _cpu) in cpus.iter().enumerate().filter(|(_i, e)| **e != u32::MAX) {
             numa_nodes[cpus[i] as usize].cpus |= 1u128 << i;
         }
 
         for (i, memory) in memories
             .iter()
             .enumerate()
-            .filter(|(i, memory)| memory.length != 0)
+            .filter(|(_i, memory)| memory.length != 0)
         {
             numa_nodes[memory.node_id as usize].memories.enable_index(i);
         }
@@ -146,47 +143,21 @@ pub fn init_arch() {
     }
 }
 
-pub fn assign_node_id(modify: bool) -> u8 {
-    static mut NODE_ID: u8 = 0;
-    if unsafe { NODE_ID } >= 128 {
-        panic!("Maximum number of domains supported is 128");
-    }
-    unsafe {
-        NODE_ID += 1;
-        let return_value = NODE_ID - 1;
-        if !modify {
-            NODE_ID -= 1;
-        }
-        return_value
-    }
-}
-
-pub fn assign_memory_id() -> u8 {
-    static mut MEMORY_ID: u8 = 0;
-    if unsafe { MEMORY_ID } >= 128 {
-        panic!("Maximum number of memory regions supported is 128");
-    }
-    let old = unsafe { MEMORY_ID };
-    unsafe { MEMORY_ID = MEMORY_ID.add(1) };
-    old
-}
-
-pub fn domain_to_node_id(domain_id: u32) -> Option<u32> {
-    Some(*DOMAIN_NODE_MAP.get()?.get(domain_id as usize)?)
-}
-
-pub fn cpu_belongs_to_which_node(cpu_id: usize) -> Option<u32> {
-    Some(*NUMA_CPUS.get()?.get(cpu_id)?)
-}
-
 /// A helper function that prints information about NUMA - available nodes, cpus and memory blocks in them
 /// their starts and lengths
 pub fn dump_info() {
-    if let Some(map) = DOMAIN_NODE_MAP.get()
+    if let Some(_) = DOMAIN_NODE_MAP.get()
         && let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
+        && let Some(nodes) = NUMA_NODES.get()
     {
-        println!("Number of NUMA nodes: {}", assign_node_id(false));
+        println!(
+            "Number of NUMA nodes: {}",
+            nodes
+                .iter()
+                .filter(|e| e.cpus != 0 || e.memories.mask != 0)
+                .count()
+        );
         for i in 0..cpus.len() {
             if cpus[i] == u32::MAX {
                 continue;
@@ -203,9 +174,7 @@ pub fn dump_info() {
             );
         }
     } else {
-        println!(
-            "The system has either no support for NUMA or there was an error during initialisation"
-        );
+        println!("Unable to determine NUMA topology");
     }
 }
 
@@ -231,6 +200,10 @@ impl Iterator for NumaMemoryIter {
 }
 
 pub fn number_of_memory_regions() -> usize {
+    if !cfg!(target_arch = "x86_64") || !cfg!(feature = "numa") {
+        return 0;
+    }
+
     if let Some(mem) = NUMA_MEMORY.get() {
         mem.iter()
             .map(|e| if e.length != 0 { 1 } else { 0 })
@@ -241,47 +214,24 @@ pub fn number_of_memory_regions() -> usize {
 }
 
 pub fn memory_regions() -> Option<NumaMemoryIter> {
-    if let Some(mem) = NUMA_MEMORY.get() {
-        Some(NumaMemoryIter { i: 0, mem })
-    } else {
-        None
+    if !cfg!(feature = "numa") || !cfg!(target_arch = "x86_64") {
+        return None;
     }
+    NUMA_MEMORY.get().map(|mem| NumaMemoryIter { i: 0, mem })
 }
 
 pub fn nearest_next_memory_region(addr: usize, overlap: bool) -> Option<&'static NumaMemory> {
     NUMA_MEMORY
         .get()?
         .iter()
-        .filter_map(|e| {
-            if if overlap {
+        .filter(|e| {
+            if overlap {
                 e.start >= addr
             } else {
                 e.start > addr
-            } {
-                Some(e)
-            } else {
-                None
             }
         })
         .min_by_key(|e| e.start)
-}
-
-pub fn nearest_preceding_memory_region(addr: usize, overlap: bool) -> Option<&'static NumaMemory> {
-    NUMA_MEMORY
-        .get()?
-        .iter()
-        .filter_map(|e| {
-            if if overlap {
-                e.start <= addr
-            } else {
-                e.start < addr
-            } {
-                Some(e)
-            } else {
-                None
-            }
-        })
-        .max_by_key(|e| e.start)
 }
 
 pub fn current_node() -> Option<&'static NumaNode> {
@@ -328,10 +278,10 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     let distances = DISTANCES.get()?;
     let num_nodes = NUMA_NODES.get().unwrap().len();
 
-    for (i, node) in NUMA_NODES.get()?.iter().enumerate() {
-        others[i] = (i as u32, distances[num_nodes * node_id as usize + i]);
+    for (i, _node) in NUMA_NODES.get()?.iter().enumerate() {
+        others[i] = (i as u32, distances[num_nodes * node_id + i]);
     }
-    others.sort_by_key(|(node_id, distance)| *distance);
+    others.sort_by_key(|(_node_id, distance)| *distance);
     let others = others.map(|e| e.0);
     iter.others = others;
 

@@ -68,6 +68,7 @@ impl Hpet {
                     page.start_address(),
                     frame.base(),
                     PageFlags::new().write(true).device_memory(true),
+                    0, // non-huge 4k page
                 )
                 .expect("failed to map memory for GenericAddressStructure")
                 .flush();
