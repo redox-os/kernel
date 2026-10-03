@@ -101,7 +101,7 @@ x86_64:clippy:
   needs: [x86_64]
   script:
   - redoxer clippy
-  - redoxer clippy -- --features self_modifying,lpss_debug,numa,profiling,drop_panic,busy_panic,qemu_debug,system76_ec_debug,debugger,syscall_debug,sys_fdstat,numa
+  - redoxer clippy -- --all-features
   variables:
     ARCH: "x86_64"
     RUSTFLAGS: "-Dwarnings"
