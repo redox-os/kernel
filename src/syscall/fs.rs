@@ -166,7 +166,7 @@ fn duplicate_file(
         });
     }
 
-    file.cap_rights.require(CapRights::CAP_NAMED_DUP)?;
+    file.cap_rights.require(CapRights::CAP_FD_READ)?;
 
     // TODO: potential unnecessary clone
     let description = { file.description.read(token.token()).clone() };
@@ -269,7 +269,6 @@ fn call_normal(
     let mut nums = arrayvec::ArrayVec::<_, 2>::new();
 
     let consume = flags.contains(CallFlags::CONSUME);
-    let mut required_caps = CapRights::CAP_SYS_CALL;
     if flags.contains(CallFlags::WRITE) {
         required_caps |= CapRights::CAP_WRITE;
     }
@@ -361,7 +360,7 @@ fn call_fdwrite(
             let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
             file_descriptor
                 .cap_rights
-                .require(CapRights::CAP_SYS_CALL | CapRights::CAP_WRITE)?;
+                .require(CapRights::CAP_FD_WRITE)?;
             let desc = file_descriptor.description.read(token.token());
             Ok((desc.scheme_ref.upgrade()?, desc.number))
         })?;
@@ -411,9 +410,7 @@ fn call_fdread(
 ) -> Result<usize> {
     let (scheme, number) = with_current_ctx(token, |context, token| {
         let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
-        file_descriptor
-            .cap_rights
-            .require(CapRights::CAP_SYS_CALL | CapRights::CAP_READ)?;
+        file_descriptor.cap_rights.require(CapRights::CAP_FD_READ)?;
         let desc = file_descriptor.description.read(token.token());
         Ok((desc.scheme_ref.upgrade()?, desc.number))
     })?;
