@@ -594,8 +594,8 @@ bitflags::bitflags! {
         const CAP_EVENT     = 1 << 8;
 
         // Redox-specific rights
-        const CAP_SYS_CALL  = 1 << 9;
-        const CAP_NAMED_DUP = 1 << 10;
+        const CAP_FD_READ   = 1 << 9;
+        const CAP_FD_WRITE  = 1 << 10;
 
         const KERNEL_MASK   = 0x0000_0000_0000_FFFF;
         const SCHEME_MASK   = 0xFFFF_FFFF_FFFF_0000;
