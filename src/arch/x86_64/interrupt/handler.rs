@@ -393,17 +393,11 @@ macro_rules! interrupt_stack {
 
                 $save2!(),
 
-                // TODO: Map PTI
-                // $crate::arch::x86_64::pti::map();
-
                 // Call inner function with pointer to stack
                 "
                 mov rdi, rsp
                 call {inner}
                 ",
-
-                // TODO: Unmap PTI
-                // $crate::arch::x86_64::pti::unmap();
 
                 $rstor2!(),
 
@@ -443,14 +437,8 @@ macro_rules! interrupt {
                 "push rax",
                 push_scratch!(),
 
-                // TODO: Map PTI
-                // $crate::arch::x86_64::pti::map();
-
                 // Call inner function with pointer to stack
                 "call {inner}",
-
-                // TODO: Unmap PTI
-                // $crate::arch::x86_64::pti::unmap();
 
                 // Restore all userspace registers
                 pop_scratch!(),
@@ -491,15 +479,9 @@ macro_rules! interrupt_error {
                 "mov rsi, [rsp + {rax_offset}];",
                 "mov [rsp + {rax_offset}], rax;",
 
-                // TODO: Map PTI
-                // $crate::arch::x86_64::pti::map();
-
                 // Call inner function with pointer to stack, and error code.
                 "mov rdi, rsp;",
                 "call {inner};",
-
-                // TODO: Unmap PTI
-                // $crate::arch::x86_64::pti::unmap();
 
                 // Restore all userspace registers
                 pop_preserved!(),

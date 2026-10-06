@@ -323,7 +323,7 @@ fn kernel_page_flags<A: Arch>(virt: VirtualAddress) -> PageFlags<A> {
         // Remap everything else read-write, no execute
         PageFlags::new().write(true)
     })
-    .global(cfg!(all(target_arch = "x86_64", not(feature = "pti"))))
+    .global(cfg!(target_arch = "x86_64"))
 }
 
 // TODO: use this function at more places
@@ -436,7 +436,7 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], bump_allocator: &mut BumpAll
             let virt_base = A::phys_to_virt(area.base);
             let flags = PageFlags::new()
                 .write(true)
-                .global(cfg!(all(target_arch = "x86_64", not(feature = "pti"))));
+                .global(cfg!(target_arch = "x86_64"));
 
             map_phys_contiguous_inactive(
                 &mut mapper,

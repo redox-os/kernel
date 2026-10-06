@@ -771,8 +771,7 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
                     .next_multiple_of(MAX_SECTION_SIZE);
                 let aligned_start = area.base.data() / MAX_SECTION_SIZE * MAX_SECTION_SIZE;
 
-                if cfg!(feature = "numa")
-                    && cfg!(target_arch = "x86_64")
+                if numa::is_supported()
                     && number_of_memory_regions > 1
                     && let Some(next_memory_region) =
                         numa::nearest_next_memory_region(area.base.data(), false)
@@ -1111,7 +1110,8 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
     };
 
     let free_lists;
-    if number_of_memory_regions > 1
+    if numa::is_supported()
+        && number_of_memory_regions > 1
         && let Some(regions) = numa::memory_regions()
     {
         let free_list_page = allocator

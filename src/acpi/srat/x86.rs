@@ -1,7 +1,7 @@
 use crate::{
     acpi::srat::{to_usize, Srat, SratEntry},
     cpu_set,
-    numa::{self, NumaMemory},
+    numa::{self, NumaMemory, NumaNodeID},
 };
 
 #[inline(always)]
@@ -13,9 +13,9 @@ fn to_single_int(high: &[u8; 3], low: u8) -> u32 {
 }
 
 pub fn init_srat(
-    dom_node_map: &mut [u32],
-    cpus: &mut [u32],
-    memories: &mut [NumaMemory],
+    dom_node_map: &mut [Option<NumaNodeID>],
+    cpus: &mut [Option<NumaNodeID>],
+    memories: &mut [Option<NumaMemory>],
     srat: &Srat,
 ) {
     let mut cpu_count = 0;
@@ -42,7 +42,7 @@ pub fn init_srat(
     });
 
     assert!(
-        memory_count <= numa::MAX_DOMAINS,
+        memory_count <= numa::MAX_MEM_REGIONS,
         "Found {} memory blocks while only a maximum of {} are supported",
         memory_count,
         numa::MAX_DOMAINS
@@ -67,8 +67,8 @@ pub fn init_srat(
                     &legacy_processor_local_affinity.proximity_domain_high,
                     legacy_processor_local_affinity.proximity_domain_low,
                 );
-                if dom_node_map[dom as usize] == u32::MAX {
-                    dom_node_map[dom as usize] = node_id;
+                if dom_node_map[dom as usize].is_none() {
+                    dom_node_map[dom as usize] = Some(NumaNodeID::new(node_id).unwrap());
                     node_id += 1;
                 }
                 cpus[legacy_processor_local_affinity.apic_id as usize] = dom_node_map[dom as usize];
@@ -91,12 +91,15 @@ pub fn init_srat(
                     memory_affinity.base_address_high,
                 );
                 let length = to_usize(memory_affinity.length_low, memory_affinity.length_high);
-                if dom_node_map[dom as usize] == u32::MAX {
-                    dom_node_map[dom as usize] = node_id;
+                if dom_node_map[dom as usize].is_none() {
+                    dom_node_map[dom as usize] = Some(NumaNodeID::new(node_id).unwrap());
                     node_id += 1;
                 }
-                memories[memory_id as usize] =
-                    numa::NumaMemory::new(start, length, dom_node_map[dom as usize]);
+                memories[memory_id as usize] = Some(numa::NumaMemory::new(
+                    start,
+                    length,
+                    dom_node_map[dom as usize].unwrap(),
+                ));
                 memory_id += 1;
             }
             SratEntry::ProcessorLocalAffinity(processor_local_affinity) => {
@@ -105,8 +108,8 @@ pub fn init_srat(
                     continue;
                 }
                 let dom = processor_local_affinity.proximity_domain;
-                if dom_node_map[dom as usize] == u32::MAX {
-                    dom_node_map[dom as usize] = node_id;
+                if dom_node_map[dom as usize].is_none() {
+                    dom_node_map[dom as usize] = Some(NumaNodeID::new(node_id).unwrap());
                     node_id += 1;
                 }
                 cpus[processor_local_affinity.x2apic_id as usize] = dom_node_map[dom as usize];

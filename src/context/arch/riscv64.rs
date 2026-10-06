@@ -182,9 +182,6 @@ unsafe extern "C" fn switch_to_inner(prev: &mut Context, next: &mut Context) {
         sd s11, {off_s11}(a0)
         ld s11, {off_s11}(a1)
 
-        sd s11, {off_s11}(a0)
-        ld s11, {off_s11}(a1)
-
         sd sp, {off_sp}(a0)
         ld sp, {off_sp}(a1)
 

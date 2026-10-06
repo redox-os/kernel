@@ -110,15 +110,9 @@ pub unsafe extern "C" fn syscall_instruction() {
     push_scratch!(),
     push_preserved!(),
 
-    // TODO: Map PTI
-    // $crate::arch::x86_64::pti::map();
-
     // Call inner funtion
     "mov rdi, rsp;",
     "call __inner_syscall_instruction;",
-
-    // TODO: Unmap PTI
-    // $crate::arch::x86_64::pti::unmap();
 
     "
     .globl enter_usermode

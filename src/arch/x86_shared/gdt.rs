@@ -203,27 +203,6 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
     }
 }
 
-#[cfg(feature = "pti")]
-pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
-    use super::pti::{PTI_CONTEXT_STACK, PTI_CPU_STACK};
-
-    #[cfg(target_arch = "x86")]
-    unsafe {
-        core::ptr::addr_of_mut!((*pcr).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
-        core::ptr::addr_of_mut!((*pcr).tss.esp0)
-            .write((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u32);
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        core::ptr::addr_of_mut!((*pcr).tss.rsp[0])
-            .write_unaligned((PTI_CPU_STACK.as_ptr() as usize + PTI_CPU_STACK.len()) as u64);
-    }
-
-    unsafe { PTI_CONTEXT_STACK = stack };
-}
-
-#[cfg(not(feature = "pti"))]
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
     #[cfg(target_arch = "x86")]
     unsafe {

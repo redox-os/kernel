@@ -96,8 +96,6 @@ lpss_debug = []
 multi_core = ["acpi"]
 numa = ["multi_core"]
 profiling = []
-#TODO: remove when threading issues are fixed
-pti = []
 drop_panic = []
 busy_panic = []
 qemu_debug = []

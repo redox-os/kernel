@@ -728,14 +728,17 @@ fn select_next_context(
         let num_cpu = crate::cpu_count();
         let curr_cpu = cpu_id.get();
 
+        /* // disabled: unused (see below)
         let counter = percpu
             .switch_internals
             .steal_counter
             .fetch_add(1, Ordering::Relaxed)
             % STEAL_INTERVAL;
+        */
 
         let mut steal_hint = None;
         let should_steal = local_len == 0
+            /* // disabled: causing livelock in webkit
             || (counter == 0 && {
                 let mut max_neighbour = 0;
 
@@ -755,7 +758,7 @@ fn select_next_context(
                 }
 
                 max_neighbour > local_len.saturating_add(STEAL_THRESHOLD)
-            });
+            })*/;
 
         if should_steal {
             let targets = steal_hint

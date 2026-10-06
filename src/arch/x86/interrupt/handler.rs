@@ -301,17 +301,11 @@ macro_rules! interrupt_stack {
                 // Enter kernel TLS segment
                 enter_gs!(),
 
-                // TODO: Map PTI
-                // $crate::arch::x86::pti::map();
-
                 // Call inner function with pointer to stack
                 "
                 mov ecx, esp
                 call {inner}
                 ",
-
-                // TODO: Unmap PTI
-                // $crate::arch::x86::pti::unmap();
 
                 // Exit kernel TLS segment
                 exit_gs!(),
@@ -347,14 +341,8 @@ macro_rules! interrupt {
                 // Enter kernel TLS segment
                 enter_gs!(),
 
-                // TODO: Map PTI
-                // $crate::arch::x86::pti::map();
-
                 // Call inner function with pointer to stack
                 "call {inner}",
-
-                // TODO: Unmap PTI
-                // $crate::arch::x86::pti::unmap();
 
                 // Exit kernel TLS segment
                 exit_gs!(),
@@ -395,18 +383,12 @@ macro_rules! interrupt_error {
                 // Put code in, it's now in eax
                 "push eax",
 
-                // TODO: Map PTI
-                // $crate::arch::x86::pti::map();
-
                 // Call inner function with pointer to stack
                 "
                 push esp
                 call {inner}
                 ",
                 // add esp, 4
-
-                // TODO: Unmap PTI (split "add esp, 8" into two "add esp, 4"s maybe?)
-                // $crate::arch::x86::pti::unmap();
 
                 // Pop previous esp and code
                 "add esp, 8",
@@ -458,9 +440,6 @@ impl ArchIntCtx for InterruptStack {
 #[unsafe(naked)]
 pub unsafe extern "C" fn enter_usermode() {
     core::arch::naked_asm!(
-        // TODO: Unmap PTI
-        // $crate::arch::x86::pti::unmap();
-
         // Exit kernel TLS segment
         exit_gs!(),
         // Restore all userspace registers

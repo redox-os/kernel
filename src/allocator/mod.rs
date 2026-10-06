@@ -22,9 +22,7 @@ unsafe fn map_heap(mapper: &mut KernelMapper<true>, offset: usize, size: usize) 
                 .map_phys(
                     page.start_address(),
                     phys,
-                    PageFlags::new()
-                        .write(true)
-                        .global(cfg!(not(feature = "pti"))),
+                    PageFlags::new().write(true).global(true),
                     // TODO: consider growing the kernel heap with huge pages?
                     0,
                 )
