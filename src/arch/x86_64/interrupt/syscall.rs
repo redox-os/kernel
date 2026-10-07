@@ -106,19 +106,47 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     }
 }
 
+macro_rules! slow_swapgs_path {
+    () => {
+        concat!(
+            "swapgs;",                   // Swap KGSBASE with GSBASE, allowing fast TSS access.
+            "mov gs:[{sp}], rsp;",       // Save userspace stack pointer
+            "mov rsp, gs:[{ksp}];",      // Load kernel stack pointer
+            "push QWORD PTR {ss_sel};",  // Push fake userspace SS (resembling iret frame)
+            "push QWORD PTR gs:[{sp}];", // Push userspace rsp
+            "push r11;",                 // Push rflags
+            "push QWORD PTR {cs_sel};",  // Push fake CS (resembling iret stack frame)
+            "push rcx;",                 // Push userspace return pointer
+            "swapgs;",                   // Restore user GSBASE by swapping GSBASE and KGSBASE.
+        )
+    };
+}
+
 #[unsafe(naked)]
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(
     // Yes, this is magic. No, you don't need to understand
     "
+    // EFLAGS.ID is a user-unmodifiable flag that we use to control whether syscall entry should be
+    // traced.
     bt r11, 21
     jc .Lslow_path
 
-    // CS is [15:3] sel, [2] TI = 1, [1:0] DPL = 0,
-    mov r11, ss
-    shr r11, 1
-    mov r11, [{all_percpu_blocks}+r11-4]
-
+    ",
+    alternative!(
+        feature: "syscall_rdpid",
+        then: ["
+            rdpid r11
+            mov r11, [{all_percpu_blocks}+r11]
+        "],
+        default: ["
+            // CS is [15:3] sel, [2] TI = 1, [1:0] DPL = 0,
+            mov r11, cs
+            shr r11, 1
+            mov r11, [{all_percpu_blocks}+r11-4]
+        "]
+    ),
+    "
     mov [r11-{percpu_kpcr}+{sp}], rsp // Save userspace stack pointer
     mov rsp, [r11-{percpu_kpcr}+{ksp}] // Load kernel stack pointer
     push QWORD PTR {ss_sel} // Push fake userspace SS (resembling iret frame)

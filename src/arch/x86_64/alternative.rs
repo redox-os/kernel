@@ -81,6 +81,17 @@ pub unsafe fn early_init(bsp: bool) {
             assert!(cfg!(not(cpu_feature_always = "fsgsbase")));
         }
 
+        if cfg!(not(cpu_feature_never = "syscall_rdpid"))
+            && let Some(f) = cpuid().get_extended_feature_info()
+            && f.has_rdpid()
+            && let Some(f) = cpuid().get_extended_processor_and_feature_identifiers()
+            && f.has_rdtscp()
+        {
+            enable |= KcpuFeatures::RDPID;
+        } else {
+            assert!(cfg!(not(cpu_feature_always = "rdpid")));
+        }
+
         #[cfg(not(cpu_feature_never = "xsave"))]
         if feature_info().has_xsave() {
             use raw_cpuid::{ExtendedRegisterStateLocation, ExtendedRegisterType};
@@ -202,6 +213,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
                 "fsgsbase" => enable.contains(KcpuFeatures::FSGSBASE),
                 "xsave" => enable.contains(KcpuFeatures::XSAVE),
                 "xsaveopt" => enable.contains(KcpuFeatures::XSAVEOPT),
+                "syscall_rdpid" => enable.contains(KcpuFeatures::RDPID),
                 //_ => panic!("unknown altcode relocation: {}", name),
                 _ => true,
             };
@@ -275,10 +287,11 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
 bitflags! {
     #[derive(Clone, Copy, Debug)]
     pub struct KcpuFeatures: usize {
-        const SMAP = 1;
-        const FSGSBASE = 2;
-        const XSAVE = 4;
-        const XSAVEOPT = 8;
+        const SMAP = 1 << 0;
+        const FSGSBASE = 1 << 1;
+        const XSAVE = 1 << 2;
+        const XSAVEOPT = 1 << 3;
+        const RDPID = 1 << 4;
     }
 }
 

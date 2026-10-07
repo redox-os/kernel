@@ -3,5 +3,6 @@ smap = "auto"
 fsgsbase = "auto"
 xsave = "auto"
 xsaveopt = "auto"
+syscall_rdpid = "auto"
 
 # vim: ft=toml
