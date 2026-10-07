@@ -1427,8 +1427,6 @@ impl UserScheme {
         let mut address = inner.capture_user(slice, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
-        let has_extra = !cap_rights.contains(CapRights::SCHEME_MASK);
-
         let mut sqe_flags = SqeFlags::empty();
 
         let mut last_arg = 0;
