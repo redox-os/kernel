@@ -141,26 +141,22 @@ pub fn contexts(token: LockToken<'_, L1>) -> RwLockReadGuard<'_, L2, BTreeSet<Co
 pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeSet<ContextRef>> {
     CONTEXTS.write(token)
 }
-
 pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
-    let cpu_id = {
+    let blocked_to_runnable_on_cpu_id = {
         let mut guard = context_lock.write(token.token());
-        if !guard.unblock_no_ipi() {
-            let guard_runnable = guard.status.is_runnable();
-            let guard_cpu_id = guard.cpu_id;
-            if guard_runnable {
-                // already set to runnable externally
-                drop(guard);
-                wakeup_context(context_lock, guard_cpu_id, token);
-            }
-            return false;
-        }
-        guard.cpu_id
+        let guard_cpu_id = guard.cpu_id;
+
+        guard.unblock_no_ipi().then_some(guard_cpu_id)
     };
 
-    wakeup_context(context_lock, cpu_id, token);
-
-    true
+    if let Some(cpu_id) = blocked_to_runnable_on_cpu_id {
+        // was blocked and became runnable
+        wakeup_context(context_lock, cpu_id, token);
+        true
+    } else {
+        // was already runnable
+        false
+    }
 }
 
 pub fn wakeup_context(
