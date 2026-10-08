@@ -592,3 +592,7 @@ impl CpuSet {
         Self { mask }
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct FdType(pub u32);
