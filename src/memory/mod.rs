@@ -529,6 +529,7 @@ impl RaiiFrame {
     }
     pub fn take(self) -> Frame {
         let f = self.get();
+        #[cfg_attr(test, expect(clippy::forget_non_drop))]
         core::mem::forget(self);
         f
     }

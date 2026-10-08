@@ -6,7 +6,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Weak},
 };
-use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::Ordering};
+use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
 
 use crate::{
     context::memory::AddrSpaceWrapper,

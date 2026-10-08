@@ -182,7 +182,7 @@ pub fn futex(
                 }
 
                 let mut futexes = FUTEXES.lock(token.token());
-                let (futexes, mut token) = futexes.token_split();
+                let (futexes, token) = futexes.token_split();
 
                 futexes
                     .entry(target_physaddr)

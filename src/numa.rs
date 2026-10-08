@@ -1,15 +1,11 @@
 use alloc::string::String;
-use core::{
-    ops::{Deref, DerefMut},
-    ptr::write_bytes,
-    slice,
-};
+use core::slice;
 
-use crate::{acpi, cpu_set::LogicalCpuSet, percpu};
+use crate::{acpi, percpu};
 use bitfield::Bit;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, NumaMemoryPolicy};
+use syscall::NumaMemoryPolicy;
 
 pub const MAX_DOMAINS: usize = 128;
 pub const MAX_MEM_REGIONS: usize = MAX_DOMAINS;
