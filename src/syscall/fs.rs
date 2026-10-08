@@ -269,6 +269,7 @@ fn call_normal(
     let mut nums = arrayvec::ArrayVec::<_, 2>::new();
 
     let consume = flags.contains(CallFlags::CONSUME);
+    let mut required_caps = CapRights::empty();
     if flags.contains(CallFlags::WRITE) {
         required_caps |= CapRights::CAP_WRITE;
     }
@@ -355,14 +356,18 @@ fn call_fdwrite(
     let len = fds.len();
 
     // TODO: Ensure deadlocks can't happen
-    let (scheme, number, descs_to_send) = {
+    let (scheme, number, cap_rights, descs_to_send) = {
         let (scheme, number) = with_current_ctx(token, |context, token| {
             let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
             file_descriptor
                 .cap_rights
                 .require(CapRights::CAP_FD_WRITE)?;
             let desc = file_descriptor.description.read(token.token());
-            Ok((desc.scheme_ref.upgrade()?, desc.number))
+            Ok((
+                desc.scheme_ref.upgrade()?,
+                desc.number,
+                file_descriptor.cap_rights,
+            ))
         })?;
 
         with_current_ctx(token, |context, token| {
@@ -396,7 +401,14 @@ fn call_fdwrite(
         CallFlags::empty()
     };
 
-    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)?;
+    scheme.kfdwrite(
+        number,
+        descs_to_send,
+        flags_to_scheme,
+        metadata,
+        cap_rights,
+        token,
+    )?;
 
     Ok(len)
 }
@@ -408,14 +420,18 @@ fn call_fdread(
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
-    let (scheme, number) = with_current_ctx(token, |context, token| {
+    let (scheme, number, cap_rights) = with_current_ctx(token, |context, token| {
         let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
         file_descriptor.cap_rights.require(CapRights::CAP_FD_READ)?;
         let desc = file_descriptor.description.read(token.token());
-        Ok((desc.scheme_ref.upgrade()?, desc.number))
+        Ok((
+            desc.scheme_ref.upgrade()?,
+            desc.number,
+            file_descriptor.cap_rights,
+        ))
     })?;
 
-    scheme.kfdread(number, payload, flags, metadata, token)
+    scheme.kfdread(number, payload, flags, metadata, cap_rights, token)
 }
 
 /// File descriptor controls

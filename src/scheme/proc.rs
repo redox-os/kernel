@@ -888,6 +888,7 @@ impl KernelScheme for ProcScheme {
         descs: Vec<(Arc<context::file::LockedFileDescription>, CapRights)>,
         _flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let context = {

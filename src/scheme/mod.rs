@@ -456,6 +456,7 @@ impl KernelScheme for SchemeList {
         descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
@@ -470,6 +471,7 @@ impl KernelScheme for SchemeList {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
@@ -785,6 +787,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
@@ -795,6 +798,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))

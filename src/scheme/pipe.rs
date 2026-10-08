@@ -414,6 +414,7 @@ impl KernelScheme for PipeScheme {
         mut descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         _flags: CallFlags,
         _metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
@@ -477,6 +478,7 @@ impl KernelScheme for PipeScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         _metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);

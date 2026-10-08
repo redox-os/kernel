@@ -2043,6 +2043,7 @@ impl KernelScheme for UserScheme {
         descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2054,13 +2055,14 @@ impl KernelScheme for UserScheme {
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = descs.len();
-        let mut buf: [u64; 6] = [
+        let mut buf: [u64; 7] = [
             number as u64,
             sendfd_flags.bits() as u64,
             len as u64,
             0,
             0,
             0,
+            cap_rights.bits(),
         ];
         let dst = &mut buf[3..];
         let len = dst.len().min(metadata.len());
@@ -2083,6 +2085,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2096,7 +2099,15 @@ impl KernelScheme for UserScheme {
         }
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / size_of::<usize>();
-        let mut buf: [u64; 6] = [id as u64, recvfd_flags.bits() as u64, len as u64, 0, 0, 0];
+        let mut buf: [u64; 7] = [
+            id as u64,
+            recvfd_flags.bits() as u64,
+            len as u64,
+            0,
+            0,
+            0,
+            cap_rights.bits(),
+        ];
         let dst = &mut buf[3..];
         let len = dst.len().min(metadata.len());
         dst[..len].copy_from_slice(&metadata[..len]);
