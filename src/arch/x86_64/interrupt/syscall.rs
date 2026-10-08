@@ -1,9 +1,12 @@
 use crate::{
     arch::{gdt, interrupt::InterruptStack},
+    percpu::PercpuBlock,
     ptrace,
     sync::CleanLockToken,
-    syscall,
-    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
+    syscall::{
+        self,
+        flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
+    },
 };
 use core::mem::offset_of;
 use x86::{
@@ -14,16 +17,27 @@ use x86::{
 
 pub unsafe fn init() {
     unsafe {
+        crate::arch::gdt::init_ldt();
+
+        let cpu_id = PercpuBlock::current().cpu_id;
+
         // IA32_STAR[31:0] are reserved.
 
         // The base selector of the two consecutive segments for kernel code and the immediately
         // succeeding stack (data).
-        let syscall_cs_ss_base = (gdt::GDT_KERNEL_CODE as u16) << 3;
+        //
+        // This uses the LDT rather than GDT so that each CPU can get their own selector, allowing
+        // the selector index to be used to obtain the CPU ID. The LDT's memory should never have
+        // to be accessed after these MSR writes, since SYSCALL caches the internal
+        // segmentation-related info IIUC.
+        let syscall_cs_ss_base =
+            SegmentSelector::new(u16::try_from(cpu_id.get() * 2).unwrap(), x86::Ring::Ring0)
+                | SegmentSelector::TI_LDT;
         // The base selector of the three consecutive segments (of which two are used) for user code
         // and user data. It points to a 32-bit code segment, which must be followed by a data segment
         // (stack), and a 64-bit code segment.
         let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | 3;
-        let star_high = u32::from(syscall_cs_ss_base) | (u32::from(sysret_cs_ss_base) << 16);
+        let star_high = u32::from(syscall_cs_ss_base.bits()) | (u32::from(sysret_cs_ss_base) << 16);
 
         msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
         msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as *const () as u64);

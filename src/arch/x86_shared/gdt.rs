@@ -2,6 +2,7 @@
 
 use core::{cell::SyncUnsafeCell, ptr};
 
+use spin::Once;
 #[cfg(target_arch = "x86")]
 use x86::bits32::task::TaskStateSegment;
 #[cfg(target_arch = "x86_64")]
@@ -9,7 +10,7 @@ use x86::bits64::task::TaskStateSegment;
 use x86::{
     dtables::{self, DescriptorTablePointer},
     segmentation::{self, Descriptor as SegmentDescriptor, SegmentSelector},
-    task, Ring,
+    Ring,
 };
 
 use crate::{
@@ -39,6 +40,12 @@ pub const GDT_TSS: usize = 6;
 #[cfg(target_arch = "x86_64")]
 pub const GDT_TSS_HIGH: usize = 7;
 
+// LDT is only used on x86_64
+#[cfg(target_arch = "x86_64")]
+pub const GDT_LDT: usize = 8;
+#[cfg(target_arch = "x86_64")]
+pub const GDT_LDT_HIGH: usize = 9;
+
 pub const GDT_A_PRESENT: u8 = 1 << 7;
 pub const GDT_A_RING_0: u8 = 0 << 5;
 pub const GDT_A_RING_1: u8 = 1 << 5;
@@ -50,6 +57,7 @@ pub const GDT_A_CONFORMING: u8 = 1 << 2;
 pub const GDT_A_PRIVILEGE: u8 = 1 << 1;
 pub const GDT_A_DIRTY: u8 = 1;
 
+pub const GDT_A_LDT: u8 = 0x2;
 pub const GDT_A_TSS_AVAIL: u8 = 0x9;
 pub const GDT_A_TSS_BUSY: u8 = 0xB;
 
@@ -72,26 +80,29 @@ const SEGMENT_FLAGS: u8 = GDT_F_LONG_MODE;
 #[cfg(target_arch = "x86")]
 const SEGMENT_COUNT: usize = 9;
 #[cfg(target_arch = "x86_64")]
-const SEGMENT_COUNT: usize = 8;
+const SEGMENT_COUNT: usize = 10;
+
+const KERNEL_CODE: GdtEntry = GdtEntry::new(
+    0,
+    SEGMENT_LIMIT,
+    GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
+    SEGMENT_FLAGS,
+);
+const KERNEL_DATA: GdtEntry = GdtEntry::new(
+    0,
+    SEGMENT_LIMIT,
+    GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
+    SEGMENT_FLAGS,
+);
 
 // Later copied into the actual GDT with various fields set.
 const BASE_GDT: [GdtEntry; SEGMENT_COUNT] = [
     // Null
     GdtEntry::new(0, 0, 0, 0),
     // Kernel code
-    GdtEntry::new(
-        0,
-        SEGMENT_LIMIT,
-        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_EXECUTABLE | GDT_A_PRIVILEGE,
-        SEGMENT_FLAGS,
-    ),
+    KERNEL_CODE,
     // Kernel data
-    GdtEntry::new(
-        0,
-        SEGMENT_LIMIT,
-        GDT_A_PRESENT | GDT_A_RING_0 | GDT_A_SYSTEM | GDT_A_PRIVILEGE,
-        SEGMENT_FLAGS,
-    ),
+    KERNEL_DATA,
     // Kernel TLS
     #[cfg(target_arch = "x86")]
     GdtEntry::new(
@@ -141,6 +152,11 @@ const BASE_GDT: [GdtEntry; SEGMENT_COUNT] = [
     // TSS
     GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_TSS_AVAIL, 0),
     // TSS must be 16 bytes long, twice the normal size
+    #[cfg(target_arch = "x86_64")]
+    GdtEntry::new(0, 0, 0, 0),
+    // LDT
+    GdtEntry::new(0, 0, GDT_A_PRESENT | GDT_A_RING_3 | GDT_A_LDT, 0),
+    // LDT must be 16 bytes long, twice the normal size
     #[cfg(target_arch = "x86_64")]
     GdtEntry::new(0, 0, 0, 0),
 ];
@@ -257,6 +273,47 @@ pub unsafe fn set_userspace_io_allowed(pcr: *mut ProcessorControlRegion, allowed
         core::ptr::addr_of_mut!((*pcr).tss.iomap_base).write(offset);
     }
 }
+#[cold]
+pub(crate) unsafe fn init_ldt() {
+    use crate::{cpu_set::MAX_CPU_COUNT, memory::FrameAllocated};
+
+    type Ldt = [GdtEntry; 2 * MAX_CPU_COUNT as usize];
+    static LDT_ALLOC: Once<FrameAllocated<Ldt>> = Once::new();
+    let gdt = unsafe { &mut (*pcr()).gdt };
+
+    let ldt = LDT_ALLOC
+        .call_once(|| {
+            let mut ldt_allocation =
+                unsafe { FrameAllocated::<Ldt>::try_alloc(true).expect("failed to allocate LDT") };
+
+            for (i, entry) in ldt_allocation.iter_mut().enumerate() {
+                if i % 2 == 0 {
+                    *entry = KERNEL_CODE;
+                } else {
+                    *entry = KERNEL_DATA;
+                }
+            }
+
+            ldt_allocation
+        })
+        .as_ptr()
+        .addr() as u64;
+
+    gdt[GDT_LDT].set_offset((ldt & 0xFFFF_FFFF) as u32);
+    gdt[GDT_LDT].set_limit(size_of::<Ldt>() as u32 - 1);
+
+    // GDT is aligned to 8 bytes
+    #[expect(clippy::cast_ptr_alignment)]
+    unsafe {
+        (&mut gdt[GDT_LDT_HIGH] as *mut GdtEntry)
+            .cast::<u32>()
+            .write((ldt >> 32) as u32);
+    }
+
+    unsafe {
+        x86::dtables::load_ldtr(SegmentSelector::new(GDT_LDT as u16, Ring::Ring0));
+    }
+}
 
 #[cold]
 fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
@@ -363,8 +420,10 @@ pub unsafe fn install_pcr(pcr_ptr: *mut ProcessorControlRegion) {
         x86::msr::wrmsr(x86::msr::IA32_FS_BASE, 0);
     }
 
-    // Load the task register
-    unsafe { task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0)) };
+    // Load the task register and LDT
+    unsafe {
+        x86::task::load_tr(SegmentSelector::new(GDT_TSS as u16, Ring::Ring0));
+    }
 
     unsafe { crate::percpu::init_tlb_shootdown(pcr.percpu.cpu_id, &mut pcr.percpu) };
 }
