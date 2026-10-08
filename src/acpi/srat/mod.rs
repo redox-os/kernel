@@ -7,7 +7,7 @@ use crate::{
     acpi::{rxsdt::Rxsdt, sdt::Sdt, RXSDT_ENUM},
     cpu_set::MAX_CPU_COUNT,
     memory,
-    numa::{self, NumaMemory, NumaNode},
+    numa::{self, NumaMemory, NumaNode, NumaNodeID},
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -19,10 +19,10 @@ const SRAT_RESERVED_LEN: usize = 12;
 
 #[repr(C)]
 struct NumaInfo {
-    dom_node_map: [u32; numa::MAX_DOMAINS],
-    cpus: [u32; MAX_CPU_COUNT as usize],
-    memories: [NumaMemory; numa::MAX_DOMAINS],
-    _nodes: [NumaNode; numa::MAX_DOMAINS],
+    dom_node_map: [Option<NumaNodeID>; numa::MAX_DOMAINS],
+    cpus: [Option<NumaNodeID>; MAX_CPU_COUNT as usize],
+    memories: [Option<NumaMemory>; numa::MAX_MEM_REGIONS],
+    _nodes: [Option<NumaNode>; numa::MAX_DOMAINS],
 }
 
 #[repr(C, packed)]
@@ -33,9 +33,9 @@ pub struct Srat {
 
 pub fn init<A: Arch>(
     allocator: &mut BumpAllocator<A>,
-    map: &Once<&'static [u32]>,
-    once_cpus: &Once<&'static [u32]>,
-    mem: &Once<&'static [NumaMemory]>,
+    map: &Once<&'static [Option<NumaNodeID>]>,
+    once_cpus: &Once<&'static [Option<NumaNodeID>]>,
+    mem: &Once<&'static [Option<NumaMemory>]>,
 ) {
     let numa_info = allocator
         .allocate(rmm::FrameCount::new(
@@ -51,9 +51,9 @@ pub fn init<A: Arch>(
         _nodes: _,
     } = unsafe { &mut *numa_info };
 
-    dom_node_map.fill(u32::MAX);
-    cpus.fill(u32::MAX);
-    memories.fill(NumaMemory::default());
+    dom_node_map.fill(None);
+    cpus.fill(None);
+    memories.fill(None);
 
     if let Some(rxsdt) = RXSDT_ENUM.get() {
         for sdt_addr in rxsdt.iter() {

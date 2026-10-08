@@ -6,7 +6,7 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Weak},
 };
-use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
+use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref, sync::atomic::Ordering};
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -108,6 +108,27 @@ impl RunContextData {
             total_weight: 0,
             min_vtime: 0,
         }
+    }
+    pub fn is_stealable(&self) -> bool {
+        !self.queue.is_empty()
+    }
+    fn queue_insert(&mut self, k: ContextQueueKey, v: ContextQueueValue) {
+        // it is forbidden to push kmain context
+        /*
+        if let Some(ctx) = v.context_ref.upgrade() {
+            let mut t = unsafe { CleanLockToken::new() };
+            if let Some(g) = ctx.try_read(t.token()) {
+                if !g.userspace {
+                    panic!(
+                        "CPU {} was trying to push {:?} {id}",
+                        crate::cpu_id().get(),
+                        g.name.as_str(),
+                    );
+                }
+            }
+        }
+        */
+        self.queue.insert(k, v);
     }
 }
 
@@ -350,21 +371,36 @@ impl Drop for PreemptGuardL1<'_> {
     }
 }
 
-pub fn get_contexts_stats(token: &mut CleanLockToken) -> [usize; 5] {
+pub fn get_contexts_stats(token: &mut CleanLockToken) -> [usize; 6] {
     let alive = contexts(token.downgrade()).len();
 
     let mut running = 0;
     let mut switches = 0;
     let mut syscall_switches = 0;
+    let mut idling_cpu = 0;
 
     for percpu in crate::percpu::all_percpu_blocks() {
-        running += percpu.switch_internals.run_queue.lock().queue.len();
+        let (queue, stealable) = {
+            let lock = percpu.switch_internals.run_queue.lock();
+            (lock.queue.len(), lock.is_stealable())
+        };
+        running += queue;
         let data = CpuStatsData::from(&percpu.stats);
         switches += data.context_switches as usize;
         syscall_switches += data.syscall_switches as usize;
+        if !stealable {
+            idling_cpu += 1;
+        }
     }
 
     let blocked = alive.saturating_sub(running);
 
-    [alive, running, blocked, switches, syscall_switches]
+    [
+        alive,
+        running,
+        blocked,
+        switches,
+        syscall_switches,
+        idling_cpu,
+    ]
 }

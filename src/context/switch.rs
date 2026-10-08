@@ -377,7 +377,9 @@ fn schedule(
                 // Currently scheduled contexts shouldn't either, as they must by construction be
                 // scheduled on another thread (otherwise guard and prev_context_guard would be the
                 // same object, which is also forbidden).
-                if !guard.status.is_runnable() || guard.currently_scheduled {
+                //
+                // The idle context is runnable, but also should not be pushed.
+                if !guard.status.is_runnable() || guard.currently_scheduled || !guard.userspace {
                     continue;
                 }
 
@@ -422,7 +424,7 @@ fn schedule(
                 guard.queue_key = Some(key);
                 drop(guard);
 
-                run_queue.queue.insert(
+                run_queue.queue_insert(
                     key,
                     ContextQueueValue {
                         vtime: new_vtime,
@@ -724,7 +726,6 @@ fn select_next_context(
 
     // Work Stealing
     {
-        let local_len = contexts_data.queue.len();
         let num_cpu = crate::cpu_count();
         let curr_cpu = cpu_id.get();
 
@@ -737,7 +738,7 @@ fn select_next_context(
         */
 
         let steal_hint = None;
-        let should_steal = local_len == 0
+        let should_steal = !contexts_data.is_stealable()
             /* // disabled: causing livelock in webkit
             || (counter == 0 && {
                 let mut max_neighbour = 0;
@@ -757,7 +758,7 @@ fn select_next_context(
                     }
                 }
 
-                max_neighbour > local_len.saturating_add(STEAL_THRESHOLD)
+                max_neighbour > contexts_data.queue.len().saturating_add(STEAL_THRESHOLD)
             })*/;
 
         if should_steal {
@@ -881,7 +882,7 @@ fn select_next_context(
                         guard.queue_key = Some(new_key);
                         contexts_data.total_weight =
                             contexts_data.total_weight.saturating_add(weight);
-                        contexts_data.queue.insert(
+                        contexts_data.queue_insert(
                             new_key,
                             ContextQueueValue {
                                 vtime: guard.vtime,
@@ -912,7 +913,7 @@ fn select_next_context(
                 target_percpu
                     .switch_internals
                     .stealable
-                    .store(!target_queue.queue.is_empty(), Ordering::Relaxed);
+                    .store(target_queue.is_stealable(), Ordering::Relaxed);
 
                 break;
             }
@@ -949,7 +950,7 @@ fn select_next_context(
                 });
 
                 let weight = SCHED_PRIO_TO_WEIGHT[prev_context_guard.prio] as u64;
-                contexts_data.queue.insert(
+                contexts_data.queue_insert(
                     ContextQueueKey {
                         vd,
                         rem_slice: Reverse(rem_slice),
@@ -970,14 +971,14 @@ fn select_next_context(
             percpu
                 .switch_internals
                 .stealable
-                .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
+                .store(contexts_data.is_stealable(), Ordering::Relaxed);
 
             Some((chosen_guard, addr_space))
         } else {
             percpu
                 .switch_internals
                 .stealable
-                .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
+                .store(contexts_data.is_stealable(), Ordering::Relaxed);
             None
         }
     } else {
@@ -986,7 +987,7 @@ fn select_next_context(
         percpu
             .switch_internals
             .stealable
-            .store(!contexts_data.queue.is_empty(), Ordering::Relaxed);
+            .store(contexts_data.is_stealable(), Ordering::Relaxed);
 
         if (!was_idle || prev_is_dead) && !is_idle {
             // Since the idle context is per-cpu, then assuming its context Arc will only be
@@ -1477,7 +1478,7 @@ mod tests {
             vtime: u64,
             queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,
         ) {
-            queue.queue.insert(
+            queue.queue_insert(
                 ContextQueueKey {
                     vd: vtime,
                     rem_slice: Reverse(vtime),
@@ -1565,7 +1566,7 @@ mod tests {
         };
         {
             let mut q0 = cpu0.switch_internals.run_queue.lock();
-            q0.queue.insert(last_task.0, last_task.1);
+            q0.queue_insert(last_task.0, last_task.1);
             cpu0.switch_internals.queue_len.store(2, Ordering::Relaxed);
         };
         {

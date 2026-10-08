@@ -19,7 +19,7 @@ use crate::{
     },
     cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
-    numa::NumaNode,
+    numa::{NumaNode, NumaNodeID},
     ptrace::Session,
     syscall::debug::SyscallDebugInfo,
 };
@@ -53,7 +53,7 @@ pub struct PercpuBlock {
 
     pub stats: CpuStats,
 
-    pub numa_node: Cell<Option<(u32, &'static NumaNode)>>,
+    pub numa_node: Cell<Option<(NumaNodeID, &'static NumaNode)>>,
 }
 
 pub static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =

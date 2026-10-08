@@ -15,7 +15,7 @@ use alloc::{string::String, vec::Vec};
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let start_time_sec = *START.lock(token.token()) / 1_000_000_000;
 
-    let [contexts_alive, contexts_running, contexts_blocked, context_switches, syscall_switches] =
+    let [contexts_alive, contexts_running, contexts_blocked, context_switches, syscall_switches, idling_cpu] =
         get_contexts_stats(token);
     let (event_keys, event_subs) = get_event_stat(token);
     let (futex_keys, futex_subs) = get_futex_stat(token);
@@ -24,8 +24,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let res = format!(
         "{}{}\n\
         boot_time: {start_time_sec}\n\
-        context_switches: {}\n\
-        syscall_switches: {}\n\
+        context_switches: {context_switches}\n\
+        syscall_switches: {syscall_switches}\n\
         contexts_created: {}\n\
         contexts_alive: {contexts_alive}\n\
         contexts_running: {contexts_running}\n\
@@ -34,12 +34,11 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
         event_subcribers: {event_subs}\n\
         futex_registries: {futex_keys}\n\
         futex_subcribers: {futex_subs}\n\
+        idling_cpu_count: {idling_cpu}\n\
         pipe_subcribers: {pipe_subs}\n\
         timeout_subscribers: {timeout_subs}\n",
         get_cpu_stats(),
         get_irq_stats(),
-        context_switches,
-        syscall_switches,
         get_contexts_count(),
     );
 
