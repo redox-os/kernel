@@ -118,11 +118,6 @@ pub fn futex(
             {
                 let context_lock = context::current();
 
-                // TODO: Lock ordering violation
-                let mut token = unsafe { CleanLockToken::new() };
-                let mut futexes = FUTEXES.lock(token.token());
-                let (futexes, mut token) = futexes.token_split();
-
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
                     // (simpler) validation we did in the first place.
@@ -171,6 +166,8 @@ pub fn futex(
                     return Err(Error::new(EAGAIN));
                 }
 
+                drop(addr_space_guard);
+
                 {
                     let mut context = context_lock.write(token.token());
 
@@ -184,6 +181,9 @@ pub fn futex(
                     context.block("futex");
                 }
 
+                let mut futexes = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes.token_split();
+
                 futexes
                     .entry(target_physaddr)
                     .or_insert_with(Vec::new)
@@ -191,8 +191,6 @@ pub fn futex(
                         context_lock: Arc::downgrade(&context_lock),
                     });
             }
-
-            drop(addr_space_guard);
 
             context::switch(token);
 
