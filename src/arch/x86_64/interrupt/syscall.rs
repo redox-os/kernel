@@ -110,18 +110,25 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(
     // Yes, this is magic. No, you don't need to understand
-    "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
-    "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
-    "mov rsp, gs:[{ksp}];",       // Load kernel stack pointer
-    "push QWORD PTR {ss_sel};",   // Push fake userspace SS (resembling iret frame)
-    "push QWORD PTR gs:[{sp}];",  // Push userspace rsp
-    "push r11;",                  // Push rflags
-    "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
-    "push rcx;",                  // Push userspace return pointer
-    "swapgs;",                    // Restore user GSBASE by swapping GSBASE and KGSBASE.
+    "
+    bt r11, 21
+    jc .Lslow_path
 
+    // CS is [15:3] sel, [2] TI = 1, [1:0] DPL = 0,
+    mov r11, ss
+    shr r11, 1
+    mov r11, [{all_percpu_blocks}+r11-4]
+
+    mov [r11-{percpu_kpcr}+{sp}], rsp // Save userspace stack pointer
+    mov rsp, [r11-{percpu_kpcr}+{ksp}] // Load kernel stack pointer
+    push QWORD PTR {ss_sel} // Push fake userspace SS (resembling iret frame)
+    push QWORD PTR [r11-{percpu_kpcr}+{sp}] // Push userspace rsp
+    push 0 // Push rflags
+    push QWORD PTR {cs_sel} // Push fake CS (resembling iret stack frame)
+    push rcx // Push userspace return pointer
+    ",
     // Push context registers
-    "push rax;",
+    ".Lpush_registers: push rax;",
     push_scratch!(),
     push_preserved!(),
 
@@ -186,14 +193,28 @@ pub unsafe extern "C" fn syscall_instruction() {
     xor rcx, rcx
     xor r11, r11
     iretq
+",
+    ".Lslow_path:",
+    "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
+    "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
+    "mov rsp, gs:[{ksp}];",       // Load kernel stack pointer
+    "push QWORD PTR {ss_sel};",   // Push fake userspace SS (resembling iret frame)
+    "push QWORD PTR gs:[{sp}];",  // Push userspace rsp
+    "push r11;",                  // Push rflags
+    "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
+    "push rcx;",                  // Push userspace return pointer
+    "swapgs;",                    // Restore user GSBASE by swapping GSBASE and KGSBASE.
+    "jmp .Lpush_registers;", "
     .globl __syscall_instruction_end
 __syscall_instruction_end:
     ",
 
+    percpu_kpcr = const(offset_of!(gdt::ProcessorControlRegion, percpu)),
     sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
     ksp = const(offset_of!(gdt::ProcessorControlRegion, tss) + offset_of!(TaskStateSegment, rsp)),
     ss_sel = const(SegmentSelector::new(gdt::GDT_USER_DATA as u16, x86::Ring::Ring3).bits()),
     cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
+    all_percpu_blocks = sym crate::percpu::ALL_PERCPU_BLOCKS
     );
 }
 unsafe extern "C" {
