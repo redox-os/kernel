@@ -28,7 +28,7 @@ pub unsafe fn init_clint(fdt: &Fdt) {
         .property("timebase-frequency")
         .unwrap()
         .as_usize()
-        .unwrap();
+        .unwrap() as u64;
 
     let clint_node = fdt.find_node("/soc/clint").unwrap();
     assert!(clint_node
@@ -38,7 +38,7 @@ pub unsafe fn init_clint(fdt: &Fdt) {
         .find(|x| (*x).eq("riscv,clint0"))
         .is_some());
 
-    let clint = Clint::new(clock_freq, &clint_node);
-    *clint::CLINT.lock() = Some(clint);
-    clint::CLINT.lock().as_mut().unwrap().init(0);
+    clint::CLINT
+        .call_once(|| Clint::new(clock_freq, &clint_node))
+        .init(0);
 }

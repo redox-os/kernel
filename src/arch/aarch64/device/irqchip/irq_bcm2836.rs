@@ -3,7 +3,7 @@ use crate::{
     arch::device::{ROOT_IC_IDX, ROOT_IC_IDX_IS_SET},
     dtb::{
         get_mmio_address,
-        irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc},
+        irqchip::{InterruptHandler, IrqCell, IrqConnection, IrqDesc},
     },
     sync::CleanLockToken,
 };
@@ -117,17 +117,18 @@ impl Bcm2836ArmInterruptController {
 }
 
 impl InterruptHandler for Bcm2836ArmInterruptController {
-    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for Bcm2836ArmInterruptController {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
+        irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        _chips: &[IrqChipItem],
+        _phandle: u32,
+        _parents: &[IrqConnection],
     ) -> Result<()> {
         let (base, _size) = match Bcm2836ArmInterruptController::parse(fdt_opt.unwrap()) {
             Ok((a, b)) => (a, b),

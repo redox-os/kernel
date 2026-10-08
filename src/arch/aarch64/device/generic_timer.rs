@@ -3,7 +3,7 @@ use spin::Once;
 use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
 use crate::{
     context::{self, timeout},
-    dtb::{get_interrupt, irqchip::IRQ_CHIP},
+    dtb::{get_interrupt, irqchip::IrqChip},
     scheme::irq::irq_trigger,
     sync::CleanLockToken,
     time,
@@ -59,11 +59,11 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
         error!("failed to find interrupt parent for architected timer");
         return;
     };
-    let Ok(virq) = IRQ_CHIP.chip(ic_idx).ic.irq_xlate(irq) else {
+    let Ok(virq) = IrqChip::chip(ic_idx).ic.irq_xlate(irq) else {
         error!("failed to translate architected timer interrupt");
         return;
     };
-    let Some(desc) = IRQ_CHIP.irq_desc.get(virq) else {
+    let Some(desc) = IrqChip::descs().get(virq) else {
         error!(
             "architected timer virq {} is outside the descriptor table",
             virq
@@ -75,7 +75,7 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
         use_virtual,
         clk_freq,
         reload_count: clk_freq / 100,
-        hwirq: desc.basic.ic_irq(),
+        hwirq: desc.basic.ic_irq,
         virq: virq as u32,
     };
     if config.reload_count == 0 {
@@ -94,7 +94,7 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
     );
     let config = TIMER.call_once(|| config);
     program_current(config);
-    IRQ_CHIP.irq_enable(config.virq);
+    IrqChip::irq_enable(config.virq);
 }
 
 pub unsafe fn init_acpi(non_secure_physical_gsiv: u32, virtual_gsiv: u32) {
@@ -131,7 +131,7 @@ pub unsafe fn init_acpi(non_secure_physical_gsiv: u32, virtual_gsiv: u32) {
         }
     );
     program_current(config);
-    IRQ_CHIP.irq_enable(config.virq);
+    IrqChip::irq_enable(config.virq);
 }
 
 pub(crate) fn init_ap() -> Result<()> {
