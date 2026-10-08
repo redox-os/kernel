@@ -4,12 +4,18 @@ use crate::{
         get_mmio_address,
         irqchip::{
             mmio_after_acquire, mmio_before_release, InterruptController, InterruptHandler,
-            IrqCell, IrqChipItem, IrqDesc, IRQ_CHIP,
+            IrqCell, IrqChip, IrqConnection, IrqDesc,
         },
     },
     sync::CleanLockToken,
 };
-use core::{mem, num::NonZero, ptr, sync::atomic::Ordering};
+use core::{
+    mem,
+    num::NonZero,
+    ptr,
+    ptr::{null_mut, with_exposed_provenance_mut},
+    sync::atomic::Ordering,
+};
 use fdt::Fdt;
 use spin::Mutex;
 use syscall::{Error, Mmio, EINVAL};
@@ -63,7 +69,7 @@ unsafe impl Sync for Plic {}
 impl Plic {
     pub fn new() -> Self {
         Self {
-            regs: 0 as *mut PlicRegs,
+            regs: null_mut(),
             ndev: 0,
             virq_base: 0,
             context: 0,
@@ -160,7 +166,7 @@ impl InterruptHandler for Plic {
         let irq = self.irq_ack();
         //println!("PLIC interrupt {}", irq);
         if let Some(virq) = self.irq_to_virq(irq) {
-            IRQ_CHIP.trigger_virq(virq as u32, token);
+            IrqChip::trigger_virq(virq as u32, token);
         } else {
             error!("unexpected irq num {}", irq);
             self.irq_eoi(irq);
@@ -169,29 +175,39 @@ impl InterruptHandler for Plic {
     }
 }
 
+const SUPERVISOR_EXTERNAL_INTERRUPT: u32 = 9;
+
 impl InterruptController for Plic {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
+        irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        chips: &[IrqChipItem],
+        phandle: u32,
+        parents: &[IrqConnection],
     ) -> syscall::Result<()> {
-        let desc = &chips[ic_idx];
-        let fdt = fdt_opt.unwrap();
-        let my_node = fdt.find_phandle(desc.phandle).unwrap();
+        let fdt = fdt_opt.expect("PLIC init expected fdt!");
+        let my_node = fdt
+            .find_phandle(phandle)
+            .expect("PLIC init failed to find its node in fdt!");
 
         // MMIO region
-        let reg = my_node.reg().unwrap().next().unwrap();
-        let addr = get_mmio_address(&fdt, &my_node, &reg).unwrap();
+        let reg = my_node
+            .reg()
+            .and_then(|mut r| r.next())
+            .expect("PLIC failed to parse MMIO reg!");
+        let addr = get_mmio_address(fdt, &my_node, &reg).expect("PLIC failed to get MMIO address!");
         // Specifies how many external interrupts are supported by this controller.
         let ndev = my_node
             .property("riscv,ndev")
             .and_then(|x| x.as_usize())
-            .unwrap();
+            .expect("PLIC failed to parse ndev!");
 
-        self.regs = (addr + crate::PHYS_OFFSET) as *mut PlicRegs;
+        self.regs = with_exposed_provenance_mut(
+            addr.checked_add(crate::PHYS_OFFSET)
+                .expect("PLIC phys offset overflow???"),
+        );
         self.ndev = ndev;
 
         self.virq_base = *irq_idx;
@@ -206,11 +222,23 @@ impl InterruptController for Plic {
         // TODO spread irqs over all the cores when we have them?
         let hlic_ic_idx = hlic::irqchip_for_hart(BOOT_HART_ID.load(Ordering::Relaxed))
             .expect("Could not find HLIC irqchip for the boot hart while initing PLIC");
-        self.context = desc
-            .parents
+        self.context = parents
             .iter()
-            .position(|x| x.parent_interrupt.is_some() && x.parent == hlic_ic_idx)
-            .unwrap();
+            .position(
+                |IrqConnection {
+                     parent_phandle: _,
+                     parent,
+                     parent_interrupt,
+                 }| {
+                    // specify supervisor external irq to avoid errors on SoCs with management cores
+                    *parent == hlic_ic_idx
+                        && matches!(
+                            parent_interrupt,
+                            Some(IrqCell::L1(SUPERVISOR_EXTERNAL_INTERRUPT))
+                        )
+                },
+            )
+            .expect("Failed to determine PLIC context!");
         info!("PLIC: using context {}", self.context);
 
         self.set_priority_threshold(self.context, 0);

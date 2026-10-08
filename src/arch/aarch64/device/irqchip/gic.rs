@@ -1,7 +1,7 @@
 use super::InterruptController;
 use crate::{
     dtb::{
-        irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc},
+        irqchip::{InterruptHandler, IrqCell, IrqConnection, IrqDesc},
         translate_mmio_address,
     },
     sync::CleanLockToken,
@@ -212,17 +212,18 @@ impl GenericInterruptController {
 }
 
 impl InterruptHandler for GenericInterruptController {
-    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for GenericInterruptController {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
+        irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        _chips: &[IrqChipItem],
+        _phandle: u32,
+        _parents: &[IrqConnection],
     ) -> Result<()> {
         if let Some(fdt) = fdt_opt {
             let (dist_addr, _dist_size, cpu_addr, _cpu_size) =

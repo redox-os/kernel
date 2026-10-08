@@ -6,24 +6,25 @@ use syscall::{
 
 use super::InterruptController;
 use crate::{
-    dtb::irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc},
+    dtb::irqchip::{InterruptHandler, IrqCell, IrqConnection, IrqDesc},
     sync::CleanLockToken,
 };
 
 pub struct Null;
 
 impl InterruptHandler for Null {
-    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for Null {
     fn irq_init(
         &mut self,
         _fdt_opt: Option<&Fdt>,
-        _irq_desc: &[IrqDesc; 1024],
+        _irq_desc: &mut [IrqDesc; 1024],
         _ic_idx: usize,
         _irq_idx: &mut usize,
-        _chips: &[IrqChipItem],
+        _phandle: u32,
+        _parents: &[IrqConnection],
     ) -> Result<()> {
         Ok(())
     }

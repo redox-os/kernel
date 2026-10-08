@@ -5,7 +5,7 @@ use super::InterruptController;
 use crate::{
     dtb::{
         get_interrupt, get_mmio_address,
-        irqchip::{InterruptHandler, IrqCell, IrqChipItem, IrqDesc, IRQ_CHIP},
+        irqchip::{InterruptHandler, IrqCell, IrqChip, IrqConnection, IrqDesc},
     },
     sync::CleanLockToken,
 };
@@ -66,9 +66,9 @@ impl Bcm2835ArmInterruptController {
             irq_range: (0, 0),
         }
     }
-    pub fn parse(fdt: &Fdt, chips: &[IrqChipItem]) -> Result<(usize, usize, Option<usize>)> {
+    pub fn parse(fdt: &Fdt, parents: &[IrqConnection]) -> Result<(usize, usize, Option<usize>)> {
         if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-armctrl-ic"]) {
-            return Bcm2835ArmInterruptController::parse_inner(fdt, &node, chips);
+            return Bcm2835ArmInterruptController::parse_inner(fdt, &node, parents);
         } else {
             return Err(Error::new(EINVAL));
         }
@@ -76,26 +76,26 @@ impl Bcm2835ArmInterruptController {
     fn parse_inner(
         fdt: &Fdt,
         node: &FdtNode,
-        chips: &[IrqChipItem],
+        _parents: &[IrqConnection],
     ) -> Result<(usize, usize, Option<usize>)> {
         //assert address_cells == 0x1, size_cells == 0x1
         let mem = node.reg().unwrap().nth(0).unwrap();
         let base = get_mmio_address(fdt, node, &mem).unwrap();
         let size = mem.size.unwrap() as u32;
-        let mut ret_virq = None;
+        let ret_virq = None;
 
-        if let Some(interrupt_parent) = node.property("interrupt-parent") {
-            let phandle = interrupt_parent.as_usize().unwrap() as u32;
-            let irq = get_interrupt(fdt, node, 0).unwrap();
-            let ic_idx = chips.iter().position(|x| x.phandle == phandle).unwrap();
-            //PHYS_NONSECURE_PPI only
-            let virq = chips[ic_idx].ic.irq_xlate(irq).unwrap();
-            info!(
-                "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
-                ic_idx, virq
-            );
-            ret_virq = Some(virq);
-        }
+        // if let Some(interrupt_parent) = node.property("interrupt-parent") {
+        //     let phandle = interrupt_parent.as_usize().unwrap() as u32;
+        //     let irq = get_interrupt(fdt, node, 0).unwrap();
+        //     let ic_idx = chips.iter().position(|x| x.phandle == phandle).unwrap();
+        //     //PHYS_NONSECURE_PPI only
+        //     let virq = chips[ic_idx].ic.irq_xlate(irq).unwrap();
+        //     info!(
+        //         "register bcm2835arm_ctrl as ic_idx {}'s child  virq = {}",
+        //         ic_idx, virq
+        //     );
+        //     ret_virq = Some(virq);
+        // }
         Ok((base as usize, size as usize, ret_virq))
     }
 
@@ -129,13 +129,14 @@ impl InterruptController for Bcm2835ArmInterruptController {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
+        irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        chips: &[IrqChipItem],
+        _phandle: u32,
+        parents: &[IrqConnection],
     ) -> Result<()> {
         let (base, _size, _virq) =
-            match Bcm2835ArmInterruptController::parse(fdt_opt.unwrap(), chips) {
+            match Bcm2835ArmInterruptController::parse(fdt_opt.unwrap(), parents) {
                 Ok((a, b, c)) => (a, b, c),
                 Err(_) => return Err(Error::new(EINVAL)),
             };
@@ -286,7 +287,7 @@ impl InterruptHandler for Bcm2835ArmInterruptController {
         if let Some(virq) = self.irq_to_virq(irq)
             && virq < 1024
         {
-            if let Some(handler) = IRQ_CHIP.irq_desc[virq].handler() {
+            if let Some(handler) = IrqChip::descs()[virq].handler.get() {
                 handler.irq_handler(virq as u32, token);
             }
         } else {

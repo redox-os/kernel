@@ -6,7 +6,7 @@ use crate::{
         gic::{GenericInterruptController, GicCpuIf, GicDistIf},
         gicv3::{GicV3, GicV3CpuIf},
     },
-    dtb::irqchip::{init_with_chips, IrqChipItem},
+    dtb::irqchip::{IrqChip, IrqChipItem},
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
 
@@ -94,5 +94,5 @@ pub(super) fn init(madt: Madt) {
             warn!("unsupported GIC version {}", gicd.gic_version);
         }
     }
-    init_with_chips(chips);
+    IrqChip::init_with_chips(chips.into_boxed_slice());
 }

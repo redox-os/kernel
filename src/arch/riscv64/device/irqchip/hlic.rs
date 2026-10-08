@@ -1,6 +1,6 @@
 use crate::{
     dtb::irqchip::{
-        InterruptController, InterruptHandler, IrqCell, IrqChipItem, IrqDesc, IRQ_CHIP,
+        InterruptController, InterruptHandler, IrqCell, IrqChip, IrqConnection, IrqDesc,
     },
     sync::CleanLockToken,
 };
@@ -40,16 +40,15 @@ pub fn interrupt(hart: usize, interrupt: usize, token: &mut CleanLockToken) {
             hart, interrupt
         )
     });
-    let virq = IRQ_CHIP
-        .irq_to_virq(ic_idx, interrupt as u32)
+    let virq = IrqChip::irq_to_virq(ic_idx, interrupt as u32)
         .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
-    match IRQ_CHIP.irq_desc[virq].handler() {
+    match IrqChip::descs()[virq].handler.get() {
         Some(handler) => {
             handler.irq_handler(virq as u32, token);
         }
-        _ => match IRQ_CHIP.irq_desc[virq].basic.child_ic_idx() {
+        _ => match IrqChip::descs()[virq].basic.child_ic_idx {
             Some(ic_idx) => {
-                IRQ_CHIP.chip(ic_idx).ic.irq_handler(virq as u32, token);
+                IrqChip::chip(ic_idx).ic.irq_handler(virq as u32, token);
             }
             _ => {
                 panic!(
@@ -88,7 +87,7 @@ impl Hlic {
 impl InterruptHandler for Hlic {
     fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         assert!(irq < 16, "Unsupported HLIC interrupt raised!");
-        IRQ_CHIP.trigger_virq(self.virq_base as u32 + irq, token);
+        IrqChip::trigger_virq(self.virq_base as u32 + irq, token);
     }
 }
 
@@ -96,19 +95,18 @@ impl InterruptController for Hlic {
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
+        irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        chips: &[IrqChipItem],
+        phandle: u32,
+        _parents: &[IrqConnection],
     ) -> syscall::Result<()> {
-        let desc = &chips[ic_idx];
         let fdt = fdt_opt.unwrap();
         let cpu_node = fdt
             .find_all_nodes("/cpus/cpu")
             .find(|x| {
                 x.children().any(|x| {
-                    x.property("phandle").and_then(NodeProperty::as_usize)
-                        == Some(desc.phandle as usize)
+                    x.property("phandle").and_then(NodeProperty::as_usize) == Some(phandle as usize)
                 })
             })
             .expect("Could not find CPU node for HLIC controller");

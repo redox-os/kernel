@@ -4,7 +4,10 @@ use crate::{
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use core::{
+    cell::SyncUnsafeCell,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use fdt::{node::NodeProperty, Fdt};
 use spin::Once;
 use syscall::{Error, Result, EINVAL};
@@ -27,16 +30,15 @@ pub enum IrqCell {
 pub trait InterruptController: InterruptHandler {
     /// Bring the controller up once on the boot CPU, before it is published.
     ///
-    /// `chips` lets a controller inspect an already-initialized parent. Its
-    /// own entry contains a placeholder during this call, so its `ic` must not
-    /// be used.
+    /// This function is called during the initialization of IrqChip, which is not accessible yet!
     fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
+        irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        chips: &[IrqChipItem],
+        phandle: u32,
+        parents: &[IrqConnection],
     ) -> Result<()>;
     fn irq_ack(&self) -> u32;
     fn irq_eoi(&self, irq_num: u32);
@@ -53,107 +55,29 @@ pub trait InterruptController: InterruptHandler {
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize>;
 }
 
-/// Placeholder swapped into the chip list while a controller is running its
-/// own [`InterruptController::irq_init`], so that the initializer can still
-/// read the rest of the list.
-struct UninitController;
-
-impl InterruptHandler for UninitController {
-    fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {
-        unreachable!("interrupt on a controller that is still initializing")
-    }
-}
-
-impl InterruptController for UninitController {
-    fn irq_init(
-        &mut self,
-        _fdt_opt: Option<&Fdt>,
-        _irq_desc: &[IrqDesc; 1024],
-        _ic_idx: usize,
-        _irq_idx: &mut usize,
-        _chips: &[IrqChipItem],
-    ) -> Result<()> {
-        unreachable!()
-    }
-    fn irq_ack(&self) -> u32 {
-        unreachable!()
-    }
-    fn irq_eoi(&self, _irq_num: u32) {
-        unreachable!()
-    }
-    fn irq_enable(&self, _irq_num: u32) {
-        unreachable!()
-    }
-    fn irq_disable(&self, _irq_num: u32) {
-        unreachable!()
-    }
-    fn irq_xlate(&self, _irq_data: IrqCell) -> Result<usize> {
-        unreachable!()
-    }
-    fn irq_to_virq(&self, _hwirq: u32) -> Option<usize> {
-        unreachable!()
-    }
-}
-
 pub struct IrqConnection {
     pub parent_phandle: u32,
-    pub parent: usize, // parent idx in chiplist
+    /// parent index in IrqChip::chips()
+    pub parent: usize,
     pub parent_interrupt: Option<IrqCell>,
 }
 
 pub struct IrqChipItem {
     pub phandle: u32,
     pub parents: Vec<IrqConnection>,
-    pub children: Vec<usize>, // child idx in chiplist
+    /// child indices in IrqChip::chips()
+    pub children: Vec<usize>,
     pub ic: Box<dyn InterruptController>,
 }
 
-pub struct IrqChipList {
-    pub chips: Vec<IrqChipItem>,
-}
-
-/// Sentinel for [`IrqDescItem::child_ic_idx`], which is logically an
-/// `Option<usize>` but has to be readable from other CPUs without a lock.
-const NO_CHILD_IC: usize = usize::MAX;
-
-/// The routing of a single virtual IRQ.
-///
-/// Every field is written while the boot CPU builds the tables, except
-/// `used`, which the `irq:` scheme flips at runtime from whichever CPU the
-/// calling driver happens to run on. They are therefore all atomics. The
-/// descriptors live in a `static` shared by every CPU.
-///
-/// The descriptors are not published by the `Once` that publishes
-/// [`IrqChipCore::chips`], so they carry their own ordering. The boot CPU
-/// stores the routing with `Release` and every reader loads it with
-/// `Acquire`. That pairing is what makes the tables the boot CPU built
-/// visible to a CPU that reaches a descriptor before it looks at `chips`.
 pub struct IrqDescItem {
-    ic_idx: AtomicUsize,       // ic idx in irq chip list
-    child_ic_idx: AtomicUsize, // ic idx in irq chip list, or NO_CHILD_IC
-    ic_irq: AtomicU32,         // hwirq in ic
+    pub ic_idx: usize,               // ic idx in irq chip list
+    pub child_ic_idx: Option<usize>, // ic idx in irq chip list, or NO_CHILD_IC
+    pub ic_irq: u32,                 // hwirq in ic
     used: AtomicBool,
 }
 
 impl IrqDescItem {
-    #[inline]
-    pub fn ic_idx(&self) -> usize {
-        self.ic_idx.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    pub fn ic_irq(&self) -> u32 {
-        self.ic_irq.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    pub fn child_ic_idx(&self) -> Option<usize> {
-        match self.child_ic_idx.load(Ordering::Acquire) {
-            NO_CHILD_IC => None,
-            idx => Some(idx),
-        }
-    }
-
     #[inline]
     pub fn set_used(&self, used: bool) {
         self.used.store(used, Ordering::Release);
@@ -171,57 +95,127 @@ impl IrqDescItem {
     /// Point this descriptor at `ic_irq` of chip `ic_idx`. Only called while
     /// the boot CPU initializes the controllers.
     #[inline]
-    pub fn set_mapping(&self, ic_idx: usize, ic_irq: u32) {
-        self.ic_irq.store(ic_irq, Ordering::Release);
-        self.ic_idx.store(ic_idx, Ordering::Release);
-    }
-
-    #[inline]
-    fn set_child_ic_idx(&self, child_ic_idx: usize) {
-        self.child_ic_idx.store(child_ic_idx, Ordering::Release);
+    pub fn set_mapping(&mut self, ic_idx: usize, ic_irq: u32) {
+        self.ic_irq = ic_irq;
+        self.ic_idx = ic_idx;
     }
 }
 
 pub struct IrqDesc {
     pub basic: IrqDescItem,
-    /// Write-once: Registered while the device drivers are brought up, read
-    /// from interrupt context on any CPU afterwards.
-    handler: Once<Box<dyn InterruptHandler>>,
+    pub handler: Once<Box<dyn InterruptHandler>>,
 }
-
 impl IrqDesc {
-    #[inline]
-    pub fn handler(&self) -> Option<&dyn InterruptHandler> {
-        self.handler.get().map(|handler| &**handler)
+    const fn new() -> Self {
+        Self {
+            basic: IrqDescItem {
+                ic_idx: 0,
+                ic_irq: 0,
+                child_ic_idx: None,
+                used: AtomicBool::new(false),
+            },
+            handler: Once::new(),
+        }
     }
 }
 
-impl IrqChipList {
-    fn init_inner1(&mut self, fdt: &Fdt) {
-        for node in fdt.all_nodes() {
-            if node.property("interrupt-controller").is_some() {
-                let Some(compatible) = node.compatible() else {
-                    continue;
-                };
-                let compatible = compatible.first();
-                let Some(phandle) = node.property("phandle") else {
-                    continue;
-                };
-                let phandle = phandle.as_usize().unwrap() as u32;
-                let Some(intr_cells) = node.interrupt_cells() else {
-                    continue;
+pub use inner::IrqChip;
+mod inner {
+    use super::*;
+
+    pub struct IrqChip {
+        //TODO: support multi level interrupt constrollers
+        /// Populated exactly once, by [`init_with_fdt`] / [`init_with_chips`] on the boot CPU, and read-only
+        /// afterwards.
+        // SAFETY: used to synchronize and gate irq_desc!
+        chips: Once<Box<[IrqChipItem]>>,
+        // irq_desc uses chips to enforce initialization and should only be modified from the same call_once
+        irq_desc: SyncUnsafeCell<[IrqDesc; 1024]>,
+    }
+
+    static IRQ_CHIP: IrqChip = IrqChip {
+        chips: Once::new(),
+        irq_desc: SyncUnsafeCell::new([const { IrqDesc::new() }; 1024]),
+    };
+
+    impl IrqChip {
+        #[inline]
+        pub fn chips() -> &'static [IrqChipItem] {
+            IRQ_CHIP
+                .chips
+                .get()
+                .expect("IrqChip::chips() called before initialization!")
+        }
+        #[inline]
+        pub fn descs() -> &'static [IrqDesc; 1024] {
+            unsafe {
+                if !IRQ_CHIP.chips.is_completed() {
+                    panic!("IrqChip::descs() called before initialization!");
+                }
+                &*IRQ_CHIP.irq_desc.get()
+            }
+        }
+        pub fn init_with_fdt(fdt: &Fdt) {
+            travel_interrupt_ctrl(fdt);
+            Self::init(Self::parse_fdt_chips(fdt), Some(fdt));
+        }
+        /// Publish a controller list assembled by the platform (ACPI) instead of the
+        /// devicetree.
+        #[allow(dead_code)]
+        pub fn init_with_chips(chips: Box<[IrqChipItem]>) {
+            Self::init(chips, None);
+        }
+        fn init(mut chips: Box<[IrqChipItem]>, fdt_opt: Option<&Fdt>) {
+            unsafe {
+                IRQ_CHIP.chips.call_once(move || {
+                    let roots = Self::assign_children(&mut chips);
+                    Self::connect_parent_irqs(
+                        &mut chips,
+                        IRQ_CHIP
+                            .irq_desc
+                            .get()
+                            .as_mut()
+                            .expect("IRQ_CHIP.irq_desc should never be null!"),
+                        fdt_opt,
+                        roots,
+                    );
+                    chips
+                });
+            }
+        }
+    }
+}
+
+impl IrqChip {
+    fn parse_fdt_chips(fdt: &Fdt) -> Box<[IrqChipItem]> {
+        fdt.all_nodes()
+            .filter(|n| n.property("interrupt-controller").is_some())
+            .filter_map(|node| {
+                let (Some(compatible), Some(phandle), Some(intr_cells)) = (
+                    node.compatible().map(|c| c.first()),
+                    node.property("phandle")
+                        .and_then(|p| p.as_usize())
+                        .and_then(|p| p.try_into().ok()),
+                    node.interrupt_cells(),
+                ) else {
+                    warn!(
+                        "Failed to parse properties of interrupt controller: {}",
+                        node.name
+                    );
+                    return None;
                 };
 
                 debug!(
                     "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
                     node.name, compatible, intr_cells, phandle
                 );
-                let mut item = IrqChipItem {
-                    phandle,
-                    parents: Vec::new(),
-                    children: Vec::new(),
-                    ic: new_irqchip(compatible).unwrap(),
+
+                let Some(ic) = new_irqchip(compatible) else {
+                    warn!("No drivers found, skipping");
+                    return None;
                 };
+
+                let mut item_parents = Vec::new();
 
                 fn interrupt_address(
                     iter: &mut impl Iterator<Item = u32>,
@@ -244,8 +238,8 @@ impl IrqChipList {
                     }
                 }
 
-                if let Some(parent) = node.interrupt_parent()
-                    && let Some(intr_data) = node.property("interrupts")
+                if let (Some(parent), Some(intr_data)) =
+                    (node.interrupt_parent(), node.property("interrupts"))
                 {
                     // FIXME use interrupts() helper when fixed (see gh#12)
                     let mut intr_data = intr_data
@@ -253,19 +247,27 @@ impl IrqChipList {
                         .as_chunks::<4>()
                         .0
                         .iter()
-                        .map(|&x| u32::from_be_bytes(x));
+                        .copied()
+                        .map(u32::from_be_bytes);
+
                     let parent_phandle = parent
                         .property("phandle")
                         .and_then(NodeProperty::as_usize)
-                        .unwrap() as u32;
-                    let parent_interrupt_cells = parent.interrupt_cells().unwrap();
+                        .expect("Failed to parse IC parent phandle property as usize!")
+                        as u32;
+
+                    let parent_interrupt_cells = parent
+                        .interrupt_cells()
+                        .expect("Failed to parse IC parent interrupt cells!");
+
                     debug!("interrupt-parent = 0x{:08x}", parent_phandle);
                     debug!("interrupts begin:");
+
                     while let Some(parent_interrupt) =
                         interrupt_address(&mut intr_data, parent_interrupt_cells)
                     {
                         debug!("{:?}, ", parent_interrupt);
-                        item.parents.push(IrqConnection {
+                        item_parents.push(IrqConnection {
                             parent_phandle,
                             parent: 0,
                             parent_interrupt: gate_interrupt_address(parent_interrupt),
@@ -281,73 +283,78 @@ impl IrqChipList {
                         .as_chunks::<4>()
                         .0
                         .iter()
-                        .map(|&x| u32::from_be_bytes(x));
+                        .copied()
+                        .map(u32::from_be_bytes);
+
                     while let Some(parent_phandle) = intr_data.next()
-                        && let Some(parent) = fdt.find_phandle(parent_phandle)
-                        && let Some(parent_interrupt_cells) = parent.interrupt_cells()
-                        && let Some(parent_interrupt) =
-                            interrupt_address(&mut intr_data, parent_interrupt_cells)
+                        && let Some(parent_interrupt) = fdt
+                            .find_phandle(parent_phandle)
+                            .and_then(|p| p.interrupt_cells())
+                            .and_then(|cells| interrupt_address(&mut intr_data, cells))
                     {
                         debug!("{:?}, ", parent_interrupt);
-                        item.parents.push(IrqConnection {
+                        item_parents.push(IrqConnection {
                             parent_phandle,
                             parent: 0,
                             parent_interrupt: gate_interrupt_address(parent_interrupt),
                         });
                     }
                 }
-
-                self.chips.push(item);
-            }
-        }
+                Some(IrqChipItem {
+                    phandle,
+                    parents: item_parents,
+                    children: Vec::new(),
+                    ic,
+                })
+            })
+            .collect()
     }
+    fn assign_children(chips: &mut [IrqChipItem]) -> Vec<usize> {
+        (0..chips.len())
+            .filter(|&child_i| {
+                let phandle = chips[child_i].phandle;
+                let parents = &chips[child_i].parents;
 
-    fn init_inner2(&mut self) -> Vec<usize> {
-        let mut roots = Vec::new();
-
-        for child_i in 0..self.chips.len() {
-            let child = &mut self.chips[child_i];
-            let phandle = child.phandle;
-
-            if child.parents.is_empty() {
-                roots.push(child_i);
-                continue;
-            }
-
-            for conn_i in 0..child.parents.len() {
-                let parent_phandle = self.chips[child_i].parents[conn_i].parent_phandle;
-                let parent_i = self
-                    .chips
-                    .iter()
-                    .position(|x| parent_phandle == x.phandle)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Cannot find parent intc {} (connection from {})",
-                            parent_phandle, phandle
-                        )
-                    });
-                self.chips[child_i].parents[conn_i].parent = parent_i;
-                let parent = &mut self.chips[parent_i];
-                if !parent.children.contains(&child_i) {
-                    parent.children.push(child_i);
+                if parents.is_empty() {
+                    return true;
                 }
-            }
-        }
-        roots
-    }
 
-    fn init_inner3(
-        &mut self,
+                for conn_i in 0..parents.len() {
+                    let parent_phandle = chips[child_i].parents[conn_i].parent_phandle;
+                    let parent_i = chips
+                        .iter()
+                        .position(|&IrqChipItem { phandle, .. }| parent_phandle == phandle)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Cannot find parent intc {} (connection from {})",
+                                parent_phandle, phandle
+                            )
+                        });
+                    chips[child_i].parents[conn_i].parent = parent_i;
+
+                    let parent = &mut chips[parent_i];
+                    if !parent.children.contains(&child_i) {
+                        parent.children.push(child_i);
+                    }
+                }
+                false
+            })
+            .collect()
+    }
+    fn connect_parent_irqs(
+        chips: &mut [IrqChipItem],
+        irq_desc: &mut [IrqDesc; 1024],
         fdt_opt: Option<&Fdt>,
-        irq_desc: &[IrqDesc; 1024],
         mut queue: Vec<usize>,
     ) {
-        //run init
         let mut irq_idx: usize = 0;
         let mut queue_idx = 0;
+
         while queue_idx < queue.len() {
             let cur_idx = queue[queue_idx];
-            let cur_chip = &self.chips[cur_idx];
+            let cur_chip = &mut chips[cur_idx];
+            let cur_chip_phandle = cur_chip.phandle;
+
             for child in &cur_chip.children {
                 if let Some(child_pos) = queue.iter().position(|x| *child == *x) {
                     assert!(
@@ -360,109 +367,102 @@ impl IrqChipList {
                 }
             }
 
-            let mut ic = core::mem::replace(
-                &mut self.chips[cur_idx].ic,
-                Box::new(UninitController) as Box<dyn InterruptController>,
-            );
-            let result = ic.irq_init(fdt_opt, irq_desc, cur_idx, &mut irq_idx, &self.chips);
-            self.chips[cur_idx].ic = ic;
-            result.expect("Failed to initialize irq chip");
+            cur_chip
+                .ic
+                .irq_init(
+                    fdt_opt,
+                    irq_desc,
+                    cur_idx,
+                    &mut irq_idx,
+                    cur_chip.phandle,
+                    &cur_chip.parents,
+                )
+                .expect("Failed to initialize irq chip");
 
-            let cur_chip = &self.chips[cur_idx];
-            for connection in &cur_chip.parents {
+            let mut conn_i = 0;
+
+            while conn_i < chips[cur_idx].parents.len() {
+                let connection = &chips[cur_idx].parents[conn_i];
                 debug_assert!(queue[0..queue_idx].contains(&connection.parent));
+
                 if let Some(parent_interrupt) = connection.parent_interrupt {
-                    let parent = &self.chips[connection.parent];
+                    let parent = &mut chips[connection.parent];
+
                     match parent.ic.irq_xlate(parent_interrupt) {
                         Ok(virq) => {
                             // assert is unused
-                            irq_desc[virq].basic.set_child_ic_idx(cur_idx);
+                            irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
                         }
                         _ => {
                             error!(
                                 "Cannot connect irq chip {} to parent irq {} : {:?}",
-                                cur_chip.phandle, parent.phandle, parent_interrupt
+                                cur_chip_phandle, parent.phandle, parent_interrupt
                             );
                         }
                     }
                 }
+                conn_i += 1;
             }
 
             queue_idx += 1;
         }
     }
-}
-
-pub struct IrqChipCore {
-    //TODO: support multi level interrupt constrollers
-    /// Populated exactly once, by [`init`] on the boot CPU, and read-only
-    /// afterwards. `Once` is what makes the publication visible to the other
-    /// CPUs without a lock on the interrupt path.
-    chips: Once<Box<[IrqChipItem]>>,
-    pub irq_desc: [IrqDesc; 1024],
-}
-
-impl IrqChipCore {
-    #[inline]
-    pub fn chips(&self) -> &[IrqChipItem] {
-        self.chips.get().map_or(&[], |chips| chips)
-    }
 
     #[inline]
-    pub fn chip(&self, ic_idx: usize) -> &IrqChipItem {
-        &self.chips()[ic_idx]
+    pub fn chip(ic_idx: usize) -> &'static IrqChipItem {
+        &Self::chips()[ic_idx]
     }
 
-    pub fn irq_eoi(&self, virq: u32) {
-        let irq_desc = &self.irq_desc[virq as usize];
+    pub fn irq_eoi(virq: u32) {
+        let irq_desc = &Self::descs()[virq as usize];
 
-        self.chip(irq_desc.basic.ic_idx())
+        Self::chip(irq_desc.basic.ic_idx)
             .ic
-            .irq_eoi(irq_desc.basic.ic_irq())
+            .irq_eoi(irq_desc.basic.ic_irq)
     }
 
-    pub fn irq_enable(&self, virq: u32) {
-        let irq_desc = &self.irq_desc[virq as usize];
+    pub fn irq_enable(virq: u32) {
+        let irq_desc = &Self::descs()[virq as usize];
 
-        self.chip(irq_desc.basic.ic_idx())
+        Self::chip(irq_desc.basic.ic_idx)
             .ic
-            .irq_enable(irq_desc.basic.ic_irq())
+            .irq_enable(irq_desc.basic.ic_irq)
     }
 
     #[allow(unused)]
-    pub fn irq_disable(&self, virq: u32) {
-        let irq_desc = &self.irq_desc[virq as usize];
+    pub fn irq_disable(virq: u32) {
+        let irq_desc = &Self::descs()[virq as usize];
 
-        self.chip(irq_desc.basic.ic_idx())
+        Self::chip(irq_desc.basic.ic_idx)
             .ic
-            .irq_disable(irq_desc.basic.ic_irq())
+            .irq_disable(irq_desc.basic.ic_irq)
     }
 
     #[cfg(target_arch = "riscv64")]
-    pub fn irq_to_virq(&self, ic_idx: usize, hwirq: u32) -> Option<usize> {
-        self.chip(ic_idx).ic.irq_to_virq(hwirq)
+    pub fn irq_to_virq(ic_idx: usize, hwirq: u32) -> Option<usize> {
+        Self::chip(ic_idx).ic.irq_to_virq(hwirq)
     }
 
-    pub fn irq_xlate(&self, ic_idx: usize, irq_data: &[u32]) -> Result<usize, Error> {
-        let irq_data = match irq_data.len() {
-            1 => IrqCell::L1(irq_data[0]),
-            2 => IrqCell::L2(irq_data[0], irq_data[1]),
-            3 => IrqCell::L3(irq_data[0], irq_data[1], irq_data[2]),
+    pub fn irq_xlate(ic_idx: usize, irq_data: &[u32]) -> Result<usize, Error> {
+        let irq_data = match *irq_data {
+            [a] => IrqCell::L1(a),
+            [a, b] => IrqCell::L2(a, b),
+            [a, b, c] => IrqCell::L3(a, b, c),
             _ => return Err(Error::new(EINVAL)),
         };
-        self.chip(ic_idx).ic.irq_xlate(irq_data)
+        Self::chip(ic_idx).ic.irq_xlate(irq_data)
     }
 
-    pub fn trigger_virq(&self, virq: u32, token: &mut CleanLockToken) {
+    pub fn trigger_virq(virq: u32, token: &mut CleanLockToken) {
         if virq < 1024 {
-            let desc = &self.irq_desc[virq as usize];
-            match desc.handler() {
+            let desc = &Self::descs()[virq as usize];
+            match &desc.handler.get() {
                 Some(handler) => {
                     handler.irq_handler(virq, token);
                 }
                 _ => {
-                    if let Some(ic_idx) = desc.basic.child_ic_idx() {
-                        self.chip(ic_idx).ic.irq_handler(virq, token);
+                    if let Some(ic_idx) = desc.basic.child_ic_idx {
+                        Self::chip(ic_idx).ic.irq_handler(virq, token);
                     } else {
                         irq_trigger(virq as u8, token);
                     }
@@ -471,14 +471,14 @@ impl IrqChipCore {
         }
     }
 
-    pub fn phandle_to_ic_idx(&self, phandle: u32) -> Option<usize> {
-        self.chips().iter().position(|x| x.phandle == phandle)
+    pub fn phandle_to_ic_idx(phandle: u32) -> Option<usize> {
+        Self::chips().iter().position(|x| x.phandle == phandle)
     }
 
-    pub fn irq_iter_for(&self, ic_idx: u32) -> impl Iterator<Item = u8> + '_ {
-        self.irq_desc.iter().filter_map(move |x| {
-            if x.basic.ic_idx() == ic_idx as usize {
-                Some(x.basic.ic_irq() as u8)
+    pub fn irq_iter_for(ic_idx: u32) -> impl Iterator<Item = u8> {
+        Self::descs().iter().filter_map(move |x| {
+            if x.basic.ic_idx == ic_idx as usize {
+                Some(x.basic.ic_irq as u8)
             } else {
                 None
             }
@@ -491,49 +491,7 @@ impl IrqChipCore {
 /// Kept `unsafe` to match the signature of the x86 counterpart used by the
 /// `irq:` scheme. The body itself is safe.
 pub unsafe fn acknowledge(irq: usize) {
-    IRQ_CHIP.irq_eoi(irq as u32);
-}
-
-const INIT_IRQ_DESC: IrqDesc = IrqDesc {
-    basic: IrqDescItem {
-        ic_idx: AtomicUsize::new(0),
-        ic_irq: AtomicU32::new(0),
-        child_ic_idx: AtomicUsize::new(NO_CHILD_IC),
-        used: AtomicBool::new(false),
-    },
-    handler: Once::new(),
-};
-
-pub static IRQ_CHIP: IrqChipCore = IrqChipCore {
-    chips: Once::new(),
-    irq_desc: [INIT_IRQ_DESC; 1024],
-};
-
-/// Build the interrupt controller tree from the devicetree and publish it.
-pub fn init(fdt: &Fdt) {
-    travel_interrupt_ctrl(fdt);
-
-    let mut list = IrqChipList { chips: Vec::new() };
-    list.init_inner1(fdt);
-    finish_init(list, Some(fdt));
-}
-
-/// Publish a controller list assembled by the platform (ACPI) instead of the
-/// devicetree.
-#[allow(dead_code)]
-pub fn init_with_chips(chips: Vec<IrqChipItem>) {
-    finish_init(IrqChipList { chips }, None);
-}
-
-fn finish_init(mut list: IrqChipList, fdt_opt: Option<&Fdt>) {
-    if IRQ_CHIP.chips.is_completed() {
-        error!("irqchip has already been initialized!");
-        return;
-    }
-
-    let roots = list.init_inner2();
-    list.init_inner3(fdt_opt, &IRQ_CHIP.irq_desc, roots);
-    IRQ_CHIP.chips.call_once(|| list.chips.into_boxed_slice());
+    IrqChip::irq_eoi(irq as u32);
 }
 
 pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
@@ -542,7 +500,7 @@ pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
         return;
     }
 
-    let desc = &IRQ_CHIP.irq_desc[virq as usize];
+    let desc = &IrqChip::descs()[virq as usize];
     let mut handler = Some(handler);
     desc.handler.call_once(|| {
         handler
@@ -559,7 +517,7 @@ pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
 /// normal memory.
 ///
 /// Descriptor atomics order normal memory only. Volatile MMIO accesses do not
-/// add ordering. These helprs bridge the two ordering domains.
+/// add ordering. These helpers bridge the two ordering domains.
 ///
 /// Only aarch64 and riscv64 build `dtb`. A third architecture has to add the
 /// barrier its own device mapping requires instead of inheriting one of these.
@@ -596,11 +554,11 @@ pub fn mmio_after_acquire() {
 #[inline]
 #[must_use]
 pub fn try_set_reserved(_cpu_id: LogicalCpuId, index: u8) -> bool {
-    if !IRQ_CHIP.irq_desc[index as usize].basic.try_set_used() {
+    if !IrqChip::descs()[index as usize].basic.try_set_used() {
         return false;
     }
     mmio_after_acquire();
-    IRQ_CHIP.irq_enable(index as u32);
+    IrqChip::irq_enable(index as u32);
     true
 }
 
@@ -611,9 +569,9 @@ pub fn try_set_reserved(_cpu_id: LogicalCpuId, index: u8) -> bool {
 /// is the handoff point, so a later successful acquisition follows the mask.
 #[inline]
 pub fn free_reserved(_cpu_id: LogicalCpuId, index: u8) {
-    IRQ_CHIP.irq_disable(index as u32);
+    IrqChip::irq_disable(index as u32);
     mmio_before_release();
-    IRQ_CHIP.irq_desc[index as usize].basic.set_used(false);
+    IrqChip::descs()[index as usize].basic.set_used(false);
 }
 
 pub fn available_irqs_iter(_cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
