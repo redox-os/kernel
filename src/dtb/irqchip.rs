@@ -4,11 +4,16 @@ use crate::{
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
+use core::{
+    cell::SyncUnsafeCell,
+    sync::atomic::{AtomicBool, Ordering},
+};
 use fdt::{node::NodeProperty, Fdt};
+use spin::Once;
 use syscall::{Error, Result, EINVAL};
 
-pub trait InterruptHandler {
-    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken);
+pub unsafe trait InterruptHandler {
+    unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken);
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -19,23 +24,25 @@ pub enum IrqCell {
     L3(u32, u32, u32),
 }
 
-pub trait InterruptController: InterruptHandler {
-    fn irq_init(
+pub unsafe trait InterruptController: InterruptHandler {
+    unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        phandle: u32,
+        parents: &[IrqConnection],
     ) -> Result<()>;
-    fn irq_ack(&mut self) -> u32;
-    fn irq_eoi(&mut self, irq_num: u32);
-    fn irq_enable(&mut self, irq_num: u32);
+    unsafe fn irq_ack(&self) -> u32;
+    unsafe fn irq_eoi(&self, irq_num: u32);
+    unsafe fn irq_enable(&self, irq_num: u32);
     #[allow(unused)]
-    fn irq_disable(&mut self, irq_num: u32);
+    unsafe fn irq_disable(&self, irq_num: u32);
     /// Configure the interrupt trigger mode from the devicetree specifier
     /// before enabling the interrupt. Controllers without configurable
     /// trigger modes may keep the default implementation.
-    fn irq_configure(&mut self, _irq_data: IrqCell) -> Result<()> {
+    unsafe fn irq_configure(&self, _irq_data: IrqCell) -> Result<()> {
         Ok(())
     }
     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize>;
@@ -50,13 +57,9 @@ pub struct IrqConnection {
 
 pub struct IrqChipItem {
     pub phandle: u32,
-    pub parents: Vec<IrqConnection>,
+    pub parents: Box<[IrqConnection]>,
     pub children: Vec<usize>, // child idx in chiplist
     pub ic: Box<dyn InterruptController>,
-}
-
-pub struct IrqChipList {
-    pub chips: Vec<IrqChipItem>,
 }
 
 pub struct IrqDescItem {
@@ -64,40 +67,96 @@ pub struct IrqDescItem {
     pub ic_idx: usize,               //ic idx in irq chip list
     pub child_ic_idx: Option<usize>, //ic idx in irq chip list
     pub ic_irq: u32,                 //hwirq in ic
-    pub used: bool,
+    pub used: AtomicBool,
 }
 
 pub struct IrqDesc {
     pub basic: IrqDescItem,
-    pub handler: Option<Box<dyn InterruptHandler>>,
+    pub handler: Once<Box<dyn InterruptHandler>>,
 }
 
-impl IrqChipList {
-    fn init_inner1(&mut self, fdt: &Fdt) {
-        for node in fdt.all_nodes() {
-            if node.property("interrupt-controller").is_some() {
-                let Some(compatible) = node.compatible() else {
-                    continue;
-                };
-                let compatible = compatible.first();
-                let Some(phandle) = node.property("phandle") else {
-                    continue;
-                };
-                let phandle = phandle.as_usize().unwrap() as u32;
-                let Some(intr_cells) = node.interrupt_cells() else {
-                    continue;
+pub struct IrqChip {
+    //TODO: support multi level interrupt constrollers
+    pub chips: Once<Box<[IrqChipItem]>>,
+    pub irq_desc: SyncUnsafeCell<[IrqDesc; 1024]>,
+}
+
+unsafe impl Sync for IrqChip {}
+
+mod inner {
+    use super::*;
+
+    static IRQ_CHIP: IrqChip = IrqChip {
+        chips: Once::new(),
+        irq_desc: SyncUnsafeCell::new(
+            [const {
+                IrqDesc {
+                    basic: IrqDescItem {
+                        idx: 0,
+                        ic_idx: 0,
+                        ic_irq: 0,
+                        child_ic_idx: None,
+                        used: AtomicBool::new(false),
+                    },
+                    handler: Once::new(),
+                }
+            }; 1024],
+        ),
+    };
+    impl IrqChip {
+        pub fn chips() -> &'static [IrqChipItem] {
+            IRQ_CHIP
+                .chips
+                .get()
+                .expect("IrqChip::chips() called before initialization!")
+        }
+        pub fn descs() -> &'static [IrqDesc] {
+            unsafe {
+                if !IRQ_CHIP.chips.is_completed() {
+                    panic!("IrqChip::descs() called before initialization!")
+                }
+                IRQ_CHIP.irq_desc.get().as_ref().expect("Null static???")
+            }
+        }
+    }
+    pub fn init(fdt: &Fdt) {
+        IRQ_CHIP.chips.call_once(|| unsafe {
+            let mut chips = parse_chips(fdt);
+
+            let roots = assign_children(&mut chips);
+
+            let descs = &mut *IRQ_CHIP.irq_desc.get();
+
+            connect_parent_irqs(&mut chips, descs, fdt, roots);
+
+            chips
+        });
+        println!("IrqChip initialized, chips: {}", IrqChip::chips().len());
+    }
+    fn parse_chips(fdt: &Fdt) -> Box<[IrqChipItem]> {
+        fdt.all_nodes()
+            .filter(|n| n.property("interrupt-controller").is_some())
+            .filter_map(|node| {
+                let (Some(compatible), Some(phandle), Some(intr_cells)) = (
+                    node.compatible().map(|c| c.first()),
+                    node.property("phandle")
+                        .map(|p| p.as_usize().unwrap() as u32),
+                    node.interrupt_cells(),
+                ) else {
+                    return None;
                 };
 
                 debug!(
                     "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
                     node.name, compatible, intr_cells, phandle
                 );
-                let mut item = IrqChipItem {
-                    phandle,
-                    parents: Vec::new(),
-                    children: Vec::new(),
-                    ic: new_irqchip(compatible).unwrap(),
+
+                let Some(ic) = new_irqchip(compatible) else {
+                    warn!("No drivers found, skipping");
+                    return None;
                 };
+
+                let mut item_parents = Vec::new();
 
                 fn interrupt_address(
                     iter: &mut impl Iterator<Item = u32>,
@@ -120,8 +179,8 @@ impl IrqChipList {
                     }
                 }
 
-                if let Some(parent) = node.interrupt_parent()
-                    && let Some(intr_data) = node.property("interrupts")
+                if let (Some(parent), Some(intr_data)) =
+                    (node.interrupt_parent(), node.property("interrupts"))
                 {
                     // FIXME use interrupts() helper when fixed (see gh#12)
                     let mut intr_data = intr_data
@@ -129,19 +188,24 @@ impl IrqChipList {
                         .as_chunks::<4>()
                         .0
                         .iter()
-                        .map(|&x| u32::from_be_bytes(x));
+                        .copied()
+                        .map(u32::from_be_bytes);
+
                     let parent_phandle = parent
                         .property("phandle")
                         .and_then(NodeProperty::as_usize)
                         .unwrap() as u32;
+
                     let parent_interrupt_cells = parent.interrupt_cells().unwrap();
+
                     debug!("interrupt-parent = 0x{:08x}", parent_phandle);
                     debug!("interrupts begin:");
+
                     while let Some(parent_interrupt) =
                         interrupt_address(&mut intr_data, parent_interrupt_cells)
                     {
                         debug!("{:?}, ", parent_interrupt);
-                        item.parents.push(IrqConnection {
+                        item_parents.push(IrqConnection {
                             parent_phandle,
                             parent: 0,
                             parent_interrupt: gate_interrupt_address(parent_interrupt),
@@ -157,200 +221,210 @@ impl IrqChipList {
                         .as_chunks::<4>()
                         .0
                         .iter()
-                        .map(|&x| u32::from_be_bytes(x));
+                        .copied()
+                        .map(u32::from_be_bytes);
+
                     while let Some(parent_phandle) = intr_data.next()
-                        && let Some(parent) = fdt.find_phandle(parent_phandle)
-                        && let Some(parent_interrupt_cells) = parent.interrupt_cells()
-                        && let Some(parent_interrupt) =
-                            interrupt_address(&mut intr_data, parent_interrupt_cells)
+                        && let Some(parent_interrupt) = fdt
+                            .find_phandle(parent_phandle)
+                            .and_then(|p| p.interrupt_cells())
+                            .and_then(|cells| interrupt_address(&mut intr_data, cells))
                     {
                         debug!("{:?}, ", parent_interrupt);
-                        item.parents.push(IrqConnection {
+                        item_parents.push(IrqConnection {
                             parent_phandle,
                             parent: 0,
                             parent_interrupt: gate_interrupt_address(parent_interrupt),
                         });
                     }
                 }
-
-                self.chips.push(item);
-            }
-        }
+                Some(IrqChipItem {
+                    phandle,
+                    parents: item_parents.into_boxed_slice(),
+                    children: Vec::new(),
+                    ic,
+                })
+            })
+            .collect()
     }
 
-    fn init_inner2(&mut self) -> Vec<usize> {
-        let mut roots = Vec::new();
+    fn assign_children(chips: &mut [IrqChipItem]) -> Vec<usize> {
+        (0..chips.len())
+            .filter(|&child_i| {
+                let phandle = chips[child_i].phandle;
+                let parents = &chips[child_i].parents;
 
-        for child_i in 0..self.chips.len() {
-            let child = &mut self.chips[child_i];
-            let phandle = child.phandle;
-
-            if child.parents.is_empty() {
-                roots.push(child_i);
-                continue;
-            }
-
-            for conn_i in 0..child.parents.len() {
-                let parent_phandle = self.chips[child_i].parents[conn_i].parent_phandle;
-                let parent_i = self
-                    .chips
-                    .iter()
-                    .position(|x| parent_phandle == x.phandle)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "Cannot find parent intc {} (connection from {})",
-                            parent_phandle, phandle
-                        )
-                    });
-                self.chips[child_i].parents[conn_i].parent = parent_i;
-                let parent = &mut self.chips[parent_i];
-                if !parent.children.contains(&child_i) {
-                    parent.children.push(child_i);
+                if parents.is_empty() {
+                    return true;
                 }
-            }
-        }
-        roots
-    }
 
-    fn init_inner3(
-        &mut self,
-        fdt_opt: Option<&Fdt>,
-        irq_desc: &mut [IrqDesc; 1024],
-        mut queue: Vec<usize>,
-    ) {
-        //run init
-        let mut irq_idx: usize = 0;
-        let mut queue_idx = 0;
-        while queue_idx < queue.len() {
-            let cur_idx = queue[queue_idx];
-            let cur_chip = &mut self.chips[cur_idx];
-            for child in &cur_chip.children {
-                if let Some(child_pos) = queue.iter().position(|x| *child == *x) {
-                    assert!(
-                        child_pos > queue_idx,
-                        "IRQ chip tree has a cycle with phandle {} in it",
-                        cur_chip.phandle
-                    );
-                } else {
-                    queue.push(*child);
-                }
-            }
-            cur_chip
-                .ic
-                .irq_init(fdt_opt, irq_desc, cur_idx, &mut irq_idx)
-                .expect("Failed to initialize irq chip");
+                for conn_i in 0..parents.len() {
+                    let parent_phandle = chips[child_i].parents[conn_i].parent_phandle;
+                    let parent_i = chips
+                        .iter()
+                        .position(|&IrqChipItem { phandle, .. }| parent_phandle == phandle)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Cannot find parent intc {} (connection from {})",
+                                parent_phandle, phandle
+                            )
+                        });
+                    chips[child_i].parents[conn_i].parent = parent_i;
 
-            let cur_chip = &self.chips[cur_idx];
-            for connection in &cur_chip.parents {
-                debug_assert!(queue[0..queue_idx].contains(&connection.parent));
-                if let Some(parent_interrupt) = connection.parent_interrupt {
-                    let parent = &self.chips[connection.parent];
-                    match parent.ic.irq_xlate(parent_interrupt) {
-                        Ok(virq) => {
-                            // assert is unused
-                            irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
-                        }
-                        _ => {
-                            error!(
-                                "Cannot connect irq chip {} to parent irq {} : {:?}",
-                                cur_chip.phandle, parent.phandle, parent_interrupt
-                            );
-                        }
+                    let parent = &mut chips[parent_i];
+                    if !parent.children.contains(&child_i) {
+                        parent.children.push(child_i);
                     }
                 }
-            }
+                false
+            })
+            .collect()
+    }
 
-            queue_idx += 1;
+    unsafe fn connect_parent_irqs(
+        chips: &mut [IrqChipItem],
+        irq_desc: &mut [IrqDesc; 1024],
+        fdt: &Fdt,
+        mut queue: Vec<usize>,
+    ) -> Vec<usize> {
+        unsafe {
+            let mut irq_idx: usize = 0;
+            let mut queue_idx = 0;
+
+            while queue_idx < queue.len() {
+                let cur_idx = queue[queue_idx];
+                let cur_chip = &mut chips[cur_idx];
+                let cur_chip_phandle = cur_chip.phandle;
+
+                for child in &cur_chip.children {
+                    if let Some(child_pos) = queue.iter().position(|x| *child == *x) {
+                        assert!(
+                            child_pos > queue_idx,
+                            "IRQ chip tree has a cycle with phandle {} in it",
+                            cur_chip.phandle
+                        );
+                    } else {
+                        queue.push(*child);
+                    }
+                }
+
+                cur_chip
+                    .ic
+                    .irq_init(
+                        Some(fdt),
+                        irq_desc,
+                        cur_idx,
+                        &mut irq_idx,
+                        cur_chip.phandle,
+                        &cur_chip.parents,
+                    )
+                    .expect("Failed to initialize irq chip");
+
+                let mut conn_i = 0;
+
+                while conn_i < chips[cur_idx].parents.len() {
+                    let connection = &chips[cur_idx].parents[conn_i];
+                    debug_assert!(queue[0..queue_idx].contains(&connection.parent));
+
+                    if let Some(parent_interrupt) = connection.parent_interrupt {
+                        let parent = &mut chips[connection.parent];
+
+                        match parent.ic.irq_xlate(parent_interrupt) {
+                            Ok(virq) => {
+                                // assert is unused
+                                irq_desc[virq].basic.child_ic_idx = Some(cur_idx);
+                            }
+                            _ => {
+                                error!(
+                                    "Cannot connect irq chip {} to parent irq {} : {:?}",
+                                    cur_chip_phandle, parent.phandle, parent_interrupt
+                                );
+                            }
+                        }
+                    }
+                    conn_i += 1;
+                }
+
+                queue_idx += 1;
+            }
+            queue
         }
     }
 }
 
-pub struct IrqChipCore {
-    //TODO: support multi level interrupt constrollers
-    pub irq_chip_list: IrqChipList,
-    pub irq_desc: [IrqDesc; 1024],
-}
+impl IrqChip {
+    pub unsafe fn irq_eoi(virq: u32) {
+        unsafe {
+            let irq_desc = &Self::descs()[virq as usize];
+            let ic_idx = irq_desc.basic.ic_idx;
+            let hwirq = irq_desc.basic.ic_irq;
 
-impl IrqChipCore {
-    pub fn irq_eoi(&mut self, virq: u32) {
-        let irq_desc = &self.irq_desc[virq as usize];
-        let ic_idx = irq_desc.basic.ic_idx;
-        let hwirq = irq_desc.basic.ic_irq;
-
-        self.irq_chip_list.chips[ic_idx].ic.irq_eoi(hwirq)
+            Self::chips()[ic_idx].ic.irq_eoi(hwirq)
+        }
     }
 
-    pub fn irq_enable(&mut self, virq: u32) {
-        let irq_desc = &self.irq_desc[virq as usize];
-        let ic_idx = irq_desc.basic.ic_idx;
-        let hwirq = irq_desc.basic.ic_irq;
+    pub unsafe fn irq_enable(virq: u32) {
+        unsafe {
+            let irq_desc = &Self::descs()[virq as usize];
+            let ic_idx = irq_desc.basic.ic_idx;
+            let hwirq = irq_desc.basic.ic_irq;
 
-        self.irq_chip_list.chips[ic_idx].ic.irq_enable(hwirq)
+            Self::chips()[ic_idx].ic.irq_enable(hwirq)
+        }
     }
 
     #[allow(unused)]
-    pub fn irq_disable(&mut self, virq: u32) {
-        let irq_desc = &self.irq_desc[virq as usize];
-        let ic_idx = irq_desc.basic.ic_idx;
-        let hwirq = irq_desc.basic.ic_irq;
+    unsafe fn irq_disable(virq: u32) {
+        unsafe {
+            let irq_desc = &Self::descs()[virq as usize];
+            let ic_idx = irq_desc.basic.ic_idx;
+            let hwirq = irq_desc.basic.ic_irq;
 
-        self.irq_chip_list.chips[ic_idx].ic.irq_disable(hwirq)
+            Self::chips()[ic_idx].ic.irq_disable(hwirq)
+        }
     }
 
     #[cfg(target_arch = "riscv64")]
-    pub fn irq_to_virq(&self, ic_idx: usize, hwirq: u32) -> Option<usize> {
-        self.irq_chip_list.chips[ic_idx].ic.irq_to_virq(hwirq)
+    pub fn irq_to_virq(ic_idx: usize, hwirq: u32) -> Option<usize> {
+        Self::chips()[ic_idx].ic.irq_to_virq(hwirq)
     }
 
-    pub fn irq_xlate(&self, ic_idx: usize, irq_data: &[u32]) -> Result<usize, Error> {
-        let irq_data = match irq_data.len() {
-            1 => IrqCell::L1(irq_data[0]),
-            2 => IrqCell::L2(irq_data[0], irq_data[1]),
-            3 => IrqCell::L3(irq_data[0], irq_data[1], irq_data[2]),
+    pub fn irq_xlate(ic_idx: usize, irq_data: &[u32]) -> Result<usize, Error> {
+        let irq_data = match irq_data {
+            &[a] => IrqCell::L1(a),
+            &[a, b] => IrqCell::L2(a, b),
+            &[a, b, c] => IrqCell::L3(a, b, c),
             _ => return Err(Error::new(EINVAL)),
         };
-        self.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq_data)
+        Self::chips()[ic_idx].ic.irq_xlate(irq_data)
     }
 
-    pub fn trigger_virq(&mut self, virq: u32, token: &mut CleanLockToken) {
-        if virq < 1024 {
-            let desc = &mut self.irq_desc[virq as usize];
-            match &mut desc.handler {
-                Some(handler) => {
-                    handler.irq_handler(virq, token);
-                }
-                _ => {
-                    if let Some(ic_idx) = desc.basic.child_ic_idx {
-                        self.irq_chip_list.chips[ic_idx].ic.irq_handler(virq, token);
-                    } else {
-                        irq_trigger(virq as u8, token);
+    pub unsafe fn trigger_virq(virq: u32, token: &mut CleanLockToken) {
+        unsafe {
+            if virq < 1024 {
+                let desc = &Self::descs()[virq as usize];
+                match desc.handler.get() {
+                    Some(handler) => {
+                        handler.irq_handler(virq, token);
+                    }
+                    _ => {
+                        if let Some(ic_idx) = desc.basic.child_ic_idx {
+                            Self::chips()[ic_idx].ic.irq_handler(virq, token);
+                        } else {
+                            irq_trigger(virq as u8, token);
+                        }
                     }
                 }
             }
         }
     }
 
-    pub fn init(&mut self, fdt_opt: Option<&Fdt>) {
-        for (i, desc) in self.irq_desc.iter_mut().enumerate() {
-            desc.basic.idx = i;
-        }
-        if let Some(fdt) = fdt_opt {
-            self.irq_chip_list.init_inner1(fdt);
-        }
-        let roots = self.irq_chip_list.init_inner2();
-        self.irq_chip_list
-            .init_inner3(fdt_opt, &mut self.irq_desc, roots);
+    pub fn phandle_to_ic_idx(phandle: u32) -> Option<usize> {
+        Self::chips().iter().position(|x| x.phandle == phandle)
     }
 
-    pub fn phandle_to_ic_idx(&self, phandle: u32) -> Option<usize> {
-        self.irq_chip_list
-            .chips
-            .iter()
-            .position(|x| x.phandle == phandle)
-    }
-
-    pub fn irq_iter_for(&self, ic_idx: u32) -> impl Iterator<Item = u8> + '_ {
-        self.irq_desc.iter().filter_map(move |x| {
+    pub fn irq_iter_for(ic_idx: u32) -> impl Iterator<Item = u8> {
+        Self::descs().iter().filter_map(move |x| {
             if x.basic.ic_idx == ic_idx as usize {
                 Some(x.basic.ic_irq as u8)
             } else {
@@ -362,31 +436,13 @@ impl IrqChipCore {
 
 pub unsafe fn acknowledge(irq: usize) {
     unsafe {
-        IRQ_CHIP.irq_eoi(irq as u32);
+        IrqChip::irq_eoi(irq as u32);
     }
 }
 
-const INIT_HANDLER: Option<Box<dyn InterruptHandler>> = None;
-const INIT_IRQ_DESC: IrqDesc = IrqDesc {
-    basic: IrqDescItem {
-        idx: 0,
-        ic_idx: 0,
-        ic_irq: 0,
-        child_ic_idx: None,
-        used: false,
-    },
-    handler: INIT_HANDLER,
-};
-pub static mut IRQ_CHIP: IrqChipCore = IrqChipCore {
-    irq_chip_list: IrqChipList { chips: Vec::new() },
-    irq_desc: [INIT_IRQ_DESC; 1024],
-};
-
 pub fn init(fdt: &Fdt) {
     travel_interrupt_ctrl(fdt);
-    unsafe {
-        IRQ_CHIP.init(Some(fdt));
-    }
+    inner::init(fdt);
 }
 
 pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
@@ -394,30 +450,30 @@ pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {
         error!("irq {} exceed 1024!!!", virq);
         return;
     }
-
-    unsafe {
-        if IRQ_CHIP.irq_desc[virq as usize].handler.is_some() {
-            error!("irq {} has already been registered!", virq);
-            return;
-        }
-
-        IRQ_CHIP.irq_desc[virq as usize].handler = Some(handler);
-    }
+    IrqChip::descs()[virq as usize]
+        .handler
+        .call_once(|| handler);
 }
 
 #[inline]
 pub fn is_reserved(_cpu_id: LogicalCpuId, index: u8) -> bool {
-    unsafe { IRQ_CHIP.irq_desc[index as usize].basic.used }
+    IrqChip::descs()[index as usize]
+        .basic
+        .used
+        .load(Ordering::Relaxed)
 }
-
+// TODO make reservation atomic!
 #[inline]
 pub fn set_reserved(_cpu_id: LogicalCpuId, index: u8, reserved: bool) {
     unsafe {
-        IRQ_CHIP.irq_desc[index as usize].basic.used = reserved;
+        IrqChip::descs()[index as usize]
+            .basic
+            .used
+            .store(reserved, Ordering::Relaxed);
         if reserved {
-            IRQ_CHIP.irq_enable(index as u32);
+            IrqChip::irq_enable(index as u32);
         } else {
-            IRQ_CHIP.irq_disable(index as u32);
+            IrqChip::irq_disable(index as u32);
         }
     }
 }

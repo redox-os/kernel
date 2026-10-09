@@ -1,10 +1,14 @@
 use crate::{
-    dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+    arch::start::HARTS_NUM,
+    dtb::irqchip::{
+        InterruptController, InterruptHandler, IrqCell, IrqChip, IrqConnection, IrqDesc,
+    },
     sync::CleanLockToken,
 };
-use alloc::vec::Vec;
-use core::arch::asm;
+use alloc::boxed::Box;
+use core::{arch::asm, iter::repeat_with, sync::atomic::Ordering};
 use fdt::{node::NodeProperty, Fdt};
+use spin::Once;
 use syscall::{Error, EINVAL};
 
 // This is a hart-local interrupt controller, a root of irqchip tree
@@ -30,28 +34,29 @@ fn acknowledge(interrupt: usize) {
 pub unsafe fn interrupt(hart: usize, interrupt: usize, token: &mut CleanLockToken) {
     unsafe {
         assert!(
-            hart < CPU_INTERRUPT_HANDLERS.len(),
+            hart < CPU_INTERRUPT_HANDLERS.get().unwrap().len(),
             "Unexpected hart in interrupt routine"
         );
         acknowledge(interrupt);
-        let ic_idx = CPU_INTERRUPT_HANDLERS[hart].unwrap_or_else(|| {
-            panic!(
-                "No hlic connected to hart {} yet interrupt {} occurred",
-                hart, interrupt
-            )
-        });
-        let virq = IRQ_CHIP
-            .irq_to_virq(ic_idx, interrupt as u32)
+        let ic_idx = *CPU_INTERRUPT_HANDLERS
+            .get()
+            .and_then(|h| h.get(hart))
+            .and_then(|h| h.get())
+            .unwrap_or_else(|| {
+                panic!(
+                    "No hlic connected to hart {} yet interrupt {} occurred",
+                    hart, interrupt
+                )
+            });
+        let virq = IrqChip::irq_to_virq(ic_idx, interrupt as u32)
             .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
-        match &mut IRQ_CHIP.irq_desc[virq].handler {
+        match &mut IrqChip::descs()[virq].handler.get() {
             Some(handler) => {
                 handler.irq_handler(virq as u32, token);
             }
-            _ => match IRQ_CHIP.irq_desc[virq].basic.child_ic_idx {
+            _ => match IrqChip::descs()[virq].basic.child_ic_idx {
                 Some(ic_idx) => {
-                    IRQ_CHIP.irq_chip_list.chips[ic_idx]
-                        .ic
-                        .irq_handler(virq as u32, token);
+                    IrqChip::chips()[ic_idx].ic.irq_handler(virq as u32, token);
                 }
                 _ => {
                     panic!(
@@ -74,7 +79,7 @@ pub fn init() {
     }
 }
 
-static mut CPU_INTERRUPT_HANDLERS: Vec<Option<usize>> = Vec::new();
+static CPU_INTERRUPT_HANDLERS: Once<Box<[Once<usize>]>> = Once::new();
 
 pub struct Hlic {
     virq_base: usize,
@@ -85,44 +90,44 @@ impl Hlic {
         return Self { virq_base: 0 };
     }
 }
-impl InterruptHandler for Hlic {
-    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
+unsafe impl InterruptHandler for Hlic {
+    unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         assert!(irq < 16, "Unsupported HLIC interrupt raised!");
         unsafe {
-            IRQ_CHIP.trigger_virq(self.virq_base as u32 + irq, token);
+            IrqChip::trigger_virq(self.virq_base as u32 + irq, token);
         }
     }
 }
 
-impl InterruptController for Hlic {
-    fn irq_init(
+unsafe impl InterruptController for Hlic {
+    unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        phandle: u32,
+        _parents: &[IrqConnection],
     ) -> syscall::Result<()> {
-        let desc = unsafe { &IRQ_CHIP.irq_chip_list.chips[ic_idx] };
         let fdt = fdt_opt.unwrap();
         let cpu_node = fdt
             .find_all_nodes("/cpus/cpu")
             .find(|x| {
                 x.children().any(|x| {
-                    x.property("phandle").and_then(NodeProperty::as_usize)
-                        == Some(desc.phandle as usize)
+                    x.property("phandle").and_then(NodeProperty::as_usize) == Some(phandle as usize)
                 })
             })
             .expect("Could not find CPU node for HLIC controller");
         let hart = cpu_node.property("reg").unwrap().as_usize().unwrap();
-        unsafe {
-            if CPU_INTERRUPT_HANDLERS.len() <= hart {
-                CPU_INTERRUPT_HANDLERS.resize(hart + 1, None);
-            }
-            assert!(
-                CPU_INTERRUPT_HANDLERS[hart].replace(ic_idx).is_none(),
-                "Conflicting HLIC interrupt handler found"
-            );
-        }
+        CPU_INTERRUPT_HANDLERS
+            .get()
+            .unwrap_or(CPU_INTERRUPT_HANDLERS.call_once(|| {
+                repeat_with(Once::new)
+                    .take(HARTS_NUM.load(Ordering::Relaxed))
+                    .collect()
+            }))[hart]
+            .call_once(|| ic_idx);
+
         self.virq_base = *irq_idx;
         for i in 0..16 {
             irq_desc[self.virq_base + i].basic.ic_idx = ic_idx;
@@ -132,18 +137,18 @@ impl InterruptController for Hlic {
         Ok(())
     }
 
-    fn irq_ack(&mut self) -> u32 {
+    unsafe fn irq_ack(&self) -> u32 {
         panic!("Cannot ack HLIC interrupt");
     }
 
-    fn irq_eoi(&mut self, _irq_num: u32) {}
+    unsafe fn irq_eoi(&self, _irq_num: u32) {}
 
-    fn irq_enable(&mut self, _irq_num: u32) {
+    unsafe fn irq_enable(&self, _irq_num: u32) {
         // This would require IPI to a correct core
         // Not bothering with this, all interrupts are enabled at all times
     }
 
-    fn irq_disable(&mut self, _irq_num: u32) {
+    unsafe fn irq_disable(&self, _irq_num: u32) {
         // This would require IPI to a correct core
         // Not bothering with this, all interrupts are enabled at all times
     }
@@ -165,6 +170,9 @@ impl InterruptController for Hlic {
 }
 
 pub fn irqchip_for_hart(hart: usize) -> Option<usize> {
-    let value = unsafe { CPU_INTERRUPT_HANDLERS.get(hart) }?;
-    *value
+    CPU_INTERRUPT_HANDLERS
+        .get()
+        .expect("irqchip_for_hart called before initialization!")
+        .get(hart)
+        .and_then(|c| c.get().copied())
 }
