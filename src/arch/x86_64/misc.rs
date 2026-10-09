@@ -25,7 +25,7 @@ pub unsafe fn init(cpu_id: LogicalCpuId) {
         {
             // TSC_AUX is useful as it allows both the userspace and kernel to relatively quickly
             // read the processor ID, e.g. with RDPID and RDTSCP.
-            x86::msr::wrmsr(x86::msr::IA32_TSC_AUX, cpu_id.get().into());
+            x86::msr::wrmsr(x86::msr::IA32_TSC_AUX, u64::from(cpu_id.get()) * 8);
         }
 
         // Allows reading performance counters in userspace. This in itself should be harmless, as

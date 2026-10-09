@@ -106,22 +106,6 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
     }
 }
 
-macro_rules! slow_swapgs_path {
-    () => {
-        concat!(
-            "swapgs;",                   // Swap KGSBASE with GSBASE, allowing fast TSS access.
-            "mov gs:[{sp}], rsp;",       // Save userspace stack pointer
-            "mov rsp, gs:[{ksp}];",      // Load kernel stack pointer
-            "push QWORD PTR {ss_sel};",  // Push fake userspace SS (resembling iret frame)
-            "push QWORD PTR gs:[{sp}];", // Push userspace rsp
-            "push r11;",                 // Push rflags
-            "push QWORD PTR {cs_sel};",  // Push fake CS (resembling iret stack frame)
-            "push rcx;",                 // Push userspace return pointer
-            "swapgs;",                   // Restore user GSBASE by swapping GSBASE and KGSBASE.
-        )
-    };
-}
-
 #[unsafe(naked)]
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(
@@ -131,27 +115,28 @@ pub unsafe extern "C" fn syscall_instruction() {
     // traced.
     bt r11, 21
     jc .Lslow_path
-
     ",
+    // TODO: use an array of kernel stack pointers instead? (would be more efficient if the kernel
+    // is single-stack)
     alternative!(
         feature: "syscall_rdpid",
         then: ["
-            rdpid r11
-            mov r11, [{all_percpu_blocks}+r11]
+            rdpid r9
+            mov r9, [{all_percpu_blocks}+r9]
         "],
         default: ["
             // CS is [15:3] sel, [2] TI = 1, [1:0] DPL = 0,
-            mov r11, cs
-            shr r11, 1
-            mov r11, [{all_percpu_blocks}+r11-4]
+            mov r9, cs
+            shr r9, 1
+            mov r9, [{all_percpu_blocks}+r9-2]
         "]
     ),
     "
-    mov [r11-{percpu_kpcr}+{sp}], rsp // Save userspace stack pointer
-    mov rsp, [r11-{percpu_kpcr}+{ksp}] // Load kernel stack pointer
+    mov r9, [r9-{percpu_kpcr}+{ksp}] // Load kernel stack pointer
+    xchg r9, rsp
     push QWORD PTR {ss_sel} // Push fake userspace SS (resembling iret frame)
-    push QWORD PTR [r11-{percpu_kpcr}+{sp}] // Push userspace rsp
-    push 0 // Push rflags
+    push r9 // Push userspace rsp
+    push r11 // Push userspace RFLAGS
     push QWORD PTR {cs_sel} // Push fake CS (resembling iret stack frame)
     push rcx // Push userspace return pointer
     ",
