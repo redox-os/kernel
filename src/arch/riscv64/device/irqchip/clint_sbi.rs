@@ -1,13 +1,17 @@
 use crate::{
     context,
     context::timeout,
-    dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+    dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IrqChip},
     sync::CleanLockToken,
 };
-use alloc::{boxed::Box, vec::Vec};
-use core::{arch::asm, cmp::max};
+use alloc::boxed::Box;
+use core::{
+    arch::asm,
+    cmp::max,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use fdt::node::FdtNode;
-use spin::Mutex;
+use spin::Once;
 // This is a Core-Local Interruptor (CLINT). A single device directly routed into each HLIC
 // It is responsible for local timer and IPI interrupts
 // An example DTS:
@@ -20,10 +24,11 @@ use spin::Mutex;
 
 pub struct Clint {
     freq: u64,
-    next_event: Vec<u64>,
+    // Could be changed to SyncUnsafeCell<u64> since it's only accessed from the corresponding hart
+    next_event: Box<[AtomicU64]>,
 }
 
-pub static CLINT: Mutex<Option<Clint>> = Mutex::new(None);
+pub static CLINT: Once<Clint> = Once::new();
 const TICKS_PER_SECOND: u64 = 100;
 const IRQ_IPI: usize = 0;
 const IRQ_TIMER: usize = 1;
@@ -34,11 +39,10 @@ struct ClintConnector {
 }
 
 impl InterruptHandler for ClintConnector {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {
+    fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {
         CLINT
-            .lock()
-            .as_mut()
-            .unwrap()
+            .get()
+            .expect("CLINT has not been initialized!")
             .irq_handler(self.hart_id, self.irq);
         if self.irq == IRQ_TIMER {
             // a bit of hack, but it is a really bad idea to call scheduler
@@ -58,19 +62,15 @@ fn map_interrupt(irq: u32) -> u32 {
 }
 
 impl Clint {
-    pub fn new(freq: usize, node: &FdtNode) -> Self {
+    pub fn new(freq: u64, node: &FdtNode) -> Self {
         // TODO IPI
         // let reg = clint_node.reg().unwrap().next().unwrap();
         // reg.starting_address.add(crate::PHYS_OFFSET) as *mut u8;
         // reg.size.unwrap();
 
-        let mut me = Self {
-            freq: freq as u64,
-            next_event: Vec::new(),
-        };
         let mut interrupts = node
             .property("interrupts-extended")
-            .unwrap()
+            .expect("CLINT failed to parse interrupts!")
             .value
             .as_chunks::<4>()
             .0
@@ -82,14 +82,10 @@ impl Clint {
                 phandle1, phandle2,
                 "Invalid interrupts-extended property for CLINT"
             );
-            let hlic = unsafe {
-                IRQ_CHIP
-                    .irq_chip_list
-                    .chips
-                    .iter()
-                    .find(|x| x.phandle == phandle1)
-                    .expect("Couldn't find HLIC in irqchip list for CLINT")
-            };
+            let hlic = IrqChip::chips()
+                .iter()
+                .find(|x| x.phandle == phandle1)
+                .expect("Couldn't find HLIC in irqchip list for CLINT");
 
             // FIXME dirty hack map M-mode interrupts (handled by SBI) to S-mode interrupts we get from SBI
             // Why aren't S-mode interrupts in the DTB already?
@@ -108,11 +104,13 @@ impl Clint {
             register_irq(virq1 as u32, Box::new(ClintConnector { hart_id, irq: 1 }));
             hart_id += 1;
         }
-        me.next_event.resize_with(hart_id, || 0);
-        me
+        Self {
+            freq,
+            next_event: (0..hart_id).map(|_| AtomicU64::new(0)).collect(),
+        }
     }
 
-    pub(crate) fn irq_handler(self: &mut Self, hart_id: usize, irq: usize) {
+    pub(crate) fn irq_handler(&self, hart_id: usize, irq: usize) {
         match irq {
             IRQ_IPI => {
                 println!("IPI interrupt at {}", hart_id);
@@ -125,10 +123,12 @@ impl Clint {
                     lateout("t0") mtime
                     )
                 };
-
-                self.next_event[hart_id] =
-                    max(self.next_event[hart_id], mtime as u64) + self.freq / TICKS_PER_SECOND;
-                sbi_rt::set_timer(self.next_event[hart_id]).expect("SBI timer cannot be set!");
+                let next_event = max(
+                    self.next_event[hart_id].load(Ordering::Relaxed),
+                    mtime as u64,
+                ) + self.freq / TICKS_PER_SECOND;
+                self.next_event[hart_id].store(next_event, Ordering::Relaxed);
+                sbi_rt::set_timer(next_event).expect("SBI timer cannot be set!");
             }
             _ => {
                 panic!("Unexpected CLINT irq")
@@ -136,15 +136,16 @@ impl Clint {
         }
     }
 
-    pub fn init(self: &mut Self, hart: usize) {
-        let mtime: usize;
+    pub fn init(&self, hart: usize) {
+        let mtime: u64;
         unsafe {
             asm!(
             "rdtime t0",
             lateout("t0") mtime
             )
         };
-        self.next_event[hart] = mtime as u64 + (self.freq / TICKS_PER_SECOND);
-        sbi_rt::set_timer(self.next_event[hart]).expect("SBI timer cannot be set!");
+        let next_event = mtime + (self.freq / TICKS_PER_SECOND);
+        self.next_event[hart].store(next_event, Ordering::Relaxed);
+        sbi_rt::set_timer(next_event).expect("SBI timer cannot be set!");
     }
 }

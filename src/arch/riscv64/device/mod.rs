@@ -73,7 +73,7 @@ pub unsafe fn init() {
         let data = DTB_BINARY.get().unwrap();
         let fdt = Fdt::new(data).unwrap();
 
-        crate::dtb::irqchip::init(&fdt);
+        crate::dtb::irqchip::IrqChip::init_with_fdt(&fdt);
 
         let cpu = fdt.find_node(format!("/cpus/cpu@{}", 0).as_str()).unwrap();
         init_intc(&cpu);
