@@ -1,4 +1,5 @@
 use alloc::{
+    collections::VecDeque,
     sync::{Arc, Weak},
     vec::Vec,
 };
@@ -27,7 +28,7 @@ use crate::{
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
     scheme::SchemeId,
-    sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
+    sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1, L3},
     syscall::{
         data::{Map, StdFsCallMeta},
         error::*,
@@ -38,14 +39,17 @@ use crate::{
 
 use super::{CallerCtx, FileHandle, KernelScheme, OpenResult};
 
+struct States {
+    sqes: VecDeque<Sqe>,
+    states: Slab<State>,
+    is_waiting: bool,
+}
+
 pub struct UserInner {
     root_id: SchemeId,
     pub scheme_id: SchemeId,
     context: Weak<ContextLock>,
-    todo: WaitQueue<Sqe>,
-
-    // TODO: custom packed radix tree data structure
-    states: Mutex<L1, Slab<State>>,
+    states: Mutex<L1, States>,
 }
 
 enum State {
@@ -177,15 +181,18 @@ impl UserInner {
             root_id,
             scheme_id,
             context,
-            todo: WaitQueue::new(),
-            states: Mutex::new(Slab::with_capacity(32)),
+            states: Mutex::new(States {
+                sqes: VecDeque::with_capacity(32),
+                states: Slab::with_capacity(32),
+                is_waiting: false,
+            }),
         }
     }
 
     fn next_id(&self, token: &mut CleanLockToken) -> Result<u32> {
         let idx = {
             let mut states = self.states.lock(token.token());
-            states.insert(State::Placeholder)
+            states.states.insert(State::Placeholder)
         };
 
         // TODO: implement blocking?
@@ -222,6 +229,14 @@ impl UserInner {
         )
     }
 
+    fn send_sqe(&self, states: &mut States, sqe: Sqe, token: &mut LockToken<'_, L3>) -> Result<()> {
+        states.sqes.push_back(sqe);
+        if core::mem::replace(&mut states.is_waiting, false) {
+            unblock_context(&self.context.upgrade().ok_or(Error::new(ESRCH))?, token);
+        }
+        Ok(())
+    }
+
     fn call_inner(
         &self,
         fds: Vec<Arc<LockedFileDescription>>,
@@ -237,7 +252,9 @@ impl UserInner {
                 .block("UserInner::call");
             {
                 let mut states = self.states.lock(token.token());
-                states[sqe.tag as usize] = State::Waiting {
+                let (states, mut token) = states.token_split();
+
+                states.states[sqe.tag as usize] = State::Waiting {
                     context: Arc::downgrade(&current_context),
                     fds,
                     canceling: false,
@@ -247,9 +264,11 @@ impl UserInner {
                     // the caller is interrupted by SIGKILL.
                     callee_responsible: PageSpan::empty(),
                 };
+                self.send_sqe(&mut *states, sqe, &mut token.downgrade())?;
             }
-            self.todo.send(sqe, token);
 
+            // TODO: faster way to wakeup schemes when it can be assumed that there will be at most
+            // one listener
             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
         }
 
@@ -282,7 +301,7 @@ impl UserInner {
 
                 let states = self.states.lock(token.token());
                 let (mut states, mut token) = states.into_split();
-                match states.get_mut(sqe.tag as usize) {
+                match states.states.get_mut(sqe.tag as usize) {
                     // invalid state
                     None => return Err(Error::new(EBADFD)),
                     Some(o) => match mem::replace(o, State::Placeholder) {
@@ -344,15 +363,18 @@ impl UserInner {
                             let mut preempt = PreemptGuardL1::new(&current_context, &mut token);
                             let token = preempt.token();
 
-                            self.todo.send_locked(
-                                Sqe {
-                                    opcode: Opcode::Cancel as u8,
-                                    sqe_flags: SqeFlags::ONEWAY,
-                                    tag: sqe.tag,
-                                    ..Default::default()
-                                },
-                                token.token(),
-                            );
+                            states.sqes.push_back(Sqe {
+                                opcode: Opcode::Cancel as u8,
+                                sqe_flags: SqeFlags::ONEWAY,
+                                tag: sqe.tag,
+                                ..Default::default()
+                            });
+                            if core::mem::replace(&mut states.is_waiting, false) {
+                                unblock_context(
+                                    &self.context.upgrade().ok_or(Error::new(ESRCH))?,
+                                    &mut token.downgrade(),
+                                );
+                            }
                             event::trigger_locked(
                                 self.root_id,
                                 self.scheme_id.get(),
@@ -383,7 +405,7 @@ impl UserInner {
                         }
 
                         State::Responded(response) => {
-                            states.remove(sqe.tag as usize);
+                            states.states.remove(sqe.tag as usize);
                             return Ok(response);
                         }
                     },
@@ -728,15 +750,53 @@ impl UserInner {
         // If O_NONBLOCK is used, do not block
         let nonblock = flags & O_NONBLOCK as u32 != 0;
 
-        match self
-            .todo
-            .receive_into_user(buf, !nonblock, "UserInner::read (v2)", token)
-        {
-            // If we received requests, return them to the scheme handler
-            Ok(byte_count) => Ok(byte_count),
-            // If there were no requests and O_NONBLOCK was used (EAGAIN), or some other error
-            // occurred, return that.
-            Err(error) => Err(error),
+        let mut already_waited = false;
+        loop {
+            {
+                let mut states = self.states.lock(token.token());
+                let (states, mut inner_token) = states.token_split();
+
+                if !states.sqes.is_empty() {
+                    let (s1, s2) = states.sqes.as_slices();
+                    // TODO: transmute
+                    let s1_bytes = unsafe {
+                        core::slice::from_raw_parts(
+                            s1.as_ptr().cast::<u8>(),
+                            s1.len() * size_of::<Sqe>(),
+                        )
+                    };
+                    let s2_bytes = unsafe {
+                        core::slice::from_raw_parts(
+                            s2.as_ptr().cast::<u8>(),
+                            s2.len() * size_of::<Sqe>(),
+                        )
+                    };
+
+                    let mut copied = 0_usize;
+                    copied += buf.copy_common_bytes_from_slice(s1_bytes)?;
+
+                    if let Some(rest) = buf.advance(copied) {
+                        copied += rest.copy_common_bytes_from_slice(s2_bytes)?;
+                    }
+                    states.sqes.drain(..copied / size_of::<Sqe>());
+
+                    return Ok(copied);
+                }
+
+                if nonblock {
+                    return Err(Error::new(EAGAIN));
+                }
+                if already_waited {
+                    return Err(Error::new(EINTR));
+                }
+                states.is_waiting = true;
+                let context_lock = context::current();
+                let mut context = context_lock.write(inner_token.token());
+
+                context.block("UserInner::read");
+            }
+
+            context::switch(token);
         }
     }
 
@@ -765,28 +825,33 @@ impl UserInner {
 
         let tag = self.next_id(token)?;
         {
+            let uid_gid = current_uid_gid(token);
             let mut states = self.states.lock(token.token());
-            states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+            let (states, mut token) = states.token_split();
+
+            states.states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+
+            self.send_sqe(
+                states,
+                Sqe {
+                    opcode: Opcode::RequestMmap as u8,
+                    sqe_flags: SqeFlags::empty(),
+                    _rsvd: 0,
+                    tag,
+                    args: [
+                        id as u64,
+                        flags.bits() as u64,
+                        required_page_count as u64,
+                        0,
+                        0,
+                        uid_gid_hack_merge(uid_gid),
+                    ],
+                    caller: { context::current().read(token.token()).pid as u64 },
+                },
+                &mut token.downgrade(),
+            )?;
         }
 
-        self.todo.send(
-            Sqe {
-                opcode: Opcode::RequestMmap as u8,
-                sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag,
-                args: [
-                    id as u64,
-                    flags.bits() as u64,
-                    required_page_count as u64,
-                    0,
-                    0,
-                    uid_gid_hack_merge(current_uid_gid(token)),
-                ],
-                caller: { context::current().read(token.token()).pid as u64 },
-            },
-            token,
-        );
         event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
 
         Ok(())
@@ -825,6 +890,7 @@ impl UserInner {
                     match self
                         .states
                         .lock(token.token())
+                        .states
                         .get_mut(tag as usize)
                         .ok_or(Error::new(EINVAL))?
                     {
@@ -873,7 +939,7 @@ impl UserInner {
 
                 let context = {
                     let mut states = self.states.lock(token.token());
-                    match states.get_mut(tag as usize) {
+                    match states.states.get_mut(tag as usize) {
                         Some(o) => match mem::replace(o, State::Placeholder) {
                             // invalid state
                             State::Placeholder => {
@@ -885,7 +951,7 @@ impl UserInner {
                                 return Err(Error::new(EINVAL));
                             }
                             State::Fmap(context) => {
-                                states.remove(tag as usize);
+                                states.states.remove(tag as usize);
                                 context
                             }
                         },
@@ -931,7 +997,7 @@ impl UserInner {
         {
             let mut states_lock = self.states.lock(token.token());
             let (states, mut lock_token) = states_lock.token_split();
-            match states.get_mut(tag as usize) {
+            match states.states.get_mut(tag as usize) {
                 Some(o) => match mem::replace(o, State::Placeholder) {
                     // invalid state
                     State::Placeholder => return Err(Error::new(EBADFD)),
@@ -984,7 +1050,7 @@ impl UserInner {
                                 unblock_context(&context, &mut lock_token.token().downgrade());
                             }
                             _ => {
-                                states.remove(tag as usize);
+                                states.states.remove(tag as usize);
                             }
                         }
 
@@ -1012,7 +1078,7 @@ impl UserInner {
     pub fn fevent(&self, flags: EventFlags, token: &mut CleanLockToken) -> Result<EventFlags> {
         // TODO: Should the root scheme also suppress events if `flags` does not contain
         // `EVENT_READ`?
-        Ok(if self.todo.is_currently_empty(token) {
+        Ok(if self.states.lock(token.token()).sqes.is_empty() {
             EventFlags::empty()
         } else {
             EventFlags::EVENT_READ.intersection(flags)
@@ -1195,6 +1261,7 @@ impl UserInner {
         match self
             .states
             .lock(token.token())
+            .states
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
@@ -1253,6 +1320,7 @@ impl UserInner {
         let descriptions = match self
             .states
             .lock(token.token())
+            .states
             .get_mut(request_id)
             .ok_or(Error::new(EINVAL))?
         {
@@ -1267,7 +1335,7 @@ impl UserInner {
     }
 
     pub fn into_drop(self, token: &mut CleanLockToken) {
-        self.todo.condition.into_drop(token);
+        // TODO?
     }
 }
 pub struct CaptureGuard<const READ: bool, const WRITE: bool> {
@@ -1674,17 +1742,22 @@ impl KernelScheme for UserScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        self.inner.todo.send(
-            Sqe {
-                opcode: Opcode::CloseMsg as u8,
-                sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag: 0,
-                args: [id as u64, 0, 0, 0, 0, 0],
-                caller: 0, // TODO?
-            },
-            token,
-        );
+        {
+            let mut states = self.inner.states.lock(token.token());
+            let (states, mut token) = states.token_split();
+            self.inner.send_sqe(
+                states,
+                Sqe {
+                    opcode: Opcode::CloseMsg as u8,
+                    sqe_flags: SqeFlags::empty(),
+                    _rsvd: 0,
+                    tag: 0,
+                    args: [id as u64, 0, 0, 0, 0, 0],
+                    caller: 0, // TODO?
+                },
+                &mut token.downgrade(),
+            )?;
+        }
 
         event::trigger(
             self.inner.root_id,
@@ -1698,17 +1771,23 @@ impl KernelScheme for UserScheme {
 
     fn detach(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
-        self.inner.todo.send(
-            Sqe {
-                opcode: Opcode::Detach as u8,
-                sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag: 0,
-                args: [id as u64, 0, 0, 0, 0, 0],
-                caller: ctx.pid as u64,
-            },
-            token,
-        );
+        {
+            let mut states = self.inner.states.lock(token.token());
+            let (states, mut token) = states.token_split();
+
+            self.inner.send_sqe(
+                states,
+                Sqe {
+                    opcode: Opcode::Detach as u8,
+                    sqe_flags: SqeFlags::empty(),
+                    _rsvd: 0,
+                    tag: 0,
+                    args: [id as u64, 0, 0, 0, 0, 0],
+                    caller: ctx.pid as u64,
+                },
+                &mut token.downgrade(),
+            )?;
+        }
         event::trigger(
             self.inner.root_id,
             self.inner.scheme_id.get(),
