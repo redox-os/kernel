@@ -189,16 +189,6 @@ impl UserInner {
         }
     }
 
-    fn next_id(&self, token: &mut CleanLockToken) -> Result<u32> {
-        let idx = {
-            let mut states = self.states.lock(token.token());
-            states.states.insert(State::Placeholder)
-        };
-
-        // TODO: implement blocking?
-        u32::try_from(idx).map_err(|_| Error::new(EAGAIN))
-    }
-
     fn call(
         &self,
         ctx: CallerCtx,
@@ -215,7 +205,7 @@ impl UserInner {
                 opcode: opcode as u8,
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
-                tag: self.next_id(token)?,
+                tag: 0,
                 caller: ctx.pid as u64,
                 args: {
                     let mut a = args.args();
@@ -240,7 +230,7 @@ impl UserInner {
     fn call_inner(
         &self,
         fds: Vec<Arc<LockedFileDescription>>,
-        sqe: Sqe,
+        mut sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
         allow_direct_switch: bool,
@@ -254,7 +244,7 @@ impl UserInner {
                 let mut states = self.states.lock(token.token());
                 let (states, mut token) = states.token_split();
 
-                states.states[sqe.tag as usize] = State::Waiting {
+                let tag = states.states.insert(State::Waiting {
                     context: Arc::downgrade(&current_context),
                     fds,
                     canceling: false,
@@ -263,7 +253,8 @@ impl UserInner {
                     // starts as empty, so the caller can unmap it (optimal for TLB), but is populated
                     // the caller is interrupted by SIGKILL.
                     callee_responsible: PageSpan::empty(),
-                };
+                });
+                sqe.tag = u32::try_from(tag).map_err(|_| Error::new(EAGAIN))?;
                 self.send_sqe(&mut *states, sqe, &mut token.downgrade())?;
             }
 
@@ -823,13 +814,14 @@ impl UserInner {
     ) -> Result<()> {
         info!("REQUEST FMAP");
 
-        let tag = self.next_id(token)?;
         {
             let uid_gid = current_uid_gid(token);
             let mut states = self.states.lock(token.token());
             let (states, mut token) = states.token_split();
 
-            states.states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+            let tag = states
+                .states
+                .insert(State::Fmap(Arc::downgrade(&context::current())));
 
             self.send_sqe(
                 states,
@@ -837,7 +829,7 @@ impl UserInner {
                     opcode: Opcode::RequestMmap as u8,
                     sqe_flags: SqeFlags::empty(),
                     _rsvd: 0,
-                    tag,
+                    tag: u32::try_from(tag).map_err(|_| Error::new(EAGAIN))?,
                     args: [
                         id as u64,
                         flags.bits() as u64,
@@ -1461,9 +1453,7 @@ impl UserScheme {
         allow_direct_switch: bool,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let inner = self.inner.clone();
-
-        let mut address = inner.capture_user(slice, token)?;
+        let mut address = self.inner.capture_user(slice, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
         let mut sqe_flags = SqeFlags::empty();
@@ -1479,7 +1469,7 @@ impl UserScheme {
             opcode: opcode as u8,
             sqe_flags,
             _rsvd: 0,
-            tag: inner.next_id(token)?,
+            tag: 0, // will be assigned
             caller: ctx.pid as u64,
             args: [
                 fds[0] as u64,
@@ -1501,7 +1491,10 @@ impl UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
 
-        match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch) {
+        match self
+            .inner
+            .call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch)
+        {
             Ok(Response::Regular(res, _, notify_on_detach)) => {
                 address.release(token)?;
                 on_response(notify_on_detach, token);
