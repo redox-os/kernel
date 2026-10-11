@@ -1,5 +1,5 @@
 use crate::{
-    arch::{device::irqchip::hlic, start::BOOT_HART_ID},
+    arch::start::BOOT_HART_ID,
     dtb::{
         get_mmio_address,
         irqchip::{
@@ -8,7 +8,13 @@ use crate::{
     },
     sync::CleanLockToken,
 };
-use core::{cell::SyncUnsafeCell, mem, num::NonZero, sync::atomic::Ordering};
+use alloc::boxed::Box;
+use core::{
+    cell::SyncUnsafeCell,
+    mem,
+    num::{NonZero, NonZeroUsize},
+    sync::atomic::Ordering,
+};
 use fdt::Fdt;
 use syscall::{Error, Io, Mmio, EINVAL};
 
@@ -105,15 +111,19 @@ pub struct Plic {
     regs: *const PlicRegs,
     ndev: usize,
     virq_base: usize,
+    // the zeroth context would always be for machine mode
+    supervisor_context_per_hart: Box<[Option<NonZeroUsize>]>,
+    // TODO
     context: usize,
 }
 
 impl Plic {
     pub fn new() -> Self {
         Self {
-            regs: 0 as *mut PlicRegs,
+            regs: core::ptr::null_mut(),
             ndev: 0,
             virq_base: 0,
+            supervisor_context_per_hart: Box::new([]),
             context: 0,
         }
     }
@@ -168,18 +178,49 @@ unsafe impl InterruptController for Plic {
 
         // route all interrupts to boot HART
         // TODO spread irqs over all the cores when we have them?
-        let hlic_ic_idx = hlic::irqchip_for_hart(BOOT_HART_ID.load(Ordering::Relaxed))
-            .expect("Could not find HLIC irqchip for the boot hart while initing PLIC");
-        self.context = parents
-            .iter()
-            .position(|x| {
-                matches!(
-                    x.parent_interrupt,
-                    // Specify supervisor external interrupt to account for M mode contexts
-                    Some(IrqCell::L1(SUPERVISOR_EXTERNAL_INTERRUPT))
-                ) && x.parent == hlic_ic_idx
+        self.supervisor_context_per_hart = fdt
+            .find_all_nodes("/cpus/cpu")
+            .enumerate()
+            .map(|(i, c)| {
+                let hlic = c
+                    .children()
+                    .find(|h| {
+                        h.compatible()
+                            .is_some_and(|comp| comp.all().any(|comp| comp == "riscv,cpu-intc"))
+                    })
+                    .expect("PLIC failed to find hlic for hart in dtb!");
+                assert_eq!(
+                    i,
+                    str::parse::<usize>(&c.name[4..]).unwrap_or_else(|_| panic!(
+                        "PLIC failed to parse hart_id of cpu node! \n name: \"{}\"",
+                        c.name
+                    )),
+                    "Inconsistent hart_id / position in dtb!"
+                );
+                parents
+                    .iter()
+                    .position(|con| {
+                        matches!(
+                            con.parent_interrupt,
+                            // Specify supervisor external interrupt to account for M mode contexts
+                            Some(IrqCell::L1(SUPERVISOR_EXTERNAL_INTERRUPT))
+                        ) && con.parent_phandle
+                            == hlic
+                                .property("phandle")
+                                .and_then(|p| p.as_usize())
+                                .expect("PLIC failed to parse phandle of hlic!")
+                                as u32
+                    })
+                    .map(|pos| {
+                        NonZeroUsize::new(pos).expect("PLIC supervisor context in zeroth position!")
+                    })
             })
-            .unwrap();
+            .collect();
+
+        self.context = self.supervisor_context_per_hart[BOOT_HART_ID.load(Ordering::Relaxed)]
+            .expect("PLIC no context mapping for boot hart_id!")
+            .get();
+
         info!("PLIC: using context {}", self.context);
 
         unsafe {

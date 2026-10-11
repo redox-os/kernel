@@ -1,14 +1,13 @@
 use crate::{
-    arch::start::HARTS_NUM,
+    arch::device::ArchPercpuMisc,
     dtb::irqchip::{
         InterruptController, InterruptHandler, IrqCell, IrqChip, IrqConnection, IrqDesc,
     },
+    percpu::PercpuBlock,
     sync::CleanLockToken,
 };
-use alloc::boxed::Box;
-use core::{arch::asm, iter::repeat_with, sync::atomic::Ordering};
-use fdt::{node::NodeProperty, Fdt};
-use spin::Once;
+use core::arch::asm;
+use fdt::Fdt;
 use syscall::{Error, EINVAL};
 
 // This is a hart-local interrupt controller, a root of irqchip tree
@@ -21,7 +20,7 @@ use syscall::{Error, EINVAL};
 //        compatible = "riscv,cpu-intc"
 //        phandle = 0x00000006
 
-fn acknowledge(interrupt: usize) {
+unsafe fn acknowledge(interrupt: usize) {
     unsafe {
         asm!(
         "csrc sip, t0",
@@ -31,45 +30,7 @@ fn acknowledge(interrupt: usize) {
     }
 }
 
-pub unsafe fn interrupt(hart: usize, interrupt: usize, token: &mut CleanLockToken) {
-    unsafe {
-        assert!(
-            hart < CPU_INTERRUPT_HANDLERS.get().unwrap().len(),
-            "Unexpected hart in interrupt routine"
-        );
-        acknowledge(interrupt);
-        let ic_idx = *CPU_INTERRUPT_HANDLERS
-            .get()
-            .and_then(|h| h.get(hart))
-            .and_then(|h| h.get())
-            .unwrap_or_else(|| {
-                panic!(
-                    "No hlic connected to hart {} yet interrupt {} occurred",
-                    hart, interrupt
-                )
-            });
-        let virq = IrqChip::irq_to_virq(ic_idx, interrupt as u32)
-            .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
-        match &mut IrqChip::descs()[virq].handler.get() {
-            Some(handler) => {
-                handler.irq_handler(virq as u32, token);
-            }
-            _ => match IrqChip::descs()[virq].basic.child_ic_idx {
-                Some(ic_idx) => {
-                    IrqChip::chips()[ic_idx].ic.irq_handler(virq as u32, token);
-                }
-                _ => {
-                    panic!(
-                        "Unconnected interrupt {} occurred on hlic connected to hart {}",
-                        interrupt, hart
-                    );
-                }
-            },
-        }
-    }
-}
-
-pub fn init() {
+pub unsafe fn enable_local_interrupts() {
     unsafe {
         asm!(
             "csrs sie, t0",
@@ -78,8 +39,47 @@ pub fn init() {
         )
     }
 }
+// is it actually necessary to expose individual local interrupts to userspace?
+// we could remove a lot of overhead by hard-wiring these until the plic/...
+//
+// the previous and current implementation does not actually propagate these
+// to userspace at all anyway since the hlic's handler is never called.
+#[inline(always)]
+pub unsafe fn interrupt(interrupt: usize, token: &mut CleanLockToken) {
+    unsafe {
+        acknowledge(interrupt);
 
-static CPU_INTERRUPT_HANDLERS: Once<Box<[Once<usize>]>> = Once::new();
+        let ArchPercpuMisc {
+            hart_id,
+            ref hlic_idx,
+        } = PercpuBlock::current().misc_arch_info;
+
+        let virq = IrqChip::irq_to_virq(
+            hlic_idx
+                .get()
+                .copied()
+                .expect("Interrupt before hlic_idx is initialized!"),
+            interrupt as u32,
+        )
+        .unwrap_or_else(|| panic!("HLIC doesn't know of interrupt {}", interrupt));
+
+        let IrqDesc { basic, handler } = &IrqChip::descs()[virq];
+        // per-hart direct handler for software (sbi ipi), timer, external
+        // and counter overflow interrupts
+        if let Some(handler) = handler.get() {
+            handler.irq_handler(virq as u32, token);
+        // propagate interrupt to child
+        // eg. clic, plic, imsic,  aplic
+        } else if let Some(ic_idx) = basic.child_ic_idx {
+            IrqChip::chips()[ic_idx].ic.irq_handler(virq as u32, token);
+        } else {
+            panic!(
+                "Unconnected interrupt {} occurred on hlic connected to hart {}",
+                interrupt, hart_id
+            );
+        }
+    }
+}
 
 pub struct Hlic {
     virq_base: usize,
@@ -87,9 +87,11 @@ pub struct Hlic {
 
 impl Hlic {
     pub(crate) fn new() -> Self {
-        return Self { virq_base: 0 };
+        Self { virq_base: 0 }
     }
 }
+// never actually used as the the above interrupt function either
+// invokes the handler on desc or of its child.
 unsafe impl InterruptHandler for Hlic {
     unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         assert!(irq < 16, "Unsupported HLIC interrupt raised!");
@@ -102,32 +104,13 @@ unsafe impl InterruptHandler for Hlic {
 unsafe impl InterruptController for Hlic {
     unsafe fn irq_init(
         &mut self,
-        fdt_opt: Option<&Fdt>,
+        _fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
-        phandle: u32,
+        _phandle: u32,
         _parents: &[IrqConnection],
     ) -> syscall::Result<()> {
-        let fdt = fdt_opt.unwrap();
-        let cpu_node = fdt
-            .find_all_nodes("/cpus/cpu")
-            .find(|x| {
-                x.children().any(|x| {
-                    x.property("phandle").and_then(NodeProperty::as_usize) == Some(phandle as usize)
-                })
-            })
-            .expect("Could not find CPU node for HLIC controller");
-        let hart = cpu_node.property("reg").unwrap().as_usize().unwrap();
-        CPU_INTERRUPT_HANDLERS
-            .get()
-            .unwrap_or(CPU_INTERRUPT_HANDLERS.call_once(|| {
-                repeat_with(Once::new)
-                    .take(HARTS_NUM.load(Ordering::Relaxed))
-                    .collect()
-            }))[hart]
-            .call_once(|| ic_idx);
-
         self.virq_base = *irq_idx;
         for i in 0..16 {
             irq_desc[self.virq_base + i].basic.ic_idx = ic_idx;
@@ -167,12 +150,4 @@ unsafe impl InterruptController for Hlic {
             None
         }
     }
-}
-
-pub fn irqchip_for_hart(hart: usize) -> Option<usize> {
-    CPU_INTERRUPT_HANDLERS
-        .get()
-        .expect("irqchip_for_hart called before initialization!")
-        .get(hart)
-        .and_then(|c| c.get().copied())
 }

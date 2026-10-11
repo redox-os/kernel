@@ -1,9 +1,9 @@
 use ::syscall::Exception;
-use core::{arch::naked_asm, sync::atomic::Ordering};
+use core::arch::naked_asm;
 use rmm::VirtualAddress;
 
 use crate::{
-    arch::{device::irqchip, start::BOOT_HART_ID},
+    arch::device::irqchip,
     context::signal::excp_handler,
     memory::GenericPfFlags,
     ptrace,
@@ -141,16 +141,15 @@ unsafe fn handle_system_exception(scause: usize, regs: &InterruptStack) {
     }
 }
 
+#[inline(always)]
 unsafe fn handle_interrupt(interrupt: usize) {
     unsafe {
         let mut token = CleanLockToken::new();
-        // FIXME retrieve from percpu area
-        // For now all the interrupts go to boot hart so this suffices...
-        let hart: usize = BOOT_HART_ID.load(Ordering::Relaxed);
-        irqchip::hlic::interrupt(hart, interrupt, &mut token);
+        irqchip::hlic::interrupt(interrupt, &mut token);
     }
 }
 
+#[inline(always)]
 unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
     unsafe {
         let mut token = CleanLockToken::new();
@@ -198,6 +197,7 @@ unsafe fn handle_user_exception(scause: usize, regs: &mut InterruptStack) {
     }
 }
 
+#[inline(always)]
 unsafe fn page_fault(scause: usize, regs: &mut InterruptStack, user_mode: bool) -> bool {
     unsafe {
         if scause != INSTRUCTION_PAGE_FAULT

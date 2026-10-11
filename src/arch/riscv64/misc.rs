@@ -1,5 +1,7 @@
 use core::{arch::asm, ptr::with_exposed_provenance_mut};
 
+use spin::Once;
+
 use crate::{
     arch::device::ArchPercpuMisc,
     cpu_set::LogicalCpuId,
@@ -41,7 +43,10 @@ pub unsafe fn init(cpu_id: LogicalCpuId, hart_id: usize) {
             tmp: 0,
             s_sp: 0,
             percpu: PercpuBlock {
-                misc_arch_info: ArchPercpuMisc { hart_id },
+                misc_arch_info: ArchPercpuMisc {
+                    hart_id,
+                    hlic_idx: Once::new(),
+                },
                 ..PercpuBlock::init(cpu_id)
             },
         };

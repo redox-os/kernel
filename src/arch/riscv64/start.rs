@@ -9,6 +9,7 @@ use crate::{
     arch::{device, interrupt::exception_handler, paging},
     devices::graphical_debug,
     dtb::serial::init_early,
+    percpu::PercpuBlock,
     startup::KernelArgs,
 };
 
@@ -105,7 +106,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             info!("Redox OS starting...");
             args.print();
 
-            device::dump_fdt(&dtb);
+            device::dump_fdt(dtb);
 
             // Initialize RMM
             let mut bump_allocator = crate::startup::memory::init(&args, None, None);
@@ -134,12 +135,18 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             crate::dtb::init(dtb_data);
 
             // Initialize devices
-            device::init(dtb);
+            let boot_hart_hlic = device::init(dtb, boot_hart_id);
+            PercpuBlock::current()
+                .misc_arch_info
+                .hlic_idx
+                .call_once(|| boot_hart_hlic);
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization
             device::init_noncore(dtb, boot_hart_id);
 
             // FIXME bringup AP HARTs
+
+            device::irqchip::hlic::enable_local_interrupts(); // enable interrupts at HLIC level
 
             args.bootstrap()
         };
