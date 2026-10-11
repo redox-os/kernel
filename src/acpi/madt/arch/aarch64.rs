@@ -6,7 +6,7 @@ use crate::{
         gic::{GenericInterruptController, GicCpuIf, GicDistIf},
         gicv3::{GicV3, GicV3CpuIf},
     },
-    dtb::irqchip::{IrqChipItem, IRQ_CHIP},
+    dtb::irqchip::{self, IrqChip, IrqChipItem},
     memory::{map_device_memory, PhysicalAddress, PAGE_SIZE},
 };
 
@@ -40,6 +40,7 @@ pub(super) fn init(madt: Madt) {
         gic_dist_if.init(virt.data());
     };
     info!("{:#x?}", gic_dist_if);
+    let mut chips = Vec::new();
     match gicd.gic_version {
         1 | 2 => {
             #[allow(clippy::never_loop)]
@@ -58,11 +59,11 @@ pub(super) fn init(madt: Madt) {
                 };
                 let chip = IrqChipItem {
                     phandle: 0,
-                    parents: Vec::new(),
+                    parents: Box::new([]),
                     children: Vec::new(),
                     ic: Box::new(gic),
                 };
-                unsafe { IRQ_CHIP.irq_chip_list.chips.push(chip) };
+                chips.push(chip);
                 //TODO: support more GICCs
                 break;
             }
@@ -82,11 +83,11 @@ pub(super) fn init(madt: Madt) {
                 };
                 let chip = IrqChipItem {
                     phandle: 0,
-                    parents: Vec::new(),
+                    parents: Box::new([]),
                     children: Vec::new(),
                     ic: Box::new(gic),
                 };
-                unsafe { IRQ_CHIP.irq_chip_list.chips.push(chip) };
+                chips.push(chip);
                 //TODO: support more GICCs
                 break;
             }
@@ -95,5 +96,5 @@ pub(super) fn init(madt: Madt) {
             warn!("unsupported GIC version {}", gicd.gic_version);
         }
     }
-    unsafe { IRQ_CHIP.init(None) };
+    irqchip::init(None, Some(chips.into_boxed_slice()));
 }

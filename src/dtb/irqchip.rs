@@ -119,15 +119,18 @@ mod inner {
             }
         }
     }
-    pub fn init(fdt: &Fdt) {
+    pub fn init(fdt_opt: Option<&Fdt>, chips_opt: Option<Box<[IrqChipItem]>>) {
         IRQ_CHIP.chips.call_once(|| unsafe {
-            let mut chips = parse_chips(fdt);
+            let mut chips = fdt_opt
+                .map(parse_chips)
+                .or(chips_opt)
+                .expect("IrqChip::init called without either fdt or chips!");
 
             let roots = assign_children(&mut chips);
 
             let descs = &mut *IRQ_CHIP.irq_desc.get();
 
-            connect_parent_irqs(&mut chips, descs, fdt, roots);
+            connect_parent_irqs(&mut chips, descs, fdt_opt, roots);
 
             chips
         });
@@ -284,7 +287,7 @@ mod inner {
     unsafe fn connect_parent_irqs(
         chips: &mut [IrqChipItem],
         irq_desc: &mut [IrqDesc; 1024],
-        fdt: &Fdt,
+        fdt_opt: Option<&Fdt>,
         mut queue: Vec<usize>,
     ) -> Vec<usize> {
         unsafe {
@@ -311,7 +314,7 @@ mod inner {
                 cur_chip
                     .ic
                     .irq_init(
-                        Some(fdt),
+                        fdt_opt,
                         irq_desc,
                         cur_idx,
                         &mut irq_idx,
@@ -440,9 +443,11 @@ pub unsafe fn acknowledge(irq: usize) {
     }
 }
 
-pub fn init(fdt: &Fdt) {
-    travel_interrupt_ctrl(fdt);
-    inner::init(fdt);
+pub fn init(fdt_opt: Option<&Fdt>, chips_opt: Option<Box<[IrqChipItem]>>) {
+    if let Some(fdt) = fdt_opt {
+        travel_interrupt_ctrl(fdt);
+    }
+    inner::init(fdt_opt, chips_opt);
 }
 
 pub fn register_irq(virq: u32, handler: Box<dyn InterruptHandler>) {

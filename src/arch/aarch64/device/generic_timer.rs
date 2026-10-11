@@ -3,7 +3,7 @@ use spin::Once;
 use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
 use crate::{
     context::{self, timeout},
-    dtb::{get_interrupt, irqchip::IRQ_CHIP},
+    dtb::{get_interrupt, irqchip::IrqChip},
     scheme::irq::irq_trigger,
     sync::CleanLockToken,
     time,
@@ -59,11 +59,11 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
         error!("failed to find interrupt parent for architected timer");
         return;
     };
-    let Ok(virq) = (unsafe { IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq) }) else {
+    let Ok(virq) = IrqChip::chips()[ic_idx].ic.irq_xlate(irq) else {
         error!("failed to translate architected timer interrupt");
         return;
     };
-    let Some(desc) = (unsafe { IRQ_CHIP.irq_desc.get(virq) }) else {
+    let Some(desc) = IrqChip::descs().get(virq) else {
         error!(
             "architected timer virq {} is outside the descriptor table",
             virq
@@ -94,7 +94,7 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
     );
     let config = TIMER.call_once(|| config);
     program_current(config);
-    unsafe { IRQ_CHIP.irq_enable(config.virq) };
+    unsafe { IrqChip::irq_enable(config.virq) };
 }
 
 pub unsafe fn init_acpi(non_secure_physical_gsiv: u32, virtual_gsiv: u32) {
@@ -131,7 +131,7 @@ pub unsafe fn init_acpi(non_secure_physical_gsiv: u32, virtual_gsiv: u32) {
         }
     );
     program_current(config);
-    unsafe { IRQ_CHIP.irq_enable(config.virq) };
+    unsafe { IrqChip::irq_enable(config.virq) };
 }
 
 pub(crate) fn init_ap() -> Result<()> {

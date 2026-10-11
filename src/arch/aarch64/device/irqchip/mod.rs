@@ -1,4 +1,4 @@
-use crate::dtb::irqchip::{InterruptController, IRQ_CHIP};
+use crate::dtb::irqchip::{InterruptController, IrqChip};
 use alloc::boxed::Box;
 use fdt::{node::FdtNode, Fdt};
 
@@ -33,7 +33,7 @@ pub(crate) fn ic_for_chip(fdt: &Fdt, node: &FdtNode) -> Option<usize> {
         .or(fdt.root().property("interrupt-parent"))
         .and_then(|f| f.as_usize())
     {
-        unsafe { IRQ_CHIP.phandle_to_ic_idx(irqc_phandle as u32) }
+        IrqChip::phandle_to_ic_idx(irqc_phandle as u32)
     } else {
         error!("no irq parent found");
         None
@@ -76,9 +76,8 @@ pub(crate) fn acknowledge_root() -> (u32, u32, Option<usize>) {
     }
 
     unsafe {
-        let ic = &mut IRQ_CHIP.irq_chip_list.chips
-            [super::ROOT_IC_IDX.load(core::sync::atomic::Ordering::Acquire)]
-        .ic;
+        let ic =
+            &IrqChip::chips()[super::ROOT_IC_IDX.load(core::sync::atomic::Ordering::Acquire)].ic;
         let raw = ic.irq_ack();
         (raw, raw, ic.irq_to_virq(raw))
     }
@@ -89,10 +88,9 @@ pub(crate) fn end_root(raw_iar: u32) {
         return;
     }
     unsafe {
-        IRQ_CHIP.irq_chip_list.chips
-            [super::ROOT_IC_IDX.load(core::sync::atomic::Ordering::Acquire)]
-        .ic
-        .irq_eoi(raw_iar);
+        IrqChip::chips()[super::ROOT_IC_IDX.load(core::sync::atomic::Ordering::Acquire)]
+            .ic
+            .irq_eoi(raw_iar);
     }
 }
 

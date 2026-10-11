@@ -1,11 +1,11 @@
 use alloc::vec::Vec;
-use core::arch::asm;
+use core::{arch::asm, sync::atomic::AtomicBool};
 use fdt::{node::NodeProperty, Fdt};
 
 use super::{gic::GicDistIf, InterruptController};
 use crate::{
     dtb::{
-        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        irqchip::{InterruptHandler, IrqCell, IrqConnection, IrqDesc},
         translate_mmio_address,
     },
     sync::CleanLockToken,
@@ -76,17 +76,19 @@ impl GicV3 {
     }
 }
 
-impl InterruptHandler for GicV3 {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
+unsafe impl InterruptHandler for GicV3 {
+    unsafe fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
-impl InterruptController for GicV3 {
-    fn irq_init(
+unsafe impl InterruptController for GicV3 {
+    unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
         irq_desc: &mut [IrqDesc; 1024],
         ic_idx: usize,
         irq_idx: &mut usize,
+        _phandle: u32,
+        _parents: &[IrqConnection],
     ) -> Result<()> {
         if let Some(fdt) = fdt_opt {
             self.parse(fdt)?;
@@ -107,7 +109,7 @@ impl InterruptController for GicV3 {
         while i < cnt && (idx + i < 1024) {
             irq_desc[idx + i].basic.ic_idx = ic_idx;
             irq_desc[idx + i].basic.ic_irq = i as u32;
-            irq_desc[idx + i].basic.used = true;
+            irq_desc[idx + i].basic.used = AtomicBool::new(true);
 
             i += 1;
         }
@@ -117,20 +119,20 @@ impl InterruptController for GicV3 {
         *irq_idx = idx + cnt;
         Ok(())
     }
-    fn irq_ack(&mut self) -> u32 {
+    unsafe fn irq_ack(&self) -> u32 {
         let irq_num = unsafe { self.gic_cpu_if.irq_ack() };
         irq_num
     }
-    fn irq_eoi(&mut self, irq_num: u32) {
+    unsafe fn irq_eoi(&self, irq_num: u32) {
         unsafe { self.gic_cpu_if.irq_eoi(irq_num) }
     }
-    fn irq_enable(&mut self, irq_num: u32) {
+    unsafe fn irq_enable(&self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_enable(irq_num) }
     }
-    fn irq_disable(&mut self, irq_num: u32) {
+    unsafe fn irq_disable(&self, irq_num: u32) {
         unsafe { self.gic_dist_if.irq_disable(irq_num) }
     }
-    fn irq_configure(&mut self, irq_data: IrqCell) -> Result<()> {
+    unsafe fn irq_configure(&self, irq_data: IrqCell) -> Result<()> {
         let (irq, flags) = match irq_data {
             IrqCell::L3(0, irq, flags) => (irq, flags), // SPI
             _ => return Err(Error::new(EINVAL)),
@@ -184,7 +186,7 @@ impl GicV3CpuIf {
         }
     }
 
-    unsafe fn irq_ack(&mut self) -> u32 {
+    unsafe fn irq_ack(&self) -> u32 {
         unsafe {
             let mut irq: usize;
             asm!("mrs {}, icc_iar1_el1", out(reg) irq);
@@ -196,7 +198,7 @@ impl GicV3CpuIf {
         }
     }
 
-    unsafe fn irq_eoi(&mut self, irq: u32) {
+    unsafe fn irq_eoi(&self, irq: u32) {
         unsafe {
             asm!("msr icc_eoir1_el1, {}", in(reg) irq as usize);
         }

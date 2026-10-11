@@ -6,7 +6,7 @@ use crate::{
     arch::device::irqchip::ic_for_chip,
     dtb::{
         diag_uart_node, get_interrupt,
-        irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+        irqchip::{register_irq, InterruptHandler, IrqChip},
     },
     scheme::irq::irq_trigger,
     sync::CleanLockToken,
@@ -14,14 +14,14 @@ use crate::{
 
 pub struct Com1Irq {}
 
-impl InterruptHandler for Com1Irq {
-    fn irq_handler(&mut self, irq: u32, token: &mut CleanLockToken) {
+unsafe impl InterruptHandler for Com1Irq {
+    unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         COM1.lock().receive(token);
         unsafe {
             // FIXME add_irq accepts a u8 as irq number
             // PercpuBlock::current().stats.add_irq(irq);
             irq_trigger(irq.try_into().unwrap(), token);
-            IRQ_CHIP.irq_eoi(irq);
+            IrqChip::irq_eoi(irq);
         }
     }
 }
@@ -41,12 +41,12 @@ pub unsafe fn init(fdt: &Fdt) {
             return;
         };
 
-        if let Err(err) = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_configure(irq) {
+        if let Err(err) = IrqChip::chips()[ic_idx].ic.irq_configure(irq) {
             error!("serial port interrupt configuration failed: {:?}", err);
             return;
         }
 
-        let Ok(virq) = IRQ_CHIP.irq_chip_list.chips[ic_idx].ic.irq_xlate(irq) else {
+        let Ok(virq) = IrqChip::chips()[ic_idx].ic.irq_xlate(irq) else {
             error!("serial port interrupt translation failed");
             return;
         };
@@ -58,17 +58,17 @@ pub unsafe fn init(fdt: &Fdt) {
         info!("serial_port virq = {}", virq);
         register_irq(virq as u32, Box::new(Com1Irq {}));
         COM1.lock().enable_irq();
-        IRQ_CHIP.irq_enable(virq as u32);
+        IrqChip::irq_enable(virq as u32);
     }
 }
 
 pub unsafe fn init_acpi(irq: u32) {
     unsafe {
         //TODO: what should chip index be?
-        let virq = IRQ_CHIP.irq_chip_list.chips[0].ic.irq_to_virq(irq).unwrap();
+        let virq = IrqChip::chips()[0].ic.irq_to_virq(irq).unwrap();
         info!("serial_port virq = {}", virq);
         register_irq(virq as u32, Box::new(Com1Irq {}));
         COM1.lock().enable_irq();
-        IRQ_CHIP.irq_enable(virq as u32);
+        IrqChip::irq_enable(virq as u32);
     }
 }
