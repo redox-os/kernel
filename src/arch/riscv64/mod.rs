@@ -67,3 +67,16 @@ pub const KFX_SIZE: usize = 1024;
 pub fn kfx_size() -> usize {
     KFX_SIZE
 }
+
+#[inline]
+pub fn current_stack_ptr() -> *mut u8 {
+    let ret: *mut u8;
+    unsafe {
+        core::arch::asm!(
+            "mv {}, sp",
+            out(reg) ret,
+            options(nomem, preserves_flags, nostack),
+        );
+    }
+    ret
+}

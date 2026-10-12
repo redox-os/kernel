@@ -1,3 +1,5 @@
+use spin::Mutex;
+
 use crate::memory::KernelMapper;
 use core::cell::Cell;
 
@@ -83,6 +85,7 @@ pub struct ArchPercpuMisc {
     pub apic_id_opt: Cell<Option<local_apic::ApicId>>,
     #[cfg(feature = "x86_kvm_pv")]
     pub tsc_info: tsc::TscPercpu,
+    pub idt: Mutex<Option<&'static mut crate::arch::idt::Idt>>,
 }
 
 impl ArchPercpuMisc {
@@ -91,6 +94,7 @@ impl ArchPercpuMisc {
             apic_id_opt: Cell::new(None),
             #[cfg(feature = "x86_kvm_pv")]
             tsc_info: tsc::TscPercpu::default(),
+            idt: Mutex::new(None),
         }
     }
 }

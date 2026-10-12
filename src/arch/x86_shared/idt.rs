@@ -1,11 +1,6 @@
-use core::{
-    cell::SyncUnsafeCell,
-    mem,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use core::{cell::SyncUnsafeCell, mem};
 
 use alloc::boxed::Box;
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
 use x86::{
     dtables::{self, DescriptorTablePointer},
@@ -20,25 +15,22 @@ use crate::{
         },
         ipi::IpiKind,
     },
+    context::context::Kstack,
     cpu_set::LogicalCpuId,
-    memory::PAGE_SIZE,
 };
-
-use spin::RwLock;
 
 #[repr(C)]
 pub struct Idt {
     pub(crate) entries: [IdtEntry; 256],
-    reservations: [AtomicU32; 8],
-    backup_stack_end: usize,
+    // TODO: track reservations in userspace instead, with a daemon that sends various capabilities
+    reservations: [u32; 8],
 }
 
 impl Idt {
     const fn new() -> Self {
         Self {
             entries: [IdtEntry::new(); 256],
-            reservations: [const { AtomicU32::new(0) }; 8],
-            backup_stack_end: 0,
+            reservations: [0; 8],
         }
     }
 
@@ -47,36 +39,23 @@ impl Idt {
         let byte_index = index / 32;
         let bit = index % 32;
 
-        self.reservations[usize::from(byte_index)].load(Ordering::Acquire) & (1 << bit) != 0
+        self.reservations[usize::from(byte_index)] & (1 << bit) != 0
     }
 
     #[inline]
-    pub(crate) fn set_reserved(&self, index: u8, reserved: bool) {
-        let byte_index = index / 32;
-        let bit = index % 32;
+    pub(crate) fn set_reserved(&mut self, index: u8, reserved: bool) {
+        let bit = 1 << (index % 32);
+        let word = &mut self.reservations[usize::from(index / 32)];
 
-        self.reservations[usize::from(byte_index)]
-            .fetch_or(u32::from(reserved) << bit, Ordering::AcqRel);
-    }
-
-    #[inline]
-    pub(crate) fn set_reserved_mut(&mut self, index: u8, reserved: bool) {
-        let byte_index = index / 32;
-        let bit = index % 32;
-
-        *{ &mut self.reservations[usize::from(byte_index)] }.get_mut() |=
-            u32::from(reserved) << bit;
+        if reserved {
+            *word |= 1 << bit;
+        } else {
+            *word &= !(1 << bit);
+        }
     }
 }
 
-// Allocate 64 KiB of stack space for the backup stack.
-const BACKUP_STACK_SIZE: usize = PAGE_SIZE << 4;
-
 static INIT_BSP_IDT: SyncUnsafeCell<Idt> = SyncUnsafeCell::new(Idt::new());
-
-// TODO: VecMap?
-pub(crate) static IDTS: RwLock<HashMap<LogicalCpuId, &'static mut Idt>> =
-    RwLock::new(HashMap::with_hasher(DefaultHashBuilder::new()));
 
 #[inline]
 pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
@@ -84,7 +63,14 @@ pub fn is_reserved(cpu_id: LogicalCpuId, index: u8) -> bool {
         return unsafe { (*INIT_BSP_IDT.get()).is_reserved(index) };
     }
 
-    IDTS.read().get(&cpu_id).unwrap().is_reserved(index)
+    crate::percpu::get_percpu_block(cpu_id)
+        .unwrap()
+        .misc_arch_info
+        .idt
+        .lock()
+        .as_ref()
+        .unwrap()
+        .is_reserved(index)
 }
 
 #[inline]
@@ -94,10 +80,14 @@ pub fn set_reserved(cpu_id: LogicalCpuId, index: u8, reserved: bool) {
         return;
     }
 
-    IDTS.read()
-        .get(&cpu_id)
+    crate::percpu::get_percpu_block(cpu_id)
         .unwrap()
-        .set_reserved(index, reserved);
+        .misc_arch_info
+        .idt
+        .lock()
+        .as_mut()
+        .unwrap()
+        .set_reserved(index, reserved)
 }
 
 pub fn available_irqs_iter(cpu_id: LogicalCpuId) -> impl Iterator<Item = u8> + 'static {
@@ -135,66 +125,46 @@ fn set_exceptions(idt: &mut [IdtEntry]) {
 
 /// Initializes a fully functional IDT for use before it be moved into the map. This is ONLY called
 /// on the BSP, since the kernel heap is ready for the APs.
-pub unsafe fn init_bsp() {
-    #[repr(C, packed(4096))]
-    struct BackupStack([u8; BACKUP_STACK_SIZE]);
+pub unsafe fn init_bsp_before_mem() {
+    unsafe {
+        init_generic(LogicalCpuId::BSP, &mut *INIT_BSP_IDT.get());
 
-    static INIT_BSP_BACKUP_STACK: SyncUnsafeCell<BackupStack> =
-        SyncUnsafeCell::new(BackupStack([0; BACKUP_STACK_SIZE]));
+        install_idt(&mut *INIT_BSP_IDT.get(), LogicalCpuId::BSP);
+    }
+}
+#[cold]
+pub unsafe fn init_bsp_after_mem() {
+    let kstack = Kstack::new().expect("failed to allocate backup stack");
+    let stack_end = kstack.initial_top();
+    core::mem::forget(kstack);
 
     unsafe {
-        init_generic(
-            LogicalCpuId::BSP,
-            &mut *INIT_BSP_IDT.get(),
-            INIT_BSP_BACKUP_STACK.get().addr() + BACKUP_STACK_SIZE,
-        );
-
-        install_idt(&mut *INIT_BSP_IDT.get());
+        install_backup_stack(&mut *INIT_BSP_IDT.get(), stack_end as usize);
     }
 }
 
 pub fn allocate_and_init_idt(cpu_id: LogicalCpuId) -> *mut Idt {
-    let mut idts_btree = IDTS.write();
+    let idt = Box::leak(Box::new(Idt::new()));
 
-    let idt = idts_btree
-        .entry(cpu_id)
-        .or_insert_with(|| Box::leak(Box::new(Idt::new())));
+    let backup_stack = Kstack::new().expect("failed to allocate AP's backup interrupt stack");
+    let backup_stack_end = backup_stack.initial_top() as usize;
+    core::mem::forget(backup_stack);
 
-    use crate::memory::{RmmA, RmmArch};
-    let must_be_zero = true;
-    let frames = crate::memory::allocate_p2frame(4, must_be_zero)
-        .expect("failed to allocate pages for backup interrupt stack");
+    init_generic(cpu_id, idt);
+    unsafe {
+        install_backup_stack(idt, backup_stack_end);
+    }
 
-    // Physical pages are mapped linearly. So is the linearly mapped virtual memory.
-    let base_address = RmmA::phys_to_virt(frames.base());
-
-    // Stack always grows downwards.
-    let backup_stack_end = base_address.data() + BACKUP_STACK_SIZE;
-
-    init_generic(cpu_id, idt, backup_stack_end);
-
-    *idt
+    idt
 }
 
 const BACKUP_IST: u8 = 1;
 
 /// Initializes an IDT for any type of processor.
-fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
+fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
     let (current_idt, current_reservations) = (&mut idt.entries, &mut idt.reservations);
 
     set_exceptions(current_idt);
-
-    // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
-    // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
-    // considered the most fatal, especially Double Faults which are caused by errors __when
-    // accessing the system IDT__. If that goes wrong, then kernel memory may be partially
-    // corrupt, and we want a separate stack.
-    //
-    // Note that each CPU has its own "backup interrupt stack".
-    idt.backup_stack_end = backup_stack_end;
-    current_idt[2].set_ist(BACKUP_IST);
-    current_idt[8].set_ist(BACKUP_IST);
-    current_idt[18].set_ist(BACKUP_IST);
 
     assert_eq!(
         __generic_interrupts_end as *const () as usize
@@ -211,7 +181,7 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
     }
 
     // reserve bits 31:0, i.e. the first 32 interrupts, which are reserved for exceptions
-    *current_reservations[0].get_mut() |= 0x0000_0000_FFFF_FFFF;
+    current_reservations[0] |= 0x0000_0000_FFFF_FFFF;
 
     if cpu_id == LogicalCpuId::BSP {
         // Set up IRQs
@@ -235,13 +205,13 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
         current_idt[49].set_func(irq::lapic_error);
 
         // reserve bits 49:32, which are for the standard IRQs, and for the local apic timer and error.
-        *current_reservations[1].get_mut() |= 0x0003_FFFF;
+        current_reservations[1] |= 0x0003_FFFF;
     } else {
         // TODO: use_default_irqs! but also the legacy IRQs that are only needed on one CPU
         current_idt[49].set_func(irq::lapic_error);
 
         // reserve bit 49
-        *current_reservations[1].get_mut() |= 1 << 17;
+        current_reservations[1] |= 1 << 17;
     }
 
     // Set IPI handlers
@@ -249,10 +219,10 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
     current_idt[IpiKind::Switch as usize].set_func(ipi::switch);
     current_idt[IpiKind::Tlb as usize].set_func(ipi::tlb);
     current_idt[IpiKind::Pit as usize].set_func(ipi::pit);
-    idt.set_reserved_mut(IpiKind::Wakeup as u8, true);
-    idt.set_reserved_mut(IpiKind::Switch as u8, true);
-    idt.set_reserved_mut(IpiKind::Tlb as u8, true);
-    idt.set_reserved_mut(IpiKind::Pit as u8, true);
+    idt.set_reserved(IpiKind::Wakeup as u8, true);
+    idt.set_reserved(IpiKind::Switch as u8, true);
+    idt.set_reserved(IpiKind::Tlb as u8, true);
+    idt.set_reserved(IpiKind::Pit as u8, true);
 
     #[cfg(target_arch = "x86")]
     {
@@ -260,22 +230,16 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt, backup_stack_end: usize) {
         // Set syscall function
         current_idt[0x80].set_func(syscall::syscall);
         current_idt[0x80].set_flags(IdtFlags::PRESENT | IdtFlags::RING_3 | IdtFlags::INTERRUPT);
-        idt.set_reserved_mut(0x80, true);
+        idt.set_reserved(0x80, true);
     }
 
     #[cfg(feature = "profiling")]
     crate::profiling::maybe_setup_timer(idt, cpu_id);
 }
 
-pub unsafe fn install_idt(idt_ptr: *mut Idt) {
+pub unsafe fn install_idt(idt_ptr: *mut Idt, cpu_id: LogicalCpuId) {
     unsafe {
         let idt = &mut *idt_ptr;
-
-        #[cfg(target_arch = "x86_64")] // TODO: x86
-        {
-            (*crate::arch::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] =
-                idt.backup_stack_end as u64;
-        }
 
         let idtr: DescriptorTablePointer<X86IdtEntry> = DescriptorTablePointer {
             limit: (idt.entries.len() * size_of::<IdtEntry>() - 1) as u16,
@@ -283,6 +247,36 @@ pub unsafe fn install_idt(idt_ptr: *mut Idt) {
         };
 
         dtables::lidt(&idtr);
+    }
+    if cpu_id != LogicalCpuId::BSP {
+        let mut idt_guard = crate::percpu::get_percpu_block(cpu_id)
+            .unwrap()
+            .misc_arch_info
+            .idt
+            .lock();
+        assert!(
+            idt_guard.is_none(),
+            "already initialized cpu {cpu_id:?}'s IDT"
+        );
+        *idt_guard = Some(unsafe { &mut *idt_ptr });
+    }
+}
+#[cold]
+pub unsafe fn install_backup_stack(idt: &mut Idt, backup_stack_end: usize) {
+    // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
+    // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
+    // considered the most fatal, especially Double Faults which are caused by errors __when
+    // accessing the system IDT__. If that goes wrong, then kernel memory may be partially
+    // corrupt, and we want a separate stack.
+    //
+    // Note that each CPU has its own "backup interrupt stack".
+    idt.entries[2].set_ist(BACKUP_IST);
+    idt.entries[8].set_ist(BACKUP_IST);
+    idt.entries[18].set_ist(BACKUP_IST);
+
+    #[cfg(target_arch = "x86_64")] // TODO: x86
+    unsafe {
+        (*crate::arch::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] = backup_stack_end as u64;
     }
 }
 

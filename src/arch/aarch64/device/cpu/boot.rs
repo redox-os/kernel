@@ -743,7 +743,8 @@ unsafe extern "C" fn secondary_start(args_ptr: *const BootArgs) -> ! {
         }
     }
 
-    crate::startup::kmain_ap(logical_id)
+    // TODO: use stack
+    crate::startup::kmain_ap(logical_id, Kstack::new().expect("failed to allocate stack"))
 }
 
 fn park() -> ! {

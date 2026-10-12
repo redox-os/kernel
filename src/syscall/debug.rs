@@ -44,13 +44,15 @@ unsafe fn read_struct<T>(ptr: usize) -> Result<T> {
 //TODO: calling format_call with arguments from another process space will not work
 pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g: usize) -> String {
     match a {
-        SYS_OPENAT_INTO => format!(
+        SYS_OPENAT_INTO2 => format!(
             "openat_into({} {:?}, {:#0x}, {}, out: {})",
             b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
+            debug_path(c, d & 0xffff)
+                .as_ref()
+                .map(|p| ByteStr(p.as_bytes())),
             e,
-            f,
-            g
+            d & O_FCNTL_MASK,
+            f
         ),
         SYS_UNLINKAT => format!(
             "unlinkat({} {:?}, {:#0x}, {}, {})",

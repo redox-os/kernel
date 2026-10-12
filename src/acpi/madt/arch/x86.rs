@@ -8,10 +8,11 @@ use crate::{
         device::local_apic::the_local_apic,
         start::{kstart_ap, KernelArgsAp},
     },
+    context::context::Kstack,
     cpu_set::LogicalCpuId,
     memory::{
-        allocate_p2frame, Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch,
-        VirtualAddress, PAGE_SIZE,
+        Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress,
+        PAGE_SIZE,
     },
     startup::AP_READY,
 };
@@ -75,21 +76,16 @@ pub(super) fn init(madt: Madt) {
                 let cpu_id = LogicalCpuId::next();
 
                 // Allocate a stack
-                let must_be_zero = true;
-                let stack_start = RmmA::phys_to_virt(
-                    allocate_p2frame(4, must_be_zero)
-                        .expect("no more frames in acpi stack_start")
-                        .base(),
-                )
-                .data();
-                let stack_end = stack_start + (PAGE_SIZE << 4);
+                let kstack = Kstack::new().expect("no more frames in acpi stack_start");
+                let stack_end = kstack.initial_top() as usize;
 
                 let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
 
                 let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
 
-                let args = KernelArgsAp {
+                let mut args = KernelArgsAp {
                     stack_end: stack_end as *mut u8,
+                    kstack: Some(kstack),
                     cpu_id,
                     pcr_ptr,
                     idt_ptr,
@@ -103,7 +99,7 @@ pub(super) fn init(madt: Madt) {
                 // Set the ap_ready to 0, volatile
                 unsafe {
                     ap_ready.write(0);
-                    ap_args_ptr.write(&args as *const _ as u64);
+                    ap_args_ptr.write(&mut args as *mut _ as u64);
                     ap_page_table.write(page_table_physaddr as u64);
                     ap_code.write(kstart_ap as *const () as u64);
 

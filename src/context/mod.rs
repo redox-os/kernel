@@ -194,9 +194,9 @@ pub fn wakeup_context(
         .push(weak);
 }
 
-pub fn init(token: &mut CleanLockToken) {
+pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
     let owner = None; // kmain not owned by any fd
-    let mut context = Context::new(owner).expect("failed to create kmain context");
+    let mut context = Context::new(owner, kstack).expect("failed to create kmain context");
     context.sched_affinity = LogicalCpuSet::empty();
     context.sched_affinity.atomic_set(crate::cpu_id());
 
@@ -318,14 +318,13 @@ pub fn spawn(
 ) -> Result<Arc<ContextLock>> {
     let stack = Kstack::new()?;
 
-    let mut context = Context::new(owner_proc_id)?;
+    let mut context = Context::new(owner_proc_id, stack)?;
 
     let _ = context.set_addr_space(Some(AddrSpaceWrapper::new()?), token.downgrade());
     context
         .arch
-        .setup_initial_call(&stack, func, userspace_allowed);
+        .setup_initial_call(&context.kstack, func, userspace_allowed);
 
-    context.kstack = Some(stack);
     context.userspace = userspace_allowed;
     context.queue_key = Some(ContextQueueKey {
         vd: context.vd,

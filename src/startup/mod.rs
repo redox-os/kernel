@@ -7,7 +7,7 @@ use core::{
 
 use crate::{
     arch::interrupt,
-    context::{self, switch::SwitchResult, wakeup_context, Status},
+    context::{self, context::Kstack, switch::SwitchResult, wakeup_context, Status},
     memory::{PhysicalAddress, RmmA, RmmArch},
     profiling, scheme,
     sync::CleanLockToken,
@@ -153,11 +153,11 @@ pub(crate) static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
+pub(crate) fn kmain(bootstrap: Bootstrap, kmain_kstack: Kstack) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
-    context::init(&mut token);
+    context::init(&mut token, kmain_kstack);
     // EMPTY_CR3 and the BSP idle context must exist before secondary CPUs are
     // released into their own context initialization.
     BSP_READY.store(true, Ordering::Release);
@@ -207,7 +207,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables, dead_code)]
-pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
+pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId, kmain_kstack: Kstack) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
 
     AP_READY.store(true, Ordering::SeqCst);
@@ -228,7 +228,7 @@ pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
         }
     }
 
-    context::init(&mut token);
+    context::init(&mut token, kmain_kstack);
 
     debug!("AP {}", cpu_id);
 

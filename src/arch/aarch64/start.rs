@@ -9,6 +9,7 @@ use fdt::Fdt;
 use crate::{
     allocator,
     arch::{device, paging},
+    context::context::Kstack,
     devices::graphical_debug,
     dtb,
     startup::KernelArgs,
@@ -137,7 +138,8 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap()
         };
 
-        crate::startup::kmain(bootstrap);
+        // TODO: use stack
+        crate::startup::kmain(bootstrap, Kstack::new().expect("failed to allocate stack"));
     }
 }
 

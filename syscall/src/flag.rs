@@ -491,13 +491,15 @@ bitflags! {
         /// Call is a standard fs call, with metadata defined in `StdFsCallMeta`
         const STD_FS = 1 << 16;
 
-        /// Call is taking multiple fds as an argument
-        const MULTIPLE_FDS = 1 << 17;
+        // reserved: 1 << 17
 
         /// Allow current timeslice to be lent out to the callee, which will have a preference of
         /// switching back to this context until the current timeslice is exhausted, after which
         /// the scheduler will continue as if it was switching away from this context.
         const ALLOW_DIRECT_SWITCH = 1 << 18;
+
+        /// Call is taking multiple fds, syscall5 variant.
+        const MULTIPLE_FDS2 = 1 << 19;
     }
 }
 

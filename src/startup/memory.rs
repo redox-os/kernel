@@ -191,6 +191,11 @@ fn register_memory_from_kernel_args(args: &KernelArgs) {
         args.bootstrap_size as usize,
         BootloaderMemoryKind::IdentityMap,
     );
+    register_memory_region(
+        args.stack_base as usize,
+        args.stack_size as usize,
+        BootloaderMemoryKind::IdentityMap, // TODO: reclaim
+    );
 }
 
 pub fn register_memory_region(base: usize, size: usize, kind: BootloaderMemoryKind) {
@@ -417,7 +422,11 @@ unsafe fn map_phys_contiguous_inactive<A: Arch>(
     assert_eq!(page_count, 0);
 }
 
-unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], bump_allocator: &mut BumpAllocator<A>) {
+unsafe fn map_memory<A: Arch>(
+    args: &KernelArgs,
+    areas: &[MemoryArea],
+    bump_allocator: &mut BumpAllocator<A>,
+) {
     unsafe {
         let mut mapper = PageMapper::<A, _>::create(TableKind::Kernel, &mut *bump_allocator)
             .expect("failed to create Mapper");
@@ -428,23 +437,44 @@ unsafe fn map_memory<A: Arch>(areas: &[MemoryArea], bump_allocator: &mut BumpAll
         info!("Highest huge page level: {highest_huge_level}");
 
         // Map all physical areas at PHYS_OFFSET
+        let physmap_flags = PageFlags::new()
+            .write(true)
+            .global(cfg!(target_arch = "x86_64"));
         for area in areas.iter() {
             let page_count = area.size / PAGE_SIZE;
             if area.size % PAGE_SIZE != 0 || area.base.data() % PAGE_SIZE != 0 {
                 error!("Unaligned area: {area:?}");
             }
             let virt_base = A::phys_to_virt(area.base);
-            let flags = PageFlags::new()
-                .write(true)
-                .global(cfg!(target_arch = "x86_64"));
 
             map_phys_contiguous_inactive(
                 &mut mapper,
                 area.base,
                 virt_base,
-                flags,
+                physmap_flags,
                 page_count,
                 highest_huge_level,
+            );
+        }
+
+        // Map bootloader stack (also physically contiguous, but never in the memory map, as it
+        // shouldn't be).
+        {
+            assert_eq!(args.stack_base % PAGE_SIZE as u64, 0);
+            assert_eq!(args.stack_size % PAGE_SIZE as u64, 0);
+            assert_ne!(args.stack_size, 0);
+
+            debug!(
+                "MAPPING STACK, BASE {:x} SIZE {:x}",
+                args.stack_base, args.stack_size
+            );
+            map_phys_contiguous_inactive(
+                &mut mapper,
+                PhysicalAddress::new(args.stack_base as usize),
+                A::phys_to_virt(PhysicalAddress::new(args.stack_base as usize)),
+                physmap_flags,
+                args.stack_size as usize / PAGE_SIZE,
+                0,
             );
         }
 
@@ -566,7 +596,7 @@ pub unsafe fn init(
         // Create a basic allocator for the first pages
         let mut bump_allocator = BumpAllocator::<CurrentRmmArch>::new(areas, 0);
 
-        map_memory(areas, &mut bump_allocator);
+        map_memory(args, areas, &mut bump_allocator);
 
         // Create the physical memory map
         let offset = bump_allocator.offset();

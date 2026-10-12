@@ -204,6 +204,12 @@ pub unsafe fn pcr() -> *mut ProcessorControlRegion {
 }
 
 pub unsafe fn set_tss_stack(pcr: *mut ProcessorControlRegion, stack: usize) {
+    // Invariant: except during early kernel initialization, all kernel stacks must be naturally
+    // aligned (64 KiB).
+
+    // TODO: downgrade to debug_assert_eq
+    assert_eq!(stack % (PAGE_SIZE << 4), 0);
+
     #[cfg(target_arch = "x86")]
     unsafe {
         core::ptr::addr_of_mut!((*pcr).tss.ss0).write((GDT_KERNEL_DATA << 3) as u16);
@@ -270,9 +276,15 @@ fn init_pcr(pcr: &mut ProcessorControlRegion, stack_end: usize) {
         }
     }
 
-    // Set the stack pointer to use when coming back from userspace.
+    // The kernel can only enter userspace after such a context has been configured, and coming
+    // from userspace is a prerequisite for using the TSS stack pointer (otherwise the CPU uses the
+    // IST or existing stack).
+    //
+    // Since the TSS stack pointer is always set in context::arch::switch_to, we can safely set it
+    // to 0 here, resulting in a double-fault if userspace was somehow entered without updating the
+    // TSS value.
     unsafe {
-        set_tss_stack(pcr, stack_end);
+        set_tss_stack(pcr, 0);
     }
 }
 
