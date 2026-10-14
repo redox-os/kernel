@@ -6,7 +6,7 @@ use core::{
 
 use crate::{
     flag::{EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
-    Error, EINVAL,
+    Error, Result, EINVAL,
 };
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -505,12 +505,65 @@ pub struct KernelSchemeInfo {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+pub struct NumaNodeSet {
+    mask: u128,
+}
+
+impl NumaNodeSet {
+    pub fn empty() -> Self {
+        Self { mask: 0 }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.mask == 0
+    }
+
+    pub fn set(&mut self, i: usize) -> Result<()> {
+        if i >= 128 {
+            return Err(Error::new(EINVAL));
+        }
+        self.mask |= 1 << i;
+        Ok(())
+    }
+
+    pub fn clear(&mut self, i: usize) -> Result<()> {
+        if i >= 128 {
+            return Err(Error::new(EINVAL));
+        }
+        self.mask &= !(1 << i);
+        Ok(())
+    }
+
+    pub fn contains(&self, i: usize) -> Result<bool> {
+        if i >= 128 {
+            return Err(Error::new(EINVAL));
+        }
+        Ok(self.mask & 1 << i != 0)
+    }
+
+    pub fn to_bytes(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(&raw const *self as *const u8, size_of::<Self>()) }
+    }
+
+    pub fn from_raw(mask: u128) -> Self {
+        Self { mask }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub enum NumaMemoryPolicy {
-    /// Allocates from local node; fails if no memory is available in local node
+    /// Allocates from local node; fails if no memory is available in local node.
     NodeLocalStrict = 1,
 
-    /// Allocates from local node; falls back to allocating from other nodes in the increasing order of distance from the current node
+    /// Allocates from local node; falls back to allocating from other nodes in the increasing order of distance from the current node.
     NodeLocalLeniant = 2,
+
+    /// Allocates from the specified nodes; fails if no memory is available.
+    MemBindStrict = 3,
+
+    /// Allocates from the specified nodes; falls back to other nodes if no memory is available.
+    MemBindLeniant = 4,
 }
 
 impl TryFrom<u64> for NumaMemoryPolicy {
@@ -520,6 +573,8 @@ impl TryFrom<u64> for NumaMemoryPolicy {
         match value {
             1 => Ok(NumaMemoryPolicy::NodeLocalStrict),
             2 => Ok(NumaMemoryPolicy::NodeLocalLeniant),
+            3 => Ok(NumaMemoryPolicy::MemBindStrict),
+            4 => Ok(NumaMemoryPolicy::MemBindLeniant),
             _ => Err(Error::new(EINVAL)),
         }
     }
