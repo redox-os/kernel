@@ -200,8 +200,8 @@ pub fn futex(
 
             // TODO: this doing a second search is not efficient. It probably best to have another
             // hashtable mapping context and whether it was woken up AND where to remove index from FUTEXES
-            let mut futexes_map = FUTEXES.lock(token.token());
-            let (futexes_map, _) = futexes_map.token_split();
+            let mut futexes_lock = FUTEXES.lock(token.token());
+            let (futexes_map, _) = futexes_lock.token_split();
 
             let Some(futexes) = futexes_map.get_mut(&target_physaddr) else {
                 return Ok(0);
@@ -224,12 +224,21 @@ pub fn futex(
                 }
             }
 
-            if !found {
-                return Ok(0);
-            }
-
             if futexes.is_empty() {
                 futexes_map.remove(&target_physaddr);
+            }
+
+            if !found {
+                drop(futexes_lock);
+                // Signal can still arrive even if already woken up, in that case we want to assume EINTR happened
+                let current_context_ref = context::current();
+                let context = current_context_ref.read(token.token());
+                if context
+                    .sigcontrol()
+                    .is_none_or(|(control, pctl, _)| control.currently_pending_unblocked(pctl) == 0)
+                {
+                    return Ok(0);
+                }
             }
 
             // Not woken up by FUTEX_WAKE, likely by signal
