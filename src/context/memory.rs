@@ -24,6 +24,7 @@ use crate::{
         AddRefError, Enomem, Frame, Page, PageFlags, PageInfo, PageMapper, RaiiFrame, RefCount,
         RefKind, RmmA, TableKind, TheFrameAllocator, VirtualAddress, PAGE_SIZE,
     },
+    numa::KNumaMemoryPolicy,
     percpu::PercpuBlock,
     scheme::KernelSchemes,
     sync::{
@@ -584,7 +585,7 @@ impl AddrSpace {
         let utable = unsafe {
             PageMapper::create(
                 TableKind::User,
-                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+                crate::memory::TheFrameAllocator(KNumaMemoryPolicy::NodeLocalLeniant),
             )
             .ok_or(Error::new(ENOMEM))?
         };
@@ -1348,7 +1349,7 @@ impl Grant {
         flags: PageFlags<RmmA>,
         mapper: &mut PageMapper,
         flusher: &mut Flusher,
-        mem_policy: NumaMemoryPolicy,
+        mem_policy: KNumaMemoryPolicy,
     ) -> Result<Grant, Enomem> {
         let mut frame_allocator = TheFrameAllocator(mem_policy);
         let base = Frame::containing(

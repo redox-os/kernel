@@ -20,7 +20,7 @@ use crate::{
         memory::{AccessMode, PfError},
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
-    numa::{self, FreeListMask},
+    numa::{self, FreeListMask, KNumaMemoryPolicy},
     sync::CleanLockToken,
     syscall::error::{Error, ENOMEM},
 };
@@ -1491,7 +1491,7 @@ pub fn init_frame(init_rc: RefCount, must_be_zero: bool) -> Result<Frame, PfErro
     Ok(new_frame)
 }
 #[derive(Debug)]
-pub struct TheFrameAllocator(pub NumaMemoryPolicy);
+pub struct TheFrameAllocator(pub KNumaMemoryPolicy);
 
 unsafe impl FrameAllocator for TheFrameAllocator {
     fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {

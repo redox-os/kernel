@@ -7,7 +7,8 @@ use crate::{
         unblock_context, wakeup_context, Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
-    numa, ptrace,
+    numa::{self, FreeListMask, KNumaMemoryPolicy},
+    ptrace,
     scheme::{
         memory::{MemoryScheme, MemoryType},
         FileHandle, KernelScheme,
@@ -40,7 +41,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy};
+use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy, NumaNodeSet};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -1697,13 +1698,42 @@ impl ContextHandle {
 
                 if flags.contains(CallFlags::WRITE) {
                     let mut addrspace = addrspace.acquire_write(token.downgrade());
-                    addrspace.table.utable.allocator_mut().0 =
-                        NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
+                    let mut mem_policy =
+                        KNumaMemoryPolicy::from(NumaMemoryPolicy::try_from(unsafe {
+                            payload.read_exact::<u64>()?
+                        })?);
+
+                    match mem_policy {
+                        KNumaMemoryPolicy::MemBindStrict(
+                            ref mut free_list_mask,
+                            ref mut node_mask,
+                        )
+                        | KNumaMemoryPolicy::MemBindLeniant(
+                            ref mut free_list_mask,
+                            ref mut node_mask,
+                        ) => {
+                            *node_mask = unsafe {
+                                payload
+                                    .advance(size_of::<u64>())
+                                    .ok_or(Error::new(EINVAL))?
+                                    .read_exact::<NumaNodeSet>()?
+                            };
+                            *free_list_mask = FreeListMask::from(*node_mask);
+                        }
+                        _ => (),
+                    }
+                    addrspace.table.utable.allocator_mut().0 = mem_policy;
                 }
                 if flags.contains(CallFlags::READ) {
                     let addrspace = addrspace.acquire_read(token.downgrade());
-                    let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
-                    payload.copy_from_slice(&mem_policy)?;
+                    let (mem_policy, set) = addrspace.table.utable.allocator().0.decompose();
+                    payload.copy_exactly((mem_policy as u64).to_ne_bytes().as_slice())?;
+                    if let Some(set) = set {
+                        payload
+                            .advance(size_of::<u64>())
+                            .ok_or(Error::new(EINVAL))?
+                            .copy_exactly(set.to_bytes())?;
+                    }
                 }
                 Ok(0)
             }

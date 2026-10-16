@@ -1,5 +1,6 @@
 use alloc::string::String;
 use core::{
+    cmp::min,
     ops::{Deref, DerefMut},
     ptr::write_bytes,
     slice,
@@ -9,7 +10,7 @@ use crate::{acpi, cpu_set::LogicalCpuSet, percpu};
 use bitfield::Bit;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
-use syscall::{Error, NumaMemoryPolicy};
+use syscall::{Error, NumaMemoryPolicy, NumaNodeSet};
 
 pub const MAX_DOMAINS: usize = 128;
 pub const MAX_MEM_REGIONS: usize = MAX_DOMAINS;
@@ -65,6 +66,19 @@ impl FreeListMask {
 
     pub fn is_enabled(&self, i: usize) -> bool {
         self.mask.bit(i)
+    }
+}
+
+impl From<NumaNodeSet> for FreeListMask {
+    fn from(value: NumaNodeSet) -> Self {
+        let nodes = NUMA_NODES.get().unwrap();
+        let mut mask = 0u128;
+        for i in 0..nodes.len() {
+            if value.contains(i).unwrap() {
+                mask |= nodes[i].as_ref().unwrap().memories.mask;
+            }
+        }
+        FreeListMask { mask }
     }
 }
 
@@ -278,10 +292,12 @@ pub fn current_node_id() -> Option<NumaNodeID> {
     Some(cpu.numa_node.get()?.0)
 }
 
-pub fn free_list_mask(mem_policy: NumaMemoryPolicy) -> Option<(FreeListMask, bool)> {
+pub fn free_list_mask(mem_policy: KNumaMemoryPolicy) -> Option<(FreeListMask, bool)> {
     match mem_policy {
-        NumaMemoryPolicy::NodeLocalStrict => Some((current_node()?.memories, false)),
-        NumaMemoryPolicy::NodeLocalLeniant => Some((current_node()?.memories, true)),
+        KNumaMemoryPolicy::NodeLocalStrict => Some((current_node()?.memories, false)),
+        KNumaMemoryPolicy::NodeLocalLeniant => Some((current_node()?.memories, true)),
+        KNumaMemoryPolicy::MemBindStrict(v, _) => Some((v, false)),
+        KNumaMemoryPolicy::MemBindLeniant(v, _) => Some((v, true)),
     }
 }
 
@@ -320,4 +336,43 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     iter.others = others;
 
     Some(iter)
+}
+
+/// This is meant only for the kernel. Users of RedoxOS must use `syscall::data::NumaMemoryPolicy`
+#[derive(Debug, Clone, Copy)]
+pub enum KNumaMemoryPolicy {
+    NodeLocalStrict,
+    NodeLocalLeniant,
+    MemBindStrict(FreeListMask, NumaNodeSet),
+    MemBindLeniant(FreeListMask, NumaNodeSet),
+}
+
+impl KNumaMemoryPolicy {
+    pub fn decompose(&self) -> (NumaMemoryPolicy, Option<NumaNodeSet>) {
+        match self {
+            KNumaMemoryPolicy::NodeLocalStrict => (NumaMemoryPolicy::NodeLocalStrict, None),
+            KNumaMemoryPolicy::NodeLocalLeniant => (NumaMemoryPolicy::NodeLocalLeniant, None),
+            KNumaMemoryPolicy::MemBindStrict(_, set) => {
+                (NumaMemoryPolicy::MemBindStrict, Some(*set))
+            }
+            KNumaMemoryPolicy::MemBindLeniant(_, set) => {
+                (NumaMemoryPolicy::MemBindLeniant, Some(*set))
+            }
+        }
+    }
+}
+
+impl From<NumaMemoryPolicy> for KNumaMemoryPolicy {
+    fn from(value: NumaMemoryPolicy) -> Self {
+        match value {
+            NumaMemoryPolicy::NodeLocalStrict => Self::NodeLocalStrict,
+            NumaMemoryPolicy::NodeLocalLeniant => Self::NodeLocalLeniant,
+            NumaMemoryPolicy::MemBindStrict => {
+                Self::MemBindStrict(FreeListMask::default(), NumaNodeSet::empty())
+            }
+            NumaMemoryPolicy::MemBindLeniant => {
+                Self::MemBindLeniant(FreeListMask::default(), NumaNodeSet::empty())
+            }
+        }
+    }
 }
