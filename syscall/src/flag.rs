@@ -47,6 +47,8 @@ bitflags! {
         const EVENT_NONE = 0;
         const EVENT_READ = 1;
         const EVENT_WRITE = 2;
+        const EVENT_HUP = 4;
+        const EVENT_ERR = 8;
     }
 }
 

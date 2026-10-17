@@ -10,7 +10,7 @@ use slab::Slab;
 use syscall::{
     schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
-    SendFdFlags, StdFsCallKind, MAP_FIXED_NOREPLACE,
+    SendFdFlags, StdFsCallKind, EVENT_HUP, MAP_FIXED_NOREPLACE,
 };
 
 use crate::{
@@ -1689,7 +1689,7 @@ impl KernelScheme for UserScheme {
         event::trigger(
             self.inner.root_id,
             self.inner.scheme_id.get(),
-            EVENT_READ,
+            EVENT_READ | EVENT_HUP,
             token,
         );
 
