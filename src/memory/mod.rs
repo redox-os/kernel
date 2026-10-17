@@ -128,18 +128,13 @@ pub fn allocate_p2frame(order: u32, must_be_zero: bool) -> Option<Frame> {
     }
 
     // relaxed ordering since we only want atomicity
-    let index =
-        usize::from(RR_INDEX.fetch_add(1, Ordering::Relaxed)) % numa::number_of_memory_regions();
-    for i in index..len {
+    let index = usize::from(RR_INDEX.fetch_add(1, Ordering::Relaxed)) % len;
+    for i in (index..len).chain(0..index) {
         if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i, must_be_zero) {
             return Some(frame.0);
         }
     }
-    for i in 0..index {
-        if let Some(frame) = allocate_p2frame_complex(order, (), None, order, i, must_be_zero) {
-            return Some(frame.0);
-        }
-    }
+
     None
 }
 pub fn allocate_frame(must_be_zero: bool) -> Option<Frame> {
@@ -743,7 +738,7 @@ const _: () = {
 };
 
 #[cold]
-fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
+fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask> {
     let number_of_memory_regions = numa::number_of_memory_regions();
 
     let (free_areas, offset_into_first_free_area) = allocator.free_areas();
@@ -804,22 +799,21 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
     let mut sections_fill = |region: Option<MemoryArea>,
                              i: &mut usize, // out parameter
                              force: bool|
-     -> Option<MemoryArea> {
+     -> (Option<MemoryArea>, bool) {
+        let mut bool_res = false;
         let mut iter = free_areas_iter().peekable();
 
         while let Some(mut memory_map_area) = iter.next() {
-            if !{
-                if let Some(region) = region
-                    && !force
-                {
-                    memory_map_area.base >= region.base
-                        && memory_map_area.base.data() < region.base.data() + region.size
-                } else {
-                    true
-                }
-            } {
+            if !force
+                && region.is_some_and(|region| {
+                    memory_map_area.base < region.base
+                        || memory_map_area.base.data() >= region.base.data() + region.size
+                })
+            {
                 continue;
             }
+
+            bool_res = true;
 
             // TODO: NonZeroUsize
 
@@ -915,29 +909,36 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
                 pages_left -= page_info_count;
                 base = base.next_by(page_info_count);
                 if return_value.is_some() {
-                    return return_value;
+                    return (return_value, bool_res);
                 }
             }
         }
-        None
+        (None, bool_res)
     };
     let mut i = 0;
 
-    if number_of_memory_regions > 1
+    let region_mask = if number_of_memory_regions > 1
         && let Some(regions) = numa::memory_regions()
     {
-        for region in regions {
+        let mut region_mask: numa::RegionMask = [false; numa::MAX_MEM_REGIONS];
+
+        for (index, region) in regions.enumerate() {
             let mut sections_fill_result = Some(region);
             let mut force = false;
+            let mut bool_res = false;
 
             while let Some(region) = sections_fill_result {
-                sections_fill_result = sections_fill(Some(region), &mut i, force);
+                (sections_fill_result, bool_res) = sections_fill(Some(region), &mut i, force);
                 force = true;
             }
+
+            region_mask[index] = bool_res;
         }
+        Some(region_mask)
     } else {
         sections_fill(None, &mut i, false);
-    }
+        None
+    };
 
     let sections = &mut sections[..i];
 
@@ -1114,15 +1115,20 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
         && number_of_memory_regions > 1
         && let Some(regions) = numa::memory_regions()
     {
+        let region_mask = region_mask.as_ref().expect("Unexpected none");
+        let actual_count = region_mask.iter().filter(|e| **e).count();
         let free_list_page = allocator
             .allocate(FrameCount::new(
-                (numa::number_of_memory_regions() * size_of::<Mutex<FreeList>>())
-                    .div_ceil(PAGE_SIZE),
+                (actual_count * size_of::<FreeList>()).div_ceil(PAGE_SIZE),
             ))
             .expect("Failed to allocate free list page");
         let va = RmmA::phys_to_virt(free_list_page).data() as *mut FreeList;
-        free_lists = unsafe { slice::from_raw_parts_mut(va, numa::number_of_memory_regions()) };
-        for (i, region) in regions.enumerate() {
+        free_lists = unsafe { slice::from_raw_parts_mut(va, actual_count) };
+        for (i, region) in regions
+            .enumerate()
+            .filter_map(|(i, e)| region_mask[i].then_some(e))
+            .enumerate()
+        {
             let free_list = FreeList {
                 upper_limit: region.base.add(region.size).data(),
                 lower_limit: region.base.data(),
@@ -1156,11 +1162,13 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) {
 
     //debug_freelist();
     debug!("Initial freelist consistent");
+
+    region_mask
 }
 
 #[cold]
-pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
-    init_sections(allocator);
+pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask> {
+    let mask = init_sections(allocator);
 
     unsafe {
         // would have been interesting otherwise
@@ -1175,6 +1183,7 @@ pub fn init_mm(allocator: &mut BumpAllocator<RmmA>) {
 
         THE_ZEROED_FRAME.get().write(Some((the_frame, the_info)));
     }
+    mask
 }
 
 #[derive(Debug, PartialEq)]

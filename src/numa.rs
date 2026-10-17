@@ -82,9 +82,9 @@ pub struct NumaMemory {
     pub length: usize,
     pub node_id: NumaNodeID,
     #[cfg(target_pointer_width = "64")]
-    pub _pad: [u8; 4],
+    _pad: [u8; 4],
     #[cfg(target_pointer_width = "32")]
-    pub _pad: [u8; 12],
+    _pad: [u8; 12],
 }
 
 impl NumaMemory {
@@ -112,7 +112,9 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     }
 }
 
-pub fn init_arch() {
+pub type RegionMask = [bool; MAX_MEM_REGIONS];
+
+pub fn init_arch(mask: &Option<RegionMask>) {
     if let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
     {
@@ -134,18 +136,25 @@ pub fn init_arch() {
             node.as_mut().unwrap().cpus |= 1u128 << cpu_id;
         }
 
+        let mut index = 0;
         for (i, memory) in memories
             .iter()
             .enumerate()
             .filter_map(|(i, memory)| Some((i, memory.as_ref()?)))
         {
+            if let Some(mask) = mask
+                && !mask[i]
+            {
+                continue;
+            }
             let node = &mut numa_nodes[memory.node_id.get() as usize];
 
             if node.is_none() {
                 *node = Some(NumaNode::default());
             }
 
-            node.as_mut().unwrap().memories.enable_index(i);
+            node.as_mut().unwrap().memories.enable_index(index);
+            index += 1;
         }
 
         for cpu in percpu::all_percpu_blocks() {

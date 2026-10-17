@@ -113,9 +113,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             crate::acpi::init_before_mem(args.acpi_rsdp(), &mut mapper);
         }
 
+        #[cfg(all(feature = "numa", target_arch = "x86_64"))]
         numa::init(mapper.allocator_mut());
 
-        crate::memory::init_mm(mapper.allocator_mut());
+        let numa_region_mask = crate::memory::init_mm(mapper.allocator_mut());
 
         // Set up the IDT's IST
         idt::init_bsp_after_mem();
@@ -134,6 +135,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
             in("rax") kmain_kstack_top,
             in("rdi") (&args),
             in("rsi") (&mut kstack_slot),
+            in("rdx") (&numa_region_mask),
             continue_after_stack=sym continue_after_kmain_stack_raw,
             options(noreturn),
         );
@@ -155,18 +157,23 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 extern "sysv64" fn continue_after_kmain_stack_raw(
     args: &KernelArgs,
     kstack_slot: &mut Option<Kstack>,
+    numa_region_mask: &Option<numa::RegionMask>,
 ) -> ! {
-    continue_after_kmain_stack(args, kstack_slot)
+    continue_after_kmain_stack(args, kstack_slot, numa_region_mask)
 }
 #[cfg(target_arch = "x86")]
 extern "fastcall" fn continue_after_kmain_stack_raw(
     args: &KernelArgs,
     kstack_slot: &mut Option<Kstack>,
 ) -> ! {
-    continue_after_kmain_stack(args, kstack_slot)
+    continue_after_kmain_stack(args, kstack_slot, &None)
 }
 #[inline(always)]
-fn continue_after_kmain_stack(args: &KernelArgs, kstack_slot: &mut Option<Kstack>) -> ! {
+fn continue_after_kmain_stack(
+    args: &KernelArgs,
+    kstack_slot: &mut Option<Kstack>,
+    numa_region_mask: &Option<numa::RegionMask>,
+) -> ! {
     info!("Now on kmain stack");
     unsafe {
         let bootstrap = {
@@ -190,7 +197,7 @@ fn continue_after_kmain_stack(args: &KernelArgs, kstack_slot: &mut Option<Kstack
             device::init();
 
             #[cfg(all(target_arch = "x86_64", feature = "numa"))]
-            numa::init_arch();
+            numa::init_arch(numa_region_mask);
 
             // Read ACPI tables, starts APs
             if cfg!(feature = "acpi") {

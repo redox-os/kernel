@@ -107,7 +107,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             info!("Redox OS starting...");
             args.print();
 
-            device::dump_fdt(dtb);
+            debug!("device tree: {:?}", dtb);
 
             // Initialize RMM
             let mut bump_allocator = crate::startup::memory::init(&args, None, None);
