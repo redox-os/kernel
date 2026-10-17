@@ -1,11 +1,12 @@
 use alloc::boxed::Box;
-use fdt::Fdt;
+use fdt::properties::PHandle;
 
 pub use crate::dtb::serial::COM1;
 use crate::{
     dtb::{
         get_interrupt, interrupt_parent,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+        Fdt,
     },
     scheme::irq::irq_trigger,
     sync::CleanLockToken,
@@ -27,10 +28,10 @@ impl InterruptHandler for Com1Irq {
 
 pub unsafe fn init(fdt: &Fdt) -> Option<()> {
     unsafe {
-        if let Some(node) = fdt.find_compatible(&["ns16550a", "snps,dw-apb-uart"]) {
-            let intr = get_interrupt(fdt, &node, 0).unwrap();
-            let interrupt_parent = interrupt_parent(fdt, &node)?;
-            let phandle = interrupt_parent.property("phandle")?.as_usize()? as u32;
+        if let Some(node) = fdt.all_compatible(&["ns16550a", "snps,dw-apb-uart"]).next() {
+            let intr = get_interrupt(&node, 0).unwrap();
+            let interrupt_parent = interrupt_parent(fdt, node)?;
+            let phandle = interrupt_parent.property::<PHandle>()?;
             let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle)?;
 
             let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]

@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, vec::Vec};
+use fdt::properties::PHandle;
 
 use super::{Madt, MadtEntry};
 use crate::{
@@ -57,7 +58,7 @@ pub(super) fn init(madt: Madt) {
                     irq_range: (0, 0),
                 };
                 let chip = IrqChipItem {
-                    phandle: 0,
+                    phandle: PHandle::new(0),
                     parents: Vec::new(),
                     children: Vec::new(),
                     ic: Box::new(gic),
@@ -81,7 +82,7 @@ pub(super) fn init(madt: Madt) {
                     irq_range: (0, 0),
                 };
                 let chip = IrqChipItem {
-                    phandle: 0,
+                    phandle: PHandle::new(0),
                     parents: Vec::new(),
                     children: Vec::new(),
                     ic: Box::new(gic),

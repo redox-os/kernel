@@ -94,14 +94,14 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             graphical_debug::init(args.env());
 
-            if let Some(dtb) = &dtb {
+            if let Ok((dtb, _)) = &dtb {
                 init_early(dtb);
             }
 
             info!("Redox OS starting...");
             args.print();
 
-            if let Some(dtb) = &dtb {
+            if let Ok((dtb, _)) = &dtb {
                 debug!("device tree: {:?}", dtb);
             }
 

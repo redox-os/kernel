@@ -1,13 +1,18 @@
-use crate::{dtb::get_mmio_address, sync::CleanLockToken, time};
+use crate::{
+    dtb::{get_mmio_address, Fdt},
+    sync::CleanLockToken,
+    time,
+};
 use core::ptr::read_volatile;
 
 static RTC_DR: usize = 0x000;
 
-pub unsafe fn init(fdt: &fdt::Fdt) {
-    if let Some(node) = fdt.find_compatible(&["arm,pl031"]) {
+pub unsafe fn init(fdt: &Fdt<'_>) {
+    if let Some(node) = fdt.all_compatible(&["arm,pl031"]).next() {
         match node
             .reg()
-            .and_then(|mut iter| iter.next())
+            .and_then(|iter| iter.iter::<usize, usize>().next())
+            .and_then(|region| region.ok())
             .and_then(|region| get_mmio_address(fdt, &node, &region))
         {
             Some(phys) => {

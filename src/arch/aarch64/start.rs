@@ -4,8 +4,6 @@
 //! defined in other files inside of the `arch` module
 use core::{arch::naked_asm, cell::SyncUnsafeCell, slice};
 
-use fdt::Fdt;
-
 use crate::{
     allocator,
     arch::{device, paging},
@@ -83,12 +81,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
                 None
             };
 
-            let dtb_res = hwdesc_data
-                .ok_or(fdt::FdtError::BadPtr)
-                .and_then(|data| Fdt::new(data));
+            let dtb_res = args.dtb();
 
             // Try to find serial port prior to logging
-            if let Ok(dtb) = &dtb_res {
+            if let Ok((dtb, _)) = &dtb_res {
                 dtb::serial::init_early(dtb);
             }
 
@@ -120,7 +116,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             // Initialize devices
             match dtb_res {
-                Ok(dtb) => {
+                Ok((dtb, _)) => {
                     dtb::init(hwdesc_data.map(|slice| (slice.as_ptr() as usize, slice.len())));
                     device::init_devicetree(&dtb);
                 }

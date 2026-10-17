@@ -1,10 +1,13 @@
-use super::travel_interrupt_ctrl;
+use super::{travel_interrupt_ctrl, Fdt};
 use crate::{
     arch::device::irqchip::new_irqchip, cpu_set::LogicalCpuId, scheme::irq::irq_trigger,
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
-use fdt::{node::NodeProperty, Fdt};
+use fdt::properties::{
+    interrupts::{InterruptCells, InterruptSpecifier, Interrupts},
+    Compatible, PHandle,
+};
 use syscall::{Error, Result, EINVAL};
 
 pub trait InterruptHandler {
@@ -17,6 +20,20 @@ pub enum IrqCell {
     L1(u32),
     L2(u32, u32),
     L3(u32, u32, u32),
+}
+
+impl IrqCell {
+    pub(super) fn from_interrupt_specifier(
+        interrupt_specifier: InterruptSpecifier<'_>,
+    ) -> Option<Self> {
+        let mut iter = interrupt_specifier.iter();
+        match (iter.next(), iter.next(), iter.next(), iter.next()) {
+            (Some(a), None, None, None) => Some(IrqCell::L1(a)),
+            (Some(a), Some(b), None, None) => Some(IrqCell::L2(a, b)),
+            (Some(a), Some(b), Some(c), None) => Some(IrqCell::L3(a, b, c)),
+            _ => None,
+        }
+    }
 }
 
 pub trait InterruptController: InterruptHandler {
@@ -43,13 +60,13 @@ pub trait InterruptController: InterruptHandler {
 }
 
 pub struct IrqConnection {
-    pub parent_phandle: u32,
+    pub parent_phandle: PHandle,
     pub parent: usize, // parent idx in chiplist
     pub parent_interrupt: Option<IrqCell>,
 }
 
 pub struct IrqChipItem {
-    pub phandle: u32,
+    pub phandle: PHandle,
     pub parents: Vec<IrqConnection>,
     pub children: Vec<usize>, // child idx in chiplist
     pub ic: Box<dyn InterruptController>,
@@ -74,23 +91,28 @@ pub struct IrqDesc {
 
 impl IrqChipList {
     fn init_inner1(&mut self, fdt: &Fdt) {
-        for node in fdt.all_nodes() {
-            if node.property("interrupt-controller").is_some() {
-                let Some(compatible) = node.compatible() else {
+        for (_id, node) in fdt.all_nodes() {
+            if node
+                .property::<fdt::properties::interrupts::InterruptController>()
+                .is_some()
+            {
+                let Some(compatible) = node.property::<Compatible>() else {
                     continue;
                 };
                 let compatible = compatible.first();
-                let Some(phandle) = node.property("phandle") else {
+                let Some(phandle) = node.property::<PHandle>() else {
                     continue;
                 };
-                let phandle = phandle.as_usize().unwrap() as u32;
-                let Some(intr_cells) = node.interrupt_cells() else {
+                let Some(intr_cells) = node.property::<InterruptCells>() else {
                     continue;
                 };
 
                 debug!(
                     "{}, compatible = {}, #interrupt-cells = 0x{:08x}, phandle = 0x{:08x}",
-                    node.name, compatible, intr_cells, phandle
+                    node.name(),
+                    compatible,
+                    intr_cells.0,
+                    phandle.as_u32(),
                 );
                 let mut item = IrqChipItem {
                     phandle,
@@ -98,18 +120,6 @@ impl IrqChipList {
                     children: Vec::new(),
                     ic: new_irqchip(compatible).unwrap(),
                 };
-
-                fn interrupt_address(
-                    iter: &mut impl Iterator<Item = u32>,
-                    interrupt_cells: usize,
-                ) -> Option<IrqCell> {
-                    match interrupt_cells {
-                        1 => Some(IrqCell::L1(iter.next()?)),
-                        2 if let Ok([a, b]) = iter.next_chunk() => Some(IrqCell::L2(a, b)),
-                        3 if let Ok([a, b, c]) = iter.next_chunk() => Some(IrqCell::L3(a, b, c)),
-                        _ => None,
-                    }
-                }
 
                 fn gate_interrupt_address(addr: IrqCell) -> Option<IrqCell> {
                     match addr {
@@ -120,56 +130,45 @@ impl IrqChipList {
                     }
                 }
 
-                if let Some(parent) = node.interrupt_parent()
-                    && let Some(intr_data) = node.property("interrupts")
-                {
-                    // FIXME use interrupts() helper when fixed (see gh#12)
-                    let mut intr_data = intr_data
-                        .value
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|&x| u32::from_be_bytes(x));
-                    let parent_phandle = parent
-                        .property("phandle")
-                        .and_then(NodeProperty::as_usize)
-                        .unwrap() as u32;
-                    let parent_interrupt_cells = parent.interrupt_cells().unwrap();
-                    debug!("interrupt-parent = 0x{:08x}", parent_phandle);
-                    debug!("interrupts begin:");
-                    while let Some(parent_interrupt) =
-                        interrupt_address(&mut intr_data, parent_interrupt_cells)
-                    {
-                        debug!("{:?}, ", parent_interrupt);
-                        item.parents.push(IrqConnection {
-                            parent_phandle,
-                            parent: 0,
-                            parent_interrupt: gate_interrupt_address(parent_interrupt),
-                        });
-                    }
-                    debug!("interrupts end");
-                } else if let Some(intr_data) = node.property("interrupts-extended") {
-                    // FIXME use the helper when fixed (see gh#37)
-                    // Shouldn't matter much since ARM seems to not use extended interrupt and
-                    // RISC-V seems to not use 3-sized interrupt addresses
-                    let mut intr_data = intr_data
-                        .value
-                        .as_chunks::<4>()
-                        .0
-                        .iter()
-                        .map(|&x| u32::from_be_bytes(x));
-                    while let Some(parent_phandle) = intr_data.next()
-                        && let Some(parent) = fdt.find_phandle(parent_phandle)
-                        && let Some(parent_interrupt_cells) = parent.interrupt_cells()
-                        && let Some(parent_interrupt) =
-                            interrupt_address(&mut intr_data, parent_interrupt_cells)
-                    {
-                        debug!("{:?}, ", parent_interrupt);
-                        item.parents.push(IrqConnection {
-                            parent_phandle,
-                            parent: 0,
-                            parent_interrupt: gate_interrupt_address(parent_interrupt),
-                        });
+                if let Some(interrupts) = node.property::<Interrupts>() {
+                    match interrupts {
+                        Interrupts::Legacy(interrupts) => {
+                            let parent_phandle =
+                                interrupts.interrupt_parent().property::<PHandle>().unwrap();
+                            debug!("interrupt-parent = 0x{:08x}", parent_phandle.as_u32());
+                            debug!("interrupts begin:");
+                            for interrupt in interrupts.iter() {
+                                if let Some(parent_interrupt) =
+                                    IrqCell::from_interrupt_specifier(interrupt)
+                                {
+                                    debug!("{:?}, ", parent_interrupt);
+                                    item.parents.push(IrqConnection {
+                                        parent_phandle,
+                                        parent: 0,
+                                        parent_interrupt: gate_interrupt_address(parent_interrupt),
+                                    });
+                                }
+                            }
+                            debug!("interrupts end");
+                        }
+                        Interrupts::Extended(interrupts) => {
+                            for interrupt in interrupts.iter() {
+                                if let Some(parent_phandle) =
+                                    interrupt.interrupt_parent().property::<PHandle>()
+                                    && let Some(parent_interrupt) =
+                                        IrqCell::from_interrupt_specifier(
+                                            interrupt.interrupt_specifier(),
+                                        )
+                                {
+                                    debug!("{:?}, ", parent_interrupt);
+                                    item.parents.push(IrqConnection {
+                                        parent_phandle,
+                                        parent: 0,
+                                        parent_interrupt: gate_interrupt_address(parent_interrupt),
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -199,7 +198,8 @@ impl IrqChipList {
                     .unwrap_or_else(|| {
                         panic!(
                             "Cannot find parent intc {} (connection from {})",
-                            parent_phandle, phandle
+                            parent_phandle.as_u32(),
+                            phandle.as_u32(),
                         )
                     });
                 self.chips[child_i].parents[conn_i].parent = parent_i;
@@ -229,7 +229,7 @@ impl IrqChipList {
                     assert!(
                         child_pos > queue_idx,
                         "IRQ chip tree has a cycle with phandle {} in it",
-                        cur_chip.phandle
+                        cur_chip.phandle.as_u32(),
                     );
                 } else {
                     queue.push(*child);
@@ -253,7 +253,9 @@ impl IrqChipList {
                         _ => {
                             error!(
                                 "Cannot connect irq chip {} to parent irq {} : {:?}",
-                                cur_chip.phandle, parent.phandle, parent_interrupt
+                                cur_chip.phandle.as_u32(),
+                                parent.phandle.as_u32(),
+                                parent_interrupt,
                             );
                         }
                     }
@@ -342,7 +344,7 @@ impl IrqChipCore {
             .init_inner3(fdt_opt, &mut self.irq_desc, roots);
     }
 
-    pub fn phandle_to_ic_idx(&self, phandle: u32) -> Option<usize> {
+    pub fn phandle_to_ic_idx(&self, phandle: PHandle) -> Option<usize> {
         self.irq_chip_list
             .chips
             .iter()

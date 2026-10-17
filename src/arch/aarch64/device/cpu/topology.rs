@@ -1,10 +1,19 @@
 use alloc::vec::Vec;
 use core::fmt;
+use fdt::{
+    nodes::NodeName,
+    properties::{
+        cells::{AddressCells, SizeCells},
+        Status,
+    },
+};
 
-use fdt::{node::FdtNode, Fdt};
 use spin::Once;
 
-use crate::cpu_set::MAX_CPU_COUNT;
+use crate::{
+    cpu_set::MAX_CPU_COUNT,
+    dtb::{Fdt, FdtNode},
+};
 
 use super::registers::control_regs;
 
@@ -71,7 +80,7 @@ enum TopologyError<'a> {
     InvalidSizeCells,
     NoEnabledCpus,
     TooManyCpus(usize),
-    InvalidDeviceType(&'a str),
+    InvalidDeviceType(NodeName<'a>),
     MissingReg(&'a str),
     InvalidReg(&'a str),
     InvalidMpidr { node: &'a str, mpidr: u64 },
@@ -115,8 +124,8 @@ impl fmt::Display for TopologyError<'_> {
     }
 }
 
-fn property_u32(node: FdtNode<'_, '_>, name: &str) -> Option<u32> {
-    let bytes: [u8; 4] = node.property(name)?.value.try_into().ok()?;
+fn property_u32(node: FdtNode<'_>, name: &str) -> Option<u32> {
+    let bytes: [u8; 4] = node.raw_property(name)?.value.try_into().ok()?;
     Some(u32::from_be_bytes(bytes))
 }
 
@@ -128,34 +137,29 @@ fn parse_mpidr(reg: &[u8], address_cells: usize) -> Option<u64> {
     }
 }
 
-fn enabled(node: FdtNode<'_, '_>) -> bool {
-    match node.property("status") {
-        None => true,
-        Some(status) => matches!(status.as_str(), Some("ok" | "okay")),
-    }
+fn enabled(node: FdtNode<'_>) -> bool {
+    matches!(node.property::<Status>(), None | Some(Status::OKAY))
 }
 
-fn enable_method(node: FdtNode<'_, '_>) -> EnableMethod {
-    match node.property("enable-method") {
+fn enable_method(node: FdtNode<'_>) -> EnableMethod {
+    match node.raw_property("enable-method") {
         None => EnableMethod::None,
-        Some(method) => match method.as_str() {
-            Some("psci") => EnableMethod::Psci,
+        Some(method) => match method.as_value::<&str>() {
+            Ok("psci") => EnableMethod::Psci,
             _ => EnableMethod::Unsupported,
         },
     }
 }
 
-fn discover<'b, 'a: 'b>(
-    fdt: &'b Fdt<'a>,
-    boot_mpidr: u64,
-) -> Result<DiscoveredTopology, TopologyError<'a>> {
+fn discover<'a>(fdt: &Fdt<'a>, boot_mpidr: u64) -> Result<DiscoveredTopology, TopologyError<'a>> {
     let cpus_node = fdt
         .find_node("/cpus")
         .ok_or(TopologyError::MissingCpusNode)?;
-    let address_cells = property_u32(cpus_node, "#address-cells")
-        .filter(|cells| matches!(cells, 1 | 2))
-        .ok_or(TopologyError::InvalidAddressCells)? as usize;
-    if property_u32(cpus_node, "#size-cells") != Some(0) {
+    let address_cells = cpus_node
+        .property::<AddressCells>()
+        .ok_or(TopologyError::InvalidAddressCells)?
+        .0;
+    if cpus_node.property::<SizeCells>() != Some(SizeCells(0)) {
         return Err(TopologyError::InvalidSizeCells);
     }
 
@@ -163,18 +167,19 @@ fn discover<'b, 'a: 'b>(
     let mut disabled = 0;
     for node in cpus_node
         .children()
-        .filter(|node| node.name.split('@').next() == Some("cpu"))
+        .iter()
+        .filter(|node| node.name().name == "cpu")
     {
         // Do not derive the PE identity from `compatible`: some vendor DTs
         // label these nodes differently from the MIDR implemented by the
         // silicon. `device_type`, reg/MPIDR and enable-method define the boot
         // topology; MIDR_EL1 remains authoritative for the CPU model.
         if node
-            .property("device_type")
-            .and_then(|value| value.as_str())
+            .raw_property("device_type")
+            .and_then(|value| value.as_value::<&str>().ok())
             != Some("cpu")
         {
-            return Err(TopologyError::InvalidDeviceType(node.name));
+            return Err(TopologyError::InvalidDeviceType(node.name()));
         }
         if !enabled(node) {
             disabled += 1;
@@ -182,13 +187,13 @@ fn discover<'b, 'a: 'b>(
         }
 
         let reg = node
-            .property("reg")
-            .ok_or(TopologyError::MissingReg(node.name))?;
-        let mpidr =
-            parse_mpidr(reg.value, address_cells).ok_or(TopologyError::InvalidReg(node.name))?;
+            .raw_property("reg")
+            .ok_or(TopologyError::MissingReg(node.name().name))?;
+        let mpidr = parse_mpidr(reg.value, address_cells)
+            .ok_or(TopologyError::InvalidReg(node.name().name))?;
         if mpidr & !MPIDR_HWID_MASK != 0 {
             return Err(TopologyError::InvalidMpidr {
-                node: node.name,
+                node: node.name().name,
                 mpidr,
             });
         }

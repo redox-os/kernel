@@ -1,6 +1,9 @@
-use crate::dtb::irqchip::{InterruptController, IRQ_CHIP};
+use crate::dtb::{
+    irqchip::{InterruptController, IRQ_CHIP},
+    Fdt, FdtNode,
+};
 use alloc::boxed::Box;
-use fdt::{node::FdtNode, Fdt};
+use fdt::properties::PHandle;
 
 pub(crate) mod gic;
 pub(crate) mod gicv3;
@@ -25,15 +28,15 @@ pub(crate) fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> 
 }
 
 pub(crate) fn ic_for_chip(fdt: &Fdt, node: &FdtNode) -> Option<usize> {
-    if let Some(_) = node.property("interrupts-extended") {
+    if let Some(_) = node.raw_property("interrupts-extended") {
         error!("multi-parented device not supported");
         None
     } else if let Some(irqc_phandle) = node
-        .property("interrupt-parent")
-        .or(fdt.root().property("interrupt-parent"))
-        .and_then(|f| f.as_usize())
+        .raw_property("interrupt-parent")
+        .or(fdt.find_node("/").unwrap().raw_property("interrupt-parent"))
+        .and_then(|f| f.as_value::<u32>().ok())
     {
-        unsafe { IRQ_CHIP.phandle_to_ic_idx(irqc_phandle as u32) }
+        unsafe { IRQ_CHIP.phandle_to_ic_idx(PHandle::new(irqc_phandle)) }
     } else {
         error!("no irq parent found");
         None

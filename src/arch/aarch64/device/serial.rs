@@ -1,5 +1,4 @@
 use alloc::boxed::Box;
-use fdt::Fdt;
 
 pub use crate::dtb::serial::COM1;
 use crate::{
@@ -7,6 +6,7 @@ use crate::{
     dtb::{
         diag_uart_node, get_interrupt,
         irqchip::{register_irq, InterruptHandler, IRQ_CHIP},
+        Fdt,
     },
     scheme::irq::irq_trigger,
     sync::CleanLockToken,
@@ -26,13 +26,13 @@ impl InterruptHandler for Com1Irq {
     }
 }
 
-pub unsafe fn init(fdt: &Fdt) {
+pub unsafe fn init(fdt: &Fdt<'_>) {
     unsafe {
         let Some(node) = diag_uart_node(fdt) else {
             error!("diagnostic serial port not found in devicetree");
             return;
         };
-        let Some(irq) = get_interrupt(fdt, &node, 0) else {
+        let Some(irq) = get_interrupt(&node, 0) else {
             error!("diagnostic serial port interrupt not found");
             return;
         };

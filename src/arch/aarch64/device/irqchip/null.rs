@@ -1,4 +1,3 @@
-use fdt::Fdt;
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -6,7 +5,10 @@ use syscall::{
 
 use super::InterruptController;
 use crate::{
-    dtb::irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    dtb::{
+        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        Fdt,
+    },
     sync::CleanLockToken,
 };
 

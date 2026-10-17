@@ -4,6 +4,7 @@ use crate::{
     dtb::{
         get_mmio_address,
         irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        Fdt, FdtNode,
     },
     sync::CleanLockToken,
 };
@@ -12,7 +13,6 @@ use core::{
     ptr::{read_volatile, write_volatile},
     sync::atomic::Ordering,
 };
-use fdt::{node::FdtNode, Fdt};
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -74,7 +74,7 @@ impl Bcm2836ArmInterruptController {
         }
     }
     pub fn parse(fdt: &Fdt) -> Result<(usize, usize)> {
-        if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-l1-intc"]) {
+        if let Some(node) = fdt.all_compatible(&["brcm,bcm2836-l1-intc"]).next() {
             return Bcm2836ArmInterruptController::parse_inner(fdt, &node);
         } else {
             return Err(Error::new(EINVAL));
@@ -82,10 +82,16 @@ impl Bcm2836ArmInterruptController {
     }
     fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize)> {
         //assert address_cells == 0x1, size_cells == 0x1
-        let reg = node.reg().unwrap().nth(0).unwrap();
+        let reg = node
+            .reg()
+            .unwrap()
+            .iter::<usize, usize>()
+            .nth(0)
+            .unwrap()
+            .unwrap();
         let addr = get_mmio_address(fdt, node, &reg).unwrap();
 
-        Ok((addr, reg.size.unwrap()))
+        Ok((addr, reg.len))
     }
 
     unsafe fn init(&mut self) {

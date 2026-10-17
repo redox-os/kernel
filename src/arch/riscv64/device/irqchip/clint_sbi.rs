@@ -1,12 +1,15 @@
 use crate::{
     context,
     context::timeout,
-    dtb::irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+    dtb::{
+        irqchip::{register_irq, InterruptHandler, IrqCell, IRQ_CHIP},
+        FdtNode,
+    },
     sync::CleanLockToken,
 };
 use alloc::{boxed::Box, vec::Vec};
 use core::{arch::asm, cmp::max};
-use fdt::node::FdtNode;
+use fdt::properties::PHandle;
 use spin::Mutex;
 // This is a Core-Local Interruptor (CLINT). A single device directly routed into each HLIC
 // It is responsible for local timer and IPI interrupts
@@ -69,7 +72,7 @@ impl Clint {
             next_event: Vec::new(),
         };
         let mut interrupts = node
-            .property("interrupts-extended")
+            .raw_property("interrupts-extended")
             .unwrap()
             .value
             .as_chunks::<4>()
@@ -87,7 +90,7 @@ impl Clint {
                     .irq_chip_list
                     .chips
                     .iter()
-                    .find(|x| x.phandle == phandle1)
+                    .find(|x| x.phandle == PHandle::new(phandle1))
                     .expect("Couldn't find HLIC in irqchip list for CLINT")
             };
 

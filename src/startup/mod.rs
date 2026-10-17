@@ -5,6 +5,8 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use fdt::FdtError;
+
 use crate::{
     arch::interrupt,
     context::{self, context::Kstack, switch::SwitchResult, wakeup_context, Status},
@@ -114,18 +116,19 @@ impl KernelArgs {
         }
     }
 
-    pub(crate) fn dtb(&self) -> Option<fdt::Fdt<'static>> {
+    pub(crate) fn dtb(&self) -> Result<(crate::dtb::Fdt<'static>, &'static [u8]), FdtError> {
         if self.hwdesc_base != 0 {
-            let data = unsafe {
-                slice::from_raw_parts(
-                    RmmA::phys_to_virt(PhysicalAddress::new(self.hwdesc_base as usize)).data()
-                        as *const u8,
-                    self.hwdesc_size as usize,
-                )
+            let hwdesc_base =
+                RmmA::phys_to_virt(PhysicalAddress::new(self.hwdesc_base as usize)).data();
+            let data8 = unsafe {
+                slice::from_raw_parts(hwdesc_base as *const u8, self.hwdesc_size as usize)
             };
-            fdt::Fdt::new(data).ok()
+            let data32 = unsafe {
+                slice::from_raw_parts(hwdesc_base as *const u32, self.hwdesc_size as usize / 4)
+            };
+            fdt::Fdt::new(data32).map(|fdt| (fdt, data8))
         } else {
-            None
+            Err(FdtError::BadPtr)
         }
     }
 }
