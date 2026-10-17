@@ -22,7 +22,7 @@ static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 pub static BOOT_HART_ID: AtomicUsize = AtomicUsize::new(0);
 // Total number of harts in device tree
 // Used for initializing IRQ structures
-pub static HARTS_NUM: AtomicUsize = AtomicUsize::new(0);
+// pub static HARTS_NUM: AtomicUsize = AtomicUsize::new(0);
 
 fn get_boot_hart_id(env: &[u8]) -> Option<usize> {
     for line in core::str::from_utf8(env).unwrap_or("").lines() {
@@ -119,7 +119,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             let num = dtb.cpus().count();
             info!("{num} HARTs available");
-            HARTS_NUM.store(num, Ordering::Relaxed);
+            // HARTS_NUM.store(num, Ordering::Relaxed);
 
             paging::init();
 
