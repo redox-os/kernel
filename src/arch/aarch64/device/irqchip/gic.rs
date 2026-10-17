@@ -211,11 +211,11 @@ impl GenericInterruptController {
     }
 }
 
-unsafe impl InterruptHandler for GenericInterruptController {
+impl InterruptHandler for GenericInterruptController {
     unsafe fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
-unsafe impl InterruptController for GenericInterruptController {
+impl InterruptController for GenericInterruptController {
     unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,

@@ -1,11 +1,11 @@
 use crate::{
-    arch::start::BOOT_HART_ID,
     dtb::{
         get_mmio_address,
         irqchip::{
             InterruptController, InterruptHandler, IrqCell, IrqChip, IrqConnection, IrqDesc,
         },
     },
+    percpu::PercpuBlock,
     sync::CleanLockToken,
 };
 use alloc::boxed::Box;
@@ -13,7 +13,6 @@ use core::{
     cell::SyncUnsafeCell,
     mem,
     num::{NonZero, NonZeroUsize},
-    sync::atomic::Ordering,
 };
 use fdt::Fdt;
 use syscall::{Error, Io, Mmio, EINVAL};
@@ -27,6 +26,8 @@ struct InterruptThresholdRegs {
 }
 
 static MAX_CONTEXTS: usize = 64;
+
+const SUPERVISOR_EXTERNAL_INTERRUPT: u32 = 9;
 
 #[repr(packed(4))]
 #[repr(C)]
@@ -48,10 +49,10 @@ const _: () = assert!(0x20_0000 == mem::offset_of!(PlicRegs, thresholds));
 const _: () = assert!(0x1000 == size_of::<InterruptThresholdRegs>());
 
 impl PlicRegs {
-    unsafe fn set_priority(&self, irq: usize, priority: usize) {
+    unsafe fn set_priority(&self, irq: u32, priority: usize) {
         unsafe {
             assert!(irq > 0 && irq <= 1023 && priority < 8);
-            self.source_priority[irq]
+            self.source_priority[irq as usize]
                 .get()
                 .as_mut_unchecked()
                 .write(priority as u32);
@@ -63,19 +64,20 @@ impl PlicRegs {
         self.pending[irq_lane].read()
     }
 
-    unsafe fn enable(&self, context: usize, irq: NonZero<usize>, enable: bool) {
+    unsafe fn enable(&self, context: NonZero<usize>, irq: NonZero<u32>, enable: bool) {
         unsafe {
-            assert!(irq.get() <= 1023 && context < MAX_CONTEXTS);
-            let irq_lane = irq.get() / 32;
-            let irq = irq.get() % 32;
-            self.enable[context].get().as_mut_unchecked()[irq_lane].writef(1u32 << irq, enable);
+            assert!(irq.get() <= 1023 && context.get() < MAX_CONTEXTS);
+            let irq_lane = irq.get() as usize / 32;
+            let irq = irq.get() as usize % 32;
+            self.enable[context.get()].get().as_mut_unchecked()[irq_lane]
+                .writef(1u32 << irq, enable);
         }
     }
 
-    unsafe fn set_priority_threshold(&self, context: usize, priority: usize) {
+    unsafe fn set_priority_threshold(&self, context: NonZero<usize>, priority: u32) {
         unsafe {
-            assert!(context < MAX_CONTEXTS && priority <= 7);
-            self.thresholds[context]
+            assert!(context.get() < MAX_CONTEXTS && priority <= 7);
+            self.thresholds[context.get()]
                 .get()
                 .as_mut_unchecked()
                 .threshold
@@ -83,26 +85,26 @@ impl PlicRegs {
         }
     }
 
-    unsafe fn claim(&self, context: usize) -> Option<NonZero<usize>> {
+    unsafe fn claim(&self, context: NonZero<usize>) -> Option<NonZero<u32>> {
         unsafe {
-            assert!(context < MAX_CONTEXTS);
-            let claim = self.thresholds[context]
+            assert!(context.get() < MAX_CONTEXTS);
+            let claim = self.thresholds[context.get()]
                 .get()
                 .as_ref_unchecked()
                 .claim_complete
                 .read();
-            NonZero::new(claim as usize)
+            NonZero::new(claim)
         }
     }
 
-    unsafe fn complete(&self, context: usize, claim: NonZero<usize>) {
+    unsafe fn complete(&self, context: NonZero<usize>, claim: NonZero<u32>) {
         unsafe {
-            assert!(context < MAX_CONTEXTS);
-            self.thresholds[context]
+            assert!(context.get() < MAX_CONTEXTS);
+            self.thresholds[context.get()]
                 .get()
                 .as_mut_unchecked()
                 .claim_complete
-                .write(claim.get() as u32);
+                .write(claim.get());
         }
     }
 }
@@ -113,8 +115,6 @@ pub struct Plic {
     virq_base: usize,
     // the zeroth context would always be for machine mode
     supervisor_context_per_hart: Box<[Option<NonZeroUsize>]>,
-    // TODO
-    context: usize,
 }
 
 impl Plic {
@@ -124,15 +124,26 @@ impl Plic {
             ndev: 0,
             virq_base: 0,
             supervisor_context_per_hart: Box::new([]),
-            context: 0,
         }
     }
+    pub fn local_context(&self) -> NonZero<usize> {
+        self.supervisor_context_per_hart
+            .get(PercpuBlock::current_hart())
+            .and_then(|c| *c)
+            .expect("PLIC local_context called w")
+    }
 }
-unsafe impl InterruptHandler for Plic {
-    unsafe fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {
+impl InterruptHandler for Plic {
+    unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         unsafe {
-            let irq = self.irq_ack();
-            //println!("PLIC interrupt {}", irq);
+            let irq @ 1.. = self.irq_ack() else {
+                info!(
+                    "PLIC context {}, irq {} already claimed",
+                    self.local_context(),
+                    irq
+                );
+                return;
+            };
             if let Some(virq) = self.irq_to_virq(irq) {
                 IrqChip::trigger_virq(virq as u32, token);
             } else {
@@ -143,8 +154,8 @@ unsafe impl InterruptHandler for Plic {
         //println!("PLIC interrupt done");
     }
 }
-const SUPERVISOR_EXTERNAL_INTERRUPT: u32 = 9;
-unsafe impl InterruptController for Plic {
+
+impl InterruptController for Plic {
     unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
@@ -217,32 +228,35 @@ unsafe impl InterruptController for Plic {
             })
             .collect();
 
-        self.context = self.supervisor_context_per_hart[BOOT_HART_ID.load(Ordering::Relaxed)]
-            .expect("PLIC no context mapping for boot hart_id!")
-            .get();
-
-        info!("PLIC: using context {}", self.context);
+        info!(
+            "PLIC: contexts {:?}\nBoot context: {}",
+            self.supervisor_context_per_hart,
+            self.local_context()
+        );
 
         unsafe {
-            self.regs
-                .as_ref_unchecked()
-                .set_priority_threshold(self.context, 0);
+            for context in self.supervisor_context_per_hart.iter().filter_map(|c| *c) {
+                self.regs
+                    .as_ref_unchecked()
+                    .set_priority_threshold(context, 0);
+            }
         }
 
         Ok(())
     }
 
+    /// Return zero if the interrupt has already been claimed
     unsafe fn irq_ack(&self) -> u32 {
         unsafe {
             let regs = self.regs.as_ref().unwrap();
-            regs.claim(self.context).unwrap().get() as u32
+            regs.claim(self.local_context()).map_or(0, NonZero::get)
         }
     }
 
     unsafe fn irq_eoi(&self, irq_num: u32) {
         unsafe {
             let regs = self.regs.as_ref().unwrap();
-            regs.complete(self.context, NonZero::new(irq_num as usize).unwrap());
+            regs.complete(self.local_context(), NonZero::new(irq_num).unwrap());
         }
     }
 
@@ -250,8 +264,8 @@ unsafe impl InterruptController for Plic {
         unsafe {
             assert!(irq_num > 0 && irq_num as usize <= self.ndev);
             let regs = self.regs.as_ref().unwrap();
-            regs.set_priority(irq_num as usize, 1);
-            regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), true);
+            regs.set_priority(irq_num, 1);
+            regs.enable(self.local_context(), NonZero::new(irq_num).unwrap(), true);
         }
     }
 
@@ -259,8 +273,8 @@ unsafe impl InterruptController for Plic {
         unsafe {
             assert!(irq_num > 0 && irq_num as usize <= self.ndev);
             let regs = self.regs.as_ref().unwrap();
-            regs.set_priority(irq_num as usize, 1);
-            regs.enable(self.context, NonZero::new(irq_num as usize).unwrap(), false);
+            regs.set_priority(irq_num, 1);
+            regs.enable(self.local_context(), NonZero::new(irq_num).unwrap(), false);
         }
     }
 

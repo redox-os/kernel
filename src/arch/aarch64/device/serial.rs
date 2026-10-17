@@ -14,7 +14,7 @@ use crate::{
 
 pub struct Com1Irq {}
 
-unsafe impl InterruptHandler for Com1Irq {
+impl InterruptHandler for Com1Irq {
     unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         COM1.lock().receive(token);
         unsafe {

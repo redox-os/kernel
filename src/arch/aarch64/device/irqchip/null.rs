@@ -12,11 +12,11 @@ use crate::{
 
 pub struct Null;
 
-unsafe impl InterruptHandler for Null {
+impl InterruptHandler for Null {
     unsafe fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
-unsafe impl InterruptController for Null {
+impl InterruptController for Null {
     unsafe fn irq_init(
         &mut self,
         _fdt_opt: Option<&Fdt>,

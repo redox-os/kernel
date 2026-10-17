@@ -12,7 +12,7 @@ use fdt::{node::NodeProperty, Fdt};
 use spin::Once;
 use syscall::{Error, Result, EINVAL};
 
-pub unsafe trait InterruptHandler {
+pub trait InterruptHandler {
     unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken);
 }
 
@@ -24,7 +24,8 @@ pub enum IrqCell {
     L3(u32, u32, u32),
 }
 
-pub unsafe trait InterruptController: InterruptHandler {
+pub trait InterruptController: InterruptHandler {
+    /// Called once from the boot hart while initializing IrqChip
     unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,
@@ -34,6 +35,7 @@ pub unsafe trait InterruptController: InterruptHandler {
         phandle: u32,
         parents: &[IrqConnection],
     ) -> Result<()>;
+    /// Returns none if the irq has already been claimed
     unsafe fn irq_ack(&self) -> u32;
     unsafe fn irq_eoi(&self, irq_num: u32);
     unsafe fn irq_enable(&self, irq_num: u32);
@@ -45,6 +47,7 @@ pub unsafe trait InterruptController: InterruptHandler {
     unsafe fn irq_configure(&self, _irq_data: IrqCell) -> Result<()> {
         Ok(())
     }
+
     fn irq_xlate(&self, irq_data: IrqCell) -> Result<usize>;
     fn irq_to_virq(&self, hwirq: u32) -> Option<usize>;
 }

@@ -116,11 +116,11 @@ impl Bcm2836ArmInterruptController {
     }
 }
 
-unsafe impl InterruptHandler for Bcm2836ArmInterruptController {
+impl InterruptHandler for Bcm2836ArmInterruptController {
     unsafe fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
-unsafe impl InterruptController for Bcm2836ArmInterruptController {
+impl InterruptController for Bcm2836ArmInterruptController {
     unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,

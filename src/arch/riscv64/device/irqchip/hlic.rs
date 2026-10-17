@@ -92,7 +92,7 @@ impl Hlic {
 }
 // never actually used as the the above interrupt function either
 // invokes the handler on desc or of its child.
-unsafe impl InterruptHandler for Hlic {
+impl InterruptHandler for Hlic {
     unsafe fn irq_handler(&self, irq: u32, token: &mut CleanLockToken) {
         assert!(irq < 16, "Unsupported HLIC interrupt raised!");
         unsafe {
@@ -101,7 +101,7 @@ unsafe impl InterruptHandler for Hlic {
     }
 }
 
-unsafe impl InterruptController for Hlic {
+impl InterruptController for Hlic {
     unsafe fn irq_init(
         &mut self,
         _fdt_opt: Option<&Fdt>,

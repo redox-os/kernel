@@ -76,11 +76,11 @@ impl GicV3 {
     }
 }
 
-unsafe impl InterruptHandler for GicV3 {
+impl InterruptHandler for GicV3 {
     unsafe fn irq_handler(&self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
-unsafe impl InterruptController for GicV3 {
+impl InterruptController for GicV3 {
     unsafe fn irq_init(
         &mut self,
         fdt_opt: Option<&Fdt>,

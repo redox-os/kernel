@@ -28,6 +28,9 @@ impl PercpuBlock {
             &arch_percpu.percpu
         }
     }
+    pub fn current_hart() -> usize {
+        Self::current().misc_arch_info.hart_id
+    }
 }
 
 #[cold]

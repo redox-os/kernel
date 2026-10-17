@@ -36,15 +36,17 @@ struct ClintConnector {
     irq: usize,
 }
 
-unsafe impl InterruptHandler for ClintConnector {
+impl InterruptHandler for ClintConnector {
     unsafe fn irq_handler(&self, _irq: u32, token: &mut CleanLockToken) {
         CLINT
             .get()
             .expect("irq_handler called before CLINT is initialized!")
             .irq_handler(self.hart_id, self.irq);
         if self.irq == IRQ_TIMER {
-            // a bit of hack, but it is a really bad idea to call scheduler
-            // from inside clint irq handler
+            // // a bit of hack, but it is a really bad idea to call scheduler
+            // // from inside clint irq handler
+            //
+            // is this still relevant?
             timeout::trigger(token);
             context::switch::tick(token);
         }
@@ -76,12 +78,10 @@ impl Clint {
                     phandle1, phandle2,
                     "Invalid interrupts-extended property for CLINT"
                 );
-                let hlic = unsafe {
-                    IrqChip::chips()
-                        .iter()
-                        .find(|x| x.phandle == phandle1)
-                        .expect("Couldn't find HLIC in irqchip list for CLINT")
-                };
+                let hlic = IrqChip::chips()
+                    .iter()
+                    .find(|x| x.phandle == phandle1)
+                    .expect("Couldn't find HLIC in irqchip list for CLINT");
 
                 // FIXME dirty hack map M-mode interrupts (handled by SBI) to S-mode interrupts we get from SBI
                 // Why aren't S-mode interrupts in the DTB already?

@@ -57,7 +57,7 @@ pub(crate) fn dump_fdt(fdt: &Fdt) {
 }
 
 pub unsafe fn init(fdt: &Fdt, boot_hart_id: usize) -> usize {
-    crate::dtb::irqchip::init(fdt);
+    crate::dtb::irqchip::init(Some(fdt), None);
     let boot_hart_hlic_idx = IrqChip::phandle_to_ic_idx(
         fdt.find_all_nodes("/cpus/cpu")
             .find(|c| {
