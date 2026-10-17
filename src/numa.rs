@@ -138,15 +138,16 @@ pub fn init_arch(mask: &Option<RegionMask>) {
             .enumerate()
             .filter_map(|(i, memory)| Some((i, memory.as_ref()?)))
         {
-            if let Some(mask) = mask
-                && !mask[i]
-            {
-                continue;
-            }
             let node = &mut numa_nodes[memory.node_id.get() as usize];
 
             if node.is_none() {
                 *node = Some(NumaNode::default());
+            }
+
+            if let Some(mask) = mask
+                && !mask[i]
+            {
+                continue;
             }
 
             node.as_mut().unwrap().memories.enable_index(index);
@@ -283,37 +284,56 @@ pub fn free_list_mask(mem_policy: NumaMemoryPolicy) -> Option<(FreeListMask, boo
 
 pub struct FreeListMaskIter {
     i: usize,
-    others: [u32; MAX_DOMAINS],
+    others: [Option<u32>; MAX_DOMAINS],
 }
 
 impl Iterator for FreeListMaskIter {
     type Item = FreeListMask;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next_node_id = self.others.get(self.i)?;
+        let next_node_id = self.others.get(self.i)?.as_ref()?;
         let next_node = &NUMA_NODES.get().unwrap()[*next_node_id as usize];
         self.i += 1;
         Some(next_node.as_ref()?.memories)
     }
 }
 
+// todo: add code to pre-compute it for all nodes to save time
 pub fn free_lists_masks() -> Option<FreeListMaskIter> {
-    let mut others: [(u32, u8); MAX_DOMAINS] = [(0u32, 0u8); MAX_DOMAINS];
-    others.fill((u32::MAX, 0));
-    let node_id = current_node_id()?;
+    let mut others: [Option<(u32, u8)>; MAX_DOMAINS] = [Some((u32::MAX, u8::MAX)); MAX_DOMAINS];
+    let current_node_id = current_node_id()?;
     let mut iter = FreeListMaskIter {
         i: 0,
-        others: [0u32; MAX_DOMAINS],
+        others: [None; MAX_DOMAINS],
     };
     let distances = DISTANCES.get()?;
-    let num_nodes = NUMA_NODES.get().unwrap().len();
+    let nodes = NUMA_NODES
+        .get()?
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| Some((i, e.as_ref()?)));
+    let num_nodes = nodes.clone().count();
 
-    for (i, _node) in NUMA_NODES.get()?.iter().enumerate() {
-        others[i] = (i as u32, distances[num_nodes * node_id.0 as usize + i]);
+    for (node_id, _) in nodes {
+        if node_id == current_node_id.get() as usize {
+            continue;
+        }
+        others[node_id] = Some((
+            node_id as u32,
+            distances[num_nodes * current_node_id.0 as usize + node_id],
+        ));
     }
-    others.sort_by_key(|(_node_id, distance)| *distance);
-    let others = others.map(|e| e.0);
-    iter.others = others;
+    others.sort_by_key(|e| e.unwrap().1);
+    let mut it = others.iter().filter_map(|e| {
+        let e = e.unwrap();
+        if e.0 == u32::MAX && e.1 == u8::MAX {
+            None
+        } else {
+            Some(e.0)
+        }
+    });
+
+    iter.others.iter_mut().for_each(|e| *e = it.next());
 
     Some(iter)
 }

@@ -196,14 +196,15 @@ fn continue_after_kmain_stack(
             // Initialize devices
             device::init();
 
-            #[cfg(all(target_arch = "x86_64", feature = "numa"))]
-            numa::init_arch(numa_region_mask);
-
             // Read ACPI tables, starts APs
             if cfg!(feature = "acpi") {
                 crate::acpi::init_after_mem();
                 device::init_after_acpi();
             }
+
+            #[cfg(all(target_arch = "x86_64", feature = "numa"))]
+            numa::init_arch(numa_region_mask);
+
             crate::profiling::init();
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization

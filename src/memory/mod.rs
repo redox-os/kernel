@@ -806,14 +806,17 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
         while let Some(mut memory_map_area) = iter.next() {
             if !force
                 && region.is_some_and(|region| {
+                    if memory_map_area.base < region.base.add(region.size)
+                        && region.base < memory_map_area.base.add(memory_map_area.size)
+                    {
+                        bool_res = true
+                    }
                     memory_map_area.base < region.base
                         || memory_map_area.base.data() >= region.base.data() + region.size
                 })
             {
                 continue;
             }
-
-            bool_res = true;
 
             // TODO: NonZeroUsize
 
@@ -905,6 +908,7 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
                     frames: page_info_array,
                 };
                 i.add_assign(1);
+                bool_res = true;
 
                 pages_left -= page_info_count;
                 base = base.next_by(page_info_count);
@@ -929,10 +933,12 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
 
             while let Some(region) = sections_fill_result {
                 (sections_fill_result, bool_res) = sections_fill(Some(region), &mut i, force);
+
+                if !region_mask[index] {
+                    region_mask[index] = bool_res
+                }
                 force = true;
             }
-
-            region_mask[index] = bool_res;
         }
         Some(region_mask)
     } else {
