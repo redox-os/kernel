@@ -1,6 +1,9 @@
-use core::arch::asm;
+use core::{arch::asm, ptr::with_exposed_provenance_mut};
+
+use spin::Once;
 
 use crate::{
+    arch::device::ArchPercpuMisc,
     cpu_set::LogicalCpuId,
     memory::{RmmA, RmmArch},
     percpu::PercpuBlock,
@@ -25,21 +28,33 @@ impl PercpuBlock {
             &arch_percpu.percpu
         }
     }
+    pub fn current_hart() -> usize {
+        Self::current().misc_arch_info.hart_id
+    }
 }
 
 #[cold]
-pub unsafe fn init(cpu_id: LogicalCpuId) {
+pub unsafe fn init(cpu_id: LogicalCpuId, hart_id: usize) {
     unsafe {
         let must_be_zero = true;
         let frame =
             crate::memory::allocate_frame(must_be_zero).expect("failed to allocate percpu memory");
-        let virt = RmmA::phys_to_virt(frame.base()).data() as *mut ArchPercpu;
+        let virt: *mut ArchPercpu =
+            with_exposed_provenance_mut(RmmA::phys_to_virt(frame.base()).data());
 
-        virt.write(ArchPercpu {
+        let arch_per_cpu = ArchPercpu {
             tmp: 0,
             s_sp: 0,
-            percpu: PercpuBlock::init(cpu_id),
-        });
+            percpu: PercpuBlock {
+                misc_arch_info: ArchPercpuMisc {
+                    hart_id,
+                    hlic_idx: Once::new(),
+                },
+                ..PercpuBlock::init(cpu_id)
+            },
+        };
+
+        virt.write(arch_per_cpu);
 
         asm!(
             "mv tp, {}",

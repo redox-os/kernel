@@ -10,6 +10,7 @@ use crate::{
     context::context::Kstack,
     devices::graphical_debug,
     dtb::serial::init_early,
+    percpu::PercpuBlock,
     startup::KernelArgs,
 };
 
@@ -19,6 +20,9 @@ static mut BSS_TEST_ZERO: usize = 0;
 static mut DATA_TEST_NONZERO: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
 pub static BOOT_HART_ID: AtomicUsize = AtomicUsize::new(0);
+// Total number of harts in device tree
+// Used for initializing IRQ structures
+// pub static HARTS_NUM: AtomicUsize = AtomicUsize::new(0);
 
 fn get_boot_hart_id(env: &[u8]) -> Option<usize> {
     for line in core::str::from_utf8(env).unwrap_or("").lines() {
@@ -94,16 +98,16 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             graphical_debug::init(args.env());
 
-            if let Some(dtb) = &dtb {
-                init_early(dtb);
-            }
+            let Some(dtb) = &dtb else {
+                panic!("Expected dtb to be present!");
+            };
+
+            init_early(dtb);
 
             info!("Redox OS starting...");
             args.print();
 
-            if let Some(dtb) = &dtb {
-                debug!("device tree: {:?}", dtb);
-            }
+            debug!("device tree: {:?}", dtb);
 
             // Initialize RMM
             let mut bump_allocator = crate::startup::memory::init(&args, None, None);
@@ -113,11 +117,15 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             info!("Booting on HART {}", boot_hart_id);
             BOOT_HART_ID.store(boot_hart_id, Ordering::Relaxed);
 
+            let num = dtb.cpus().count();
+            info!("{num} HARTs available");
+            // HARTS_NUM.store(num, Ordering::Relaxed);
+
             paging::init();
 
             crate::memory::init_mm(&mut bump_allocator);
 
-            crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0));
+            crate::arch::misc::init(crate::cpu_set::LogicalCpuId::new(0), boot_hart_id);
 
             // Setup kernel heap
             allocator::init();
@@ -128,12 +136,18 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             crate::dtb::init(dtb_data);
 
             // Initialize devices
-            device::init();
+            let boot_hart_hlic = device::init(dtb, boot_hart_id);
+            PercpuBlock::current()
+                .misc_arch_info
+                .hlic_idx
+                .call_once(|| boot_hart_hlic);
 
             // Initialize all of the non-core devices not otherwise needed to complete initialization
-            device::init_noncore();
+            device::init_noncore(dtb, boot_hart_id);
 
             // FIXME bringup AP HARTs
+
+            device::irqchip::hlic::enable_local_interrupts(); // enable interrupts at HLIC level
 
             args.bootstrap()
         };

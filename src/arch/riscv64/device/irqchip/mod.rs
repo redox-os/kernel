@@ -1,4 +1,3 @@
-use self::clint::Clint;
 use crate::dtb::irqchip::InterruptController;
 use alloc::boxed::Box;
 use fdt::Fdt;
@@ -22,13 +21,13 @@ pub fn new_irqchip(ic_str: &str) -> Option<Box<dyn InterruptController>> {
     }
 }
 
-pub unsafe fn init_clint(fdt: &Fdt) {
+pub unsafe fn init_clint(fdt: &Fdt, boot_hart: usize) {
     let cpus = fdt.find_node("/cpus").unwrap();
     let clock_freq = cpus
         .property("timebase-frequency")
         .unwrap()
         .as_usize()
-        .unwrap();
+        .unwrap() as u64;
 
     let clint_node = fdt.find_node("/soc/clint").unwrap();
     assert!(clint_node
@@ -38,7 +37,5 @@ pub unsafe fn init_clint(fdt: &Fdt) {
         .find(|x| (*x).eq("riscv,clint0"))
         .is_some());
 
-    let clint = Clint::new(clock_freq, &clint_node);
-    *clint::CLINT.lock() = Some(clint);
-    clint::CLINT.lock().as_mut().unwrap().init(0);
+    clint::Clint::init(clock_freq, &clint_node, boot_hart);
 }

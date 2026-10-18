@@ -1,11 +1,9 @@
-use crate::{
-    arch::{device::irqchip::hlic, time},
-    dtb::DTB_BINARY,
-};
+use crate::{arch::time, dtb::irqchip::IrqChip};
 use fdt::{
     node::{FdtNode, NodeProperty},
     Fdt,
 };
+use spin::Once;
 
 pub mod cpu;
 pub(crate) mod irqchip;
@@ -13,27 +11,29 @@ pub mod serial;
 
 use crate::arch::device::irqchip::init_clint;
 
-unsafe fn init_intc(cpu: &FdtNode) {
-    let intc_node = cpu
-        .children()
-        .find(|x| x.name == "interrupt-controller")
-        .unwrap();
-    assert_eq!(intc_node.compatible().unwrap().first(), "riscv,cpu-intc");
-    // This controller is hardwired into interrupt handler code and has no Mmios
-    hlic::init(); // enable interrupts at HLIC level
-}
+pub unsafe fn init(fdt: &Fdt, boot_hart_id: usize) -> usize {
+    crate::dtb::irqchip::init(Some(fdt), None);
+    let boot_hart_hlic_idx = IrqChip::phandle_to_ic_idx(
+        fdt.find_all_nodes("/cpus/cpu")
+            .find(|c| {
+                str::parse::<usize>(&c.name[4..]).expect(" failed to parse hart_id of cpu node!")
+                    == boot_hart_id
+            })
+            .and_then(|c| {
+                c.children().find(|h| {
+                    h.compatible()
+                        .is_some_and(|comp| comp.all().any(|comp| comp == "riscv,cpu-intc"))
+                })
+            })
+            .and_then(|h| h.property("phandle"))
+            .and_then(|p| p.as_usize())
+            .expect("Failed to find or parse phandle of hlic!") as u32,
+    )
+    .expect("No ic found for hlic phandle!");
 
-pub unsafe fn init() {
-    unsafe {
-        let data = DTB_BINARY.get().unwrap();
-        let fdt = Fdt::new(data).unwrap();
+    init_time(fdt);
 
-        crate::dtb::irqchip::init(&fdt);
-
-        let cpu = fdt.find_node(format!("/cpus/cpu@{}", 0).as_str()).unwrap();
-        init_intc(&cpu);
-        init_time(&fdt);
-    }
+    boot_hart_hlic_idx
 }
 
 fn init_time(fdt: &Fdt) {
@@ -46,20 +46,26 @@ fn init_time(fdt: &Fdt) {
     time::init(clock_freq);
 }
 
-pub unsafe fn init_noncore() {
+pub unsafe fn init_noncore(fdt: &Fdt, boot_hart: usize) {
     unsafe {
-        let data = DTB_BINARY.get().unwrap();
-        let fdt = Fdt::new(data).unwrap();
-
-        init_clint(&fdt);
+        init_clint(&fdt, boot_hart);
         serial::init(&fdt);
     }
 }
 
-pub struct ArchPercpuMisc;
+pub struct ArchPercpuMisc {
+    pub hart_id: usize,
+    pub hlic_idx: Once<usize>,
+}
 
 impl ArchPercpuMisc {
+    // TODO find a way to actually initialize these
+    // instead of using nonsense placeholder values?
+
     pub const fn default() -> Self {
-        Self
+        Self {
+            hart_id: 0,
+            hlic_idx: Once::new(),
+        }
     }
 }
