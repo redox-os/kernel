@@ -235,6 +235,7 @@ impl IrqScheme {
     }
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const fn irq_to_vector(irq: u8) -> u8 {
     irq + 32
 }

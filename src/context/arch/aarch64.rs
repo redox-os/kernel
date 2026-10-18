@@ -4,7 +4,7 @@ use crate::{
     percpu::PercpuBlock,
     syscall::FloatRegisters,
 };
-use core::{mem::offset_of, ptr, sync::atomic::AtomicBool};
+use core::{mem::offset_of, ptr};
 use spin::Once;
 use syscall::{EnvRegisters, Result};
 
@@ -97,7 +97,7 @@ impl Context {
             }
         }
 
-        self.set_lr(crate::arch::interrupt::syscall::enter_usermode as usize);
+        self.set_lr(crate::arch::interrupt::syscall::enter_usermode as *const () as usize);
         self.set_x28(func as usize);
         self.set_context_handle();
 

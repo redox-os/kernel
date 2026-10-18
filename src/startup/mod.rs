@@ -13,8 +13,6 @@ use crate::{
     sync::CleanLockToken,
 };
 
-use crate::numa;
-
 pub mod memory;
 
 #[repr(C, packed(8))]
@@ -201,7 +199,7 @@ pub(crate) fn kmain(bootstrap: Bootstrap, kmain_kstack: Kstack) -> ! {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "numa"))]
-    numa::dump_info();
+    crate::numa::dump_info();
     run_userspace(&mut token)
 }
 

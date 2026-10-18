@@ -3,7 +3,6 @@ use rmm::VirtualAddress;
 
 use crate::{
     context::signal::excp_handler,
-    exception_stack,
     memory::{ArchIntCtx, GenericPfFlags},
     sync::CleanLockToken,
     syscall,

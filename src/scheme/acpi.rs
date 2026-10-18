@@ -16,7 +16,7 @@ use crate::{
 };
 
 use crate::syscall::{
-    error::{Error, Result, EACCES, EBADFD, EINVAL, EIO, ENOENT},
+    error::{Error, Result, EACCES, EBADFD, EINVAL, ENOENT},
     flag::{AcpiVerb, CallFlags, EventFlags},
     usercopy::UserSliceRw,
 };
@@ -174,7 +174,7 @@ impl KernelScheme for AcpiScheme {
                 }
                 #[cfg(target_arch = "x86_64")]
                 {
-                    use crate::arch::misc::MsrFault;
+                    use crate::{arch::misc::MsrFault, syscall::error::EIO};
 
                     let register = *metadata.get(1).ok_or(Error::new(EINVAL))? as u32;
 
