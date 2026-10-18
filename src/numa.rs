@@ -298,7 +298,6 @@ impl Iterator for FreeListMaskIter {
     }
 }
 
-// todo: add code to pre-compute it for all nodes to save time
 pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     let mut others: [Option<(u32, u8)>; MAX_DOMAINS] = [Some((u32::MAX, u8::MAX)); MAX_DOMAINS];
     let current_node_id = current_node_id()?;

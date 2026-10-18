@@ -566,3 +566,11 @@ pub const UPPER_FDTBL_TAG: usize = 1 << (usize::BITS - 2);
 
 /// The identifier for registering event timeout
 pub const EVENT_TIMEOUT_ID: usize = usize::MAX - 2;
+
+#[cfg(target_pointer_width = "64")]
+pub const MAX_CPU_COUNT: u32 = 128;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_CPU_COUNT: u32 = 32;
+
+pub const CPU_SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;

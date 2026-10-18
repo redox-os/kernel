@@ -6,7 +6,7 @@ use core::{
 
 use crate::{
     flag::{EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
-    Error, EINVAL,
+    Error, Result, CPU_SET_WORDS, EINVAL,
 };
 
 #[derive(Copy, Clone, Debug, Default)]
@@ -535,5 +535,60 @@ impl TryFrom<&[u8]> for NumaMemoryPolicy {
         };
         buf.copy_from_slice(value);
         NumaMemoryPolicy::try_from(u32::from_ne_bytes(buf) as u64)
+    }
+}
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct CpuSet {
+    mask: [usize; CPU_SET_WORDS],
+}
+
+fn parts(i: usize) -> (usize, usize) {
+    let a = i / usize::BITS as usize;
+    let b = i % usize::BITS as usize;
+    (a, b)
+}
+
+impl CpuSet {
+    pub fn empty() -> Self {
+        Self {
+            mask: [0; CPU_SET_WORDS],
+        }
+    }
+
+    pub fn all() -> Self {
+        Self {
+            mask: [usize::MAX; CPU_SET_WORDS],
+        }
+    }
+
+    pub fn set(&mut self, i: usize) -> Result<()> {
+        let (a, b) = parts(i);
+        *self.mask.get_mut(a).ok_or(Error::new(EINVAL))? |= 1 << b;
+        Ok(())
+    }
+
+    pub fn clear(&mut self, i: usize) -> Result<()> {
+        let (a, b) = parts(i);
+        *self.mask.get_mut(a).ok_or(Error::new(EINVAL))? &= !(1 << b);
+        Ok(())
+    }
+
+    pub fn contains(&self, i: usize) -> Result<bool> {
+        let (a, b) = parts(i);
+        Ok(*self.mask.get(a).ok_or(Error::new(EINVAL))? & 1 << b != 0)
+    }
+
+    pub fn raw(&self) -> &[usize; CPU_SET_WORDS] {
+        &self.mask
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { slice::from_raw_parts(&raw const *self as *const u8, size_of::<Self>()) }
+    }
+
+    pub fn from_raw_mask(mask: [usize; CPU_SET_WORDS]) -> Self {
+        Self { mask }
     }
 }

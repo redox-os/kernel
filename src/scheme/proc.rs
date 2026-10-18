@@ -40,7 +40,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy};
+use syscall::{data::GlobalSchemes, CpuSet, Error, NumaMemoryPolicy};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -1239,14 +1239,14 @@ impl ContextHandle {
                 Ok(size_of::<usize>())
             }
             Self::SchedAffinity => {
-                let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
+                let cpuset = unsafe { buf.read_exact::<CpuSet>()? };
 
                 context
                     .write(token.token())
                     .sched_affinity
-                    .override_from(&mask);
+                    .override_from(cpuset.raw());
 
-                Ok(size_of_val(&mask))
+                Ok(size_of_val(&cpuset))
             }
             ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
@@ -1519,9 +1519,11 @@ impl ContextHandle {
                 Ok(size_of::<usize>())
             }
             ContextHandle::SchedAffinity => {
-                let mask = context.read(token.token()).sched_affinity.to_raw();
+                let mask = syscall::CpuSet::from_raw_mask(
+                    context.read(token.token()).sched_affinity.to_raw(),
+                );
 
-                buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
+                buf.copy_exactly(mask.as_bytes())?;
                 Ok(size_of_val(&mask))
             } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
