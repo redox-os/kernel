@@ -1,6 +1,6 @@
 use super::{
     arch::*,
-    data::{Map, Stat, StdFsCallMeta, TimeSpec},
+    data::{Map, StdFsCallMeta, TimeSpec},
     error::Result,
     flag::*,
     number::*,
@@ -16,11 +16,6 @@ pub fn clock_gettime(clock: usize, tp: &mut TimeSpec) -> Result<usize> {
 /// Copy and transform a file descriptor into specified fd number
 pub fn dup_into(fd: usize, out: usize, buf: &[u8]) -> Result<usize> {
     unsafe { syscall4(SYS_DUP_INTO, fd, buf.as_ptr() as usize, buf.len(), out) }
-}
-
-/// Copy and transform a file descriptor
-pub fn dup2(fd: usize, newfd: usize, buf: &[u8]) -> Result<usize> {
-    unsafe { syscall4(SYS_DUP2, fd, newfd, buf.as_ptr() as usize, buf.len()) }
 }
 
 /// Change file ownership
@@ -60,30 +55,6 @@ pub unsafe fn funmap(addr: usize, len: usize) -> Result<usize> {
 /// Retrieve the canonical path of a file
 pub fn fpath(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_FPATH, fd, buf.as_mut_ptr() as usize, buf.len()) }
-}
-
-/// Create a link to a file
-pub fn flink<T: AsRef<str>>(fd: usize, path: T) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall3(SYS_FLINK, fd, path.as_ptr() as usize, path.len()) }
-}
-
-/// Rename a file
-pub fn frename<T: AsRef<str>>(fd: usize, path: T) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall3(SYS_FRENAME, fd, path.as_ptr() as usize, path.len()) }
-}
-
-/// Get metadata about a file
-pub fn fstat(fd: usize, stat: &mut Stat) -> Result<usize> {
-    unsafe {
-        syscall3(
-            SYS_FSTAT,
-            fd,
-            stat as *mut Stat as usize,
-            mem::size_of::<Stat>(),
-        )
-    }
 }
 
 /// Sync a file descriptor to its underlying medium
@@ -151,11 +122,6 @@ pub fn openat_into(
     }
 }
 
-/// Remove a file at at specific path
-pub fn unlinkat<T: AsRef<str>>(fd: usize, path: T, flags: usize) -> Result<usize> {
-    let path = path.as_ref();
-    unsafe { syscall4(SYS_UNLINKAT, fd, path.as_ptr() as usize, path.len(), flags) }
-}
 /// Read from a file descriptor into a buffer
 pub fn read(fd: usize, buf: &mut [u8]) -> Result<usize> {
     unsafe { syscall3(SYS_READ, fd, buf.as_mut_ptr() as usize, buf.len()) }
