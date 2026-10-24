@@ -33,6 +33,7 @@ mod fdstat;
 mod iostat;
 mod irq;
 mod log;
+mod seed;
 mod stat;
 mod syscall;
 mod uname;
@@ -82,6 +83,8 @@ const FILES: &[(&str, Kind)] = &[
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     ("spurious_irq", Rd(interrupt::irq::spurious_irq_resource)),
     ("stat", Rd(stat::resource)),
+    #[cfg(target_arch = "riscv64")]
+    ("seed", Rd(seed::resource)),
     // Disabled because the debugger is inherently unsafe and probably will break the system.
     /*
     ("trigger_debugger", Rd(|token| unsafe {
