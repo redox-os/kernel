@@ -1,6 +1,7 @@
 use core::{
     cell::SyncUnsafeCell,
     ptr::{read_volatile, write_volatile},
+    sync::atomic::{AtomicU64, Ordering},
 };
 use x86::msr::*;
 
@@ -29,6 +30,14 @@ static LOCAL_APIC: SyncUnsafeCell<LocalApic> = SyncUnsafeCell::new(LocalApic {
     address: 0,
     x2: false,
 });
+
+/// TSC ticks between local-APIC deadline interrupts. Zero until armed.
+static TSC_DEADLINE_PERIOD: AtomicU64 = AtomicU64::new(0);
+
+/// Matches the `lapic_timer` IDT entry (see `idt.rs`). Any vector in 16..=255 is
+/// valid for an LVT entry (SDM Vol. 3A, 13.5.2 "Valid Interrupt Vectors").
+const LAPIC_TIMER_VECTOR: u32 = 48;
+
 pub unsafe fn the_local_apic() -> &'static mut LocalApic {
     unsafe { &mut *LOCAL_APIC.get() }
 }
@@ -280,6 +289,55 @@ impl LocalApic {
             let vector = 49u32;
             self.set_lvt_error(vector);
         }
+    }
+}
+
+/// Arm this CPU's local APIC timer in TSC-deadline mode.
+///
+/// Cloud Hypervisor has no PIT and no HPET, so the periodic tick that drains
+/// kernel timeouts has to come from the local APIC. `period_ticks` is the TSC
+/// delta corresponding to one tick.
+pub unsafe fn start_tsc_deadline(period_ticks: u64) -> bool {
+    unsafe {
+        let supported = cpuid()
+            .get_feature_info()
+            .is_some_and(|features| features.has_tsc_deadline());
+        if !supported || period_ticks == 0 {
+            return false;
+        }
+
+        TSC_DEADLINE_PERIOD.store(period_ticks, Ordering::Relaxed);
+
+        // SDM Vol. 3A, Table 13-2:
+        // LVT timer bits 18:17 = 10b selects TSC-deadline mode, bit 16
+        // (mask) is left clear.
+        the_local_apic().set_lvt_timer(LAPIC_TIMER_VECTOR | (0b10 << 17));
+
+        // SDM Vol. 3A, 13.5.4.1 "TSC-Deadline Mode":
+        // In xAPIC mode the memory-mapped LVT write must be ordered against the WRMSR
+        // below, by an MFENCE in between. In x2APIC mode the LVT is written with WRMSR
+        // and the processor orders it, so no fence is required there.
+        if !the_local_apic().x2 {
+            core::arch::asm!("mfence", options(nostack, preserves_flags));
+        }
+
+        rearm_tsc_deadline();
+        true
+    }
+}
+
+/// Schedule the next TSC-deadline interrupt one period from now.
+///
+/// The mode is one-shot: the timer disarms itself when it fires, so each write to
+/// `IA32_TSC_DEADLINE` yields at most one interrupt (SDM Vol. 3A, 13.5.4.1).
+pub unsafe fn rearm_tsc_deadline() {
+    unsafe {
+        let period = TSC_DEADLINE_PERIOD.load(Ordering::Relaxed);
+        if period == 0 {
+            return;
+        }
+        let deadline = x86::time::rdtsc().saturating_add(period);
+        wrmsr(IA32_TSC_DEADLINE, deadline);
     }
 }
 

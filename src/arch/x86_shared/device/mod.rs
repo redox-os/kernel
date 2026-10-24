@@ -27,8 +27,12 @@ pub unsafe fn init() {
     }
 }
 pub unsafe fn init_after_acpi() {
-    // this will disable the IOAPIC if needed.
-    //ioapic::init(mapper);
+    // `pic::init` has already selected the 8259. `ioapic::init` switches to
+    // the I/O APIC only when the MADT says there is no PC-AT dual-8259, which
+    // is Cloud Hypervisor. QEMU q35 sets PCAT_COMPAT and stays on the PIC.
+    unsafe {
+        ioapic::init();
+    }
 }
 
 unsafe fn init_hpet() -> bool {
@@ -63,6 +67,8 @@ pub unsafe fn init_noncore() {
 
         if init_hpet() {
             debug!("HPET used as system timer");
+        } else if start_apic_timer() {
+            debug!("Local APIC TSC-deadline timer used as system timer");
         } else {
             pit::init();
             debug!("PIT used as system timer");
@@ -70,6 +76,16 @@ pub unsafe fn init_noncore() {
 
         debug!("Finished initializing devices");
     }
+}
+
+fn start_apic_timer() -> bool {
+    #[cfg(feature = "x86_kvm_pv")]
+    {
+        if let Some(ticks) = tsc::tsc_ticks_for_ns(pit::RATE) {
+            return unsafe { local_apic::start_tsc_deadline(ticks) };
+        }
+    }
+    false
 }
 
 pub unsafe fn init_ap() {
