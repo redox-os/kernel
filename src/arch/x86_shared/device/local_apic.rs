@@ -54,7 +54,8 @@ pub struct LocalApic {
 impl LocalApic {
     unsafe fn init(&mut self, mapper: &mut KernelMapper<true>) {
         unsafe {
-            let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xFFFF_0000);
+            // bits 12:31 contain the physical address, value should not be shifted
+            let physaddr = PhysicalAddress::new(rdmsr(IA32_APIC_BASE) as usize & 0xfffff000);
             #[cfg(target_arch = "x86")]
             let virtaddr = rmm::VirtualAddress::new(crate::LAPIC_OFFSET);
             #[cfg(target_arch = "x86_64")]
@@ -121,7 +122,7 @@ impl LocalApic {
         ApicId::new(if self.x2 {
             unsafe { rdmsr(IA32_X2APIC_APICID) as u32 }
         } else {
-            unsafe { self.read(0x20) }
+            unsafe { (self.read(0x20) >> 24) & u8::MAX as u32 } // id is contained in bits 24:31
         })
     }
 
