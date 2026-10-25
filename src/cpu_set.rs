@@ -1,5 +1,4 @@
 use core::{
-    array,
     fmt::Display,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -129,6 +128,6 @@ pub type RawMask = [usize; CPU_SET_WORDS];
 
 impl From<CpuSet> for LogicalCpuSet {
     fn from(value: CpuSet) -> Self {
-        LogicalCpuSet(value.raw().map(|e| AtomicUsize::new(e)))
+        LogicalCpuSet(value.raw().map(AtomicUsize::new))
     }
 }

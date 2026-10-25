@@ -184,7 +184,7 @@ pub fn futex(
                 let mut futexes = FUTEXES.lock(token.token());
                 futexes
                     .entry(target_physaddr)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(FutexEntry {
                         context_lock: Arc::downgrade(&context_lock),
                     });

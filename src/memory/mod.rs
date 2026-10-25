@@ -930,7 +930,7 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
         for (index, region) in regions.enumerate() {
             let mut sections_fill_result = Some(region);
             let mut force = false;
-            let mut bool_res = false;
+            let mut bool_res;
 
             while let Some(region) = sections_fill_result {
                 (sections_fill_result, bool_res) = sections_fill(Some(region), &mut i, force);

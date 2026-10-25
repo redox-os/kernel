@@ -12,7 +12,6 @@ use crate::{
     cpu_set::LogicalCpuId,
     memory::{
         Frame, KernelMapper, Page, PageFlags, PhysicalAddress, RmmA, RmmArch, VirtualAddress,
-        PAGE_SIZE,
     },
     startup::AP_READY,
 };

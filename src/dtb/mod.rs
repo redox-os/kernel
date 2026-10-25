@@ -590,7 +590,7 @@ pub fn interrupt_parent<'a>(fdt: &Fdt<'a>, node: FdtNode<'a>) -> Option<FdtNode<
             fdt.find_node("/")
                 .and_then(|node| node.property::<InterruptParent>())
         })
-        .map(|parent| (*parent).clone())
+        .map(|parent| *parent)
 }
 
 #[cfg(dtb)]
