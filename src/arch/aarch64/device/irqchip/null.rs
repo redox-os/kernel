@@ -1,4 +1,3 @@
-use fdt::Fdt;
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -6,14 +5,17 @@ use syscall::{
 
 use super::InterruptController;
 use crate::{
-    dtb::irqchip::{InterruptHandler, IrqCell, IrqDesc},
+    dtb::{
+        irqchip::{InterruptHandler, IrqCell, IrqDesc},
+        Fdt,
+    },
     sync::CleanLockToken,
 };
 
 pub struct Null;
 
 impl InterruptHandler for Null {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&mut self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for Null {

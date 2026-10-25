@@ -1,7 +1,10 @@
 use core::{
+    array,
     fmt::Display,
     sync::atomic::{AtomicUsize, Ordering},
 };
+
+use syscall::CpuSet;
 
 use crate::CPU_COUNT;
 
@@ -41,31 +44,26 @@ impl core::fmt::Display for LogicalCpuId {
     }
 }
 
-#[cfg(target_pointer_width = "64")]
-pub const MAX_CPU_COUNT: u32 = 128;
-
-#[cfg(target_pointer_width = "32")]
-pub const MAX_CPU_COUNT: u32 = 32;
-
-const SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
+use syscall::CPU_SET_WORDS;
+pub use syscall::MAX_CPU_COUNT;
 
 // TODO: Support more than 128 CPUs.
 // The maximum number of CPUs on Linux is configurable, and the type for LogicalCpuSet and
 // LogicalCpuId may be optimized accordingly. In that case, box the mask if it's larger than some
 // base size (probably 256 bytes).
 #[derive(Debug)]
-pub struct LogicalCpuSet([AtomicUsize; SET_WORDS]);
+pub struct LogicalCpuSet([AtomicUsize; CPU_SET_WORDS]);
 
 fn parts(id: LogicalCpuId) -> (usize, u32) {
     ((id.get() / usize::BITS) as usize, id.get() % usize::BITS)
 }
 impl LogicalCpuSet {
     pub const fn empty() -> Self {
-        Self([const { AtomicUsize::new(0) }; SET_WORDS])
+        Self([const { AtomicUsize::new(0) }; CPU_SET_WORDS])
     }
 
     pub const fn all() -> Self {
-        Self([const { AtomicUsize::new(!0) }; SET_WORDS])
+        Self([const { AtomicUsize::new(!0) }; CPU_SET_WORDS])
     }
 
     pub fn contains(&self, id: LogicalCpuId) -> bool {
@@ -127,8 +125,10 @@ impl Display for LogicalCpuSet {
     }
 }
 
-pub type RawMask = [usize; SET_WORDS];
+pub type RawMask = [usize; CPU_SET_WORDS];
 
-pub fn mask_as_bytes(mask: &RawMask) -> &[u8] {
-    unsafe { core::slice::from_raw_parts(mask.as_ptr().cast(), size_of::<RawMask>()) }
+impl From<CpuSet> for LogicalCpuSet {
+    fn from(value: CpuSet) -> Self {
+        LogicalCpuSet(value.raw().map(|e| AtomicUsize::new(e)))
+    }
 }

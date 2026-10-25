@@ -10,7 +10,8 @@ pub const SYS_ARG_PATH: usize = 0x0300_0000;
 pub const SYS_RET: usize = 0x00F0_0000;
 pub const SYS_RET_FILE: usize = 0x0010_0000;
 
-pub const SYS_OPENAT_INTO: usize = SYS_CLASS_PATH | SYS_RET_FILE | 987;
+pub const SYS_OPENAT_INTO: usize = SYS_CLASS_PATH | SYS_RET_FILE | 987; // TODO: remove
+pub const SYS_OPENAT_INTO2: usize = SYS_CLASS_PATH | SYS_RET_FILE | 986;
 pub const SYS_UNLINKAT: usize = SYS_CLASS_PATH | 263;
 
 pub const SYS_CLOSE: usize = SYS_CLASS_FILE | 6;

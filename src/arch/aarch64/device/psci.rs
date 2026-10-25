@@ -3,7 +3,9 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
-use fdt::Fdt;
+use fdt::properties::Status;
+
+use crate::dtb::Fdt;
 
 const PSCI_VERSION: u32 = 0x8400_0000;
 const PSCI_CPU_ON_64: u32 = 0xc400_0003;
@@ -98,23 +100,19 @@ fn initialize_conduit(conduit: Conduit, source: &str) {
 /// intentionally not accepted here. All currently supported Meson64 device
 /// trees expose `arm,psci-0.2` or newer and use the standardized IDs.
 pub fn init(fdt: &Fdt<'_>) {
-    let Some(node) = fdt.find_compatible(&["arm,psci-1.0", "arm,psci-0.2"]) else {
+    let Some(node) = fdt.all_compatible(&["arm,psci-1.0", "arm,psci-0.2"]).next() else {
         warn!("PSCI v0.2+ node not found; reset and power-off are unavailable");
         return;
     };
 
-    if node
-        .property("status")
-        .and_then(|property| property.as_str())
-        .is_some_and(|status| status != "ok" && status != "okay")
-    {
+    if !matches!(node.property::<Status>(), None | Some(Status::OKAY)) {
         warn!("PSCI node is disabled; reset and power-off are unavailable");
         return;
     }
 
     let Some(method) = node
-        .property("method")
-        .and_then(|property| property.as_str())
+        .raw_property("method")
+        .and_then(|property| property.as_value::<&str>().ok())
     else {
         warn!("PSCI node has no valid method property");
         return;

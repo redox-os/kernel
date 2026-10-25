@@ -1,10 +1,13 @@
 use crate::{
-    dtb::irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+    dtb::{
+        irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        Fdt,
+    },
     sync::CleanLockToken,
 };
 use alloc::vec::Vec;
 use core::arch::asm;
-use fdt::{node::NodeProperty, Fdt};
+use fdt::properties::PHandle;
 use syscall::{Error, EINVAL};
 
 // This is a hart-local interrupt controller, a root of irqchip tree
@@ -105,15 +108,22 @@ impl InterruptController for Hlic {
         let desc = unsafe { &IRQ_CHIP.irq_chip_list.chips[ic_idx] };
         let fdt = fdt_opt.unwrap();
         let cpu_node = fdt
-            .find_all_nodes("/cpus/cpu")
+            .find_node("/cpus")
+            .unwrap()
+            .children()
+            .iter()
             .find(|x| {
-                x.children().any(|x| {
-                    x.property("phandle").and_then(NodeProperty::as_usize)
-                        == Some(desc.phandle as usize)
-                })
+                x.name().name == "cpu"
+                    && x.children()
+                        .iter()
+                        .any(|x| x.property::<PHandle>() == Some(desc.phandle))
             })
             .expect("Could not find CPU node for HLIC controller");
-        let hart = cpu_node.property("reg").unwrap().as_usize().unwrap();
+        let hart = cpu_node
+            .raw_property("reg")
+            .unwrap()
+            .as_value::<usize>()
+            .unwrap();
         unsafe {
             if CPU_INTERRUPT_HANDLERS.len() <= hart {
                 CPU_INTERRUPT_HANDLERS.resize(hart + 1, None);

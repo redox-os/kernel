@@ -300,7 +300,8 @@ fn trigger_inner(
         let registry = REGISTRY.read(token.token());
         if let Some(queue_list) = registry.get(&RegKey { scheme, number }) {
             for (queue_key, &queue_flags) in queue_list.iter().skip(*offset) {
-                let common_flags = flags & queue_flags;
+                let always_deliver = EventFlags::EVENT_HUP | EventFlags::EVENT_ERR;
+                let common_flags = flags & (queue_flags | always_deliver);
                 if !common_flags.is_empty() {
                     if matching_keys.len() == matching_keys.inline_size() {
                         full = true;

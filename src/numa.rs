@@ -1,7 +1,7 @@
 use alloc::string::String;
 use core::slice;
 
-use crate::{acpi, percpu};
+use crate::percpu;
 use bitfield::Bit;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
@@ -14,7 +14,7 @@ static DOMAIN_NODE_MAP: Once<&'static [Option<NumaNodeID>]> = Once::new();
 static NUMA_CPUS: Once<&'static [Option<NumaNodeID>]> = Once::new();
 static NUMA_MEMORY: Once<&'static [Option<NumaMemory>]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
-static NUMA_NODES: Once<&'static [Option<NumaNode>]> = Once::new();
+pub static NUMA_NODES: Once<&'static [Option<NumaNode>]> = Once::new();
 
 #[inline(always)]
 pub fn is_supported() -> bool {
@@ -69,6 +69,7 @@ impl FreeListMask {
 pub struct NumaNode {
     pub cpus: u128,
     pub memories: FreeListMask,
+    pub mem_size: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,9 +79,9 @@ pub struct NumaMemory {
     pub length: usize,
     pub node_id: NumaNodeID,
     #[cfg(target_pointer_width = "64")]
-    pub _pad: [u8; 4],
+    _pad: [u8; 4],
     #[cfg(target_pointer_width = "32")]
-    pub _pad: [u8; 12],
+    _pad: [u8; 12],
 }
 
 impl NumaMemory {
@@ -103,12 +104,14 @@ impl NumaMemory {
 pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
     #[cfg(target_arch = "x86_64")]
     {
-        acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
-        acpi::slit::init(&DISTANCES);
+        crate::acpi::srat::init(allocator, &DOMAIN_NODE_MAP, &NUMA_CPUS, &NUMA_MEMORY);
+        crate::acpi::slit::init(&DISTANCES);
     }
 }
 
-pub fn init_arch() {
+pub type RegionMask = [bool; MAX_MEM_REGIONS];
+
+pub fn init_arch(mask: &Option<RegionMask>) {
     if let Some(cpus) = NUMA_CPUS.get()
         && let Some(memories) = NUMA_MEMORY.get()
     {
@@ -118,18 +121,31 @@ pub fn init_arch() {
         };
         numa_nodes.iter_mut().for_each(|e| *e = None);
 
-        for (cpu_id, node_id) in cpus
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| Some((i, (*e)?)))
-        {
-            let node = &mut numa_nodes[node_id.get() as usize];
-            if node.is_none() {
-                *node = Some(NumaNode::default());
+        for cpu in percpu::all_percpu_blocks() {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            let physical_cpu_id = cpu
+                .misc_arch_info
+                .apic_id_opt
+                .get()
+                .map(|e| e.get())
+                .unwrap() as usize;
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            let physical_cpu_id = 0; // TODO
+
+            if let Some(node_id) = cpus[physical_cpu_id] {
+                let node = &mut numa_nodes[node_id.get() as usize];
+                if node.is_none() {
+                    *node = Some(NumaNode::default());
+                }
+                node.as_mut()
+                    .unwrap()
+                    .cpus
+                    .set_bit(cpu.cpu_id.get() as usize, true);
             }
-            node.as_mut().unwrap().cpus |= 1u128 << cpu_id;
         }
 
+        let mut index = 0;
         for (i, memory) in memories
             .iter()
             .enumerate()
@@ -140,25 +156,22 @@ pub fn init_arch() {
             if node.is_none() {
                 *node = Some(NumaNode::default());
             }
+            node.as_mut().unwrap().mem_size += memory.length;
 
-            node.as_mut().unwrap().memories.enable_index(i);
+            if let Some(mask) = mask
+                && !mask[i]
+            {
+                continue;
+            }
+
+            node.as_mut().unwrap().memories.enable_index(index);
+            index += 1;
         }
 
         for cpu in percpu::all_percpu_blocks() {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            let cpu_id = cpu
-                .misc_arch_info
-                .apic_id_opt
-                .get()
-                .map(|e| e.get())
-                .unwrap();
-
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-            let cpu_id = 0; // TODO
-
             let n = numa_nodes.iter().enumerate().find_map(|(i, node)| {
                 let node = node.as_ref()?;
-                if node.cpus & 1u128 << cpu_id != 0 {
+                if node.cpus & 1u128 << cpu.cpu_id.get() != 0 {
                     Some((NumaNodeID::new(i as u32).unwrap(), node))
                 } else {
                     None
@@ -274,14 +287,14 @@ pub fn free_list_mask(mem_policy: NumaMemoryPolicy) -> Option<(FreeListMask, boo
 
 pub struct FreeListMaskIter {
     i: usize,
-    others: [u32; MAX_DOMAINS],
+    others: [Option<u32>; MAX_DOMAINS],
 }
 
 impl Iterator for FreeListMaskIter {
     type Item = FreeListMask;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let next_node_id = self.others.get(self.i)?;
+        let next_node_id = self.others.get(self.i)?.as_ref()?;
         let next_node = &NUMA_NODES.get().unwrap()[*next_node_id as usize];
         self.i += 1;
         Some(next_node.as_ref()?.memories)
@@ -289,22 +302,40 @@ impl Iterator for FreeListMaskIter {
 }
 
 pub fn free_lists_masks() -> Option<FreeListMaskIter> {
-    let mut others: [(u32, u8); MAX_DOMAINS] = [(0u32, 0u8); MAX_DOMAINS];
-    others.fill((u32::MAX, 0));
-    let node_id = current_node_id()?;
+    let mut others: [Option<(u32, u8)>; MAX_DOMAINS] = [Some((u32::MAX, u8::MAX)); MAX_DOMAINS];
+    let current_node_id = current_node_id()?;
     let mut iter = FreeListMaskIter {
         i: 0,
-        others: [0u32; MAX_DOMAINS],
+        others: [None; MAX_DOMAINS],
     };
     let distances = DISTANCES.get()?;
-    let num_nodes = NUMA_NODES.get().unwrap().len();
+    let nodes = NUMA_NODES
+        .get()?
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| Some((i, e.as_ref()?)));
+    let num_nodes = nodes.clone().count();
 
-    for (i, _node) in NUMA_NODES.get()?.iter().enumerate() {
-        others[i] = (i as u32, distances[num_nodes * node_id.0 as usize + i]);
+    for (node_id, _) in nodes {
+        if node_id == current_node_id.get() as usize {
+            continue;
+        }
+        others[node_id] = Some((
+            node_id as u32,
+            distances[num_nodes * current_node_id.0 as usize + node_id],
+        ));
     }
-    others.sort_by_key(|(_node_id, distance)| *distance);
-    let others = others.map(|e| e.0);
-    iter.others = others;
+    others.sort_by_key(|e| e.unwrap().1);
+    let mut it = others.iter().filter_map(|e| {
+        let e = e.unwrap();
+        if e.0 == u32::MAX && e.1 == u8::MAX {
+            None
+        } else {
+            Some(e.0)
+        }
+    });
+
+    iter.others.iter_mut().for_each(|e| *e = it.next());
 
     Some(iter)
 }

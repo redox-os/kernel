@@ -150,7 +150,7 @@ pub struct Context {
     /// Kernel FX - used to store SIMD and FPU registers on context switch
     pub kfx: AlignedBox<[u8], { arch::KFX_ALIGN }>,
     /// Kernel stack, if located on the heap.
-    pub kstack: Option<Kstack>,
+    pub kstack: Kstack,
     /// Address space containing a page table lock, and grants. Normally this will have a value,
     /// but can be None while the context is being reaped or when a new context is created but has
     /// not yet had its address space changed. Note that these are only for user mappings; kernel
@@ -215,7 +215,7 @@ pub struct SignalState {
 }
 
 impl Context {
-    pub fn new(owner_proc_id: Option<NonZeroUsize>) -> Result<Context> {
+    pub fn new(owner_proc_id: Option<NonZeroUsize>, kstack: Kstack) -> Result<Context> {
         static DEBUG_ID: AtomicU32 = AtomicU32::new(1);
         let this = Self {
             debug_id: DEBUG_ID.fetch_add(1, Ordering::Relaxed),
@@ -238,7 +238,7 @@ impl Context {
             wake: None,
             arch: arch::Context::new(),
             kfx: AlignedBox::<[u8], { arch::KFX_ALIGN }>::try_zeroed_slice(crate::arch::kfx_size())?,
-            kstack: None,
+            kstack,
             addr_space: None,
             name: ArrayString::new(),
             files: Arc::new(RwLock::new(FdTbl::new())),
@@ -435,15 +435,25 @@ impl Context {
         if !self.can_access_regs() {
             return None;
         }
-        let kstack = self.kstack.as_ref()?;
-        Some(unsafe { &*kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
+        Some(unsafe {
+            &*self
+                .kstack
+                .initial_top()
+                .sub(size_of::<InterruptStack>())
+                .cast()
+        })
     }
     pub fn regs_mut(&mut self) -> Option<&mut InterruptStack> {
         if !self.can_access_regs() {
             return None;
         }
-        let kstack = self.kstack.as_ref()?;
-        Some(unsafe { &mut *kstack.initial_top().sub(size_of::<InterruptStack>()).cast() })
+        Some(unsafe {
+            &mut *self
+                .kstack
+                .initial_top()
+                .sub(size_of::<InterruptStack>())
+                .cast()
+        })
     }
     pub fn sigcontrol(&self) -> Option<(&Sigcontrol, &SigProcControl, &SignalState)> {
         let (for_thread, for_proc) = Self::sigcontrol_raw(self.sig.as_ref()?);
@@ -609,6 +619,12 @@ impl Kstack {
 
 impl Drop for Kstack {
     fn drop(&mut self) {
+        let range = self.initial_top().wrapping_sub(self.len())..self.initial_top();
+        assert!(
+            !range.contains(&crate::arch::current_stack_ptr()),
+            "trying to deallocate a currently running kstack!"
+        );
+
         unsafe { deallocate_p2frame(self.base, 4) }
     }
 }

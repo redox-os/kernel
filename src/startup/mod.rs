@@ -5,15 +5,15 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use fdt::FdtError;
+
 use crate::{
     arch::interrupt,
-    context::{self, switch::SwitchResult, wakeup_context, Status},
+    context::{self, context::Kstack, switch::SwitchResult, wakeup_context, Status},
     memory::{PhysicalAddress, RmmA, RmmArch},
     profiling, scheme,
     sync::CleanLockToken,
 };
-
-use crate::numa;
 
 pub mod memory;
 
@@ -116,18 +116,19 @@ impl KernelArgs {
         }
     }
 
-    pub(crate) fn dtb(&self) -> Option<fdt::Fdt<'static>> {
+    pub(crate) fn dtb(&self) -> Result<(crate::dtb::Fdt<'static>, &'static [u8]), FdtError> {
         if self.hwdesc_base != 0 {
-            let data = unsafe {
-                slice::from_raw_parts(
-                    RmmA::phys_to_virt(PhysicalAddress::new(self.hwdesc_base as usize)).data()
-                        as *const u8,
-                    self.hwdesc_size as usize,
-                )
+            let hwdesc_base =
+                RmmA::phys_to_virt(PhysicalAddress::new(self.hwdesc_base as usize)).data();
+            let data8 = unsafe {
+                slice::from_raw_parts(hwdesc_base as *const u8, self.hwdesc_size as usize)
             };
-            fdt::Fdt::new(data).ok()
+            let data32 = unsafe {
+                slice::from_raw_parts(hwdesc_base as *const u32, self.hwdesc_size as usize / 4)
+            };
+            fdt::Fdt::new(data32).map(|fdt| (fdt, data8))
         } else {
-            None
+            Err(FdtError::BadPtr)
         }
     }
 }
@@ -153,11 +154,11 @@ pub(crate) static AP_READY: AtomicBool = AtomicBool::new(false);
 static BSP_READY: AtomicBool = AtomicBool::new(false);
 
 /// This is the kernel entry point for the primary CPU. The arch crate is responsible for calling this
-pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
+pub(crate) fn kmain(bootstrap: Bootstrap, kmain_kstack: Kstack) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
 
     //Initialize the first context, stored in kernel/src/context/mod.rs
-    context::init(&mut token);
+    context::init(&mut token, kmain_kstack);
     // EMPTY_CR3 and the BSP idle context must exist before secondary CPUs are
     // released into their own context initialization.
     BSP_READY.store(true, Ordering::Release);
@@ -201,13 +202,13 @@ pub(crate) fn kmain(bootstrap: Bootstrap) -> ! {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "numa"))]
-    numa::dump_info();
+    crate::numa::dump_info();
     run_userspace(&mut token)
 }
 
 /// This is the main kernel entry point for secondary CPUs
 #[allow(unreachable_code, unused_variables, dead_code)]
-pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
+pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId, kmain_kstack: Kstack) -> ! {
     let mut token = unsafe { CleanLockToken::new() };
 
     AP_READY.store(true, Ordering::SeqCst);
@@ -228,7 +229,7 @@ pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId) -> ! {
         }
     }
 
-    context::init(&mut token);
+    context::init(&mut token, kmain_kstack);
 
     debug!("AP {}", cpu_id);
 

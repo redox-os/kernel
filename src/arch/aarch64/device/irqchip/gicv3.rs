@@ -1,12 +1,11 @@
 use alloc::vec::Vec;
 use core::arch::asm;
-use fdt::{node::NodeProperty, Fdt};
 
 use super::{gic::GicDistIf, InterruptController};
 use crate::{
     dtb::{
         irqchip::{InterruptHandler, IrqCell, IrqDesc},
-        translate_mmio_address,
+        translate_mmio_address, Fdt,
     },
     sync::CleanLockToken,
 };
@@ -35,7 +34,7 @@ impl GicV3 {
     }
 
     pub fn parse(&mut self, fdt: &Fdt) -> Result<()> {
-        let Some(node) = fdt.find_compatible(&["arm,gic-v3"]) else {
+        let Some(node) = fdt.all_compatible(&["arm,gic-v3"]).next() else {
             return Err(Error::new(EINVAL));
         };
 
@@ -46,13 +45,14 @@ impl GicV3 {
 
         // Get number of GICRs
         let gicrs = node
-            .property("#redistributor-regions")
-            .and_then(NodeProperty::as_usize)
+            .raw_property("#redistributor-regions")
+            .and_then(|prop| prop.as_value::<u32>().ok())
             .unwrap_or(1);
 
         // Read registers
-        let mut chunks = node.reg().unwrap();
-        if let Some(gicd) = chunks.next()
+        let chunks = node.reg().unwrap();
+        if let Some(gicd) = chunks.iter::<usize, usize>().next()
+            && let Ok(gicd) = gicd
             && let Some(addr) = translate_mmio_address(fdt, &node, &gicd)
         {
             unsafe {
@@ -60,11 +60,11 @@ impl GicV3 {
             }
         }
         for _ in 0..gicrs {
-            if let Some(gicr) = chunks.next() {
-                self.gicrs.push((
-                    translate_mmio_address(fdt, &node, &gicr).unwrap(),
-                    gicr.size.unwrap(),
-                ));
+            if let Some(gicr) = chunks.iter::<usize, usize>().next()
+                && let Ok(gicr) = gicr
+            {
+                self.gicrs
+                    .push((translate_mmio_address(fdt, &node, &gicr).unwrap(), gicr.len));
             }
         }
 
@@ -77,7 +77,7 @@ impl GicV3 {
 }
 
 impl InterruptHandler for GicV3 {
-    fn irq_handler(&mut self, _irq: u32, token: &mut CleanLockToken) {}
+    fn irq_handler(&mut self, _irq: u32, _token: &mut CleanLockToken) {}
 }
 
 impl InterruptController for GicV3 {

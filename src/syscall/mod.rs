@@ -4,6 +4,8 @@
 
 extern crate syscall;
 
+use syscall::O_FCNTL_MASK;
+
 pub use self::syscall::{
     data, error, flag, io, number, ptrace_event, EnvRegisters, FloatRegisters, IntRegisters,
 };
@@ -174,13 +176,39 @@ pub fn syscall(
 
             SYS_CLOSE => close(fd, token).map(|()| 0),
             SYS_CALL => {
-                let flags = CallFlags::from_bits(e & !0xff).ok_or(Error::new(EINVAL))?;
-                if flags.contains(CallFlags::MULTIPLE_FDS) {
+                // TODO: remove soon
+                if e & (1 << 17) != 0 {
+                    let flags =
+                        CallFlags::from_bits(e & !0xff & !(1 << 17)).ok_or(Error::new(EINVAL))?;
+                    warn!("Using old SYS_CALL flags, please update relibc/base and rebuild");
                     if g / core::mem::size_of::<usize>() > 16 {
                         return Err(Error::new(EINVAL));
                     };
                     let mut fds = [0_usize; 16];
                     let fds_slice = UserSlice::ro(b, g)?;
+
+                    // TODO: bytemuck/plain
+                    let copied = fds_slice.copy_common_bytes_to_slice(unsafe {
+                        core::slice::from_raw_parts_mut(
+                            fds.as_mut_ptr().cast(),
+                            fds.len() * core::mem::size_of::<usize>(),
+                        )
+                    })?;
+                    return call(
+                        &fds[..copied / core::mem::size_of::<usize>()],
+                        UserSlice::rw(c, d)?,
+                        flags,
+                        UserSlice::ro(f, (e & 0xff) * 8)?,
+                        token,
+                    );
+                }
+                let flags = CallFlags::from_bits(e & !0xff).ok_or(Error::new(EINVAL))?;
+                if flags.contains(CallFlags::MULTIPLE_FDS2) {
+                    let mut fds = [0_usize; 16];
+                    let fds_slice = UserSlice::ro(
+                        b / align_of::<usize>() * align_of::<usize>(),
+                        (b % align_of::<usize>()) * size_of::<usize>(),
+                    )?;
 
                     // TODO: bytemuck/plain
                     let copied = fds_slice.copy_common_bytes_to_slice(unsafe {
@@ -206,12 +234,25 @@ pub fn syscall(
                     )
                 }
             }
-            SYS_OPENAT_INTO => openat_into(
+            // TODO: remove soon
+            SYS_OPENAT_INTO => {
+                warn!("Using old SYS_OPENAT_INTO, please update relibc/base and rebuild");
+                openat_into(
+                    fd,
+                    UserSlice::ro(c, d)?,
+                    e,
+                    f as _,
+                    FileHandle::from(g),
+                    token,
+                )
+                .map(FileHandle::into)
+            }
+            SYS_OPENAT_INTO2 => openat_into(
                 fd,
-                UserSlice::ro(c, d)?,
+                UserSlice::ro(c, d & 0xffff)?,
                 e,
-                f as _,
-                FileHandle::from(g),
+                (d & O_FCNTL_MASK) as _,
+                FileHandle::from(f),
                 token,
             )
             .map(FileHandle::into),

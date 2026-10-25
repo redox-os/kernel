@@ -227,9 +227,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     unsafe {
         let pcr = crate::arch::gdt::pcr();
 
-        if let Some(ref stack) = next.kstack {
-            crate::arch::gdt::set_tss_stack(pcr, stack.initial_top() as usize);
-        }
+        crate::arch::gdt::set_tss_stack(pcr, next.kstack.initial_top() as usize);
         crate::arch::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
         // The syscall ABI allows the kernel to clobber the xmm/ymm/zmm registers. Hence, if the

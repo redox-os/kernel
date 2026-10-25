@@ -1,10 +1,10 @@
-use fdt::Fdt;
+use fdt::properties::{values::StringList, PHandle};
 use spin::Mutex;
 use syscall::MmioPtr;
 
 use crate::{
     devices::{serial::SerialKind, uart_16550, uart_meson, uart_pl011},
-    dtb::{diag_uart_params, diag_uart_range},
+    dtb::{diag_uart_params, diag_uart_range, Fdt, FdtNode},
     memory::{RmmA, RmmArch},
 };
 
@@ -13,7 +13,7 @@ pub static COM1: Mutex<SerialKind> = Mutex::new(SerialKind::NotPresent);
 const MESON_UART_REGISTER_SIZE: usize = 0x18;
 const MESON_XTAL_HZ: u32 = 24_000_000;
 
-fn stdout_baud(dtb: &Fdt) -> Option<u32> {
+fn stdout_baud(dtb: &Fdt<'_>) -> Option<u32> {
     let params = diag_uart_params(dtb)?;
     let digits = params
         .as_bytes()
@@ -23,12 +23,15 @@ fn stdout_baud(dtb: &Fdt) -> Option<u32> {
     params.get(..digits)?.parse().ok()
 }
 
-fn named_clock_rate(dtb: &Fdt, node: fdt::node::FdtNode<'_, '_>, name: &str) -> Option<u32> {
+fn named_clock_rate(dtb: &Fdt<'_>, node: FdtNode<'_>, name: &str) -> Option<u32> {
     // Initial Meson support only handles clocks whose provider exposes a
     // fixed rate directly through clock-frequency. It does not evaluate
     // outputs from programmable clock controllers.
-    let names = node.property("clock-names")?.iter_str();
-    let clocks = node.property("clocks")?;
+    let names = node
+        .raw_property("clock-names")?
+        .as_value::<StringList>()
+        .ok()?;
+    let clocks = node.raw_property("clocks")?;
     let mut cells = clocks
         .value
         .as_chunks::<4>()
@@ -37,16 +40,15 @@ fn named_clock_rate(dtb: &Fdt, node: fdt::node::FdtNode<'_, '_>, name: &str) -> 
         .map(|cell| u32::from_be_bytes(*cell));
 
     for clock_name in names {
-        let provider = dtb.find_phandle(cells.next()?)?;
+        let provider = dtb.root().resolve_phandle(PHandle::new(cells.next()?))?;
         let argument_cells = provider
-            .property("#clock-cells")
-            .and_then(|property| property.as_usize())?;
+            .raw_property("#clock-cells")
+            .and_then(|property| property.as_value::<u32>().ok())?;
 
         if clock_name == name {
             return provider
-                .property("clock-frequency")
-                .and_then(|property| property.as_usize())
-                .and_then(|rate| u32::try_from(rate).ok());
+                .raw_property("clock-frequency")
+                .and_then(|property| property.as_value::<u32>().ok());
         }
 
         for _ in 0..argument_cells {
@@ -58,7 +60,7 @@ fn named_clock_rate(dtb: &Fdt, node: fdt::node::FdtNode<'_, '_>, name: &str) -> 
 }
 
 #[cfg_attr(not(dtb), expect(dead_code))]
-pub unsafe fn init_early(dtb: &Fdt) {
+pub unsafe fn init_early(dtb: &Fdt<'_>) {
     unsafe {
         if !matches!(*COM1.lock(), SerialKind::NotPresent) {
             // Hardcoded UART
@@ -67,13 +69,13 @@ pub unsafe fn init_early(dtb: &Fdt) {
 
         if let Some((phys, size, skip_init, cts, compatible)) = diag_uart_range(dtb) {
             let virt = RmmA::phys_to_virt(phys).data();
-            let serial_opt = if compatible.contains("arm,pl011") {
+            let serial_opt = if compatible.compatible_with("arm,pl011") {
                 let mut serial_port = uart_pl011::SerialPort::new(virt, cts);
                 if !skip_init {
                     serial_port.init(false);
                 }
                 Some(SerialKind::Pl011(serial_port))
-            } else if compatible.contains("ns16550a") {
+            } else if compatible.compatible_with("ns16550a") {
                 if cfg!(target_arch = "riscv64") {
                     //TODO: get actual register size from device tree
                     let mut serial_port = uart_16550::SerialPort::<MmioPtr<u8>>::new(virt);
@@ -89,7 +91,7 @@ pub unsafe fn init_early(dtb: &Fdt) {
                     }
                     Some(SerialKind::Ns16550u32(serial_port))
                 }
-            } else if compatible.contains("snps,dw-apb-uart") {
+            } else if compatible.compatible_with("snps,dw-apb-uart") {
                 //TODO: get actual register size from device tree
                 let mut serial_port = uart_16550::SerialPort::<MmioPtr<u32>>::new(virt);
                 if !skip_init {
@@ -110,10 +112,9 @@ pub unsafe fn init_early(dtb: &Fdt) {
                     return;
                 };
                 let fifo_size = node
-                    .property("fifosize")
-                    .or_else(|| node.property("fifo-size"))
-                    .and_then(|property| property.as_usize())
-                    .and_then(|value| u32::try_from(value).ok())
+                    .raw_property("fifosize")
+                    .or_else(|| node.raw_property("fifo-size"))
+                    .and_then(|property| property.as_value::<u32>().ok())
                     .filter(|&value| (1..=256).contains(&value))
                     .unwrap_or(64);
                 let baud_rate = stdout_baud(dtb)

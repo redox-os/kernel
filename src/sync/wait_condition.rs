@@ -117,6 +117,16 @@ impl WaitCondition {
             {
                 contexts.swap_remove(index);
                 waited = false;
+            } else {
+                drop(contexts);
+                // Signal can still arrive even if already woken up, in that case we want to assume EINTR happened
+                let current_context_ref = context::current();
+                let context = current_context_ref.read(token.token());
+                if context.sigcontrol().is_some_and(|(control, pctl, _)| {
+                    control.currently_pending_unblocked(pctl) != 0
+                }) {
+                    waited = false;
+                }
             }
         }
 

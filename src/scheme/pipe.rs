@@ -15,7 +15,7 @@ use crate::{
     syscall::{
         data::Stat,
         error::{Error, Result, EAGAIN, EBADF, EINTR, EINVAL, ENOENT, EPIPE},
-        flag::{EventFlags, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK},
+        flag::{EventFlags, EVENT_ERR, EVENT_HUP, EVENT_READ, EVENT_WRITE, MODE_FIFO, O_NONBLOCK},
         usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
@@ -101,19 +101,26 @@ impl KernelScheme for PipeScheme {
 
         let mut ready = EventFlags::empty();
 
-        if is_writer_not_reader
-            && flags.contains(EVENT_WRITE)
-            && (pipe.queue.lock(token.token()).len() < MAX_QUEUE_SIZE
-                || !pipe.reader_is_alive.load(Ordering::Acquire))
-        {
-            ready |= EventFlags::EVENT_WRITE;
-        }
-        if !is_writer_not_reader
-            && flags.contains(EVENT_READ)
-            && (!pipe.queue.lock(token.token()).is_empty()
-                || !pipe.writer_is_alive.load(Ordering::Acquire))
-        {
-            ready |= EventFlags::EVENT_READ;
+        if is_writer_not_reader {
+            let reader_alive = pipe.reader_is_alive.load(Ordering::Acquire);
+            if flags.contains(EVENT_WRITE)
+                && (pipe.queue.lock(token.token()).len() < MAX_QUEUE_SIZE || !reader_alive)
+            {
+                ready |= EVENT_WRITE;
+            }
+            if !reader_alive {
+                ready |= EVENT_ERR;
+            }
+        } else {
+            let writer_alive = pipe.writer_is_alive.load(Ordering::Acquire);
+            if flags.contains(EVENT_READ)
+                && (!pipe.queue.lock(token.token()).is_empty() || !writer_alive)
+            {
+                ready |= EVENT_READ;
+            }
+            if !writer_alive {
+                ready |= EVENT_HUP;
+            }
         }
 
         Ok(ready)
@@ -127,13 +134,18 @@ impl KernelScheme for PipeScheme {
 
         let can_remove = if is_write_not_read {
             pipe.writer_is_alive.store(false, Ordering::SeqCst);
-            event::trigger(scheme_id, key, EVENT_READ, token);
+            event::trigger(scheme_id, key, EVENT_READ | EVENT_HUP, token);
             pipe.read_condition.notify(token);
 
             !pipe.reader_is_alive.load(Ordering::SeqCst)
         } else {
             pipe.reader_is_alive.store(false, Ordering::SeqCst);
-            event::trigger(scheme_id, key | WRITE_NOT_READ_BIT, EVENT_WRITE, token);
+            event::trigger(
+                scheme_id,
+                key | WRITE_NOT_READ_BIT,
+                EVENT_WRITE | EVENT_ERR,
+                token,
+            );
             pipe.write_condition.notify(token);
 
             !pipe.writer_is_alive.load(Ordering::SeqCst)

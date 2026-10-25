@@ -26,9 +26,10 @@ macro_rules! syscall {
                                     in("r10") $e,
                                     $(
                                         in("r8") $f,
-                                        $(
-                                            in("r9") $g,
-                                        )?
+                                        // TODO
+                                        //$(
+                                        //  in("r9") $g,
+                                        //)?
                                     )?
                                 )?
                             )?
@@ -36,6 +37,7 @@ macro_rules! syscall {
                     )?
                     out("rcx") _,
                     out("r11") _,
+                    out("r9") _,
                     out("xmm0") _,
                     out("xmm1") _,
                     out("xmm2") _,
@@ -69,7 +71,9 @@ syscall! {
     syscall3(a, b, c, d,);
     syscall4(a, b, c, d, e,);
     syscall5(a, b, c, d, e, f,);
-    syscall6(a, b, c, d, e, f, g,);
+    // TODO: Once syscall count is reduced, consider passing syscall number using RFLAGS
+    // (LAHF/SAHF), freeing up rax register. That is necessary to avoid SWAPGS, for performance.
+    //syscall6(a, b, c, d, e, f, g,);
 }
 
 #[derive(Copy, Clone, Debug, Default)]

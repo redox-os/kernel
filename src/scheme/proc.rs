@@ -40,7 +40,7 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, Error, NumaMemoryPolicy};
+use syscall::{data::GlobalSchemes, CpuSet, Error, NumaMemoryPolicy};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -893,11 +893,9 @@ impl KernelScheme for ProcScheme {
             let (handles, _token) = handles.token_split();
             let handle = handles.get(&id).unwrap();
 
-            let Handle { context, kind: _ } = handle;
+            let Handle { context, kind } = handle;
 
-            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } =
-                &handle.kind
-            {
+            if let ContextHandle::Filetable { .. } | ContextHandle::NewFiletable { .. } = &kind {
                 context.clone()
             } else {
                 return Err(Error::new(EBADF));
@@ -1241,14 +1239,14 @@ impl ContextHandle {
                 Ok(size_of::<usize>())
             }
             Self::SchedAffinity => {
-                let mask = unsafe { buf.read_exact::<crate::cpu_set::RawMask>()? };
+                let cpuset = unsafe { buf.read_exact::<CpuSet>()? };
 
                 context
                     .write(token.token())
                     .sched_affinity
-                    .override_from(&mask);
+                    .override_from(cpuset.raw());
 
-                Ok(size_of_val(&mask))
+                Ok(size_of_val(&cpuset))
             }
             ContextHandle::Status { privileged } => {
                 let mut args = buf.usizes();
@@ -1521,9 +1519,11 @@ impl ContextHandle {
                 Ok(size_of::<usize>())
             }
             ContextHandle::SchedAffinity => {
-                let mask = context.read(token.token()).sched_affinity.to_raw();
+                let mask = syscall::CpuSet::from_raw_mask(
+                    context.read(token.token()).sched_affinity.to_raw(),
+                );
 
-                buf.copy_exactly(crate::cpu_set::mask_as_bytes(&mask))?;
+                buf.copy_exactly(mask.as_bytes())?;
                 Ok(size_of_val(&mask))
             } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
@@ -1594,7 +1594,7 @@ impl ContextHandle {
     }
     pub fn kcall(
         &self,
-        _fds: &[usize],
+        fds: &[usize],
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
@@ -1618,8 +1618,8 @@ impl ContextHandle {
             }
             ContextHandle::Filetable {
                 filetable,
-                binary_format: _,
-                data: _,
+                binary_format,
+                ..
             } => {
                 let op = syscall::flag::FileTableVerb::try_from_raw(
                     u8::try_from(*metadata.first().ok_or(Error::new(EINVAL))?)
@@ -1629,7 +1629,7 @@ impl ContextHandle {
 
                 match op {
                     FileTableVerb::Close => {
-                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let files = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
                         let payload_chunks = payload.in_exact_chunks(size_of::<usize>());
                         let fds = payload_chunks
                             .map(|chunk| {
@@ -1644,10 +1644,13 @@ impl ContextHandle {
                         });
                         Ok(num_fds)
                     }
-                    FileTableVerb::Dup2 => {
+                    FileTableVerb::Dup2 | FileTableVerb::Move => {
                         let mut it = payload.usizes();
                         let old = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
                         let new = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        if it.next().is_some() {
+                            return Err(Error::new(EINVAL));
+                        }
 
                         if old == new {
                             return Ok(0);
@@ -1663,7 +1666,11 @@ impl ContextHandle {
 
                         let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
-                        let file = context.get_file(old, &mut token).ok_or(Error::new(EBADF))?;
+                        let file = match op {
+                            FileTableVerb::Move => context.remove_file(old, &mut token),
+                            _ => context.get_file(old, &mut token),
+                        }
+                        .ok_or(Error::new(EBADF))?;
                         context
                             .insert_file(new, file, &mut token)
                             .ok_or(Error::new(EMFILE))?;
@@ -1671,7 +1678,7 @@ impl ContextHandle {
                         Ok(0)
                     }
                     FileTableVerb::Resize => {
-                        let files = filetable.upgrade().ok_or(Error::new(EBADF))?;
+                        let files = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
                         let Some(&[which, size]) = metadata.get(1..3) else {
                             return Err(Error::new(EINVAL));
                         };
@@ -1680,6 +1687,67 @@ impl ContextHandle {
                             .resize(which as usize, size as usize)?;
                         Ok(size as usize)
                     }
+                    FileTableVerb::Refresh => {
+                        let filetable = filetable.upgrade().ok_or(Error::new(EOWNERDEAD))?;
+
+                        let new_data = if *binary_format {
+                            let mut data = Vec::new();
+                            for index in filetable
+                                .read(token.token())
+                                .enumerate_fds()
+                                .map(|(i, _)| i)
+                            {
+                                data.extend((index as u64).to_le_bytes());
+                            }
+                            data.into_boxed_slice()
+                        } else {
+                            use core::fmt::Write;
+                            let mut data = String::new();
+                            for index in filetable
+                                .read(token.token())
+                                .enumerate_fds()
+                                .map(|(i, _)| i)
+                            {
+                                writeln!(data, "{}", index).unwrap();
+                            }
+                            data.into_bytes().into_boxed_slice()
+                        };
+
+                        let mut handles = HANDLES.write(token.token());
+                        let entry = handles.get_mut(&fds[0]).ok_or(Error::new(EBADF))?;
+                        if let ContextHandle::Filetable { ref mut data, .. } = entry.kind {
+                            *data = new_data;
+                        }
+
+                        Ok(0)
+                    }
+                    FileTableVerb::Swap => {
+                        let mut it = payload.usizes();
+                        let fd1 = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        let fd2 = FileHandle(it.next().ok_or(Error::new(EINVAL)).flatten()?);
+                        if it.next().is_some() {
+                            return Err(Error::new(EINVAL));
+                        }
+
+                        if fd1 == fd2 {
+                            return Ok(0);
+                        }
+                        let mut context = context.read(token.token());
+                        let (context, mut token) = context.token_split();
+                        let file1_opt = context.remove_file(fd1, &mut token);
+                        let file2_opt = context.remove_file(fd2, &mut token);
+                        let (Some(file1), Some(file2)) = (file1_opt, file2_opt) else {
+                            return Err(Error::new(EBADF));
+                        };
+                        context
+                            .insert_file(fd1, file2, &mut token)
+                            .expect("already removed, must succeed");
+                        context
+                            .insert_file(fd2, file1, &mut token)
+                            .expect("already removed, must succeed");
+                        Ok(0)
+                    }
+
                     _ => Err(Error::new(EOPNOTSUPP)),
                 }
             }

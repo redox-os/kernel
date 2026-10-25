@@ -1,6 +1,9 @@
 use core::fmt::{Result, Write};
 
-use crate::arch::device::cpu::registers::{control_regs, id_regs};
+use crate::{
+    arch::device::cpu::registers::{control_regs, id_regs},
+    dtb::Fdt,
+};
 
 mod boot;
 pub mod registers;
@@ -278,7 +281,7 @@ pub fn cpu_info<W: Write>(w: &mut W) -> Result {
     Ok(())
 }
 
-pub fn init_topology(fdt: &fdt::Fdt<'_>) {
+pub fn init_topology(fdt: &Fdt<'_>) {
     let Some(topology) = topology::init(fdt) else {
         return;
     };

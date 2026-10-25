@@ -87,8 +87,8 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "fdt"
-version = "0.2.0-alpha1"
-source = "git+https://github.com/repnop/fdt.git?rev=2fb1409edd1877c714a0aa36b6a7c5351004be54#2fb1409edd1877c714a0aa36b6a7c5351004be54"
+version = "0.2.0-alpha3"
+source = "git+https://github.com/repnop/fdt.git?rev=8fa4388e056e48826e8898557a1c8600f9ee5d6a#8fa4388e056e48826e8898557a1c8600f9ee5d6a"
 
 [[package]]
 name = "find-msvc-tools"
@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "redox_syscall"
-version = "0.9.4"
+version = "0.9.6"
 dependencies = [
  "bitflags 2.9.1",
  "loom",

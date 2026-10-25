@@ -7,6 +7,8 @@ use core::{
     str::FromStr,
     sync::atomic::{AtomicUsize, Ordering},
 };
+#[cfg(dtb)]
+use fdt::properties::PHandle;
 
 use smallvec::SmallVec;
 use spin::{Mutex, Once};
@@ -191,7 +193,7 @@ impl IrqScheme {
     #[cfg(dtb)]
     unsafe fn open_phandle_irq(
         flags: usize,
-        phandle: usize,
+        phandle: PHandle,
         path_str: &str,
     ) -> Result<(Handle, InternalFlags)> {
         unsafe {
@@ -200,7 +202,7 @@ impl IrqScheme {
                 .map(|x| u32::from_str(x).or(Err(Error::new(ENOENT))))
                 .collect::<Result<_, _>>()?;
             let ic_idx = IRQ_CHIP
-                .phandle_to_ic_idx(phandle as u32)
+                .phandle_to_ic_idx(phandle)
                 .ok_or(Error::new(ENOENT))?;
             Ok({
                 if flags & O_CREAT == 0 && flags & O_STAT == 0 {
@@ -240,6 +242,7 @@ impl IrqScheme {
     }
 }
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 const fn irq_to_vector(irq: u8) -> u8 {
     irq + 32
 }
@@ -296,7 +299,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
             #[cfg(dtb)]
             unsafe {
                 for chip in &IRQ_CHIP.irq_chip_list.chips {
-                    writeln!(bytes, "phandle-{}", chip.phandle).unwrap();
+                    writeln!(bytes, "phandle-{}", chip.phandle.as_u32()).unwrap();
                 }
             }
 
@@ -335,7 +338,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                         return Err(Error::new(ENOENT));
                     }
                 } else {
-                    Self::open_phandle_irq(flags, phandle, path_str)?
+                    Self::open_phandle_irq(flags, PHandle::new(phandle as u32), path_str)?
                 }
             }
             #[cfg(not(dtb))]

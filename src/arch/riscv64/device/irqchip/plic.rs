@@ -3,11 +3,11 @@ use crate::{
     dtb::{
         get_mmio_address,
         irqchip::{InterruptController, InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        Fdt,
     },
     sync::CleanLockToken,
 };
 use core::{mem, num::NonZero, sync::atomic::Ordering};
-use fdt::Fdt;
 use syscall::{Error, Io, Mmio, EINVAL};
 
 #[repr(packed(4))]
@@ -119,15 +119,21 @@ impl InterruptController for Plic {
     ) -> syscall::Result<()> {
         let desc = unsafe { &IRQ_CHIP.irq_chip_list.chips[ic_idx] };
         let fdt = fdt_opt.unwrap();
-        let my_node = fdt.find_phandle(desc.phandle).unwrap();
+        let my_node = fdt.root().resolve_phandle(desc.phandle).unwrap();
 
         // MMIO region
-        let reg = my_node.reg().unwrap().next().unwrap();
+        let reg = my_node
+            .reg()
+            .unwrap()
+            .iter::<usize, usize>()
+            .next()
+            .unwrap()
+            .unwrap();
         let addr = get_mmio_address(&fdt, &my_node, &reg).unwrap();
         // Specifies how many external interrupts are supported by this controller.
         let ndev = my_node
-            .property("riscv,ndev")
-            .and_then(|x| x.as_usize())
+            .raw_property("riscv,ndev")
+            .and_then(|x| x.as_value::<usize>().ok())
             .unwrap();
 
         self.regs = (addr + crate::PHYS_OFFSET) as *mut PlicRegs;

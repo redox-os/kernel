@@ -1,14 +1,15 @@
 use core::ptr::{read_volatile, write_volatile};
-use fdt::{node::FdtNode, Fdt};
 
 use super::InterruptController;
 use crate::{
     dtb::{
         get_interrupt, get_mmio_address,
         irqchip::{InterruptHandler, IrqCell, IrqDesc, IRQ_CHIP},
+        Fdt, FdtNode,
     },
     sync::CleanLockToken,
 };
+use fdt::properties::PHandle;
 use syscall::{
     error::{Error, EINVAL},
     Result,
@@ -67,7 +68,7 @@ impl Bcm2835ArmInterruptController {
         }
     }
     pub fn parse(fdt: &Fdt) -> Result<(usize, usize, Option<usize>)> {
-        if let Some(node) = fdt.find_compatible(&["brcm,bcm2836-armctrl-ic"]) {
+        if let Some(node) = fdt.all_compatible(&["brcm,bcm2836-armctrl-ic"]).next() {
             return unsafe { Bcm2835ArmInterruptController::parse_inner(fdt, &node) };
         } else {
             return Err(Error::new(EINVAL));
@@ -76,14 +77,20 @@ impl Bcm2835ArmInterruptController {
     unsafe fn parse_inner(fdt: &Fdt, node: &FdtNode) -> Result<(usize, usize, Option<usize>)> {
         unsafe {
             //assert address_cells == 0x1, size_cells == 0x1
-            let mem = node.reg().unwrap().nth(0).unwrap();
+            let mem = node
+                .reg()
+                .unwrap()
+                .iter::<usize, usize>()
+                .nth(0)
+                .unwrap()
+                .unwrap();
             let base = get_mmio_address(fdt, node, &mem).unwrap();
-            let size = mem.size.unwrap() as u32;
+            let size = mem.len as u32;
             let mut ret_virq = None;
 
-            if let Some(interrupt_parent) = node.property("interrupt-parent") {
-                let phandle = interrupt_parent.as_usize().unwrap() as u32;
-                let irq = get_interrupt(fdt, node, 0).unwrap();
+            if let Some(interrupt_parent) = node.raw_property("interrupt-parent") {
+                let phandle = PHandle::new(interrupt_parent.as_value::<u32>().unwrap());
+                let irq = get_interrupt(node, 0).unwrap();
                 let ic_idx = IRQ_CHIP.phandle_to_ic_idx(phandle).unwrap();
                 //PHYS_NONSECURE_PPI only
                 let virq = IRQ_CHIP.irq_chip_list.chips[ic_idx]

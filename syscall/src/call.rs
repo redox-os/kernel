@@ -131,22 +131,21 @@ pub fn nanosleep(req: &TimeSpec, rem: &mut TimeSpec) -> Result<usize> {
 }
 
 /// Open a file at a specific path into specified fd number
-pub fn openat_into<T: AsRef<str>>(
+pub fn openat_into(
     fd: usize,
     out: usize,
-    path: T,
+    path: impl AsRef<str>,
     flags: usize,
     fcntl_flags: usize,
 ) -> Result<usize> {
     let path = path.as_ref();
     unsafe {
-        syscall6(
-            SYS_OPENAT_INTO,
+        syscall5(
+            SYS_OPENAT_INTO2,
             fd,
             path.as_ptr() as usize,
-            path.len(),
+            path.len() | (fcntl_flags & O_FCNTL_MASK),
             flags,
-            fcntl_flags,
             out,
         )
     }
@@ -188,6 +187,10 @@ pub fn sched_yield() -> Result<usize> {
 }
 
 pub trait Call {
+    #[inline]
+    fn extra_flags(&self) -> CallFlags {
+        CallFlags::empty()
+    }
     unsafe fn raw_call(
         &self,
         payload_ptr: *const u8,
@@ -219,6 +222,10 @@ impl Call for usize {
 }
 
 impl Call for &[usize] {
+    #[inline]
+    fn extra_flags(&self) -> CallFlags {
+        CallFlags::MULTIPLE_FDS2
+    }
     unsafe fn raw_call(
         &self,
         payload_ptr: *const u8,
@@ -226,20 +233,19 @@ impl Call for &[usize] {
         flags: CallFlags,
         metadata: &[u64],
     ) -> Result<usize> {
-        let combined_flags = flags | CallFlags::MULTIPLE_FDS;
+        // align_of::<usize>() is >= 4 on all architectures supported by Redox, whereas the kernel
+        // currently only allows MULTIPLE_FDS2 calls to use at most 2.
+        if self.len() > core::mem::align_of::<usize>() {
+            return Err(crate::error::Error::new(crate::error::EINVAL));
+        }
         unsafe {
-            syscall6(
+            syscall5(
                 SYS_CALL,
-                self.as_ptr() as usize,
+                self.as_ptr() as usize | self.len(),
                 payload_ptr as usize,
                 len,
-                metadata.len() | combined_flags.bits(),
+                metadata.len() | flags.bits(),
                 metadata.as_ptr() as usize,
-                #[allow(clippy::manual_slice_size_calculation)]
-                // avoid mem::size_of_val to be explicit here because of the auto-deref rules
-                {
-                    self.len() * mem::size_of::<usize>()
-                },
             )
         }
     }
@@ -252,11 +258,12 @@ pub fn call_ro<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_mut_ptr(),
             payload.len(),
-            flags | CallFlags::READ,
+            combined_flags | CallFlags::READ,
             metadata,
         )
     }
@@ -268,11 +275,12 @@ pub fn call_wo<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_ptr(),
             payload.len(),
-            flags | CallFlags::WRITE,
+            combined_flags | CallFlags::WRITE,
             metadata,
         )
     }
@@ -284,11 +292,12 @@ pub fn call_rw<T: Call>(
     flags: CallFlags,
     metadata: &[u64],
 ) -> Result<usize> {
+    let combined_flags = flags | fd.extra_flags();
     unsafe {
         fd.raw_call(
             payload.as_mut_ptr(),
             payload.len(),
-            flags | CallFlags::READ | CallFlags::WRITE,
+            combined_flags | CallFlags::READ | CallFlags::WRITE,
             metadata,
         )
     }

@@ -40,3 +40,23 @@ pub use ::rmm::x86_64::X8664Arch as CurrentRmmArch;
 pub mod flags {
     pub const FLAG_SINGLESTEP: usize = 1 << 8;
 }
+
+#[inline]
+pub fn current_stack_ptr() -> *mut u8 {
+    let ret: *mut u8;
+    unsafe {
+        #[cfg(target_arch = "x86_64")]
+        core::arch::asm!(
+            "mov {}, rsp",
+            out(reg) ret,
+            options(nomem, preserves_flags, nostack),
+        );
+        #[cfg(target_arch = "x86")]
+        core::arch::asm!(
+            "mov {}, esp",
+            out(reg) ret,
+            options(nomem, preserves_flags, nostack),
+        );
+    }
+    ret
+}

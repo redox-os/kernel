@@ -7,6 +7,7 @@ use core::{
 use crate::{
     allocator,
     arch::{device, interrupt::exception_handler, paging},
+    context::context::Kstack,
     devices::graphical_debug,
     dtb::serial::init_early,
     startup::KernelArgs,
@@ -93,15 +94,15 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
 
             graphical_debug::init(args.env());
 
-            if let Some(dtb) = &dtb {
+            if let Ok((dtb, _)) = &dtb {
                 init_early(dtb);
             }
 
             info!("Redox OS starting...");
             args.print();
 
-            if let Some(dtb) = &dtb {
-                device::dump_fdt(&dtb);
+            if let Ok((dtb, _)) = &dtb {
+                debug!("device tree: {:?}", dtb);
             }
 
             // Initialize RMM
@@ -137,6 +138,7 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
             args.bootstrap()
         };
 
-        crate::startup::kmain(bootstrap);
+        // TODO: use stack
+        crate::startup::kmain(bootstrap, Kstack::new().expect("failed to allocate stack"));
     }
 }

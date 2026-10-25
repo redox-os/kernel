@@ -83,9 +83,6 @@ pub fn init_srat(
                     continue;
                 }
                 let dom = memory_affinity.proximity_domain;
-                if memory_affinity.length_low == 0 {
-                    continue;
-                }
                 let start = to_usize(
                     memory_affinity.base_address_low,
                     memory_affinity.base_address_high,

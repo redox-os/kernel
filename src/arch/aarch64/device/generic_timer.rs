@@ -3,12 +3,11 @@ use spin::Once;
 use super::{cpu::registers::control_regs, ic_for_chip, irqchip};
 use crate::{
     context::{self, timeout},
-    dtb::{get_interrupt, irqchip::IRQ_CHIP},
+    dtb::{get_interrupt, irqchip::IRQ_CHIP, Fdt},
     scheme::irq::irq_trigger,
     sync::CleanLockToken,
     time,
 };
-use fdt::Fdt;
 use syscall::{Error, Result, EINVAL, ENODEV};
 
 bitflags! {
@@ -44,12 +43,15 @@ pub unsafe fn init(fdt: &Fdt<'_>) {
         return;
     }
 
-    let Some(node) = fdt.find_compatible(&["arm,armv8-timer", "arm,armv7-timer"]) else {
+    let Some(node) = fdt
+        .all_compatible(&["arm,armv8-timer", "arm,armv7-timer"])
+        .next()
+    else {
         error!("architected timer not found in devicetree");
         return;
     };
     let irq_index = if use_virtual { 2 } else { 1 };
-    let Some(irq) = get_interrupt(fdt, &node, irq_index) else {
+    let Some(irq) = get_interrupt(&node, irq_index) else {
         error!("architected timer is missing interrupt index {}", irq_index);
         return;
     };

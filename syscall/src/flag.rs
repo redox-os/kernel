@@ -47,6 +47,8 @@ bitflags! {
         const EVENT_NONE = 0;
         const EVENT_READ = 1;
         const EVENT_WRITE = 2;
+        const EVENT_HUP = 4;
+        const EVENT_ERR = 8;
     }
 }
 
@@ -55,6 +57,7 @@ pub const F_GETFD: usize = 1;
 pub const F_SETFD: usize = 2;
 pub const F_GETFL: usize = 3;
 pub const F_SETFL: usize = 4;
+pub const F_GET_SCHEMEID: usize = 0x1000 | 1;
 
 pub const FUTEX_WAIT: usize = 0;
 pub const FUTEX_WAKE: usize = 1;
@@ -290,6 +293,9 @@ pub enum FileTableVerb {
     Dup2 = 2,
     Reserved1 = 3,
     Resize = 4,
+    Refresh = 5,
+    Move = 6,
+    Swap = 7,
 }
 impl FileTableVerb {
     pub fn try_from_raw(value: u8) -> Option<Self> {
@@ -298,6 +304,9 @@ impl FileTableVerb {
             2 => Self::Dup2,
             3 => Self::Reserved1,
             4 => Self::Resize,
+            5 => Self::Refresh,
+            6 => Self::Move,
+            7 => Self::Swap,
             _ => return None,
         })
     }
@@ -491,13 +500,15 @@ bitflags! {
         /// Call is a standard fs call, with metadata defined in `StdFsCallMeta`
         const STD_FS = 1 << 16;
 
-        /// Call is taking multiple fds as an argument
-        const MULTIPLE_FDS = 1 << 17;
+        // reserved: 1 << 17
 
         /// Allow current timeslice to be lent out to the callee, which will have a preference of
         /// switching back to this context until the current timeslice is exhausted, after which
         /// the scheduler will continue as if it was switching away from this context.
         const ALLOW_DIRECT_SWITCH = 1 << 18;
+
+        /// Call is taking multiple fds, syscall5 variant.
+        const MULTIPLE_FDS2 = 1 << 19;
     }
 }
 
@@ -514,11 +525,13 @@ pub enum StdFsCallKind {
     Ftruncate = 7,
     Futimens = 8,
     // 9 reserved in fscall RFC
-    // Unlinkat = 10,
+    Unlinkat = 10,
     Relpathat = 11,
     Lock = 12,
     Unlock = 13,
     GetLock = 14,
+    Frenameat = 15,
+    Flinkat = 16,
 }
 
 impl StdFsCallKind {
@@ -536,11 +549,13 @@ impl StdFsCallKind {
             7 => Ftruncate,
             8 => Futimens,
             // 9 reserved in fscall RFC
-            // 10 => Unlinkat,
+            10 => Unlinkat,
             11 => Relpathat,
             12 => Lock,
             13 => Unlock,
             14 => GetLock,
+            15 => Frenameat,
+            16 => Flinkat,
             _ => return None,
         })
     }
@@ -551,3 +566,11 @@ pub const UPPER_FDTBL_TAG: usize = 1 << (usize::BITS - 2);
 
 /// The identifier for registering event timeout
 pub const EVENT_TIMEOUT_ID: usize = usize::MAX - 2;
+
+#[cfg(target_pointer_width = "64")]
+pub const MAX_CPU_COUNT: u32 = 128;
+
+#[cfg(target_pointer_width = "32")]
+pub const MAX_CPU_COUNT: u32 = 32;
+
+pub const CPU_SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
