@@ -14,7 +14,7 @@ static DOMAIN_NODE_MAP: Once<&'static [Option<NumaNodeID>]> = Once::new();
 static NUMA_CPUS: Once<&'static [Option<NumaNodeID>]> = Once::new();
 static NUMA_MEMORY: Once<&'static [Option<NumaMemory>]> = Once::new();
 static DISTANCES: Once<&'static [u8]> = Once::new();
-static NUMA_NODES: Once<&'static [Option<NumaNode>]> = Once::new();
+pub static NUMA_NODES: Once<&'static [Option<NumaNode>]> = Once::new();
 
 #[inline(always)]
 pub fn is_supported() -> bool {
@@ -69,6 +69,7 @@ impl FreeListMask {
 pub struct NumaNode {
     pub cpus: u128,
     pub memories: FreeListMask,
+    pub mem_size: usize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -120,16 +121,28 @@ pub fn init_arch(mask: &Option<RegionMask>) {
         };
         numa_nodes.iter_mut().for_each(|e| *e = None);
 
-        for (cpu_id, node_id) in cpus
-            .iter()
-            .enumerate()
-            .filter_map(|(i, e)| Some((i, (*e)?)))
-        {
-            let node = &mut numa_nodes[node_id.get() as usize];
-            if node.is_none() {
-                *node = Some(NumaNode::default());
+        for cpu in percpu::all_percpu_blocks() {
+            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+            let physical_cpu_id = cpu
+                .misc_arch_info
+                .apic_id_opt
+                .get()
+                .map(|e| e.get())
+                .unwrap() as usize;
+
+            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+            let physical_cpu_id = 0; // TODO
+
+            if let Some(node_id) = cpus[physical_cpu_id] {
+                let node = &mut numa_nodes[node_id.get() as usize];
+                if node.is_none() {
+                    *node = Some(NumaNode::default());
+                }
+                node.as_mut()
+                    .unwrap()
+                    .cpus
+                    .set_bit(cpu.cpu_id.get() as usize, true);
             }
-            node.as_mut().unwrap().cpus |= 1u128 << cpu_id;
         }
 
         let mut index = 0;
@@ -143,6 +156,7 @@ pub fn init_arch(mask: &Option<RegionMask>) {
             if node.is_none() {
                 *node = Some(NumaNode::default());
             }
+            node.as_mut().unwrap().mem_size += memory.length;
 
             if let Some(mask) = mask
                 && !mask[i]
@@ -155,20 +169,9 @@ pub fn init_arch(mask: &Option<RegionMask>) {
         }
 
         for cpu in percpu::all_percpu_blocks() {
-            #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
-            let cpu_id = cpu
-                .misc_arch_info
-                .apic_id_opt
-                .get()
-                .map(|e| e.get())
-                .unwrap();
-
-            #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
-            let cpu_id = 0; // TODO
-
             let n = numa_nodes.iter().enumerate().find_map(|(i, node)| {
                 let node = node.as_ref()?;
-                if node.cpus & 1u128 << cpu_id != 0 {
+                if node.cpus & 1u128 << cpu.cpu_id.get() != 0 {
                     Some((NumaNodeID::new(i as u32).unwrap(), node))
                 } else {
                     None
