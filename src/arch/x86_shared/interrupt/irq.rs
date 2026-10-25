@@ -7,10 +7,12 @@ use crate::{
         device::{
             ioapic, local_apic, pic, pit,
             serial::{COM1, COM2},
+            AP_NEEDS_PIT_IPI,
         },
         ipi::{ipi, IpiKind, IpiTarget},
     },
     context::{self, timeout},
+    cpu_set::LogicalCpuId,
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},
     sync::CleanLockToken,
@@ -324,9 +326,16 @@ interrupt!(lapic_timer, || {
 
     // Same work as `pit_stack`, minus `time::OFFSET += pit::RATE`: the timer is only armed
     // when the KVM pvclock supplies `monotonic_absolute`, so OFFSET is never consulted.
-    ipi(IpiKind::Pit, IpiTarget::Other);
+    // Every CPU runs its own copy of this timer (`device::init_ap_timer`), so the BSP only
+    // sends `IpiKind::Pit` for APs that could not arm one. Timeouts are global and are
+    // drained on the BSP alone.
     let mut token = unsafe { CleanLockToken::new() };
-    timeout::trigger(&mut token);
+    if PercpuBlock::current().cpu_id == LogicalCpuId::BSP {
+        if AP_NEEDS_PIT_IPI.load(Ordering::Relaxed) {
+            ipi(IpiKind::Pit, IpiTarget::Other);
+        }
+        timeout::trigger(&mut token);
+    }
     context::switch::tick(&mut token);
 });
 

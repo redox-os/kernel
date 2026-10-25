@@ -208,10 +208,11 @@ fn init_generic(cpu_id: LogicalCpuId, idt: &mut Idt) {
         current_reservations[1] |= 0x0003_FFFF;
     } else {
         // TODO: use_default_irqs! but also the legacy IRQs that are only needed on one CPU
+        current_idt[48].set_func(irq::lapic_timer);
         current_idt[49].set_func(irq::lapic_error);
 
-        // reserve bit 49
-        current_reservations[1] |= 1 << 17;
+        // reserve bits 49:48, for the local apic timer and error.
+        current_reservations[1] |= 0b11 << 16;
     }
 
     // Set IPI handlers

@@ -1,7 +1,6 @@
 use core::{
-    cell::SyncUnsafeCell,
+    cell::{Cell, SyncUnsafeCell},
     ptr::{read_volatile, write_volatile},
-    sync::atomic::{AtomicU64, Ordering},
 };
 use x86::msr::*;
 
@@ -31,8 +30,32 @@ static LOCAL_APIC: SyncUnsafeCell<LocalApic> = SyncUnsafeCell::new(LocalApic {
     x2: false,
 });
 
-/// TSC ticks between local-APIC deadline interrupts. Zero until armed.
-static TSC_DEADLINE_PERIOD: AtomicU64 = AtomicU64::new(0);
+/// Per-CPU state of the local APIC TSC-deadline tick. `IA32_TSC_DEADLINE` is a
+/// per-logical-processor MSR (SDM Vol. 3A, 13.5.4.1), so each CPU arms and re-arms its own.
+pub struct TscDeadlinePercpu {
+    /// TSC ticks between deadline interrupts. Zero until armed.
+    period: Cell<u64>,
+    /// TSC value the timer is currently armed for. The MSR itself is cleared when the timer
+    /// fires (SDM Vol. 3A, 13.5.4.1), so the previous deadline has to be kept here.
+    next: Cell<u64>,
+}
+impl TscDeadlinePercpu {
+    pub const fn default() -> Self {
+        Self {
+            period: Cell::new(0),
+            next: Cell::new(0),
+        }
+    }
+}
+
+fn tsc_deadline_percpu() -> &'static TscDeadlinePercpu {
+    &PercpuBlock::current().misc_arch_info.tsc_deadline
+}
+
+/// Whether this CPU's local APIC timer is armed as its tick.
+pub fn has_tsc_deadline_tick() -> bool {
+    tsc_deadline_percpu().period.get() != 0
+}
 
 /// Matches the `lapic_timer` IDT entry (see `idt.rs`). Any vector in 16..=255 is
 /// valid for an LVT entry (SDM Vol. 3A, 13.5.2 "Valid Interrupt Vectors").
@@ -294,9 +317,8 @@ impl LocalApic {
 
 /// Arm this CPU's local APIC timer in TSC-deadline mode.
 ///
-/// Cloud Hypervisor has no PIT and no HPET, so the periodic tick that drains
-/// kernel timeouts has to come from the local APIC. `period_ticks` is the TSC
-/// delta corresponding to one tick.
+/// Cloud Hypervisor has no PIT and no HPET, so the periodic tick has to come from
+/// the local APIC. `period_ticks` is the TSC delta corresponding to one tick.
 pub unsafe fn start_tsc_deadline(period_ticks: u64) -> bool {
     unsafe {
         let supported = cpuid()
@@ -306,7 +328,8 @@ pub unsafe fn start_tsc_deadline(period_ticks: u64) -> bool {
             return false;
         }
 
-        TSC_DEADLINE_PERIOD.store(period_ticks, Ordering::Relaxed);
+        let state = tsc_deadline_percpu();
+        state.period.set(period_ticks);
 
         // SDM Vol. 3A, Table 13-2:
         // LVT timer bits 18:17 = 10b selects TSC-deadline mode, bit 16
@@ -321,23 +344,40 @@ pub unsafe fn start_tsc_deadline(period_ticks: u64) -> bool {
             core::arch::asm!("mfence", options(nostack, preserves_flags));
         }
 
-        rearm_tsc_deadline();
+        let deadline = x86::time::rdtsc().saturating_add(period_ticks);
+        state.next.set(deadline);
+        wrmsr(IA32_TSC_DEADLINE, deadline);
         true
     }
 }
 
-/// Schedule the next TSC-deadline interrupt one period from now.
+/// Schedule the next TSC-deadline interrupt one period after the previous deadline.
 ///
 /// The mode is one-shot: the timer disarms itself when it fires, so each write to
-/// `IA32_TSC_DEADLINE` yields at most one interrupt (SDM Vol. 3A, 13.5.4.1).
+/// `IA32_TSC_DEADLINE` yields at most one interrupt (SDM Vol. 3A, 13.5.4.1). Counting from
+/// the previous deadline rather than from the current TSC keeps the latency between the
+/// deadline expiring and this re-arm from accumulating as drift.
 pub unsafe fn rearm_tsc_deadline() {
     unsafe {
-        let period = TSC_DEADLINE_PERIOD.load(Ordering::Relaxed);
+        let state = tsc_deadline_percpu();
+        let period = state.period.get();
         if period == 0 {
             return;
         }
-        let deadline = x86::time::rdtsc().saturating_add(period);
-        wrmsr(IA32_TSC_DEADLINE, deadline);
+        let prev = state.next.get();
+        let now = x86::time::rdtsc();
+        let mut next = prev.saturating_add(period);
+
+        // A deadline at or before the current TSC fires immediately (SDM Vol. 3A, 13.5.4.1).
+        // If whole periods were missed, e.g. while the vCPU was descheduled, skip them on the
+        // same phase instead of delivering them back to back.
+        if next <= now {
+            let missed = (now - prev) / period;
+            next = prev.saturating_add((missed + 1).saturating_mul(period));
+        }
+
+        state.next.set(next);
+        wrmsr(IA32_TSC_DEADLINE, next);
     }
 }
 

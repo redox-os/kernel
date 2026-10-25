@@ -231,6 +231,14 @@ pub(crate) fn kmain_ap(cpu_id: crate::cpu_set::LogicalCpuId, kmain_kstack: Kstac
 
     context::init(&mut token, kmain_kstack);
 
+    // The BSP has picked its system timer by now. If it ticks from its local APIC, arm this
+    // AP's own instead of relying on `IpiKind::Pit` broadcasts. This comes after
+    // `context::init` so the first tick has a context to switch from.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    unsafe {
+        crate::arch::device::init_ap_timer();
+    }
+
     debug!("AP {}", cpu_id);
 
     profiling::ready_for_profiling();
