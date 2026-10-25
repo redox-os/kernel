@@ -118,6 +118,13 @@ pub fn futex(
             {
                 let context_lock = context::current();
 
+                drop(addr_space_guard);
+
+                // Held from the comparison until our entry is queued, so a FUTEX_WAKE either
+                // runs before (and we see the new value) or after (and finds our entry).
+                let mut futexes = FUTEXES.lock(token.token());
+                let (futexes, mut token) = futexes.token_split();
+
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
                     // (simpler) validation we did in the first place.
@@ -166,8 +173,6 @@ pub fn futex(
                     return Err(Error::new(EAGAIN));
                 }
 
-                drop(addr_space_guard);
-
                 {
                     let mut context = context_lock.write(token.token());
 
@@ -181,7 +186,6 @@ pub fn futex(
                     context.block("futex");
                 }
 
-                let mut futexes = FUTEXES.lock(token.token());
                 futexes
                     .entry(target_physaddr)
                     .or_insert_with(Vec::new)
