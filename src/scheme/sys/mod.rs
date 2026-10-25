@@ -33,6 +33,8 @@ mod fdstat;
 mod iostat;
 mod irq;
 mod log;
+#[cfg(all(feature = "numa", target_arch = "x86_64"))]
+mod numa;
 mod stat;
 mod syscall;
 mod uname;
@@ -76,6 +78,8 @@ const FILES: &[(&str, Kind)] = &[
     ("iostat", Rd(iostat::resource)),
     ("irq", Rd(irq::resource)),
     ("log", Rd(log::resource)),
+    #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+    ("numa", Rd(numa::resource)),
     ("syscall", Rd(syscall::resource)),
     ("uname", Rd(uname::resource)),
     ("env", Rd(|_| Ok(Vec::from(crate::startup::init_env())))),
