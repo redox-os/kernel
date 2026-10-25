@@ -737,7 +737,7 @@ fn select_next_context(
             % STEAL_INTERVAL;
         */
 
-        let mut steal_hint = None;
+        let steal_hint = None;
         let should_steal = !contexts_data.is_stealable()
             /* // disabled: causing livelock in webkit
             || (counter == 0 && {

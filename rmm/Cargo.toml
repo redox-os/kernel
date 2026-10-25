@@ -10,6 +10,9 @@ bitflags = "2"
 [features]
 std = []
 
+[lints.clippy]
+missing_safety_doc = "allow" # TODO: address occurrences and then deny
+
 [[bin]]
 name = "rmm"
 path = "src/main.rs"

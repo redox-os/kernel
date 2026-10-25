@@ -101,8 +101,10 @@ x86_64:clippy:
   needs: [x86_64]
   script:
   - redoxer clippy
+  - redoxer clippy -- --all-features
   variables:
     ARCH: "x86_64"
+    RUSTFLAGS: "-Dwarnings"
 
 x86_64:profiling:
   stage: build

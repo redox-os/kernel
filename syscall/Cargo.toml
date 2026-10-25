@@ -30,3 +30,6 @@ core = { version = "1.0.0", optional = true, package = "rustc-std-workspace-core
 
 [target.'cfg(loom)'.dev-dependencies]
 loom = "0.7"
+
+[lints.clippy]
+missing_safety_doc = "allow" # TODO: address occurrences and then deny

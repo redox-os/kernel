@@ -4,7 +4,7 @@ use core::fmt::Write;
 use rmm::{GIGABYTE, MEGABYTE};
 use syscall::{Result, MAX_CPU_COUNT};
 
-use crate::{acpi::find_sdt, numa::MAX_MEM_REGIONS, percpu, sync::CleanLockToken};
+use crate::sync::CleanLockToken;
 
 pub fn resource(_: &mut CleanLockToken) -> Result<Vec<u8>> {
     if let Some(nodes) = crate::numa::NUMA_NODES.get() {
