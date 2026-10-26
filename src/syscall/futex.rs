@@ -7,7 +7,10 @@ use alloc::{
     vec::Vec,
 };
 use core::sync::atomic::{AtomicU32, Ordering};
-use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
+use hashbrown::{
+    hash_map::{DefaultHashBuilder, Entry, OccupiedEntry},
+    HashMap,
+};
 use rmm::Arch;
 use syscall::EINTR;
 
@@ -118,6 +121,40 @@ pub fn futex(
             {
                 let context_lock = context::current();
 
+                // Drop and block this context
+                drop(addr_space_guard);
+
+                {
+                    let mut context = context_lock.write(token.token());
+
+                    context.wake = timeout_opt.map(|time| time.to_nanos());
+                    if let Some((tctl, pctl, _)) = context.sigcontrol()
+                        && tctl.currently_pending_unblocked(pctl) != 0
+                    {
+                        return Err(Error::new(EINTR));
+                    }
+
+                    context.block("futex");
+                }
+
+                // Target target_physaddr
+                let futexes = FUTEXES.lock(token.token());
+                let (mut futexes, mut lock_token) = futexes.into_split();
+                futexes
+                    .entry(target_physaddr)
+                    .or_insert_with(Vec::new)
+                    .push(FutexEntry {
+                        context_lock: Arc::downgrade(&context_lock),
+                    });
+
+                // Now rearcquire again to read
+                let addr_space_guard = current_addrsp.acquire_read(lock_token.downgrade());
+
+                // Might be changing, read again to make sure
+                let new_target_physaddr =
+                    validate_and_translate_virt(&addr_space_guard, target_virtaddr)
+                        .ok_or(Error::new(EFAULT))?;
+
                 let (fetched, expected) = if op == FUTEX_WAIT {
                     // Must be aligned, otherwise it could cross a page boundary and mess up the
                     // (simpler) validation we did in the first place.
@@ -127,7 +164,8 @@ pub fn futex(
 
                     // TODO: On systems where virtual memory is not abundant, we might instead
                     // add an atomic usercopy function.
-                    let accessible_addr = crate::memory::RmmA::phys_to_virt(target_physaddr).data();
+                    let accessible_addr =
+                        crate::memory::RmmA::phys_to_virt(new_target_physaddr).data();
 
                     (
                         u64::from(unsafe {
@@ -148,7 +186,7 @@ pub fn futex(
                         // TODO: On systems where virtual memory is not abundant, we might instead
                         // add an atomic usercopy function.
                         let accessible_addr =
-                            crate::memory::RmmA::phys_to_virt(target_physaddr).data();
+                            crate::memory::RmmA::phys_to_virt(new_target_physaddr).data();
 
                         (
                             unsafe {
@@ -162,32 +200,23 @@ pub fn futex(
                         return Err(Error::new(crate::syscall::error::EOPNOTSUPP));
                     }
                 };
-                if fetched != expected {
-                    return Err(Error::new(EAGAIN));
-                }
 
                 drop(addr_space_guard);
 
-                {
-                    let mut context = context_lock.write(token.token());
-
-                    context.wake = timeout_opt.map(|time| time.to_nanos());
-                    if let Some((tctl, pctl, _)) = context.sigcontrol()
-                        && tctl.currently_pending_unblocked(pctl) != 0
-                    {
-                        return Err(Error::new(EINTR));
+                if fetched != expected || new_target_physaddr != target_physaddr {
+                    // The value or physical address is changed before switching, rollback
+                    // TODO: Changing physical address should still be allowed, but our futex can't handle remap
+                    if let Entry::Occupied(futexes_entry) = futexes.entry(target_physaddr) {
+                        if let Some(futex) = remove_futex_entry(futexes_entry) {
+                            drop(futexes);
+                            if let Some(ctx) = futex.context_lock.upgrade() {
+                                unblock_context(&ctx, &mut token.token().downgrade());
+                            }
+                        }
                     }
 
-                    context.block("futex");
+                    return Err(Error::new(EAGAIN));
                 }
-
-                let mut futexes = FUTEXES.lock(token.token());
-                futexes
-                    .entry(target_physaddr)
-                    .or_insert_with(Vec::new)
-                    .push(FutexEntry {
-                        context_lock: Arc::downgrade(&context_lock),
-                    });
             }
 
             context::switch(token);
@@ -203,32 +232,10 @@ pub fn futex(
             let mut futexes_lock = FUTEXES.lock(token.token());
             let (futexes_map, _) = futexes_lock.token_split();
 
-            let Some(futexes) = futexes_map.get_mut(&target_physaddr) else {
+            let Entry::Occupied(futexes) = futexes_map.entry(target_physaddr) else {
                 return Ok(0);
             };
-            let current_lock = context::current();
-            let mut found = false;
-
-            let mut i = 0;
-            while i < futexes.len() {
-                if let Some(ctx) = futexes[i].context_lock.upgrade() {
-                    if Arc::ptr_eq(&ctx, &current_lock) {
-                        // Not woken up by FUTEX_WAKE, remove our entry
-                        futexes.swap_remove(i);
-                        found = true;
-                        break;
-                    }
-                    i += 1;
-                } else {
-                    futexes.swap_remove(i);
-                }
-            }
-
-            if futexes.is_empty() {
-                futexes_map.remove(&target_physaddr);
-            }
-
-            if !found {
+            if remove_futex_entry(futexes).is_none() {
                 drop(futexes_lock);
                 // Signal can still arrive even if already woken up, in that case we want to assume EINTR happened
                 let current_context_ref = context::current();
@@ -252,25 +259,21 @@ pub fn futex(
                 let mut futexes_map = FUTEXES.lock(token.token());
                 let (futexes_map, mut token) = futexes_map.token_split();
 
-                let is_empty = if let Some(futexes) = futexes_map.get_mut(&target_physaddr) {
+                if let Entry::Occupied(mut futexes_entry) = futexes_map.entry(target_physaddr) {
+                    let futexes = futexes_entry.get_mut();
                     let mut i = 0;
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
                     while i < futexes.len() && woken < val {
-                        // SAFETY: already verified index is less than length
-                        let futex = unsafe { futexes.get_unchecked_mut(i) };
-                        if let Some(ctx) = futex.context_lock.upgrade() {
+                        if let Some(ctx) = futexes[i].context_lock.upgrade() {
                             unblock_context(&ctx, &mut token.token().downgrade());
                         }
                         futexes.swap_remove(i);
                         woken += 1;
                     }
 
-                    futexes.is_empty()
-                } else {
-                    false
-                };
-                if is_empty {
-                    futexes_map.remove(&target_physaddr);
+                    if futexes.is_empty() {
+                        futexes_entry.remove();
+                    }
                 }
             }
 
@@ -278,4 +281,29 @@ pub fn futex(
         }
         _ => Err(Error::new(EINVAL)),
     }
+}
+
+fn remove_futex_entry(
+    mut futexes_entry: OccupiedEntry<'_, PhysicalAddress, Vec<FutexEntry>>,
+) -> Option<FutexEntry> {
+    let current_lock = context::current();
+    let futexes = futexes_entry.get_mut();
+    let mut i = 0;
+    while i < futexes.len() {
+        if let Some(ctx) = futexes[i].context_lock.upgrade() {
+            if Arc::ptr_eq(&ctx, &current_lock) {
+                // Not woken up by FUTEX_WAKE, remove our entry
+                return Some(futexes.swap_remove(i));
+            }
+            i += 1;
+        } else {
+            futexes.swap_remove(i);
+        }
+    }
+
+    if futexes.is_empty() {
+        futexes_entry.remove();
+    }
+
+    None
 }
