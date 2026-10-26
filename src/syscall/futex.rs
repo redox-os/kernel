@@ -117,6 +117,13 @@ pub fn futex(
                 .none_if_null()
                 .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
                 .transpose()?;
+            // Must be aligned, otherwise it could cross a page boundary and mess up the
+            // (simpler) validation we did in the first place.
+            if op == FUTEX_WAIT && !addr.is_multiple_of(4) {
+                return Err(Error::new(EINVAL));
+            } else if op == FUTEX_WAIT64 && !addr.is_multiple_of(8) {
+                return Err(Error::new(EINVAL));
+            }
 
             {
                 let context_lock = context::current();
@@ -133,8 +140,8 @@ pub fn futex(
                     {
                         return Err(Error::new(EINTR));
                     }
-
                     context.block("futex");
+                    // Do not return early until rollback handled
                 }
 
                 // Target target_physaddr
@@ -152,58 +159,53 @@ pub fn futex(
 
                 // Might be changing, read again to make sure
                 let new_target_physaddr =
-                    validate_and_translate_virt(&addr_space_guard, target_virtaddr)
-                        .ok_or(Error::new(EFAULT))?;
+                    validate_and_translate_virt(&addr_space_guard, target_virtaddr);
 
-                let (fetched, expected) = if op == FUTEX_WAIT {
-                    // Must be aligned, otherwise it could cross a page boundary and mess up the
-                    // (simpler) validation we did in the first place.
-                    if !addr.is_multiple_of(4) {
-                        return Err(Error::new(EINVAL));
-                    }
-
-                    // TODO: On systems where virtual memory is not abundant, we might instead
-                    // add an atomic usercopy function.
-                    let accessible_addr =
-                        crate::memory::RmmA::phys_to_virt(new_target_physaddr).data();
-
-                    (
-                        u64::from(unsafe {
-                            (*(accessible_addr as *const AtomicU32)).load(Ordering::SeqCst)
-                        }),
-                        u64::from(val as u32),
-                    )
-                } else {
-                    #[cfg(target_has_atomic = "64")]
-                    {
-                        use core::sync::atomic::AtomicU64;
-
-                        // op == FUTEX_WAIT64
-                        if !addr.is_multiple_of(8) {
-                            return Err(Error::new(EINVAL));
-                        }
-
+                let (fetched, expected) = if let Some(target_physaddr) = new_target_physaddr {
+                    if op == FUTEX_WAIT {
                         // TODO: On systems where virtual memory is not abundant, we might instead
                         // add an atomic usercopy function.
                         let accessible_addr =
-                            crate::memory::RmmA::phys_to_virt(new_target_physaddr).data();
+                            crate::memory::RmmA::phys_to_virt(target_physaddr).data();
 
                         (
-                            unsafe {
-                                (*(accessible_addr as *const AtomicU64)).load(Ordering::SeqCst)
-                            },
-                            val as u64,
+                            u64::from(unsafe {
+                                (*(accessible_addr as *const AtomicU32)).load(Ordering::SeqCst)
+                            }),
+                            u64::from(val as u32),
                         )
+                    } else {
+                        #[cfg(target_has_atomic = "64")]
+                        {
+                            use core::sync::atomic::AtomicU64;
+
+                            // TODO: On systems where virtual memory is not abundant, we might instead
+                            // add an atomic usercopy function.
+                            let accessible_addr =
+                                crate::memory::RmmA::phys_to_virt(target_physaddr).data();
+
+                            (
+                                unsafe {
+                                    (*(accessible_addr as *const AtomicU64)).load(Ordering::SeqCst)
+                                },
+                                val as u64,
+                            )
+                        }
+                        #[cfg(not(target_has_atomic = "64"))]
+                        {
+                            // TODO: rollback
+                            return Err(Error::new(crate::syscall::error::EOPNOTSUPP));
+                        }
                     }
-                    #[cfg(not(target_has_atomic = "64"))]
-                    {
-                        return Err(Error::new(crate::syscall::error::EOPNOTSUPP));
-                    }
+                } else {
+                    (0, 1)
                 };
 
                 drop(addr_space_guard);
 
-                if fetched != expected || new_target_physaddr != target_physaddr {
+                if new_target_physaddr.is_none_or(|new| new != target_physaddr)
+                    || fetched != expected
+                {
                     // The value or physical address is changed before switching, rollback
                     // TODO: Changing physical address should still be allowed, but our futex can't handle remap
                     if let Entry::Occupied(futexes_entry) = futexes.entry(target_physaddr) {
