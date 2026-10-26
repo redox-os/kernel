@@ -25,7 +25,9 @@ use crate::{
     syscall::error::{Error, ENOMEM},
 };
 pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
-use rmm::{BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea};
+use rmm::{
+    BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea, MAX_MEMORY_AREA_COUNT,
+};
 
 mod kernel_mapper;
 pub mod page;
@@ -34,12 +36,13 @@ pub use page::*;
 pub type PageMapper = rmm::PageMapper<RmmA, crate::memory::TheFrameAllocator>;
 
 /// Available physical memory areas
-pub(crate) static AREAS: SyncUnsafeCell<[rmm::MemoryArea; 512]> = SyncUnsafeCell::new(
-    [rmm::MemoryArea {
-        base: PhysicalAddress::new(0),
-        size: 0,
-    }; 512],
-);
+pub(crate) static AREAS: SyncUnsafeCell<[rmm::MemoryArea; MAX_MEMORY_AREA_COUNT]> =
+    SyncUnsafeCell::new(
+        [rmm::MemoryArea {
+            base: PhysicalAddress::new(0),
+            size: 0,
+        }; MAX_MEMORY_AREA_COUNT],
+    );
 pub(crate) static AREA_COUNT: SyncUnsafeCell<u16> = SyncUnsafeCell::new(0);
 
 // TODO: Share code
