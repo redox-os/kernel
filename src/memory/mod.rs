@@ -26,7 +26,8 @@ use crate::{
 };
 pub use rmm::{Arch as RmmArch, PageFlags, PhysicalAddress, TableKind, VirtualAddress};
 use rmm::{
-    BumpAllocator, FrameAllocator, FrameCount, FrameUsage, MemoryArea, MAX_MEMORY_AREA_COUNT,
+    BumpAllocator, DiscontiguousMemoryArea, FrameAllocator, FrameCount, FrameUsage, MemoryArea,
+    MAX_MEMORY_AREA_COUNT,
 };
 
 mod kernel_mapper;
@@ -799,28 +800,13 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
         }
     };
 
-    let mut sections_fill = |region: Option<MemoryArea>,
-                             i: &mut usize, // out parameter
-                             force: bool|
-     -> (Option<MemoryArea>, bool) {
-        let mut bool_res = false;
-        let mut iter = free_areas_iter().peekable();
+    let mut dis = DiscontiguousMemoryArea::new(free_areas, offset_into_first_free_area);
 
-        while let Some(mut memory_map_area) = iter.next() {
-            if !force
-                && region.is_some_and(|region| {
-                    if memory_map_area.base < region.base.add(region.size)
-                        && region.base < memory_map_area.base.add(memory_map_area.size)
-                    {
-                        bool_res = true
-                    }
-                    memory_map_area.base < region.base
-                        || memory_map_area.base.data() >= region.base.data() + region.size
-                })
-            {
-                continue;
-            }
+    let mut sections_fill = |i: &mut usize, areas: &[MemoryArea]| {
+        let mut iter = areas.iter().filter(|e| e.size != usize::MAX).peekable();
 
+        while let Some(memory_map_area) = iter.next() {
+            let mut memory_map_area = memory_map_area.clone();
             // TODO: NonZeroUsize
 
             // TODO: x86_32 fails without this check
@@ -837,13 +823,6 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
 
             while let Some(next_area) = iter.peek()
                 && next_area.base == memory_map_area.base.add(memory_map_area.size)
-                && if let Some(region) = region {
-                    next_area.base >= region.base
-                        && next_area.base.data() < region.base.data() + region.size
-                        && !force
-                } else {
-                    true
-                }
             {
                 memory_map_area.size += next_area.size;
                 let _ = iter.next();
@@ -862,7 +841,6 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
 
             let mut pages_left = memory_map_area.size.div_floor(PAGE_SIZE);
             let mut base = Frame::containing(memory_map_area.base);
-            let mut return_value = None;
 
             while pages_left > 0 {
                 let page_info_max_count = core::cmp::min(pages_left, MAX_SECTION_PAGE_COUNT);
@@ -870,25 +848,6 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
                     (MAX_SECTION_SIZE - (base.base().data() % MAX_SECTION_SIZE)) / PAGE_SIZE;
                 let mut page_info_count =
                     core::cmp::min(page_info_max_count, pages_to_next_section);
-
-                if let Some(region) = region
-                    && base.base() >= region.base
-                    && base.base().data() < region.base.data() + region.size
-                    && (page_info_count * PAGE_SIZE
-                        > (region.base.data() + region.size - base.base().data()))
-                {
-                    let mut end = region.base.data() + region.size;
-                    page_info_count =
-                        (region.base.data() + region.size - base.base().data()) / PAGE_SIZE;
-                    if page_info_count > MAX_SECTION_PAGE_COUNT {
-                        page_info_count = MAX_SECTION_PAGE_COUNT;
-                        end = base.base().data() + MAX_SECTION_PAGE_COUNT * PAGE_SIZE;
-                    }
-                    return_value = Some(MemoryArea {
-                        base: PhysicalAddress::new(end),
-                        size: (base.physaddr.get() + pages_left * PAGE_SIZE) - end,
-                    });
-                }
 
                 let page_info_array_size_pages =
                     (page_info_count * size_of::<PageInfo>()).div_ceil(PAGE_SIZE);
@@ -911,16 +870,11 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
                     frames: page_info_array,
                 };
                 i.add_assign(1);
-                bool_res = true;
 
                 pages_left -= page_info_count;
                 base = base.next_by(page_info_count);
-                if return_value.is_some() {
-                    return (return_value, bool_res);
-                }
             }
         }
-        (None, bool_res)
     };
     let mut i = 0;
 
@@ -930,22 +884,21 @@ fn init_sections(allocator: &mut BumpAllocator<RmmA>) -> Option<numa::RegionMask
         let mut region_mask: numa::RegionMask = [false; numa::MAX_MEM_REGIONS];
 
         for (index, region) in regions.enumerate() {
-            let mut sections_fill_result = Some(region);
-            let mut force = false;
-            let mut bool_res = false;
-
-            while let Some(region) = sections_fill_result {
-                (sections_fill_result, bool_res) = sections_fill(Some(region), &mut i, force);
-
-                if !region_mask[index] {
-                    region_mask[index] = bool_res
-                }
-                force = true;
+            if index == 0 {
+                let left = dis.bisect(region.base, true);
+                assert_eq!(left.count(), 0);
             }
+            let left = dis.bisect(region.base.add(region.size), true);
+
+            if left.count() != 0 {
+                region_mask[index] = true;
+                sections_fill(&mut i, left.areas());
+            }
+            dis = dis.bisect(region.base.add(region.size), false);
         }
         Some(region_mask)
     } else {
-        sections_fill(None, &mut i, false);
+        sections_fill(&mut i, dis.areas());
         None
     };
 

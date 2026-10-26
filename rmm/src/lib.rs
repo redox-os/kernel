@@ -102,13 +102,14 @@ pub struct MemoryArea {
 pub const MAX_MEMORY_AREA_COUNT: usize = 512;
 
 /// A collection of discrete free areas which may or may not be contiguous.
+#[derive(Debug)]
 pub struct DiscontiguousMemoryArea {
     areas: [MemoryArea; MAX_MEMORY_AREA_COUNT],
     count: usize,
 }
 
 impl DiscontiguousMemoryArea {
-    pub fn new(areas: &[MemoryArea]) -> Self {
+    pub fn new(areas: &[MemoryArea], offset: usize) -> Self {
         let mut this = Self {
             areas: [MemoryArea {
                 base: PhysicalAddress::new(0),
@@ -119,6 +120,8 @@ impl DiscontiguousMemoryArea {
 
         this.areas[..areas.len()].copy_from_slice(areas);
         this.areas[..areas.len()].sort_unstable_by_key(|e| e.base.data());
+        this.areas[0].size = this.areas[0].size - offset;
+        this.areas[0].base = this.areas[0].base.add(offset);
         this
     }
 
@@ -147,14 +150,16 @@ impl DiscontiguousMemoryArea {
                 new.areas[0..new.count].copy_from_slice(&self.areas[range]);
 
                 if left {
-                    let last = new.count - 1;
-                    if at >= new.areas[last].base
+                    let last = new.count.checked_sub(1);
+                    if let Some(last) = last
+                        && at >= new.areas[last].base
                         && at < new.areas[last].base.add(new.areas[last].size)
                     {
                         new.areas[last].size = at.data() - new.areas[last].base.data();
                     }
                 } else {
-                    if at >= self.areas[e - 1].base
+                    if e != 0
+                        && at >= self.areas[e - 1].base
                         && at < self.areas[e - 1].base.add(self.areas[e - 1].size)
                     {
                         let rem = new.areas.shift_right(
@@ -176,6 +181,14 @@ impl DiscontiguousMemoryArea {
             }
         }
     }
+
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    pub fn areas(&self) -> &[MemoryArea] {
+        &self.areas
+    }
 }
 
 #[test]
@@ -194,7 +207,7 @@ pub fn test_discontiguous_memory_area() {
     areas[2].base = PhysicalAddress(205_000);
     areas[2].size = 5_000;
 
-    let dis = DiscontiguousMemoryArea::new(&areas[0..3]);
+    let dis = DiscontiguousMemoryArea::new(&areas[0..3], 0);
 
     // the case when the bisection point lies in a hole between two free areas
     {
@@ -286,4 +299,48 @@ pub fn test_discontiguous_memory_area() {
             right.areas[1].size
         );
     } // the case when the bisection point overlaps with the start of a free area
+
+    areas.iter_mut().for_each(|e| {
+        *e = MemoryArea {
+            base: PhysicalAddress(0),
+            size: usize::MAX,
+        }
+    });
+    areas[0] = MemoryArea {
+        base: PhysicalAddress(0x100000000),
+        size: 32212254720,
+    };
+
+    let dis = DiscontiguousMemoryArea::new(&areas[0..1], 0);
+
+    // the case when the `e` in `Err(e)` is equal to `count`
+    {
+        let left = dis.bisect(PhysicalAddress(0x100000000 + 0x180000000), true);
+        assert!(
+            left.count == 1
+                && left.areas[0].base.data() == 0x100000000
+                && left.areas[0].size == 0x180000000,
+            "Assertion 7 failed: {}, {}, {}",
+            left.count,
+            left.areas[0].base.data(),
+            left.areas[0].size
+        );
+
+        let right = dis.bisect(PhysicalAddress(0x100000000 + 0x180000000), false);
+        assert!(
+            right.count == 1
+                && right.areas[0].base.data() == 0x100000000 + 0x180000000
+                && right.areas[0].size == 25769803776,
+            "Assertion 8 failed: {}, {}, {}",
+            right.count,
+            right.areas[0].base.data(),
+            right.areas[0].size
+        );
+    } // the case when the `e` in `Err(e)` is equal to `count`
+
+    // the case when the `e` in `Err(e)` is equal to 0
+    {
+        let left = dis.bisect(PhysicalAddress(0), true);
+        debug_assert!(left.count() == 0, "Assertion 9 failed: {}", left.count);
+    } // the case when the `e` in `Err(e)` is equal to 0
 }
