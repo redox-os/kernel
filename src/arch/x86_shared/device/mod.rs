@@ -93,6 +93,10 @@ pub unsafe fn init_noncore() {
 fn start_apic_timer() -> bool {
     #[cfg(feature = "x86_kvm_pv")]
     {
+        // TODO: The period is cached from the pvclock scale, so a KVM rescale
+        // (e.g. migration to a host with a different TSC frequency) changes the
+        // tick rate. Investigate the the pvclock stable bit, as well as recomputing
+        // inside the version check on re-arm, or caching only with invariant TSC.
         if let Some(ticks) = tsc::tsc_ticks_for_ns(pit::RATE) {
             return unsafe { local_apic::start_tsc_deadline(ticks) };
         }
