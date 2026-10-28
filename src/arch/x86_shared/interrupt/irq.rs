@@ -7,10 +7,12 @@ use crate::{
         device::{
             ioapic, local_apic, pic, pit,
             serial::{COM1, COM2},
+            AP_NEEDS_PIT_IPI,
         },
         ipi::{ipi, IpiKind, IpiTarget},
     },
     context::{self, timeout},
+    cpu_set::LogicalCpuId,
     percpu::PercpuBlock,
     scheme::{irq::irq_trigger, serio::serio_input},
     sync::CleanLockToken,
@@ -75,7 +77,13 @@ unsafe fn trigger(irq: u8) {
                     pic_mask(irq)
                 }
             }
-            IrqMethod::Apic => ioapic_mask(irq),
+            // Only IRQs 0-15 have I/O APIC entries programmed by `ioapic::init`. IRQs 16 and up
+            // are MSI vectors and do not go through the I/O APIC.
+            IrqMethod::Apic => {
+                if irq < 16 {
+                    ioapic_mask(irq)
+                }
+            }
         }
         let mut token = CleanLockToken::new();
         irq_trigger(irq, &mut token);
@@ -92,7 +100,13 @@ pub unsafe fn acknowledge(irq: usize) {
                     pic_unmask(irq)
                 }
             }
-            IrqMethod::Apic => ioapic_unmask(irq),
+            // See `trigger`: unmasking an I/O APIC entry for an MSI IRQ would enable a pin
+            // whose redirection entry was never programmed.
+            IrqMethod::Apic => {
+                if irq < 16 {
+                    ioapic_unmask(irq)
+                }
+            }
         }
     }
 }
@@ -304,9 +318,27 @@ interrupt!(ata2, || {
 });
 
 interrupt!(lapic_timer, || {
-    println!("Local apic timer interrupt");
     unsafe { lapic_eoi() };
+
+    // TSC-deadline mode is one-shot: the timer disarms itself on firing (SDM Vol. 3A, 13.5.4.1).
+    // Re-arm before anything below, since `tick` may switch away from here.
+    unsafe { local_apic::rearm_tsc_deadline() };
+
+    // Same work as `pit_stack`, minus `time::OFFSET += pit::RATE`: the timer is only armed
+    // when the KVM pvclock supplies `monotonic_absolute`, so OFFSET is never consulted.
+    // Every CPU runs its own copy of this timer (`device::init_ap_timer`), so the BSP only
+    // sends `IpiKind::Pit` for APs that could not arm one. Timeouts are global and are
+    // drained on the BSP alone.
+    let mut token = unsafe { CleanLockToken::new() };
+    if PercpuBlock::current().cpu_id == LogicalCpuId::BSP {
+        if AP_NEEDS_PIT_IPI.load(Ordering::Relaxed) {
+            ipi(IpiKind::Pit, IpiTarget::Other);
+        }
+        timeout::trigger(&mut token);
+    }
+    context::switch::tick(&mut token);
 });
+
 #[cfg(feature = "profiling")]
 interrupt!(aux_timer, || {
     unsafe { lapic_eoi() };

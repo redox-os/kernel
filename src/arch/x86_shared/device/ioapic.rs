@@ -82,7 +82,9 @@ impl IoApic {
     #[allow(dead_code)]
     pub fn new(regs_base: *const u32, gsi_start: u32) -> Self {
         let mut regs = IoApicRegs { pointer: regs_base };
-        let count = regs.max_redirection_table_entries();
+        // IOAPICVER[23:16] is the "Maximum Redirection Entry", i.e. the number of entries minus
+        // one (Intel 82093AA I/O APIC datasheet, register 01h).
+        let count = regs.max_redirection_table_entries() + 1;
 
         Self {
             regs: Mutex::new(regs),
@@ -173,9 +175,9 @@ impl fmt::Debug for IoApic {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 let mut guard = self.0.lock();
 
-                let count = guard.max_redirection_table_entries();
+                let max_idx = guard.max_redirection_table_entries();
                 f.debug_list()
-                    .entries((0..count).map(|i| guard.read_ioredtbl(i)))
+                    .entries((0..=max_idx).map(|i| guard.read_ioredtbl(i)))
                     .finish()
             }
         }
@@ -282,7 +284,6 @@ pub unsafe fn handle_src_override(src_override: &'static MadtIntSrcOverride) {
     }
 }
 
-#[allow(dead_code)]
 pub unsafe fn init() {
     unsafe {
         let bsp_apic_id = ApicId::new(u32::from(
@@ -296,8 +297,13 @@ pub unsafe fn init() {
                 // TODO: Parse MP tables too.
                 None => return,
             };
+            // FLAG_PCAT means a PC-AT dual-8259 is wired up. QEMU q35 sets it,
+            // and `pic::init` already uses that controller. Masking it here and
+            // taking the I/O APIC would change EOI for every IRQ on that machine.
+            // Cloud Hypervisor has no 8259 and leaves the flag clear.
             if madt.flags & madt::FLAG_PCAT != 0 {
-                pic::disable();
+                println!("PC-AT 8259 present, keeping PIC.");
+                return;
             }
 
             // find all I/O APICs (usually one).
@@ -310,11 +316,15 @@ pub unsafe fn init() {
                 }
             }
         }
-        println!(
-            "I/O APICs: {:?}, overrides: {:?}",
-            ioapics(),
-            src_overrides()
-        );
+
+        if ioapics().is_empty() {
+            println!("No I/O APIC described, keeping 8259 PIC.");
+            return;
+        }
+
+        // With PCAT_COMPAT clear there should be no 8259, but if firmware has
+        // one wired anyway, its IRQs would arrive alongside the I/O APIC's.
+        pic::disable();
 
         // map the legacy PC-compatible IRQs (0-15) to 32-47, just like we did with 8259 PIC (if it
         // wouldn't have been disabled due to this I/O APIC)

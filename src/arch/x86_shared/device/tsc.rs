@@ -95,6 +95,48 @@ pub fn monotonic_absolute() -> Option<u128> {
     }
 }
 
+/// Convert a duration to TSC ticks using the KVM pvclock scale.
+///
+/// `ns = ((ticks << shift) * mul) >> 32`, with a negative shift meaning a right shift of `ticks`.
+pub fn tsc_ticks_for_ns(ns: u128) -> Option<u64> {
+    let ptr = PercpuBlock::current()
+        .misc_arch_info
+        .tsc_info
+        .vcpu_page
+        .get();
+    if ptr.is_null() || ns == 0 {
+        return None;
+    }
+
+    let (shift, mul) = unsafe {
+        loop {
+            let cur_version = addr_of!((*ptr).version).read_volatile();
+            if cur_version & 1 == 1 {
+                continue;
+            }
+            let shift = addr_of!((*ptr).tsc_shift).read_volatile();
+            let mul = addr_of!((*ptr).tsc_to_system_mul).read_volatile();
+            let new_version = addr_of!((*ptr).version).read_volatile();
+            if new_version != cur_version || new_version & 1 == 1 {
+                continue;
+            }
+            break (shift, mul);
+        }
+    };
+    if mul == 0 {
+        return None;
+    }
+
+    let scaled = (ns << 32) / u128::from(mul);
+    let shift_abs = u32::from(shift.unsigned_abs());
+    let ticks = if shift >= 0 {
+        scaled.checked_shr(shift_abs)?
+    } else {
+        scaled.checked_shl(shift_abs)?
+    };
+    u64::try_from(ticks).ok().filter(|ticks| *ticks > 0)
+}
+
 pub fn get_kvm_support() -> &'static Option<KvmSupport> {
     static KVM_SUPPORT: Once<Option<KvmSupport>> = Once::new();
 
