@@ -357,7 +357,7 @@ fn call_fdwrite(
 
     // TODO: Ensure deadlocks can't happen
     let (scheme, number, cap_rights, descs_to_send) = {
-        let (scheme, number) = with_current_ctx(token, |context, token| {
+        let (scheme, number, cap_rights) = with_current_ctx(token, |context, token| {
             let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
             file_descriptor
                 .cap_rights
@@ -374,6 +374,7 @@ fn call_fdwrite(
             Ok((
                 scheme,
                 number,
+                cap_rights,
                 if flags.contains(CallFlags::FD_CLONE) {
                     context.bulk_get_files(&fds, token)
                 } else {

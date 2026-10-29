@@ -1463,24 +1463,8 @@ impl UserScheme {
         let len = dst.len().min(metadata.len());
         dst[..len].copy_from_slice(&metadata[..len]);
 
-        let extra_sqe = has_extra.then_some(Sqe {
-            opcode: Opcode::CapRights as u8,
-            sqe_flags: SqeFlags::empty(),
-            _rsvd: 0,
-            tag,
-            caller: ctx.pid as u64,
-            args: [cap_rights.bits(), 0, 0, 0, 0, 0],
-        });
-
-        match inner.call_inner(
-            Vec::new(),
-            sqe,
-            extra_sqe,
-            address.span(),
-            token,
-            allow_direct_switch,
-        ) {
-            Ok(Response::Regular(res, _, notify_on_detach)) => {
+        match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch) {
+            Ok(Response::Regular(res, _, notify_on_detach, _)) => {
                 address.release(token)?;
                 on_response(notify_on_detach, token);
                 res
