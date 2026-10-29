@@ -144,30 +144,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             };
 
             format!(
-                "std_fs_call({}, {fds}, {c:x}+{d}, {:?}, {:0x?})",
-                match StdFsCallKind::try_from_raw(kind as u8) {
-                    Some(kind) => {
-                        use StdFsCallKind::*;
-                        match kind {
-                            Fchmod => "Fchmod",
-                            Fchown => "Fchown",
-                            Getdents => "Getdents",
-                            Fstat => "Fstat",
-                            Fstatvfs => "Fstatvfs",
-                            Fsync => "Fsync",
-                            Ftruncate => "Ftruncate",
-                            Futimens => "Futimens",
-                            Unlinkat => "Unlinkat",
-                            Relpathat => "Relpathat",
-                            Lock => "Lock",
-                            Unlock => "Unlock",
-                            GetLock => "GetLock",
-                            Frenameat => "Frenameat",
-                            Flinkat => "Flinkat",
-                        }
-                    }
-                    None => "UNKNOWN",
-                },
+                "std_fs_call({:?}, {fds}, {c:x}+{d}, {:?}, {:0x?})",
+                StdFsCallKind::try_from_raw(kind as u8),
                 flags,
                 // TODO: u64
                 metadata,
