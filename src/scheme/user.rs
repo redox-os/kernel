@@ -10,7 +10,7 @@ use slab::Slab;
 use syscall::{
     schemev2::{Cqe, CqeFlags, CqeOpcode, Opcode, Sqe, SqeFlags},
     CallFlags, CapRights, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
-    SendFdFlags, StdFsCallKind, MAP_FIXED_NOREPLACE,
+    SendFdFlags, StdFsCallKind, EVENT_HUP, MAP_FIXED_NOREPLACE,
 };
 
 use crate::{

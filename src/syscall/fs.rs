@@ -377,7 +377,7 @@ fn call_fdwrite(
                 }?
                 .into_iter()
                 .map(|f| (f.description, f.cap_rights))
-                .collect(),
+                .collect::<Vec<_>>(),
             ))
         })?
     };
