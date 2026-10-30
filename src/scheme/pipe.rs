@@ -1,7 +1,10 @@
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use syscall::{data::GlobalSchemes, CallFlags, CapRights};
+use syscall::{
+    data::{FdType, GlobalSchemes},
+    CallFlags, CapRights,
+};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
@@ -206,6 +209,7 @@ impl KernelScheme for PipeScheme {
             key | WRITE_NOT_READ_BIT,
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
     fn kopenat(
@@ -238,6 +242,7 @@ impl KernelScheme for PipeScheme {
                     key | WRITE_NOT_READ_BIT,
                     InternalFlags::empty(),
                     CapRights::ALL,
+                    FdType::default(),
                 ));
             } else {
                 return Err(Error::new(EBADF));
@@ -254,6 +259,7 @@ impl KernelScheme for PipeScheme {
                     id,
                     InternalFlags::empty(),
                     CapRights::ALL,
+                    FdType::default(),
                 ));
             }
             _ => return Err(Error::new(ENOENT)),
@@ -265,6 +271,7 @@ impl KernelScheme for PipeScheme {
             read_id,
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
 

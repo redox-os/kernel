@@ -1,4 +1,7 @@
-use syscall::{data::GlobalSchemes, CapRights};
+use syscall::{
+    data::{FdType, GlobalSchemes},
+    CapRights,
+};
 
 use crate::{
     devices::graphical_debug,
@@ -105,6 +108,7 @@ impl KernelScheme for DebugScheme {
             id,
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
 

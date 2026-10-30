@@ -84,6 +84,7 @@ impl KernelScheme for DtbScheme {
                 id,
                 InternalFlags::POSITIONED,
                 syscall::CapRights::ALL,
+                syscall::FdType::default(),
             ));
         }
 

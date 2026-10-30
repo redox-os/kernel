@@ -13,7 +13,7 @@ use fdt::properties::PHandle;
 use smallvec::SmallVec;
 use spin::{Mutex, Once};
 use syscall::{
-    data::GlobalSchemes,
+    data::{FdType, GlobalSchemes},
     dirent::{DirEntry, DirentBuf, DirentKind},
     CapRights,
 };
@@ -361,7 +361,12 @@ impl crate::scheme::KernelScheme for IrqScheme {
             return Err(Error::new(ENOENT));
         };
         let fd = HANDLES.write(token.token()).insert(handle);
-        Ok(OpenResult::SchemeLocal(fd, int_flags, CapRights::ALL))
+        Ok(OpenResult::SchemeLocal(
+            fd,
+            int_flags,
+            CapRights::ALL,
+            FdType::default(),
+        ))
     }
     fn getdents(
         &self,

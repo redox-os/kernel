@@ -596,3 +596,6 @@ impl CpuSet {
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct FdType(pub u32);
+impl FdType {
+    pub const ANY: Self = Self(u32::MAX);
+}

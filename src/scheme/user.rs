@@ -30,7 +30,7 @@ use crate::{
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{
-        data::{Map, StdFsCallMeta},
+        data::{FdType, Map, StdFsCallMeta},
         error::*,
         flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
         usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
@@ -1508,19 +1508,31 @@ impl KernelScheme for UserScheme {
             Response::Regular(res, fl, _, meta) => Ok({
                 let fd = res?;
                 let cap_rights = CapRights::from_bits_retain(meta[0]);
+                let fd_type = FdType(meta[1] as u32);
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
                     cap_rights,
+                    fd_type,
                 )
             }),
             Response::Fd(desc, orig_rights, meta) => {
-                let cap_rights = CapRights::from_bits_retain(meta[0]);
-                let generic_mask = cap_rights & !CapRights::SCHEME_MASK;
-                let target_scheme_bits = orig_rights & CapRights::SCHEME_MASK;
-                let new_rights =
-                    (orig_rights & generic_mask) | target_scheme_bits | CapRights::SCHEME_MASK;
-                Ok(OpenResult::External(desc, new_rights))
+                let requested_rights = CapRights::from_bits_retain(meta[0]);
+
+                let requested_fd_type =
+                    FdType(u32::try_from(meta[1]).map_err(|_| Error::new(EINVAL))?);
+
+                let actual_fd_type = *desc.read(token.token()).fd_type();
+
+                let cap_rights = if requested_fd_type == actual_fd_type {
+                    orig_rights & requested_rights
+                } else if requested_fd_type == FdType::ANY {
+                    orig_rights & (requested_rights.kernel_bits() | CapRights::SCHEME_MASK)
+                } else {
+                    return Err(Error::new(EINVAL));
+                };
+
+                Ok(OpenResult::External(desc, cap_rights))
             }
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
@@ -1606,64 +1618,6 @@ impl KernelScheme for UserScheme {
             )?
             .into_regular()
             .map(EventFlags::from_bits_truncate)
-    }
-
-    fn flink(
-        &self,
-        file: usize,
-        path: &str,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match self.inner.call(
-            ctx,
-            Vec::new(),
-            Opcode::Flink,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-            DEF_ALLOW_DIRECT_SWITCH,
-        ) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(err) => {
-                let _ = address.release(token);
-                Err(err)
-            }
-        }?;
-        Ok(())
-    }
-
-    fn frename(
-        &self,
-        file: usize,
-        path: &str,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match self.inner.call(
-            ctx,
-            Vec::new(),
-            Opcode::Frename,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-            DEF_ALLOW_DIRECT_SWITCH,
-        ) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(err) => {
-                let _ = address.release(token);
-                Err(err)
-            }
-        }?;
-        Ok(())
     }
 
     fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
@@ -1757,10 +1711,12 @@ impl KernelScheme for UserScheme {
             Response::Regular(res, fl, _, meta) => Ok({
                 let fd = res?;
                 let cap_rights = CapRights::from_bits_retain(meta[0]);
+                let fd_type = FdType(meta[1] as u32);
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
                     cap_rights,
+                    fd_type,
                 )
             }),
             Response::Fd(desc, orig_rights, meta) => {

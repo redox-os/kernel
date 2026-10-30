@@ -1,6 +1,9 @@
 use alloc::vec::Vec;
 use core::{fmt, str};
-use syscall::{data::GlobalSchemes, CapRights};
+use syscall::{
+    data::{FdType, GlobalSchemes},
+    CapRights,
+};
 
 use crate::{
     context::{file::InternalFlags, timeout},
@@ -101,6 +104,7 @@ impl KernelScheme for TimeScheme {
             id,
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
 

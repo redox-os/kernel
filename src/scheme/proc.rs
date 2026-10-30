@@ -40,7 +40,10 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, CapRights, CpuSet, Error, NumaMemoryPolicy};
+use syscall::{
+    data::{FdType, GlobalSchemes},
+    CapRights, CpuSet, Error, NumaMemoryPolicy,
+};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -748,7 +751,9 @@ impl KernelScheme for ProcScheme {
                             O_RDWR,
                             token,
                         )
-                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL))
+                        .map(|(r, fl)| {
+                            OpenResult::SchemeLocal(r, fl, CapRights::ALL, FdType::default())
+                        })
                 }
                 Handle {
                     kind: ContextHandle::OpenViaDup,
@@ -762,7 +767,9 @@ impl KernelScheme for ProcScheme {
                             O_RDWR,
                             token,
                         )
-                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL));
+                        .map(|(r, fl)| {
+                            OpenResult::SchemeLocal(r, fl, CapRights::ALL, FdType::default())
+                        });
                 }
 
                 Handle {
@@ -880,7 +887,7 @@ impl KernelScheme for ProcScheme {
             },
             token,
         )
-        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL))
+        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL, FdType::default()))
     }
     fn kfdwrite(
         &self,

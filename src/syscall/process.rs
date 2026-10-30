@@ -2,7 +2,7 @@ use alloc::sync::Arc;
 use core::{mem, num::NonZeroUsize};
 
 use rmm::Arch;
-use syscall::data::GlobalSchemes;
+use syscall::data::{FdType, GlobalSchemes};
 
 use crate::{
     context::{
@@ -283,13 +283,14 @@ fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockTo
         .insert_file(
             FileHandle::from(syscall::flag::UPPER_FDTBL_TAG | id.get()),
             FileDescriptor {
-                description: Arc::new(RwLock::new(FileDescription {
+                description: Arc::new(RwLock::new(FileDescription::new(
+                    0,
                     scheme_ref,
                     number,
-                    offset: 0,
-                    flags: (O_CREAT | O_RDWR) as u32,
-                    internal_flags: InternalFlags::empty(),
-                })),
+                    (O_CREAT | O_RDWR) as u32,
+                    InternalFlags::empty(),
+                    FdType::default(),
+                ))),
                 cap_rights: syscall::CapRights::ALL,
             },
             &mut token,

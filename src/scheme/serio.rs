@@ -3,7 +3,7 @@
 
 //use core::sync::atomic::AtomicBool;
 
-use syscall::data::GlobalSchemes;
+use syscall::data::{FdType, GlobalSchemes};
 
 use crate::{
     event,
@@ -109,6 +109,7 @@ impl KernelScheme for SerioScheme {
             id,
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
 

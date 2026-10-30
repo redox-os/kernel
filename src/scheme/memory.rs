@@ -225,6 +225,7 @@ impl KernelScheme for MemoryScheme {
                     SCHEME_ROOT_ID,
                     InternalFlags::empty(),
                     syscall::CapRights::ALL,
+                    syscall::FdType::default(),
                 ))
             }
 
@@ -265,6 +266,7 @@ impl KernelScheme for MemoryScheme {
             (handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16),
             InternalFlags::empty(),
             syscall::CapRights::ALL,
+            syscall::FdType::default(),
         ))
     }
     fn kcall(

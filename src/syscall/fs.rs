@@ -116,15 +116,16 @@ pub fn openat_into(
         );
 
         match res? {
-            OpenResult::SchemeLocal(number, internal_flags, cap_rights) => (
-                Arc::new(RwLock::new(FileDescription {
-                    offset: 0,
-                    internal_flags,
-                    scheme_ref: scheme.downgrade(),
+            OpenResult::SchemeLocal(number, internal_flags, cap_rights, fd_type) => (
+                Arc::new(RwLock::new(FileDescription::new(
+                    0,
+                    scheme.downgrade(),
                     number,
-                    flags: flags as u32,
-                })),
-                cap_rights.restrict(parent_caps),
+                    flags as u32,
+                    internal_flags,
+                    fd_type,
+                ))),
+                cap_rights,
             ),
             OpenResult::External(desc, cap_rights) => (desc, cap_rights),
         }
@@ -174,14 +175,15 @@ fn duplicate_file(
 
     let (new_description, cap_rights) =
         match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
-            OpenResult::SchemeLocal(number, internal_flags, cap_rights) => (
-                Arc::new(RwLock::new(FileDescription {
-                    offset: 0,
-                    internal_flags,
-                    scheme_ref: scheme.downgrade(),
+            OpenResult::SchemeLocal(number, internal_flags, cap_rights, fd_type) => (
+                Arc::new(RwLock::new(FileDescription::new(
+                    0,
+                    scheme.downgrade(),
                     number,
-                    flags: description.flags,
-                })),
+                    description.flags,
+                    internal_flags,
+                    fd_type,
+                ))),
                 cap_rights,
             ),
             OpenResult::External(desc, cap_rights) => (desc, cap_rights),

@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use syscall::{CapRights, EventFlags, O_NONBLOCK};
+use syscall::{data::FdType, CapRights, EventFlags, O_NONBLOCK};
 
 use crate::{
     context::file::InternalFlags,
@@ -41,6 +41,7 @@ impl KernelScheme for EventScheme {
             id.get(),
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
 

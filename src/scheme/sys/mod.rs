@@ -4,6 +4,7 @@
 // those to say shell-accessible fs-like APIs.
 
 use ::syscall::{
+    data::FdType,
     dirent::{DirEntry, DirentBuf, DirentKind},
     CapRights, EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
@@ -136,6 +137,7 @@ impl KernelScheme for SysScheme {
                 id,
                 InternalFlags::POSITIONED,
                 CapRights::ALL,
+                FdType::default(),
             ))
         } else {
             //Have to iterate to get the path without allocation
@@ -158,6 +160,7 @@ impl KernelScheme for SysScheme {
                 id,
                 InternalFlags::POSITIONED,
                 CapRights::ALL,
+                FdType::default(),
             ))
         }
     }

@@ -17,7 +17,7 @@ use core::{
 use hashbrown::hash_map::{self, DefaultHashBuilder, HashMap};
 use spin::Once;
 use syscall::{
-    data::{GlobalSchemes, NewFdParams, StdFsCallMeta},
+    data::{FdType, GlobalSchemes, NewFdParams, StdFsCallMeta},
     error::*,
     CallFlags, CapRights, EventFlags, MunmapFlags, StdFsCallKind,
 };
@@ -302,14 +302,15 @@ impl KernelScheme for SchemeList {
                 let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
 
                 return Ok(OpenResult::External(
-                    Arc::new(RwLock::new(FileDescription {
+                    Arc::new(RwLock::new(FileDescription::new(
+                        params.offset,
                         scheme_ref,
-                        number: params.number,
-                        offset: params.offset,
-                        flags: params.flags as u32,
-                        internal_flags: InternalFlags::from_extra0(params.internal_flags)
+                        params.number,
+                        params.flags as u32,
+                        InternalFlags::from_extra0(params.internal_flags)
                             .ok_or(Error::new(EINVAL))?,
-                    })),
+                        FdType::default(),
+                    ))),
                     CapRights::ALL,
                 ));
             }
@@ -335,6 +336,7 @@ impl KernelScheme for SchemeList {
             scheme_id.get(),
             InternalFlags::empty(),
             CapRights::ALL,
+            FdType::default(),
         ))
     }
 
@@ -724,24 +726,6 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
-    fn flink(
-        &self,
-        id: usize,
-        new_path: &str,
-        caller_ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
-    fn frename(
-        &self,
-        id: usize,
-        new_path: &str,
-        caller_ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
     fn fcntl(
         &self,
         id: usize,
@@ -858,7 +842,7 @@ pub trait KernelScheme: Send + Sync + 'static {
 
 #[derive(Debug)]
 pub enum OpenResult {
-    SchemeLocal(usize, InternalFlags, CapRights),
+    SchemeLocal(usize, InternalFlags, CapRights, FdType),
     External(Arc<LockedFileDescription>, CapRights),
 }
 pub struct CallerCtx {

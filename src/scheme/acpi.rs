@@ -134,6 +134,7 @@ impl KernelScheme for AcpiScheme {
             new_bits.bits(),
             InternalFlags::empty(),
             syscall::CapRights::ALL,
+            syscall::FdType::default(),
         ))
     }
     fn kcall(
