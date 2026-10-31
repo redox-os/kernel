@@ -15,10 +15,10 @@ use crate::{
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     sync::{CleanLockToken, LockToken, RwLock, L4},
-    syscall::{data::Stat, error::*, flag::*},
+    syscall::{error::*, flag::*},
 };
 
-use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
+use super::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo};
 
 fn with_current_ctx<T>(
     token: &mut CleanLockToken,
@@ -125,28 +125,6 @@ pub fn openat_into(
             .ok_or(Error::new(EEXIST))
     })
 }
-/// Unlinkat syscall
-pub fn unlinkat(
-    fh: FileHandle,
-    raw_path: UserSliceRo,
-    flags: usize,
-    token: &mut CleanLockToken,
-) -> Result<()> {
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let (caller_ctx, number, scheme) = with_current_ctx(token, |context, token| {
-        let caller_ctx = context.caller_ctx();
-        let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
-        let desc = pipe.description.read(token.token());
-        Ok((caller_ctx, desc.number, desc.scheme_ref.upgrade()?))
-    })?;
-
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    scheme.unlinkat(number, &path_buf, flags, caller_ctx, token)
-}
 
 /// Close syscall
 pub fn close(fd: FileHandle, token: &mut CleanLockToken) -> Result<()> {
@@ -208,51 +186,6 @@ pub fn dup_into(
     })
 }
 
-/// Duplicate file descriptor, replacing another
-pub fn dup2(
-    fd: FileHandle,
-    new_fd: FileHandle,
-    buf: UserSliceRo,
-    token: &mut CleanLockToken,
-) -> Result<FileHandle> {
-    if fd == new_fd && buf.is_empty() {
-        return Ok(new_fd);
-    }
-
-    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
-        Ok((
-            context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-        ))
-    })?;
-
-    let new_file = duplicate_file(file, buf, caller_ctx, token)?;
-
-    let old_file = {
-        let current_lock = context::current();
-        let mut current = current_lock.write(token.token());
-        let (context, mut split_token) = current.token_split();
-
-        let old_file = context.remove_file(new_fd, &mut split_token.token());
-
-        if context
-            .insert_file(new_fd, new_file, &mut split_token.token())
-            .is_none()
-        {
-            if let Some(old) = old_file {
-                context.insert_file(new_fd, old, &mut split_token.token());
-            }
-            return Err(Error::new(EMFILE));
-        }
-        old_file
-    };
-
-    if let Some(old) = old_file {
-        let _ = old.close(token);
-    }
-
-    Ok(new_fd)
-}
 pub fn call(
     fds: &[usize],
     payload: UserSliceRw,
@@ -440,11 +373,8 @@ fn call_fdread(
 
 /// File descriptor controls
 pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken) -> Result<usize> {
-    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
-        Ok((
-            context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-        ))
+    let file = with_current_ctx(token, |context, token| {
+        context.get_file(fd, token).ok_or(Error::new(EBADF))
     })?;
 
     let (scheme, number, flags) = {
@@ -452,21 +382,10 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         (desc.scheme_ref.upgrade()?, desc.number, desc.flags)
     };
 
-    if cmd == F_DUPFD {
-        let new_file = duplicate_file(file, UserSlice::empty(), caller_ctx, token)?;
-
-        return with_current_ctx(token, |context, token| {
-            context
-                .insert_file(FileHandle::from(arg), new_file, token)
-                .ok_or(Error::new(EMFILE))
-                .map(FileHandle::into)
-        });
-    }
-
     // Communicate fcntl with scheme
-    if cmd != F_GETFD && cmd != F_SETFD && cmd != F_GET_SCHEMEID {
+    if cmd != F_GET_SCHEMEID {
         scheme.fcntl(number, cmd, arg, token)?;
-    };
+    }
 
     // Perform kernel operation if scheme agrees
     with_current_ctx(token, |context, token| {
@@ -474,8 +393,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
         let (files, mut token) = files.token_split();
         match files.get_file_mut(fd) {
             Some(ref mut file) => match cmd {
-                F_GETFD => Ok(0),
-                F_SETFD => Ok(0),
                 F_GETFL => Ok(flags as usize),
                 F_SETFL => {
                     let new_flags = (flags & O_ACCMODE as u32) | (arg as u32 & !O_ACCMODE as u32);
@@ -493,75 +410,6 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
             },
             None => Err(Error::new(EBADF)),
         }
-    })
-}
-
-pub fn flink(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
-        Ok((
-            context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-        ))
-    })?;
-
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let (number, scheme) = {
-        let desc = file.description.read(token.token());
-        (desc.number, desc.scheme_ref.upgrade()?)
-    };
-
-    scheme.flink(number, path_buf.as_ref(), caller_ctx, token)
-}
-
-pub fn frename(fd: FileHandle, raw_path: UserSliceRo, token: &mut CleanLockToken) -> Result<()> {
-    let (caller_ctx, file) = with_current_ctx(token, |context, token| {
-        Ok((
-            context.caller_ctx(),
-            context.get_file(fd, token).ok_or(Error::new(EBADF))?,
-        ))
-    })?;
-
-    /*
-    let mut path_buf = BorrowedHtBuf::head()?;
-    let path = path_buf.use_for_string(raw_path)?;
-    */
-    let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
-
-    let (number, scheme) = {
-        let desc = file.description.read(token.token());
-        (desc.number, desc.scheme_ref.upgrade()?)
-    };
-
-    scheme.frename(number, path_buf.as_ref(), caller_ctx, token)
-}
-
-/// File status
-pub fn fstat(fd: FileHandle, user_buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-    file_op_generic_ext(fd, token, |scheme, _, desc, token| {
-        scheme.kfstat(desc.number, user_buf, token)?;
-
-        // TODO: Ensure only the kernel can access the stat when st_dev is set, or use another API
-        // for retrieving the scheme ID from a file descriptor.
-        // TODO: Less hacky method.
-        let st_dev = desc
-            .scheme_ref
-            .upgrade()?
-            .scheme_id()
-            .get()
-            .try_into()
-            .map_err(|_| Error::new(EOVERFLOW))?;
-        user_buf
-            .advance(core::mem::offset_of!(Stat, st_dev))
-            .and_then(|b| b.limit(8))
-            .ok_or(Error::new(EIO))?
-            .copy_from_slice(&u64::to_ne_bytes(st_dev))?;
-
-        Ok(())
     })
 }
 

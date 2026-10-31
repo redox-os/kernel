@@ -3,7 +3,7 @@ use core::{ascii, fmt::Debug};
 
 use super::{
     copy_path_to_buf,
-    data::{Map, Stat, TimeSpec},
+    data::{Map, TimeSpec},
     flag::*,
     number::*,
     usercopy::UserSlice,
@@ -54,26 +54,12 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             d & O_FCNTL_MASK,
             f
         ),
-        SYS_UNLINKAT => format!(
-            "unlinkat({} {:?}, {:#0x}, {}, {})",
-            b,
-            debug_path(c, d).as_ref().map(|p| ByteStr(p.as_bytes())),
-            e,
-            f,
-            g,
-        ),
         SYS_CLOSE => format!("close({})", b),
         SYS_DUP_INTO => format!(
             "dup_into({}, {:?}, out: {})",
             b,
             debug_buf(c, d).as_ref().map(|b| ByteStr(b)),
             e,
-        ),
-        SYS_DUP2 => format!(
-            "dup2({}, {}, {:?})",
-            b,
-            c,
-            debug_buf(d, e).as_ref().map(|b| ByteStr(b)),
         ),
         SYS_READ => format!("read({}, {:#X}, {})", b, c, d),
         SYS_READ2 => format!(
@@ -110,9 +96,6 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             "fcntl({}, {} ({}), {:#X})",
             b,
             match c {
-                F_DUPFD => "F_DUPFD",
-                F_GETFD => "F_GETFD",
-                F_SETFD => "F_SETFD",
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
                 F_GET_SCHEMEID => "F_GET_SCHEMEID",
@@ -127,14 +110,7 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Map>() }),
         ),
         SYS_FUNMAP => format!("funmap({:#X}, {:#X})", b, c,),
-        SYS_FLINK => format!("flink({}, {:?})", b, debug_path(c, d),),
         SYS_FPATH => format!("fpath({}, {:#X}, {})", b, c, d),
-        SYS_FRENAME => format!("frename({}, {:?})", b, debug_path(c, d),),
-        SYS_FSTAT => format!(
-            "fstat({}, {:?})",
-            b,
-            UserSlice::ro(c, d).and_then(|buf| unsafe { buf.read_exact::<Stat>() }),
-        ),
         SYS_FSYNC => format!("fsync({})", b),
         SYS_CALL => {
             let flags = CallFlags::from_bits_retain(e & !0xff);
@@ -168,30 +144,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
             };
 
             format!(
-                "std_fs_call({}, {fds}, {c:x}+{d}, {:?}, {:0x?})",
-                match StdFsCallKind::try_from_raw(kind as u8) {
-                    Some(kind) => {
-                        use StdFsCallKind::*;
-                        match kind {
-                            Fchmod => "Fchmod",
-                            Fchown => "Fchown",
-                            Getdents => "Getdents",
-                            Fstat => "Fstat",
-                            Fstatvfs => "Fstatvfs",
-                            Fsync => "Fsync",
-                            Ftruncate => "Ftruncate",
-                            Futimens => "Futimens",
-                            Unlinkat => "Unlinkat",
-                            Relpathat => "Relpathat",
-                            Lock => "Lock",
-                            Unlock => "Unlock",
-                            GetLock => "GetLock",
-                            Frenameat => "Frenameat",
-                            Flinkat => "Flinkat",
-                        }
-                    }
-                    None => "UNKNOWN",
-                },
+                "std_fs_call({:?}, {fds}, {c:x}+{d}, {:?}, {:0x?})",
+                StdFsCallKind::try_from_raw(kind as u8),
                 flags,
                 // TODO: u64
                 metadata,

@@ -1487,36 +1487,6 @@ impl KernelScheme for UserScheme {
         }
     }
 
-    fn unlinkat(
-        &self,
-        file: usize,
-        path: &str,
-        flags: usize,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match self.inner.call(
-            ctx,
-            Vec::new(),
-            Opcode::UnlinkAt,
-            [file, address.base(), address.len(), flags],
-            address.span(),
-            token,
-            DEF_ALLOW_DIRECT_SWITCH,
-        ) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(e) => {
-                let _ = address.release(token);
-                Err(e)
-            }
-        }?;
-        Ok(())
-    }
-
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner
@@ -1992,7 +1962,6 @@ impl KernelScheme for UserScheme {
             )
         }
     }
-
     fn kfdwrite(
         &self,
         number: usize,

@@ -52,9 +52,6 @@ bitflags! {
     }
 }
 
-pub const F_DUPFD: usize = 0;
-pub const F_GETFD: usize = 1;
-pub const F_SETFD: usize = 2;
 pub const F_GETFL: usize = 3;
 pub const F_SETFL: usize = 4;
 pub const F_GET_SCHEMEID: usize = 0x1000 | 1;
