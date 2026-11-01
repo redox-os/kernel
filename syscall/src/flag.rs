@@ -607,28 +607,30 @@ impl CapRights {
     pub const ALL: Self = Self::from_bits_retain(!0);
 
     #[inline]
-    pub fn kernel_bits(self) -> Self {
-        self & Self::KERNEL_MASK
+    pub const fn kernel_bits(self) -> Self {
+        Self::from_bits_retain(self.bits() & Self::KERNEL_MASK.bits())
     }
 
     #[inline]
-    pub fn scheme_bits(self) -> Self {
-        self & Self::SCHEME_MASK
+    pub const fn scheme_bits(self) -> Self {
+        Self::from_bits_retain(self.bits() & Self::SCHEME_MASK.bits())
     }
 
     #[inline]
-    pub fn scheme_rights(self) -> u64 {
-        (self & Self::SCHEME_MASK).bits() >> 16
+    pub const fn scheme_rights(self) -> u64 {
+        self.scheme_bits().bits() >> 16
     }
 
     #[inline]
-    pub fn from_scheme_rights(rights: u64) -> Self {
+    pub const fn from_scheme_rights(rights: u64) -> Self {
         Self::from_bits_retain((rights << 16) & Self::SCHEME_MASK.bits())
     }
 
     #[inline]
-    pub fn from_kernel_and_scheme(kernel_caps: Self, scheme_rights: u64) -> Self {
-        kernel_caps.kernel_bits() | Self::from_scheme_rights(scheme_rights)
+    pub const fn from_kernel_and_scheme(kernel_caps: Self, scheme_rights: u64) -> Self {
+        Self::from_bits_retain(
+            kernel_caps.kernel_bits().bits() | Self::from_scheme_rights(scheme_rights).bits(),
+        )
     }
 
     #[inline]
