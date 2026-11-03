@@ -35,12 +35,24 @@ use super::usercopy::UserSliceWo;
 ///
 pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
     let context_lock = Arc::clone(&*context::current());
+    exit_context(excp, token, context_lock);
+    context::switch(token);
+    unreachable!();
+}
+
+pub fn exit_context(
+    excp: Option<syscall::Exception>,
+    token: &mut CleanLockToken,
+    context_lock: Arc<RwLock<crate::sync::L4, context::Context>>,
+) {
     let (addrspace_opt, mut close_files) = {
         let mut context = context_lock.write(token.token());
         let (context, token) = context.token_split();
         let close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
-        let addrspace_opt = context.set_addr_space(None, token);
+        let addrspace_opt = context
+            .set_addr_space(None, token)
+            .and_then(|a| Arc::try_unwrap(a).ok());
         drop(mem::replace(&mut context.syscall_head, SyscallFrame::Dummy));
         drop(mem::replace(&mut context.syscall_tail, SyscallFrame::Dummy));
         (addrspace_opt, close_files)
@@ -48,9 +60,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
 
     // Files must be closed while context is valid so that messages can be passed
     close_files.force_close_all(token);
-    if let Some(addrspace) = addrspace_opt
-        && let Ok(addrspace) = Arc::try_unwrap(addrspace)
-    {
+    if let Some(addrspace) = addrspace_opt {
         addrspace.into_drop(token);
     }
     // TODO: Should status == Status::HardBlocked be handled differently?
@@ -79,8 +89,6 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
         drop(context_ref);
     }
     drop(close_files);
-    context::switch(token);
-    unreachable!();
 }
 
 pub fn mprotect(
