@@ -47,7 +47,7 @@ pub const TICK_INTERVAL: u64 = 3; // Approx 6.75 ms
 pub const BASE_SLICE_TICKS: u64 = TICK_INTERVAL * 3; // Approx 20.25 ms
 pub const NANOS_PER_TICK: u128 = 2_250_000; // 2.25 ms
 pub const STEAL_THRESHOLD: usize = 2;
-pub const STEAL_INTERVAL: usize = 2;
+pub const STEAL_INTERVAL: usize = 16; // Approx 108 ms
 pub const MAX_STEAL: usize = 2;
 
 /// Determines if a given context is eligible to be scheduled on a given CPU (in
@@ -729,17 +729,18 @@ fn select_next_context(
         let num_cpu = crate::cpu_count();
         let curr_cpu = cpu_id.get();
 
-        /* // disabled: unused (see below)
         let counter = percpu
             .switch_internals
             .steal_counter
             .fetch_add(1, Ordering::Relaxed)
-            % STEAL_INTERVAL;
-        */
+            % if is_idle && final_winner.is_none() {
+                2
+            } else {
+                STEAL_INTERVAL
+            };
 
-        let mut steal_hint = None;
-        let should_steal = !contexts_data.is_stealable()
-            /* // disabled: causing livelock in webkit
+        let should_steal = counter == 0
+          /* // disabled: causing livelock in webkit
             || (counter == 0 && {
                 let mut max_neighbour = 0;
 
@@ -762,14 +763,9 @@ fn select_next_context(
             })*/;
 
         if should_steal {
-            let targets = steal_hint
-                .into_iter()
-                .chain((1..num_cpu).map(|i| (curr_cpu + i) % num_cpu));
+            let targets = (1..num_cpu).map(|i| (curr_cpu + i) % num_cpu);
 
             for target_cpu in targets {
-                if target_cpu == curr_cpu {
-                    continue;
-                }
                 let Some(target_percpu) = get_percpu_block(LogicalCpuId::new(target_cpu)) else {
                     continue;
                 };
@@ -782,18 +778,29 @@ fn select_next_context(
                     continue;
                 }
 
+                let target_len = target_percpu
+                    .switch_internals
+                    .queue_len
+                    .load(Ordering::Relaxed);
+
+                let my_load = contexts_data.queue.len() + if !is_idle { 1 } else { 0 };
+                // target_len + 1 to account for running task
+                if target_len + 1 < my_load + STEAL_THRESHOLD {
+                    continue;
+                }
+
                 let Some(mut target_queue) = target_percpu.switch_internals.run_queue.try_lock()
                 else {
                     continue;
                 };
 
+                // Check again to avoid TOCTOU
                 let target_len = target_queue.queue.len();
-
-                let extra = target_len.saturating_sub(contexts_data.queue.len());
-                if extra < 2 {
+                if target_len + 1 < my_load + STEAL_THRESHOLD {
                     continue;
                 }
 
+                let extra = target_len.saturating_sub(contexts_data.queue.len());
                 let want = (extra / 2).clamp(1, MAX_STEAL);
 
                 let mut stolen = percpu.switch_internals.tmp_steal.borrow_mut();
@@ -806,7 +813,7 @@ fn select_next_context(
                         weight,
                         context_ref,
                     },
-                ) in target_queue.queue.iter().step_by(2)
+                ) in target_queue.queue.iter()
                 {
                     if stolen.len() >= want {
                         break;
@@ -870,6 +877,7 @@ fn select_next_context(
 
                     let scaled_slice = guard.rem_slice / weight;
                     guard.vd = guard.vtime.saturating_add(scaled_slice);
+                    contexts_data.total_weight = contexts_data.total_weight.saturating_add(weight);
 
                     if final_winner.is_none() && !prev_runnable {
                         final_winner = Some((guard, addr_space));
@@ -880,8 +888,6 @@ fn select_next_context(
                             ctxt_id: guard.debug_id,
                         };
                         guard.queue_key = Some(new_key);
-                        contexts_data.total_weight =
-                            contexts_data.total_weight.saturating_add(weight);
                         contexts_data.queue_insert(
                             new_key,
                             ContextQueueValue {
