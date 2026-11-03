@@ -9,6 +9,8 @@ use core::{
     sync::atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
+use alloc::sync::Arc;
+
 pub use kernel_mapper::KernelMapper;
 use spin::{once::Once, Mutex};
 use syscall::NumaMemoryPolicy;
@@ -18,6 +20,7 @@ use crate::{
     context::{
         self,
         memory::{AccessMode, PfError},
+        ContextLock,
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     numa::{self, FreeListMask},
@@ -1410,11 +1413,32 @@ pub fn page_fault_handler(
 
     if address_is_user && (caused_by_user || is_usercopy) {
         let mut token = unsafe { CleanLockToken::new() };
-        match context::memory::try_correcting_page_tables(faulting_page, mode, &mut token) {
-            Ok(()) => return Ok(()),
-            Err(PfError::Oom) => todo!("oom"),
-            Err(PfError::Segv | PfError::RecursionLimitExceeded) => (),
-            Err(PfError::NonfatalInternalError) => todo!(),
+        loop {
+            match context::memory::try_correcting_page_tables(faulting_page, mode, &mut token) {
+                Ok(()) => return Ok(()),
+                Err(PfError::Oom) => {
+                    let Some(ctx_lock) = find_newest_killable_context(&mut token) else {
+                        todo!("No more context to kill");
+                    };
+                    let mut ctx_guard = ctx_lock.write(token.token());
+                    error!(
+                        "OUT OF MEMORY! Killing PID {} {:?}",
+                        ctx_guard.pid, ctx_guard.name
+                    );
+                    if context::is_current(&ctx_lock) {
+                        drop(ctx_guard);
+                        crate::syscall::exit_this_context(None, &mut token);
+                        unreachable!();
+                    } else {
+                        ctx_guard.being_sigkilled = true;
+                        ctx_guard.status = context::Status::Runnable;
+                        drop(ctx_guard);
+                        crate::syscall::exit_context(None, &mut token, ctx_lock);
+                    }
+                }
+                Err(PfError::Segv | PfError::RecursionLimitExceeded) => break,
+                Err(PfError::NonfatalInternalError) => todo!(),
+            }
         }
     }
 
@@ -1425,6 +1449,28 @@ pub fn page_fault_handler(
 
     Err(Segv)
 }
+
+fn find_newest_killable_context(token: &mut CleanLockToken) -> Option<Arc<ContextLock>> {
+    let mut newest_ctx = None;
+    let mut newest_pid = 0;
+    {
+        let mut contexts_guard = context::contexts(token.downgrade());
+        let (contexts_guard, mut token_lock) = contexts_guard.token_split();
+        for ctx_lock in contexts_guard.iter() {
+            let ctx_guard = ctx_lock.read(token_lock.token());
+            if ctx_guard.being_sigkilled || ctx_guard.euid == 0 {
+                continue;
+            }
+            if ctx_guard.pid > newest_pid {
+                newest_pid = ctx_guard.pid;
+                drop(ctx_guard);
+                newest_ctx = Some(ctx_lock.0.clone());
+            }
+        }
+    }
+    newest_ctx
+}
+
 static THE_ZEROED_FRAME: SyncUnsafeCell<Option<(Frame, &'static PageInfo)>> =
     SyncUnsafeCell::new(None);
 
