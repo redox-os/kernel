@@ -11,7 +11,7 @@ use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
 use crate::{
     context::memory::AddrSpaceWrapper,
     cpu_set::{LogicalCpuId, LogicalCpuSet},
-    cpu_stats::CpuStatsData,
+    cpu_stats::{CpuState, CpuStatsData},
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::{get_percpu_block, PercpuBlock},
@@ -379,15 +379,16 @@ pub fn get_contexts_stats(token: &mut CleanLockToken) -> [usize; 6] {
     let mut idling_cpu = 0;
 
     for percpu in crate::percpu::all_percpu_blocks() {
-        let (queue, stealable) = {
-            let lock = percpu.switch_internals.run_queue.lock();
-            (lock.queue.len(), lock.is_stealable())
-        };
-        running += queue;
+        let queue = percpu.switch_internals.run_queue.lock().queue.len();
+        let is_idle = percpu.stats.get_state() as u8 == CpuState::Idle as u8;
+
+        running += queue + if !is_idle { 1 } else { 0 };
+
         let data = CpuStatsData::from(&percpu.stats);
         switches += data.context_switches as usize;
         syscall_switches += data.syscall_switches as usize;
-        if !stealable {
+
+        if is_idle {
             idling_cpu += 1;
         }
     }

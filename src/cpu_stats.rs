@@ -84,6 +84,16 @@ impl CpuStats {
         self.state.store(new_state as u8, Ordering::Relaxed);
     }
 
+    pub fn get_state(&self) -> CpuState {
+        let state = self.state.load(Ordering::Relaxed);
+        match state {
+            val if val == CpuState::Idle as u8 => CpuState::Idle,
+            val if val == CpuState::User as u8 => CpuState::User,
+            val if val == CpuState::Kernel as u8 => CpuState::Kernel,
+            _ => unreachable!("all possible values are covered"),
+        }
+    }
+
     /// Increments time statistics of a CPU, return the state is was accounting to.
     ///
     /// Which statistic is incremented depends on the [`State`] of the CPU.
