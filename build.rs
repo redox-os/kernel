@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used)] // the build script can panic
 
-use std::{env, path::Path, process::Command};
+use std::{env, fmt::Write, path::Path, process::Command};
 use toml::Table;
 
 fn parse_kconfig(arch: &str) -> Option<()> {
@@ -24,11 +24,10 @@ fn parse_kconfig(arch: &str) -> Option<()> {
         .as_table()
         .unwrap();
 
-    #[expect(clippy::format_collect)] // TODO: remove once version is bumped
-    let features_list = altfeatures
-        .keys()
-        .map(|feat| format!(", {feat:?}"))
-        .collect::<String>();
+    let features_list = altfeatures.keys().fold(String::new(), |mut output, feat| {
+        let _ = write!(output, ", {feat:?}");
+        output
+    });
     println!("cargo::rustc-check-cfg=cfg(cpu_feature_always, values(\"\"{features_list}))");
     println!("cargo::rustc-check-cfg=cfg(cpu_feature_auto, values(\"\"{features_list}))");
     println!("cargo::rustc-check-cfg=cfg(cpu_feature_never, values(\"\"{features_list}))");
