@@ -5,7 +5,7 @@ use core::{
 };
 
 use crate::{
-    flag::{EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
+    flag::{CapRights, EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
     Error, Result, CPU_SET_WORDS, EINVAL,
 };
 
@@ -598,4 +598,11 @@ impl CpuSet {
 pub struct FdType(pub u32);
 impl FdType {
     pub const ANY: Self = Self(u32::MAX);
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct TypedCapRights {
+    pub fd_type: FdType,
+    pub rights: CapRights,
 }

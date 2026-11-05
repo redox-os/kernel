@@ -1,6 +1,6 @@
 //! Filesystem syscalls
 
-use core::num::NonZeroUsize;
+use core::{mem::offset_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -15,7 +15,7 @@ use crate::{
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     sync::{CleanLockToken, LockToken, RwLock, L4},
-    syscall::{error::*, flag::*},
+    syscall::{data::TypedCapRights, error::*, flag::*},
 };
 
 use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
@@ -477,21 +477,40 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                     .scheme_id()
                     .get()),
                 F_GETCAP => {
-                    let buf = UserSlice::wo(arg, size_of::<CapRights>())?;
-                    let bits = file.cap_rights.bits().to_ne_bytes();
-                    buf.copy_exactly(&bits)?;
+                    let cap = TypedCapRights {
+                        fd_type: *file.description.read(token.token()).fd_type(),
+                        rights: file.cap_rights,
+                    };
+                    let mut bytes = [0u8; size_of::<TypedCapRights>()];
+
+                    let fd_type_bytes = (cap.fd_type.0).to_ne_bytes();
+                    let rights_bytes = cap.rights.bits().to_ne_bytes();
+
+                    let fd_type_offset = offset_of!(TypedCapRights, fd_type);
+                    let rights_offset = offset_of!(TypedCapRights, rights);
+
+                    bytes[fd_type_offset..fd_type_offset + fd_type_bytes.len()]
+                        .copy_from_slice(&fd_type_bytes);
+
+                    bytes[rights_offset..rights_offset + rights_bytes.len()]
+                        .copy_from_slice(&rights_bytes);
+
+                    UserSlice::wo(arg, bytes.len())?.copy_exactly(&bytes)?;
+
                     Ok(0)
                 }
                 F_SETCAP => {
-                    let new_cap_rights = unsafe {
-                        UserSlice::ro(arg, size_of::<CapRights>())?.read_exact::<CapRights>()?
+                    let requested = unsafe {
+                        UserSlice::ro(arg, size_of::<TypedCapRights>())?
+                            .read_exact::<TypedCapRights>()?
                     };
-
-                    if !new_cap_rights.is_subset_of(file.cap_rights) {
+                    if &requested.fd_type != file.description.read(token.token()).fd_type() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    if !requested.rights.is_subset_of(file.cap_rights) {
                         return Err(Error::new(EPERM));
                     }
-
-                    file.cap_rights = new_cap_rights;
+                    file.cap_rights = requested.rights;
                     Ok(0)
                 }
                 _ => Err(Error::new(EINVAL)),
