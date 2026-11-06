@@ -12,6 +12,7 @@ use crate::{
     context::context::Kstack,
     cpu_set::LogicalCpuId,
     devices::graphical_debug,
+    percpu,
     startup::KernelArgs,
 };
 
@@ -118,12 +119,24 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs, stack_end: usize) -> ! {
 
         let numa_region_mask = crate::memory::init_mm(mapper.allocator_mut());
 
+        #[cfg(all(feature = "numa", target_arch = "x86_64"))]
+        numa::init_mem(numa_region_mask.as_ref());
+
         // Set up the IDT's IST
         idt::init_bsp_after_mem();
 
         let mut kstack_slot = None;
         let kmain_kstack_top = kstack_slot
-            .insert(Kstack::new().expect("failed to allocate main kstack"))
+            .insert(
+                Kstack::new(
+                    percpu::PercpuBlock::current()
+                        .misc_arch_info
+                        .apic_id_opt
+                        .get()
+                        .map(|e| e.get()),
+                )
+                .expect("failed to allocate main kstack"),
+            )
             .initial_top();
 
         #[cfg(target_arch = "x86_64")]
@@ -203,7 +216,7 @@ fn continue_after_kmain_stack(
             }
 
             #[cfg(all(target_arch = "x86_64", feature = "numa"))]
-            numa::init_arch(numa_region_mask);
+            numa::init_nodes();
 
             crate::profiling::init();
 

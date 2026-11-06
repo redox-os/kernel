@@ -374,7 +374,7 @@ pub(super) fn prepare(topology: &[CpuDescription]) {
         let logical_id = LogicalCpuId::new(
             u32::try_from(logical_id).expect("validated CPU topology exceeds logical ID range"),
         );
-        let stack = match Kstack::new() {
+        let stack = match Kstack::new(None) {
             Ok(stack) => stack,
             Err(error) => {
                 warn!(
@@ -744,7 +744,10 @@ unsafe extern "C" fn secondary_start(args_ptr: *const BootArgs) -> ! {
     }
 
     // TODO: use stack
-    crate::startup::kmain_ap(logical_id, Kstack::new().expect("failed to allocate stack"))
+    crate::startup::kmain_ap(
+        logical_id,
+        Kstack::new(None).expect("failed to allocate stack"),
+    )
 }
 
 fn park() -> ! {

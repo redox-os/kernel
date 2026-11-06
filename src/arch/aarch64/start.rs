@@ -135,7 +135,10 @@ unsafe extern "C" fn start(args_ptr: *const KernelArgs) -> ! {
         };
 
         // TODO: use stack
-        crate::startup::kmain(bootstrap, Kstack::new().expect("failed to allocate stack"));
+        crate::startup::kmain(
+            bootstrap,
+            Kstack::new(None).expect("failed to allocate stack"),
+        );
     }
 }
 

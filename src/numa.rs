@@ -1,7 +1,7 @@
 use alloc::string::String;
 use core::slice;
 
-use crate::percpu;
+use crate::{cpu_set::LogicalCpuId, percpu};
 use bitfield::Bit;
 use rmm::{Arch, BumpAllocator, MemoryArea, PhysicalAddress};
 use spin::once::Once;
@@ -111,15 +111,48 @@ pub fn init<A: Arch>(allocator: &mut BumpAllocator<A>) {
 
 pub type RegionMask = [bool; MAX_MEM_REGIONS];
 
-pub fn init_arch(mask: &Option<RegionMask>) {
-    if let Some(cpus) = NUMA_CPUS.get()
-        && let Some(memories) = NUMA_MEMORY.get()
-    {
+pub fn init_mem(mask: Option<&RegionMask>) {
+    if let Some(memories) = NUMA_MEMORY.get() {
         let numa_nodes = unsafe {
             let ptr = memories.as_ptr().add(MAX_DOMAINS).addr() as *mut Option<NumaNode>;
             slice::from_raw_parts_mut(ptr, MAX_DOMAINS)
         };
         numa_nodes.iter_mut().for_each(|e| *e = None);
+
+        let mut index = 0;
+        for (i, memory) in memories
+            .iter()
+            .enumerate()
+            .filter_map(|(i, memory)| Some((i, memory.as_ref()?)))
+        {
+            let node = &mut numa_nodes[memory.node_id.get() as usize];
+
+            if node.is_none() {
+                *node = Some(NumaNode::default());
+            }
+            node.as_mut().unwrap().mem_size += memory.length;
+
+            if let Some(mask) = mask
+                && !mask[i]
+            {
+                continue;
+            }
+
+            node.as_mut().unwrap().memories.enable_index(index);
+            index += 1;
+        }
+        NUMA_NODES.call_once(|| numa_nodes);
+    }
+}
+
+pub fn init_nodes() {
+    if let Some(cpus) = NUMA_CPUS.get()
+        && let Some(memories) = NUMA_MEMORY.get()
+        && let Some(numa_nodes) = NUMA_NODES.get()
+    {
+        // this is the only place where we have to pero
+        let mut numa_nodes =
+            unsafe { slice::from_raw_parts_mut(numa_nodes.as_ptr().cast_mut(), self::MAX_DOMAINS) };
 
         for cpu in percpu::all_percpu_blocks() {
             #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -145,29 +178,6 @@ pub fn init_arch(mask: &Option<RegionMask>) {
             }
         }
 
-        let mut index = 0;
-        for (i, memory) in memories
-            .iter()
-            .enumerate()
-            .filter_map(|(i, memory)| Some((i, memory.as_ref()?)))
-        {
-            let node = &mut numa_nodes[memory.node_id.get() as usize];
-
-            if node.is_none() {
-                *node = Some(NumaNode::default());
-            }
-            node.as_mut().unwrap().mem_size += memory.length;
-
-            if let Some(mask) = mask
-                && !mask[i]
-            {
-                continue;
-            }
-
-            node.as_mut().unwrap().memories.enable_index(index);
-            index += 1;
-        }
-
         for cpu in percpu::all_percpu_blocks() {
             let n = numa_nodes.iter().enumerate().find_map(|(i, node)| {
                 let node = node.as_ref()?;
@@ -179,8 +189,6 @@ pub fn init_arch(mask: &Option<RegionMask>) {
             });
             cpu.numa_node.set(n);
         }
-
-        NUMA_NODES.call_once(|| numa_nodes);
     }
 }
 
@@ -212,7 +220,7 @@ pub fn dump_info() {
             }
         }
     } else {
-        println!("Unable to determine NUMA topology");
+        println!("Failed to determine NUMA topology");
     }
 }
 
@@ -338,4 +346,18 @@ pub fn free_lists_masks() -> Option<FreeListMaskIter> {
     iter.others.iter_mut().for_each(|e| *e = it.next());
 
     Some(iter)
+}
+
+/// __WARNING__: This function is meant to be used only during the early phases of booting when
+/// many of the NUMA structures are not yet available. For most cases, `current_node().unwrap().memories`
+/// should be sufficient.
+pub fn make_mask_early(cpu_id: u32) -> Option<FreeListMask> {
+    let node_id = NUMA_CPUS.get()?.get(cpu_id as usize).cloned().flatten()?;
+    Some(
+        NUMA_NODES
+            .get()?
+            .get(node_id.get() as usize)?
+            .as_ref()?
+            .memories,
+    )
 }
