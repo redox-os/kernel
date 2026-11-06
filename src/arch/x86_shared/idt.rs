@@ -9,6 +9,7 @@ use x86::{
 
 use crate::{
     arch::{
+        device::local_apic::{the_local_apic, ApicId},
         interrupt::{
             irq::{__generic_interrupts_end, __generic_interrupts_start},
             *,
@@ -17,6 +18,7 @@ use crate::{
     },
     context::context::Kstack,
     cpu_set::LogicalCpuId,
+    percpu,
 };
 
 #[repr(C)]
@@ -134,7 +136,14 @@ pub unsafe fn init_bsp_before_mem() {
 }
 #[cold]
 pub unsafe fn init_bsp_after_mem() {
-    let kstack = Kstack::new().expect("failed to allocate backup stack");
+    let kstack = Kstack::new(
+        percpu::PercpuBlock::current()
+            .misc_arch_info
+            .apic_id_opt
+            .get()
+            .map(|e| e.get()),
+    )
+    .expect("failed to allocate backup stack");
     let stack_end = kstack.initial_top();
     core::mem::forget(kstack);
 
@@ -143,10 +152,11 @@ pub unsafe fn init_bsp_after_mem() {
     }
 }
 
-pub fn allocate_and_init_idt(cpu_id: LogicalCpuId) -> *mut Idt {
+pub fn allocate_and_init_idt(cpu_id: LogicalCpuId, apic_id: ApicId) -> *mut Idt {
     let idt = Box::leak(Box::new(Idt::new()));
 
-    let backup_stack = Kstack::new().expect("failed to allocate AP's backup interrupt stack");
+    let backup_stack =
+        Kstack::new(Some(apic_id.get())).expect("failed to allocate AP's backup interrupt stack");
     let backup_stack_end = backup_stack.initial_top() as usize;
     core::mem::forget(backup_stack);
 

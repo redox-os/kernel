@@ -17,8 +17,8 @@ use crate::{
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
     memory::{
-        allocate_p2frame, deallocate_p2frame, Enomem, Frame, FrameAllocated, RaiiFrame, RmmA,
-        RmmArch, PAGE_SIZE,
+        allocate_p2frame, allocate_p2frame_with_mask, deallocate_p2frame, Enomem, Frame,
+        FrameAllocated, RaiiFrame, RmmA, RmmArch, PAGE_SIZE,
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
@@ -600,11 +600,17 @@ pub struct Kstack {
     base: Frame,
 }
 impl Kstack {
-    pub fn new() -> Result<Self, Enomem> {
+    pub fn new(physical_cpu_id: Option<u32>) -> Result<Self, Enomem> {
         let must_be_zero = true;
-        Ok(Self {
-            base: allocate_p2frame(4, must_be_zero).ok_or(Enomem)?,
-        })
+        let base = if let Some(cpu_id) = physical_cpu_id
+            && let Some(mask) = crate::numa::make_mask_early(cpu_id)
+        {
+            allocate_p2frame_with_mask(mask, 4, true, must_be_zero)
+        } else {
+            allocate_p2frame(4, must_be_zero)
+        }
+        .ok_or(Enomem)?;
+        Ok(Self { base })
     }
     pub fn initial_top(&self) -> *mut u8 {
         unsafe { (RmmA::phys_to_virt(self.base.base()).data() as *mut u8).add(PAGE_SIZE << 4) }
