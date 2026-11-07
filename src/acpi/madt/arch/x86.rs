@@ -5,7 +5,7 @@ use core::{
 
 use crate::{
     arch::{
-        device::local_apic::the_local_apic,
+        device::local_apic::{the_local_apic, ApicId},
         start::{kstart_ap, KernelArgsAp},
     },
     context::context::Kstack,
@@ -76,12 +76,16 @@ pub(super) fn init(madt: Madt) {
                 let cpu_id = LogicalCpuId::next();
 
                 // Allocate a stack
-                let kstack = Kstack::new().expect("no more frames in acpi stack_start");
+                let kstack = Kstack::new(Some(ap_local_apic.id as u32))
+                    .expect("no more frames in acpi stack_start");
                 let stack_end = kstack.initial_top() as usize;
 
                 let pcr_ptr = crate::arch::gdt::allocate_and_init_pcr(cpu_id, stack_end);
 
-                let idt_ptr = crate::arch::idt::allocate_and_init_idt(cpu_id);
+                let idt_ptr = crate::arch::idt::allocate_and_init_idt(
+                    cpu_id,
+                    ApicId::new(ap_local_apic.id as u32),
+                );
 
                 let mut args = KernelArgsAp {
                     stack_end: stack_end as *mut u8,
