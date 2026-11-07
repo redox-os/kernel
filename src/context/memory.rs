@@ -2831,7 +2831,7 @@ fn correct_inner<'l>(
                 .request_fmap(scheme_number, offset, 1, flags, &mut token)
                 .unwrap();
 
-            let context_lock = crate::context::current();
+            let context_lock = Arc::clone(&*crate::context::current());
             context_lock
                 .write(token.token())
                 .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
