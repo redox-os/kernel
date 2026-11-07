@@ -168,7 +168,7 @@ impl super::Context {
         unsafe {
             Ok(EnvRegisters {
                 fsbase: msr::rdmsr(msr::IA32_FS_BASE),
-                gsbase: msr::rdmsr(msr::IA32_KERNEL_GSBASE),
+                gsbase: msr::rdmsr(msr::IA32_GS_BASE),
             })
         }
     }
@@ -186,9 +186,7 @@ impl super::Context {
         {
             unsafe {
                 x86::msr::wrmsr(x86::msr::IA32_FS_BASE, regs.fsbase);
-                // We have to write to KERNEL_GSBASE, because when the kernel returns to
-                // userspace, it will have executed SWAPGS first.
-                x86::msr::wrmsr(x86::msr::IA32_KERNEL_GSBASE, regs.gsbase);
+                x86::msr::wrmsr(x86::msr::IA32_GS_BASE, regs.gsbase);
             }
             self.arch.fsbase = regs.fsbase as usize;
             self.arch.gsbase = regs.gsbase as usize;
@@ -227,6 +225,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     unsafe {
         let pcr = crate::arch::gdt::pcr();
 
+        next.kstack.set_archpercpu(pcr as usize);
         crate::arch::gdt::set_tss_stack(pcr, next.kstack.initial_top() as usize);
         crate::arch::gdt::set_userspace_io_allowed(pcr, next.arch.userspace_io_allowed);
 
@@ -339,16 +338,14 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
 
                     rdfsbase rdx
                     wrfsbase rax
-                    swapgs
                     rdgsbase rax
                     wrgsbase rcx
-                    swapgs
 
                     mov [{prev}+{fsbase_off}], rdx
                     mov [{prev}+{gsbase_off}], rax
                 "],
                     // TODO: Most applications will set FSBASE, but won't touch GSBASE. Maybe avoid
-                    // wrmsr or even the swapgs+rdgsbase+wrgsbase+swapgs sequence if they are already
+                    // wrmsr or even the rdgsbase+wrgsbase sequence if they are already
                     // equal?
                     default: ["
                     mov ecx, {MSR_FSBASE}
@@ -357,7 +354,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
                     shr rdx, 32
                     wrmsr
 
-                    mov ecx, {MSR_KERNEL_GSBASE}
+                    mov ecx, {MSR_GSBASE}
                     mov rdx, [{next}+{gsbase_off}]
                     mov eax, edx
                     shr rdx, 32
@@ -370,7 +367,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
                 out("rdx") _,
                 out("ecx") _, prev = in(reg) addr_of_mut!(prev.arch), next = in(reg) addr_of!(next.arch),
                 MSR_FSBASE = const msr::IA32_FS_BASE,
-                MSR_KERNEL_GSBASE = const msr::IA32_KERNEL_GSBASE,
+                MSR_GSBASE = const msr::IA32_GS_BASE,
                 gsbase_off = const offset_of!(Context, gsbase),
                 fsbase_off = const offset_of!(Context, fsbase),
             );

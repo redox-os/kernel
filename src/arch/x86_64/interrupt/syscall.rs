@@ -1,9 +1,12 @@
 use crate::{
     arch::{gdt, interrupt::InterruptStack},
+    percpu::PercpuBlock,
     ptrace,
     sync::CleanLockToken,
-    syscall,
-    syscall::flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
+    syscall::{
+        self,
+        flag::{PTRACE_FLAG_IGNORE, PTRACE_STOP_POST_SYSCALL, PTRACE_STOP_PRE_SYSCALL},
+    },
 };
 use core::mem::offset_of;
 use x86::{
@@ -14,16 +17,27 @@ use x86::{
 
 pub unsafe fn init() {
     unsafe {
+        crate::arch::gdt::init_ldt();
+
+        let cpu_id = PercpuBlock::current().cpu_id;
+
         // IA32_STAR[31:0] are reserved.
 
         // The base selector of the two consecutive segments for kernel code and the immediately
         // succeeding stack (data).
-        let syscall_cs_ss_base = (gdt::GDT_KERNEL_CODE as u16) << 3;
+        //
+        // This uses the LDT rather than GDT so that each CPU can get their own selector, allowing
+        // the selector index to be used to obtain the CPU ID. The LDT's memory should never have
+        // to be accessed after these MSR writes, since SYSCALL caches the internal
+        // segmentation-related info IIUC.
+        let syscall_cs_ss_base =
+            SegmentSelector::new(u16::try_from(cpu_id.get() * 2).unwrap(), x86::Ring::Ring0)
+                | SegmentSelector::TI_LDT;
         // The base selector of the three consecutive segments (of which two are used) for user code
         // and user data. It points to a 32-bit code segment, which must be followed by a data segment
         // (stack), and a 64-bit code segment.
         let sysret_cs_ss_base = ((gdt::GDT_USER_CODE32_UNUSED as u16) << 3) | 3;
-        let star_high = u32::from(syscall_cs_ss_base) | (u32::from(sysret_cs_ss_base) << 16);
+        let star_high = u32::from(syscall_cs_ss_base.bits()) | (u32::from(sysret_cs_ss_base) << 16);
 
         msr::wrmsr(msr::IA32_STAR, u64::from(star_high) << 32);
         msr::wrmsr(msr::IA32_LSTAR, syscall_instruction as *const () as u64);
@@ -96,17 +110,38 @@ pub unsafe extern "C" fn __inner_syscall_instruction(stack: *mut InterruptStack)
 pub unsafe extern "C" fn syscall_instruction() {
     core::arch::naked_asm!(
     // Yes, this is magic. No, you don't need to understand
-    "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
-    "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
-    "mov rsp, gs:[{ksp}];",       // Load kernel stack pointer
-    "push QWORD PTR {ss_sel};",   // Push fake userspace SS (resembling iret frame)
-    "push QWORD PTR gs:[{sp}];",  // Push userspace rsp
-    "push r11;",                  // Push rflags
-    "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
-    "push rcx;",                  // Push userspace return pointer
-
+    "
+    // EFLAGS.ID is a user-unmodifiable flag that we use to control whether syscall entry should be
+    // traced.
+    bt r11, 21
+    jc .Lslow_path
+    ",
+    // TODO: use an array of kernel stack pointers instead? (would be more efficient if the kernel
+    // is single-stack)
+    alternative!(
+        feature: "syscall_rdpid",
+        then: ["
+            rdpid r9
+            mov r9, [{all_percpu_blocks}+r9]
+        "],
+        default: ["
+            // CS is [15:3] sel, [2] TI = 1, [1:0] DPL = 0,
+            mov r9, cs
+            shr r9, 1
+            mov r9, [{all_percpu_blocks}+r9-2]
+        "]
+    ),
+    "
+    mov r9, [r9-{percpu_kpcr}+{ksp}] // Load kernel stack pointer
+    xchg r9, rsp
+    push QWORD PTR {ss_sel} // Push fake userspace SS (resembling iret frame)
+    push r9 // Push userspace rsp
+    push r11 // Push userspace RFLAGS
+    push QWORD PTR {cs_sel} // Push fake CS (resembling iret stack frame)
+    push rcx // Push userspace return pointer
+    ",
     // Push context registers
-    "push rax;",
+    ".Lpush_registers: push rax;",
     push_scratch!(),
     push_preserved!(),
 
@@ -122,9 +157,6 @@ pub unsafe extern "C" fn syscall_instruction() {
     // Pop context registers
     pop_preserved!(),
     pop_scratch!(),
-
-    // Restore user GSBASE by swapping GSBASE and KGSBASE.
-    "swapgs;",
 
     // TODO: Should we unconditionally jump or avoid jumping, to hint to the branch predictor that
     // singlestep is NOT set?
@@ -174,14 +206,28 @@ pub unsafe extern "C" fn syscall_instruction() {
     xor rcx, rcx
     xor r11, r11
     iretq
+",
+    ".Lslow_path:",
+    "swapgs;",                    // Swap KGSBASE with GSBASE, allowing fast TSS access.
+    "mov gs:[{sp}], rsp;",        // Save userspace stack pointer
+    "mov rsp, gs:[{ksp}];",       // Load kernel stack pointer
+    "push QWORD PTR {ss_sel};",   // Push fake userspace SS (resembling iret frame)
+    "push QWORD PTR gs:[{sp}];",  // Push userspace rsp
+    "push r11;",                  // Push rflags
+    "push QWORD PTR {cs_sel};",   // Push fake CS (resembling iret stack frame)
+    "push rcx;",                  // Push userspace return pointer
+    "swapgs;",                    // Restore user GSBASE by swapping GSBASE and KGSBASE.
+    "jmp .Lpush_registers;", "
     .globl __syscall_instruction_end
 __syscall_instruction_end:
     ",
 
+    percpu_kpcr = const(offset_of!(gdt::ProcessorControlRegion, percpu)),
     sp = const(offset_of!(gdt::ProcessorControlRegion, user_rsp_tmp)),
     ksp = const(offset_of!(gdt::ProcessorControlRegion, tss) + offset_of!(TaskStateSegment, rsp)),
     ss_sel = const(SegmentSelector::new(gdt::GDT_USER_DATA as u16, x86::Ring::Ring3).bits()),
     cs_sel = const(SegmentSelector::new(gdt::GDT_USER_CODE as u16, x86::Ring::Ring3).bits()),
+    all_percpu_blocks = sym crate::percpu::ALL_PERCPU_BLOCKS
     );
 }
 unsafe extern "C" {

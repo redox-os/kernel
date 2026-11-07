@@ -571,21 +571,23 @@ impl<T> FrameAllocated<T> {
         Some(pages.next_power_of_two().trailing_zeros())
     }
 
-    pub fn try_new(val: T) -> Option<Self> {
+    pub unsafe fn try_alloc(must_be_zero: bool) -> Option<Self> {
         let order = const { Self::order().unwrap() };
-        let frame = crate::memory::allocate_p2frame(order, false)?;
+        let frame = crate::memory::allocate_p2frame(order, must_be_zero)?;
 
         let this = Self {
             frame,
             _marker: core::marker::PhantomData,
         };
 
-        unsafe {
-            let virt = this.as_ptr();
-            virt.write(val);
-        }
-
         Some(this)
+    }
+    pub fn try_new(val: T) -> Option<Self> {
+        unsafe {
+            let mut this = Self::try_alloc(false)?;
+            this.as_ptr().write(val);
+            Some(this)
+        }
     }
 
     #[inline]
