@@ -8,7 +8,7 @@ use crate::{
     syscall::{
         data::Event,
         error::*,
-        usercopy::{UserSliceRo, UserSliceWo},
+        usercopy::{UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -38,6 +38,90 @@ impl KernelScheme for EventScheme {
         queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 
         Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
+    }
+
+    fn kcall(
+        &self,
+        fds: &[usize],
+        payload: UserSliceRw,
+        _flags: syscall::CallFlags,
+        metadata: &[u64],
+        token: &mut CleanLockToken,
+    ) -> Result<usize> {
+        if fds.len() != 1 {
+            return Err(Error::new(EINVAL));
+        }
+
+        let id = EventQueueId::from(fds[0]);
+        let queue = {
+            let handles = queues(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+            handle.clone()
+        };
+
+        // metadata[0] = RSVDZ
+        // metadata[1] = event length in bytes
+        // metadata[2] = read flags
+        let (Some(_protocol), Some(write_len), Some(read_flags)) = (
+            metadata.get(0).filter(|&&p| p == 0),
+            metadata.get(1).copied().map(|s| s as usize),
+            metadata.get(2).copied().map(|s| s as usize),
+        ) else {
+            return Err(Error::new(EINVAL));
+        };
+
+        let (input_slice, output_slice) = payload.split_at(write_len).ok_or(Error::new(EINVAL))?;
+
+        let mut nval_count = 0;
+        let mut output_remain = output_slice.into_wo()?;
+
+        if write_len > 0 {
+            for chunk in input_slice.in_exact_chunks(size_of::<Event>()) {
+                let event = unsafe { chunk.read_exact::<Event>()? };
+
+                match queue.write(&[event], token) {
+                    Ok(_) => {}
+                    Err(e) if e.errno == EBADF => {
+                        let nval_event = Event {
+                            id: event.id,
+                            flags: EventFlags::EVENT_NVAL,
+                            data: event.data,
+                        };
+
+                        let chunk_wo = output_remain
+                            .limit(size_of::<Event>())
+                            .ok_or(Error::new(EFAULT))?;
+                        unsafe { chunk_wo.copy_from_slice(&nval_event)? };
+
+                        output_remain = output_remain
+                            .advance(size_of::<Event>())
+                            .ok_or(Error::new(EFAULT))?;
+                        nval_count += 1;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        // nval must be reported immediately
+        let block = read_flags & O_NONBLOCK == 0 && nval_count == 0;
+
+        let bytes_read = match queue.read(output_remain, block, token) {
+            Ok(bytes) => bytes,
+            Err(Error { errno: EAGAIN }) => return Ok(nval_count * size_of::<Event>()),
+            Err(e) => return Err(e),
+        };
+        let total_bytes_out = (nval_count * size_of::<Event>()) + bytes_read;
+
+        if write_len > 0 {
+            for chunk in input_slice.in_exact_chunks(size_of::<Event>()) {
+                if let Ok(mut event) = unsafe { chunk.read_exact::<Event>() } {
+                    event.flags = EventFlags::empty();
+                    let _ = queue.write(&[event], token);
+                }
+            }
+        }
+        Ok(total_bytes_out)
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
