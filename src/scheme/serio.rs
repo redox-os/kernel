@@ -3,7 +3,7 @@
 
 //use core::sync::atomic::AtomicBool;
 
-use syscall::data::GlobalSchemes;
+use syscall::data::{FdType, GlobalSchemes};
 
 use crate::{
     event,
@@ -105,7 +105,12 @@ impl KernelScheme for SerioScheme {
             kind: HandleKind::Device(index),
         });
 
-        Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            id,
+            InternalFlags::empty(),
+            CapRights::ALL,
+            FdType::default(),
+        ))
     }
 
     fn fevent(

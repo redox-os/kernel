@@ -224,6 +224,8 @@ impl KernelScheme for MemoryScheme {
                 return Ok(OpenResult::SchemeLocal(
                     SCHEME_ROOT_ID,
                     InternalFlags::empty(),
+                    syscall::CapRights::ALL,
+                    syscall::FdType::default(),
                 ))
             }
 
@@ -263,6 +265,8 @@ impl KernelScheme for MemoryScheme {
         Ok(OpenResult::SchemeLocal(
             (handle_ty as usize) | ((mem_ty as usize) << 8) | (usize::from(flags.bits()) << 16),
             InternalFlags::empty(),
+            syscall::CapRights::ALL,
+            syscall::FdType::default(),
         ))
     }
     fn kcall(
@@ -271,6 +275,7 @@ impl KernelScheme for MemoryScheme {
         payload: UserSliceRw,
         _flags: syscall::CallFlags,
         _metadata: &[u64],
+        _cap_rights: syscall::CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         if fds.len() != 1 {

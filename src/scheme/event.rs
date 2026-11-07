@@ -1,5 +1,5 @@
 use alloc::sync::Arc;
-use syscall::{EventFlags, O_NONBLOCK};
+use syscall::{data::FdType, CapRights, EventFlags, O_NONBLOCK};
 
 use crate::{
     context::file::InternalFlags,
@@ -37,7 +37,12 @@ impl KernelScheme for EventScheme {
         let id = next_queue_id();
         queues_mut(token.token()).insert(id, Arc::new(EventQueue::new(id)));
 
-        Ok(OpenResult::SchemeLocal(id.get(), InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            id.get(),
+            InternalFlags::empty(),
+            CapRights::ALL,
+            FdType::default(),
+        ))
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {

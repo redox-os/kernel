@@ -99,6 +99,8 @@ pub fn format_call(a: usize, b: usize, c: usize, d: usize, e: usize, f: usize, g
                 F_SETFL => "F_SETFL",
                 F_GETFL => "F_GETFL",
                 F_GET_SCHEMEID => "F_GET_SCHEMEID",
+                F_GETCAP => "F_GETCAP",
+                F_SETCAP => "F_SETCAP",
                 _ => "UNKNOWN",
             },
             c,

@@ -5,7 +5,7 @@ use core::{
 };
 
 use crate::{
-    flag::{EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
+    flag::{CapRights, EventFlags, MapFlags, PtraceFlags, StdFsCallKind},
     Error, Result, CPU_SET_WORDS, EINVAL,
 };
 
@@ -591,4 +591,18 @@ impl CpuSet {
     pub fn from_raw_mask(mask: [usize; CPU_SET_WORDS]) -> Self {
         Self { mask }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+pub struct FdType(pub u32);
+impl FdType {
+    pub const ANY: Self = Self(u32::MAX);
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct TypedCapRights {
+    pub fd_type: FdType,
+    pub rights: CapRights,
 }

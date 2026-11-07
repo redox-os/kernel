@@ -8,8 +8,9 @@ use core::{
 };
 use slab::Slab;
 use syscall::{
-    schemev2::{Cqe, CqeOpcode, Opcode, Sqe, SqeFlags},
-    CallFlags, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
+    schemev2::{Opcode, SqeFlags},
+    schemev3::{Cqe, CqeOpcode, Sqe},
+    CallFlags, CapRights, FmoveFdFlags, FobtainFdFlags, MunmapFlags, RecvFdFlags, SchemeSocketCall,
     SendFdFlags, StdFsCallKind, EVENT_HUP, MAP_FIXED_NOREPLACE,
 };
 
@@ -29,7 +30,7 @@ use crate::{
     scheme::SchemeId,
     sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
     syscall::{
-        data::{Map, StdFsCallMeta},
+        data::{FdType, Map, StdFsCallMeta},
         error::*,
         flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
         usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
@@ -51,7 +52,7 @@ pub struct UserInner {
 enum State {
     Waiting {
         context: Weak<ContextLock>,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         callee_responsible: PageSpan,
         canceling: bool,
     },
@@ -62,16 +63,16 @@ enum State {
 
 #[derive(Debug)]
 enum Response {
-    Regular(Result<usize>, u8, bool),
-    Fd(Arc<LockedFileDescription>),
-    MultipleFds(Option<Vec<Arc<LockedFileDescription>>>),
+    Regular(Result<usize>, u8, bool, [u64; 2]),
+    Fd(Arc<LockedFileDescription>, CapRights, [u64; 2]),
+    MultipleFds(Option<Vec<(Arc<LockedFileDescription>, CapRights)>>),
 }
 
 impl Response {
     fn into_regular(self) -> Result<usize> {
         match self {
-            Response::Regular(res, _, _) => res,
-            Response::Fd(_) | Response::MultipleFds(_) => Err(Error::new(EIO)),
+            Response::Regular(res, _, _, _) => res,
+            Response::Fd(_, _, _) | Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
 }
@@ -90,10 +91,12 @@ enum ParsedCqe {
         tag: u32,
         res: Result<usize>,
         extra0: u8,
+        meta: [u64; 2],
     },
     ResponseWithFd {
         tag: u32,
         fd: usize,
+        meta: [u64; 2],
     },
     ResponseWithMultipleFds {
         tag: u32,
@@ -114,6 +117,7 @@ enum ParsedCqe {
         tag: u32,
         res: Result<usize>,
         extra0: u8,
+        meta: [u64; 2],
     },
 }
 impl ParsedCqe {
@@ -124,15 +128,18 @@ impl ParsedCqe {
                     tag: cqe.tag,
                     res: Error::demux(cqe.result as usize),
                     extra0: cqe.extra_raw[0],
+                    meta: cqe.meta,
                 },
                 CqeOpcode::RespondAndNotifyOnDetach => Self::RespondAndNotifyOnDetach {
                     tag: cqe.tag,
                     res: Error::demux(cqe.result as usize),
                     extra0: cqe.extra_raw[0],
+                    meta: cqe.meta,
                 },
                 CqeOpcode::RespondWithFd => Self::ResponseWithFd {
                     tag: cqe.tag,
                     fd: cqe.result as usize,
+                    meta: cqe.meta,
                 },
                 CqeOpcode::RespondWithMultipleFds => Self::ResponseWithMultipleFds {
                     tag: cqe.tag,
@@ -195,7 +202,7 @@ impl UserInner {
     fn call(
         &self,
         ctx: CallerCtx,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         opcode: Opcode,
         args: impl Args,
         caller_responsible: &mut PageSpan,
@@ -210,11 +217,9 @@ impl UserInner {
                 _rsvd: 0,
                 tag: self.next_id(token)?,
                 caller: ctx.pid as u64,
-                args: {
-                    let mut a = args.args();
-                    a[5] = uid_gid_hack_merge([ctx.uid, ctx.gid]);
-                    a
-                },
+                caller_ctx: uid_gid_hack_merge([ctx.uid, ctx.gid]),
+                args: args.args(),
+                _rsvd2: [0u64; 5],
             },
             caller_responsible,
             token,
@@ -224,7 +229,7 @@ impl UserInner {
 
     fn call_inner(
         &self,
-        fds: Vec<Arc<LockedFileDescription>>,
+        fds: Vec<(Arc<LockedFileDescription>, CapRights)>,
         sqe: Sqe,
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
@@ -743,9 +748,8 @@ impl UserInner {
     pub fn write(&self, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
         let mut bytes_read = 0;
         for chunk in buf.in_exact_chunks(size_of::<Cqe>()) {
-            match ParsedCqe::parse_cqe(&unsafe { chunk.read_exact::<Cqe>()? })
-                .and_then(|p| self.handle_parsed(&p, token))
-            {
+            let cqe = &unsafe { chunk.read_exact::<Cqe>()? };
+            match ParsedCqe::parse_cqe(cqe).and_then(|p| self.handle_parsed(&p, token)) {
                 Ok(()) => bytes_read += size_of::<Cqe>(),
                 Err(_) if bytes_read > 0 => break,
                 Err(error) => return Err(error),
@@ -781,9 +785,13 @@ impl UserInner {
                     required_page_count as u64,
                     0,
                     0,
-                    uid_gid_hack_merge(current_uid_gid(token)),
+                    0,
+                    0,
+                    0,
                 ],
                 caller: { context::current().read(token.token()).pid as u64 },
+                caller_ctx: uid_gid_hack_merge(current_uid_gid(token)),
+                _rsvd2: [0u64; 5],
             },
             token,
         );
@@ -793,35 +801,52 @@ impl UserInner {
     }
     fn handle_parsed(&self, cqe: &ParsedCqe, token: &mut CleanLockToken) -> Result<()> {
         match *cqe {
-            ParsedCqe::RegularResponse { tag, res, extra0 } => {
-                self.respond(tag, Response::Regular(res, extra0, false), token)?
-            }
-            ParsedCqe::RespondAndNotifyOnDetach { tag, res, extra0 } => {
-                self.respond(tag, Response::Regular(res, extra0, true), token)?
-            }
-            ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
+            ParsedCqe::RegularResponse {
                 tag,
-                Response::Fd({
-                    {
-                        let current_lock = context::current();
-                        let mut current = current_lock.read(token.token());
-                        let (context, mut token) = current.token_split();
-                        context.remove_file(FileHandle::from(fd), &mut token)
-                    }
-                    .ok_or(Error::new(EINVAL))?
-                    .description
-                }),
-                token,
-            )?,
+                res,
+                extra0,
+                meta,
+            } => {
+                let response = Response::Regular(res, extra0, false, meta);
+                self.respond(tag, response, token)?;
+            }
+
+            ParsedCqe::RespondAndNotifyOnDetach {
+                tag,
+                res,
+                extra0,
+                meta,
+            } => {
+                self.respond(tag, Response::Regular(res, extra0, true, meta), token)?;
+            }
+
+            ParsedCqe::ResponseWithFd { tag, fd, meta } => {
+                let file = {
+                    let current_lock = context::current();
+                    let mut current = current_lock.read(token.token());
+                    let (context, mut token) = current.token_split();
+                    context
+                        .remove_file(FileHandle::from(fd), &mut token)
+                        .ok_or(Error::new(EINVAL))?
+                };
+
+                self.respond(
+                    tag,
+                    Response::Fd(file.description, file.cap_rights, meta),
+                    token,
+                )?;
+            }
+
             ParsedCqe::ResponseWithMultipleFds { tag, num_fds: _ } => {
                 self.respond(tag, Response::MultipleFds(None), token)?;
             }
+
             ParsedCqe::ObtainFd {
                 tag,
                 flags: _,
                 dst_fd_or_ptr,
             } => {
-                let description = {
+                let (description, cap_rights) = {
                     match self
                         .states
                         .lock(token.token())
@@ -844,7 +869,10 @@ impl UserInner {
                 let (context, mut token) = current.token_split();
                 context.insert_file(
                     FileHandle::from(dst_fd_or_ptr),
-                    FileDescriptor { description },
+                    FileDescriptor {
+                        description,
+                        cap_rights,
+                    },
                     &mut token,
                 );
             }
@@ -949,7 +977,7 @@ impl UserInner {
                     } => {
                         // Convert ECANCELED to EINTR if a request was being canceled (currently always
                         // due to signals).
-                        if let Response::Regular(ref mut res, _, _) = response
+                        if let Response::Regular(ref mut res, _, _, _) = response
                             && canceling
                             && *res == Err(Error::new(ECANCELED))
                         {
@@ -957,7 +985,7 @@ impl UserInner {
                         }
 
                         // TODO: Require ECANCELED?
-                        if let Response::Regular(ref mut res, _, _) = response
+                        if let Response::Regular(ref mut res, _, _, _) = response
                             && !canceling
                             && *res == Err(Error::new(EINTR))
                         {
@@ -973,7 +1001,7 @@ impl UserInner {
                         } else {
                             to_close = fds
                                 .into_iter()
-                                .filter_map(|f| Arc::try_unwrap(f).ok())
+                                .filter_map(|(f, _)| Arc::try_unwrap(f).ok())
                                 .map(RwLock::into_inner)
                                 .collect();
                         }
@@ -1154,7 +1182,7 @@ impl UserInner {
 
     pub fn call_fdwrite(
         &self,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
         token: &mut CleanLockToken,
@@ -1186,7 +1214,7 @@ impl UserInner {
 
     fn handle_movefd(
         &self,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         request_id: usize,
         _flags: FmoveFdFlags,
         token: &mut CleanLockToken,
@@ -1389,6 +1417,7 @@ impl UserScheme {
         fds: &[usize],
         slice: UserSlice<READ, WRITE>,
         metadata: &[u64],
+        cap_rights: CapRights,
         mut on_response: impl FnMut(bool, &mut CleanLockToken),
         allow_direct_switch: bool,
         token: &mut CleanLockToken,
@@ -1399,6 +1428,7 @@ impl UserScheme {
         let ctx = { context::current().read(token.token()).caller_ctx() };
 
         let mut sqe_flags = SqeFlags::empty();
+
         let mut last_arg = 0;
         if fds.len() == 2 {
             sqe_flags |= SqeFlags::MULTIPLE_IDS;
@@ -1407,34 +1437,34 @@ impl UserScheme {
             return Err(Error::new(EINVAL));
         }
 
+        let tag = inner.next_id(token)?;
+
         let mut sqe = Sqe {
             opcode: opcode as u8,
             sqe_flags,
             _rsvd: 0,
-            tag: inner.next_id(token)?,
+            tag,
             caller: ctx.pid as u64,
+            caller_ctx: uid_gid_hack_merge([ctx.uid, ctx.gid]),
             args: [
                 fds[0] as u64,
                 address.base() as u64,
                 address.len() as u64,
                 0,
                 0,
+                0,
+                cap_rights.bits(),
                 last_arg,
             ],
+            _rsvd2: [0; 5],
         };
 
-        if fds.len() == 2 {
-            let dst = &mut sqe.args[3..5];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
-        } else {
-            let dst = &mut sqe.args[3..];
-            let len = dst.len().min(metadata.len());
-            dst[..len].copy_from_slice(&metadata[..len]);
-        }
+        let dst = &mut sqe.args[3..];
+        let len = dst.len().min(metadata.len());
+        dst[..len].copy_from_slice(&metadata[..len]);
 
         match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch) {
-            Ok(Response::Regular(res, _, notify_on_detach)) => {
+            Ok(Response::Regular(res, _, notify_on_detach, _)) => {
                 address.release(token)?;
                 on_response(notify_on_detach, token);
                 res
@@ -1475,14 +1505,35 @@ impl KernelScheme for UserScheme {
         address.release(token)?;
 
         match result? {
-            Response::Regular(res, fl, _) => Ok({
+            Response::Regular(res, fl, _, meta) => Ok({
                 let fd = res?;
+                let cap_rights = CapRights::from_bits_retain(meta[0]);
+                let fd_type = FdType(meta[1] as u32);
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                    cap_rights,
+                    fd_type,
                 )
             }),
-            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::Fd(desc, orig_rights, meta) => {
+                let requested_rights = CapRights::from_bits_retain(meta[0]);
+
+                let requested_fd_type =
+                    FdType(u32::try_from(meta[1]).map_err(|_| Error::new(EINVAL))?);
+
+                let actual_fd_type = *desc.read(token.token()).fd_type();
+
+                let cap_rights = if requested_fd_type == actual_fd_type {
+                    orig_rights & requested_rights
+                } else if requested_fd_type == FdType::ANY {
+                    orig_rights & (requested_rights.kernel_bits() | CapRights::SCHEME_MASK)
+                } else {
+                    return Err(Error::new(EINVAL));
+                };
+
+                Ok(OpenResult::External(desc, cap_rights))
+            }
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
@@ -1569,64 +1620,6 @@ impl KernelScheme for UserScheme {
             .map(EventFlags::from_bits_truncate)
     }
 
-    fn flink(
-        &self,
-        file: usize,
-        path: &str,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match self.inner.call(
-            ctx,
-            Vec::new(),
-            Opcode::Flink,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-            DEF_ALLOW_DIRECT_SWITCH,
-        ) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(err) => {
-                let _ = address.release(token);
-                Err(err)
-            }
-        }?;
-        Ok(())
-    }
-
-    fn frename(
-        &self,
-        file: usize,
-        path: &str,
-        ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        let mut address = self.inner.copy_and_capture_tail(path.as_bytes(), token)?;
-        match self.inner.call(
-            ctx,
-            Vec::new(),
-            Opcode::Frename,
-            [file, address.base(), address.len()],
-            address.span(),
-            token,
-            DEF_ALLOW_DIRECT_SWITCH,
-        ) {
-            Ok(res) => {
-                address.release(token)?;
-                res.into_regular()
-            }
-            Err(err) => {
-                let _ = address.release(token);
-                Err(err)
-            }
-        }?;
-        Ok(())
-    }
-
     fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
         let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner
@@ -1644,14 +1637,17 @@ impl KernelScheme for UserScheme {
     }
 
     fn close(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
+        let ctx = { context::current().read(token.token()).caller_ctx() };
         self.inner.todo.send(
             Sqe {
                 opcode: Opcode::CloseMsg as u8,
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
                 tag: 0,
-                args: [id as u64, 0, 0, 0, 0, 0],
-                caller: 0, // TODO?
+                args: [id as u64, 0, 0, 0, 0, 0, 0, 0],
+                caller: ctx.pid as u64,
+                caller_ctx: uid_gid_hack_merge([ctx.uid, ctx.gid]),
+                _rsvd2: [0u64; 5],
             },
             token,
         );
@@ -1674,8 +1670,10 @@ impl KernelScheme for UserScheme {
                 sqe_flags: SqeFlags::empty(),
                 _rsvd: 0,
                 tag: 0,
-                args: [id as u64, 0, 0, 0, 0, 0],
+                args: [id as u64, 0, 0, 0, 0, 0, 0, 0],
                 caller: ctx.pid as u64,
+                caller_ctx: uid_gid_hack_merge([ctx.uid, ctx.gid]),
+                _rsvd2: [0u64; 5],
             },
             token,
         );
@@ -1710,14 +1708,25 @@ impl KernelScheme for UserScheme {
         address.release(token)?;
 
         match result? {
-            Response::Regular(res, fl, _) => Ok({
+            Response::Regular(res, fl, _, meta) => Ok({
                 let fd = res?;
+                let cap_rights = CapRights::from_bits_retain(meta[0]);
+                let fd_type = FdType(meta[1] as u32);
                 OpenResult::SchemeLocal(
                     fd,
                     InternalFlags::from_extra0(fl).ok_or(Error::new(EINVAL))?,
+                    cap_rights,
+                    fd_type,
                 )
             }),
-            Response::Fd(desc) => Ok(OpenResult::External(desc)),
+            Response::Fd(desc, orig_rights, meta) => {
+                let cap_rights = CapRights::from_bits_retain(meta[0]);
+                let generic_mask = cap_rights & !CapRights::SCHEME_MASK;
+                let target_scheme_bits = orig_rights & CapRights::SCHEME_MASK;
+                let new_rights =
+                    (orig_rights & generic_mask) | target_scheme_bits | CapRights::SCHEME_MASK;
+                Ok(OpenResult::External(desc, new_rights))
+            }
             Response::MultipleFds(_) => Err(Error::new(EIO)),
         }
     }
@@ -1892,6 +1901,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let allow_direct_switch =
@@ -1903,6 +1913,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 payload,
                 metadata,
+                cap_rights,
                 |_, _| {},
                 allow_direct_switch,
                 token,
@@ -1914,6 +1925,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 ro_slice,
                 metadata,
+                cap_rights,
                 |_, _| {},
                 allow_direct_switch,
                 token,
@@ -1928,6 +1940,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: StdFsCallMeta,
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let allow_direct_switch =
@@ -1945,6 +1958,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 payload,
                 &metadata,
+                cap_rights,
                 on_response,
                 allow_direct_switch,
                 token,
@@ -1956,6 +1970,7 @@ impl KernelScheme for UserScheme {
                 fds,
                 ro_slice,
                 &metadata,
+                cap_rights,
                 on_response,
                 allow_direct_switch,
                 token,
@@ -1965,9 +1980,10 @@ impl KernelScheme for UserScheme {
     fn kfdwrite(
         &self,
         number: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -1979,17 +1995,24 @@ impl KernelScheme for UserScheme {
 
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = descs.len();
+        let mut buf: [u64; 7] = [
+            number as u64,
+            sendfd_flags.bits() as u64,
+            len as u64,
+            0,
+            0,
+            0,
+            cap_rights.bits(),
+        ];
+        let dst = &mut buf[3..];
+        let len = dst.len().min(metadata.len());
+        dst[..len].copy_from_slice(&metadata[..len]);
         inner
             .call(
                 ctx,
                 descs,
                 Opcode::Sendfd,
-                [
-                    number,
-                    sendfd_flags.bits(),
-                    *metadata.first().unwrap_or(&0) as usize,
-                    len,
-                ],
+                buf,
                 &mut PageSpan::empty(),
                 token,
                 DEF_ALLOW_DIRECT_SWITCH,
@@ -2002,6 +2025,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
@@ -2015,30 +2039,36 @@ impl KernelScheme for UserScheme {
         }
         let ctx = { context::current().read(token.token()).caller_ctx() };
         let len = payload.len() / size_of::<usize>();
+        let mut buf: [u64; 7] = [
+            id as u64,
+            recvfd_flags.bits() as u64,
+            len as u64,
+            0,
+            0,
+            0,
+            cap_rights.bits(),
+        ];
+        let dst = &mut buf[3..];
+        let len = dst.len().min(metadata.len());
+        dst[..len].copy_from_slice(&metadata[..len]);
         let res = inner.call(
             ctx,
             Vec::new(),
             Opcode::Recvfd,
-            [
-                id,
-                recvfd_flags.bits(),
-                len,
-                *metadata.first().unwrap_or(&0) as usize,
-                *metadata.get(1).unwrap_or(&0) as usize,
-            ],
+            buf,
             &mut PageSpan::empty(),
             token,
             DEF_ALLOW_DIRECT_SWITCH,
         )?;
 
         let descriptions_opt = match res {
-            Response::Regular(res, _, _) => {
+            Response::Regular(res, ..) => {
                 return match res {
                     Ok(_) => Err(Error::new(EIO)),
                     Err(e) => Err(e),
                 }
             }
-            Response::Fd(_) => return Err(Error::new(EIO)),
+            Response::Fd(..) => return Err(Error::new(EIO)),
             Response::MultipleFds(fds) => fds,
         };
 
@@ -2059,6 +2089,7 @@ impl KernelScheme for UserScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let &[kind, arg1, arg2, ..] = metadata else {
@@ -2068,21 +2099,21 @@ impl KernelScheme for UserScheme {
             return Err(Error::new(EOPNOTSUPP));
         };
         let metadata = StdFsCallMeta::new(kind, arg1, arg2);
-        self.kstdfscall(fds, kind, desc, payload, flags, metadata, token)
+        self.kstdfscall(fds, kind, desc, payload, flags, metadata, cap_rights, token)
     }
 }
 
 trait Args: Copy {
-    fn args(self) -> [u64; 6];
+    fn args(self) -> [u64; 8];
 }
 impl<const N: usize> Args for [u64; N] {
-    fn args(self) -> [u64; 6] {
-        const { assert!(N <= 6) };
+    fn args(self) -> [u64; 8] {
+        const { assert!(N <= 8) };
         core::array::from_fn(|i| self.get(i).copied().unwrap_or(0))
     }
 }
 impl<const N: usize> Args for [usize; N] {
-    fn args(self) -> [u64; 6] {
+    fn args(self) -> [u64; 8] {
         self.map(|s| s as u64).args()
     }
 }
