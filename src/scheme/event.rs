@@ -62,12 +62,13 @@ impl KernelScheme for EventScheme {
         // metadata[0] = RSVDZ
         // metadata[1] = event length in bytes
         // metadata[2] = read flags
-        let write_len = metadata.get(1).copied().unwrap_or(0) as usize;
-        let read_flags = metadata.get(2).copied().unwrap_or(0) as usize;
-
-        if write_len > payload.len() {
+        let (Some(_protocol), Some(write_len), Some(read_flags)) = (
+            metadata.get(0).filter(|&&p| p == 0),
+            metadata.get(1).copied().map(|s| s as usize),
+            metadata.get(2).copied().map(|s| s as usize),
+        ) else {
             return Err(Error::new(EINVAL));
-        }
+        };
 
         let (input_slice, output_slice) = payload.split_at(write_len).ok_or(Error::new(EINVAL))?;
 
@@ -89,12 +90,12 @@ impl KernelScheme for EventScheme {
 
                         let chunk_wo = output_remain
                             .limit(size_of::<Event>())
-                            .ok_or(Error::new(EINVAL))?;
+                            .ok_or(Error::new(EFAULT))?;
                         unsafe { chunk_wo.copy_from_slice(&nval_event)? };
 
                         output_remain = output_remain
                             .advance(size_of::<Event>())
-                            .ok_or(Error::new(EINVAL))?;
+                            .ok_or(Error::new(EFAULT))?;
                         nval_count += 1;
                     }
                     Err(e) => return Err(e),
