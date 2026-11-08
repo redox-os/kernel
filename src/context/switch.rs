@@ -898,6 +898,7 @@ fn select_next_context(
                         );
                     }
                 }
+                drop(stolen);
 
                 percpu
                     .switch_internals
