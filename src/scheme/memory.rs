@@ -285,14 +285,17 @@ impl KernelScheme for MemoryScheme {
         match handle_ty {
             HandleTy::Translation => {
                 let virt = VirtualAddress::new(payload.read_usize()?);
-                let mut token = token.token();
-                let addr = AddrSpace::current()?;
-                let addr = addr.acquire_read(token.downgrade());
-                let (phys, _) = addr
-                    .table
-                    .utable
-                    .translate(virt)
-                    .ok_or(Error::new(ENOENT))?;
+                let phys = {
+                    let mut token = token.token();
+                    let addr = AddrSpace::current()?;
+                    let addr = addr.acquire_read(token.downgrade());
+                    let (phys, _) = addr
+                        .table
+                        .utable
+                        .translate(virt)
+                        .ok_or(Error::new(ENOENT))?;
+                    phys
+                };
                 payload.write_usize(phys.data())?;
 
                 // could just return address directly, but physaddrs might conflict with the bit
