@@ -40,7 +40,10 @@ use hashbrown::{
     hash_map::{DefaultHashBuilder, Entry},
     HashMap,
 };
-use syscall::{data::GlobalSchemes, CpuSet, Error, NumaMemoryPolicy};
+use syscall::{
+    data::{FdType, GlobalSchemes},
+    CapRights, CpuSet, Error, NumaMemoryPolicy,
+};
 
 fn read_from(dst: UserSliceWo, src: &[u8], offset: u64) -> Result<usize> {
     let avail_src = usize::try_from(offset)
@@ -636,6 +639,7 @@ impl KernelScheme for ProcScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         if fds.len() != 1 {
@@ -747,7 +751,9 @@ impl KernelScheme for ProcScheme {
                             O_RDWR,
                             token,
                         )
-                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+                        .map(|(r, fl)| {
+                            OpenResult::SchemeLocal(r, fl, CapRights::ALL, FdType::default())
+                        })
                 }
                 Handle {
                     kind: ContextHandle::OpenViaDup,
@@ -761,7 +767,9 @@ impl KernelScheme for ProcScheme {
                             O_RDWR,
                             token,
                         )
-                        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl));
+                        .map(|(r, fl)| {
+                            OpenResult::SchemeLocal(r, fl, CapRights::ALL, FdType::default())
+                        });
                 }
 
                 Handle {
@@ -866,6 +874,7 @@ impl KernelScheme for ProcScheme {
                                 info.file_ref()
                                     .map(|r| Arc::clone(&r.description))
                                     .ok_or(Error::new(EBADF))?,
+                                CapRights::ALL,
                             ));
                         }
 
@@ -878,14 +887,15 @@ impl KernelScheme for ProcScheme {
             },
             token,
         )
-        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl))
+        .map(|(r, fl)| OpenResult::SchemeLocal(r, fl, CapRights::ALL, FdType::default()))
     }
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<context::file::LockedFileDescription>>,
+        descs: Vec<(Arc<context::file::LockedFileDescription>, CapRights)>,
         _flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let context = {
@@ -912,7 +922,7 @@ impl KernelScheme for ProcScheme {
             file.close(token)?;
         }
 
-        let file = descs.first().unwrap();
+        let (file, cap_rights) = descs.first().unwrap();
         let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
@@ -920,6 +930,7 @@ impl KernelScheme for ProcScheme {
                 FileHandle(usize::try_from(*target_fd).map_err(|_| Error::new(EBADFD))?),
                 context::file::FileDescriptor {
                     description: file.clone(),
+                    cap_rights: *cap_rights,
                 },
                 &mut token,
             )

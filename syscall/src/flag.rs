@@ -56,6 +56,8 @@ bitflags! {
 pub const F_GETFL: usize = 3;
 pub const F_SETFL: usize = 4;
 pub const F_GET_SCHEMEID: usize = 0x1000 | 1;
+pub const F_GETCAP: usize = 0x1000 | 2;
+pub const F_SETCAP: usize = 0x1000 | 3;
 
 pub const FUTEX_WAIT: usize = 0;
 pub const FUTEX_WAKE: usize = 1;
@@ -530,9 +532,15 @@ pub enum StdFsCallKind {
     GetLock = 14,
     Frenameat = 15,
     Flinkat = 16,
+
+    #[doc(hidden)]
+    _MaxSentinel,
 }
 
 impl StdFsCallKind {
+    pub const fn max() -> u8 {
+        (Self::_MaxSentinel as u8) - 1
+    }
     pub fn try_from_raw(raw: u8) -> Option<Self> {
         use StdFsCallKind::*;
 
@@ -572,3 +580,94 @@ pub const MAX_CPU_COUNT: u32 = 128;
 pub const MAX_CPU_COUNT: u32 = 32;
 
 pub const CPU_SET_WORDS: usize = (MAX_CPU_COUNT / usize::BITS) as usize;
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+    pub struct CapRights: u64 {
+        const CAP_MMAP      = 1 << 0;
+        const CAP_MMAP_X    = 1 << 1;
+        const CAP_READ      = 1 << 2;
+        const CAP_WRITE     = 1 << 3;
+        const CAP_SEEK      = 1 << 4;
+        const CAP_CREATE    = 1 << 5;
+        const CAP_LOOKUP    = 1 << 6;
+        const CAP_FCNTL     = 1 << 7;
+        const CAP_EVENT     = 1 << 8;
+
+        // Redox-specific rights
+        const CAP_FD_READ   = 1 << 9;
+        const CAP_FD_WRITE  = 1 << 10;
+
+        const KERNEL_MASK   = 0x0000_0000_0000_FFFF;
+        const SCHEME_MASK   = 0xFFFF_FFFF_FFFF_0000;
+    }
+}
+
+impl CapRights {
+    pub const ALL: Self = Self::from_bits_retain(!0);
+
+    #[inline]
+    pub const fn kernel_bits(self) -> Self {
+        Self::from_bits_retain(self.bits() & Self::KERNEL_MASK.bits())
+    }
+
+    #[inline]
+    pub const fn scheme_bits(self) -> Self {
+        Self::from_bits_retain(self.bits() & Self::SCHEME_MASK.bits())
+    }
+
+    #[inline]
+    pub const fn scheme_rights(self) -> u64 {
+        self.scheme_bits().bits() >> 16
+    }
+
+    #[inline]
+    pub const fn from_scheme_rights(rights: u64) -> Self {
+        Self::from_bits_retain((rights << 16) & Self::SCHEME_MASK.bits())
+    }
+
+    #[inline]
+    pub const fn from_kernel_and_scheme(kernel_caps: Self, scheme_rights: u64) -> Self {
+        Self::from_bits_retain(
+            kernel_caps.kernel_bits().bits() | Self::from_scheme_rights(scheme_rights).bits(),
+        )
+    }
+
+    #[inline]
+    pub fn require(self, required: Self) -> crate::error::Result<()> {
+        if self.contains(required) {
+            Ok(())
+        } else {
+            Err(crate::error::Error::new(crate::error::EPERM))
+        }
+    }
+
+    #[inline]
+    pub fn is_subset_of(self, superset: Self) -> bool {
+        superset.contains(self)
+    }
+
+    #[inline]
+    pub fn restrict(self, max_allowed: Self) -> Self {
+        self & max_allowed
+    }
+
+    pub fn from_open_flags(flags: usize) -> Self {
+        let mut caps = Self::empty();
+
+        let accmode = flags & O_ACCMODE;
+        if accmode == O_RDONLY || accmode == O_RDWR {
+            caps |= Self::CAP_READ;
+        }
+        if accmode == O_WRONLY || accmode == O_RDWR {
+            caps |= Self::CAP_WRITE;
+        }
+        if flags & O_CREAT != 0 {
+            caps |= Self::CAP_CREATE;
+        }
+
+        caps |= Self::CAP_SEEK | Self::CAP_FCNTL | Self::CAP_EVENT;
+
+        caps
+    }
+}

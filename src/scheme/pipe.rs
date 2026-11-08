@@ -1,7 +1,10 @@
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use syscall::{data::GlobalSchemes, CallFlags};
+use syscall::{
+    data::{FdType, GlobalSchemes},
+    CallFlags, CapRights,
+};
 
 use hashbrown::{hash_map::DefaultHashBuilder, HashMap};
 
@@ -205,6 +208,8 @@ impl KernelScheme for PipeScheme {
         Ok(OpenResult::SchemeLocal(
             key | WRITE_NOT_READ_BIT,
             InternalFlags::empty(),
+            CapRights::ALL,
+            FdType::default(),
         ))
     }
     fn kopenat(
@@ -236,6 +241,8 @@ impl KernelScheme for PipeScheme {
                 return Ok(OpenResult::SchemeLocal(
                     key | WRITE_NOT_READ_BIT,
                     InternalFlags::empty(),
+                    CapRights::ALL,
+                    FdType::default(),
                 ));
             } else {
                 return Err(Error::new(EBADF));
@@ -248,14 +255,24 @@ impl KernelScheme for PipeScheme {
             "scheme-root" => {
                 let id = PIPE_NEXT_ID.fetch_add(2, Ordering::Relaxed);
                 PIPES.write(token.token()).insert(id, Handle::SchemeRoot);
-                return Ok(OpenResult::SchemeLocal(id, InternalFlags::empty()));
+                return Ok(OpenResult::SchemeLocal(
+                    id,
+                    InternalFlags::empty(),
+                    CapRights::ALL,
+                    FdType::default(),
+                ));
             }
             _ => return Err(Error::new(ENOENT)),
         };
 
         let (read_id, _) = pipe(token)?;
 
-        Ok(OpenResult::SchemeLocal(read_id, InternalFlags::empty()))
+        Ok(OpenResult::SchemeLocal(
+            read_id,
+            InternalFlags::empty(),
+            CapRights::ALL,
+            FdType::default(),
+        ))
     }
 
     fn kread(
@@ -401,9 +418,10 @@ impl KernelScheme for PipeScheme {
     fn kfdwrite(
         &self,
         id: usize,
-        mut descs: Vec<Arc<LockedFileDescription>>,
+        mut descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         _flags: CallFlags,
         _metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
@@ -467,6 +485,7 @@ impl KernelScheme for PipeScheme {
         payload: UserSliceRw,
         flags: CallFlags,
         _metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let (is_write_not_read, key) = from_raw_id(id);
@@ -525,5 +544,5 @@ pub struct Pipe {
     reader_is_alive: AtomicBool, // starts set, unset when reader closes
     writer_is_alive: AtomicBool, // starts set, unset when writer closes
     has_run_dup: AtomicBool,
-    fd_queue: Mutex<L1, VecDeque<Arc<LockedFileDescription>>>,
+    fd_queue: Mutex<L1, VecDeque<(Arc<LockedFileDescription>, CapRights)>>,
 }

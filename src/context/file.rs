@@ -10,7 +10,10 @@ use crate::{
     syscall::error::Result,
 };
 use alloc::sync::{Arc, Weak};
-use syscall::{schemev2::NewFdFlags, Error, GlobalSchemes, RwFlags, ENODEV, O_APPEND, O_NONBLOCK};
+use syscall::{
+    schemev2::NewFdFlags, CapRights, Error, FdType, GlobalSchemes, RwFlags, ENODEV, O_APPEND,
+    O_NONBLOCK,
+};
 
 pub type LockedFileDescription = RwLock<L6, FileDescription>;
 
@@ -68,6 +71,7 @@ pub struct FileDescription {
     /// The flags passed to open or fcntl(SETFL)
     pub flags: u32,
     pub internal_flags: InternalFlags,
+    fd_type: FdType,
 }
 bitflags! {
     #[derive(Clone, Copy, Debug)]
@@ -77,6 +81,23 @@ bitflags! {
     }
 }
 impl FileDescription {
+    pub fn new(
+        offset: u64,
+        scheme_ref: KernelSchemeRef,
+        number: usize,
+        flags: u32,
+        internal_flags: InternalFlags,
+        fd_type: FdType,
+    ) -> Self {
+        Self {
+            offset,
+            scheme_ref,
+            number,
+            flags,
+            internal_flags,
+            fd_type,
+        }
+    }
     pub fn rw_flags(&self, rw: RwFlags) -> u32 {
         let mut ret = self.flags & !(O_NONBLOCK | O_APPEND) as u32;
         if rw.contains(RwFlags::APPEND) {
@@ -86,6 +107,10 @@ impl FileDescription {
             ret |= O_NONBLOCK as u32;
         }
         ret
+    }
+
+    pub fn fd_type(&self) -> &FdType {
+        &self.fd_type
     }
 }
 impl InternalFlags {
@@ -111,6 +136,9 @@ impl InternalFlags {
 pub struct FileDescriptor {
     /// Corresponding file description
     pub description: Arc<LockedFileDescription>,
+
+    /// Capability rights
+    pub cap_rights: CapRights,
 }
 
 impl FileDescription {

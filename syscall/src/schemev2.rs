@@ -50,6 +50,9 @@ bitflags! {
         // If this flag is set, index 0 of Sqe's args stores the IDs buffer address,
         // and index 1 stores the IDs buffer length.
         const MULTIPLE_IDS = 1 << 1;
+
+        // If this flag is set, the next SQE serves as extra information for this SQE.
+        const NEXT_EXTRA = 1 << 2;
     }
 }
 
@@ -71,6 +74,15 @@ impl Deref for Cqe {
 impl DerefMut for Cqe {
     fn deref_mut(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self as *mut Cqe as *mut u8, mem::size_of::<Cqe>()) }
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub struct CqeFlags: u8 {
+
+        // If this flag is set, the next CQE serves as extra information for this CQE.
+        const NEXT_EXTRA = 1 << 7;
     }
 }
 
@@ -102,6 +114,7 @@ pub enum CqeOpcode {
     /// "detached" from a file descriptor. Not done by default to avoid unnecessary IPC.
     RespondAndNotifyOnDetach,
     // TODO: ProvideMmap
+    CapRights,
 }
 
 impl CqeOpcode {
@@ -114,6 +127,7 @@ impl CqeOpcode {
             3 => Self::ObtainFd,
             4 => Self::RespondWithMultipleFds,
             5 => Self::RespondAndNotifyOnDetach,
+            6 => Self::CapRights,
             _ => return None,
         })
     }
@@ -162,6 +176,8 @@ pub enum Opcode {
     StdFsCall = 33,
 
     Detach = 34,
+
+    CapRights = 35,
 }
 
 impl Opcode {
@@ -206,6 +222,8 @@ impl Opcode {
             32 => UnlinkAt,
             33 => StdFsCall,
             34 => Detach,
+
+            35 => CapRights,
 
             _ => return None,
         })

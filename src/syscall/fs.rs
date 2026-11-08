@@ -1,6 +1,6 @@
 //! Filesystem syscalls
 
-use core::num::NonZeroUsize;
+use core::{mem::offset_of, num::NonZeroUsize};
 
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -15,10 +15,10 @@ use crate::{
     memory::{Page, VirtualAddress, PAGE_SIZE},
     scheme::{CallerCtx, FileHandle, KernelScheme, OpenResult, StrOrBytes},
     sync::{CleanLockToken, LockToken, RwLock, L4},
-    syscall::{error::*, flag::*},
+    syscall::{data::TypedCapRights, error::*, flag::*},
 };
 
-use super::usercopy::{UserSliceRo, UserSliceRw, UserSliceWo};
+use super::usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo};
 
 fn with_current_ctx<T>(
     token: &mut CleanLockToken,
@@ -32,13 +32,17 @@ fn with_current_ctx<T>(
 
 pub fn file_op_generic<T>(
     fd: FileHandle,
+    required_caps: CapRights,
     token: &mut CleanLockToken,
     op: impl FnOnce(&dyn KernelScheme, usize, &mut CleanLockToken) -> Result<T>,
 ) -> Result<T> {
-    file_op_generic_ext(fd, token, |s, _, desc, token| op(s, desc.number, token))
+    file_op_generic_ext(fd, required_caps, token, |s, _, desc, token| {
+        op(s, desc.number, token)
+    })
 }
 pub fn file_op_generic_ext<T>(
     fd: FileHandle,
+    required_caps: CapRights,
     token: &mut CleanLockToken,
     op: impl FnOnce(
         &dyn KernelScheme,
@@ -49,6 +53,7 @@ pub fn file_op_generic_ext<T>(
 ) -> Result<T> {
     let (file, desc) = with_current_ctx(token, |context, token| {
         let file = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        file.cap_rights.require(required_caps)?;
         // TODO: potential unnecessary clone
         let desc = file.description.read(token.token()).clone();
         Ok((file, desc))
@@ -82,14 +87,25 @@ pub fn openat_into(
 ) -> Result<FileHandle> {
     let path_buf = copy_path_to_buf(raw_path, PATH_MAX)?;
 
-    let (caller_ctx, scheme, number) = with_current_ctx(token, |context, token| {
+    let mut required_caps = CapRights::CAP_LOOKUP;
+    if flags & O_CREAT != 0 {
+        required_caps |= CapRights::CAP_CREATE;
+    }
+
+    let (caller_ctx, scheme, number, parent_caps) = with_current_ctx(token, |context, token| {
         let caller_ctx = context.caller_ctx();
         let pipe = context.get_file(fh, token).ok_or(Error::new(EBADF))?;
+        pipe.cap_rights.require(required_caps)?;
         let desc = pipe.description.read(token.token());
-        Ok((caller_ctx, desc.scheme_ref.upgrade()?, desc.number))
+        Ok((
+            caller_ctx,
+            desc.scheme_ref.upgrade()?,
+            desc.number,
+            pipe.cap_rights,
+        ))
     })?;
 
-    let new_description = {
+    let (new_description, cap_rights) = {
         let res = scheme.kopenat(
             number,
             StrOrBytes::from_str(&path_buf),
@@ -100,16 +116,18 @@ pub fn openat_into(
         );
 
         match res? {
-            OpenResult::SchemeLocal(number, internal_flags) => {
-                Arc::new(RwLock::new(FileDescription {
-                    offset: 0,
-                    internal_flags,
-                    scheme_ref: scheme.downgrade(),
+            OpenResult::SchemeLocal(number, internal_flags, cap_rights, fd_type) => (
+                Arc::new(RwLock::new(FileDescription::new(
+                    0,
+                    scheme.downgrade(),
                     number,
-                    flags: flags as u32,
-                }))
-            }
-            OpenResult::External(desc) => desc,
+                    flags as u32,
+                    internal_flags,
+                    fd_type,
+                ))),
+                cap_rights,
+            ),
+            OpenResult::External(desc, cap_rights) => (desc, cap_rights),
         }
     };
 
@@ -119,6 +137,7 @@ pub fn openat_into(
                 new_fd,
                 FileDescriptor {
                     description: new_description,
+                    cap_rights,
                 },
                 token,
             )
@@ -144,26 +163,35 @@ fn duplicate_file(
     if user_buf.is_empty() {
         return Ok(FileDescriptor {
             description: Arc::clone(&file.description),
+            cap_rights: file.cap_rights,
         });
     }
+
+    file.cap_rights.require(CapRights::CAP_FD_READ)?;
 
     // TODO: potential unnecessary clone
     let description = { file.description.read(token.token()).clone() };
     let scheme = description.scheme_ref.upgrade()?;
 
-    let new_description = match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
-        OpenResult::SchemeLocal(number, internal_flags) => Arc::new(RwLock::new(FileDescription {
-            offset: 0,
-            internal_flags,
-            scheme_ref: scheme.downgrade(),
-            number,
-            flags: description.flags,
-        })),
-        OpenResult::External(desc) => desc,
-    };
+    let (new_description, cap_rights) =
+        match scheme.kdup(description.number, user_buf, caller_ctx, token)? {
+            OpenResult::SchemeLocal(number, internal_flags, cap_rights, fd_type) => (
+                Arc::new(RwLock::new(FileDescription::new(
+                    0,
+                    scheme.downgrade(),
+                    number,
+                    description.flags,
+                    internal_flags,
+                    fd_type,
+                ))),
+                cap_rights,
+            ),
+            OpenResult::External(desc, cap_rights) => (desc, cap_rights),
+        };
 
     Ok(FileDescriptor {
         description: new_description,
+        cap_rights,
     })
 }
 
@@ -243,6 +271,13 @@ fn call_normal(
     let mut nums = arrayvec::ArrayVec::<_, 2>::new();
 
     let consume = flags.contains(CallFlags::CONSUME);
+    let mut required_caps = CapRights::empty();
+    if flags.contains(CallFlags::WRITE) {
+        required_caps |= CapRights::CAP_WRITE;
+    }
+    if flags.contains(CallFlags::READ) {
+        required_caps |= CapRights::CAP_READ;
+    }
     let mut fds = fds.iter();
 
     let fd = FileHandle::from(fds.next().copied().unwrap());
@@ -253,6 +288,8 @@ fn call_normal(
             context.get_file(fd, token)
         }
         .ok_or(Error::new(EBADF))?;
+
+        file.cap_rights.require(required_caps)?;
 
         let desc = file.description.read(token.token());
         let scheme = desc.scheme_ref.upgrade()?;
@@ -271,6 +308,7 @@ fn call_normal(
             }
             .ok_or(Error::new(EBADF))?;
 
+            file.cap_rights.require(required_caps)?;
             let desc = file.description.read(token.token());
             if !desc.scheme_ref.same_ref_as(&scheme) {
                 return Err(Error::new(EXDEV));
@@ -287,10 +325,18 @@ fn call_normal(
             payload,
             flags,
             metadata,
+            target_file.cap_rights,
             token,
         )
     } else {
-        scheme.kcall(&nums, payload, flags, metadata, token)
+        scheme.kcall(
+            &nums,
+            payload,
+            flags,
+            metadata,
+            target_file.cap_rights,
+            token,
+        )
     }
 }
 
@@ -312,25 +358,33 @@ fn call_fdwrite(
     let len = fds.len();
 
     // TODO: Ensure deadlocks can't happen
-    let (scheme, number, descs_to_send) = {
-        let (scheme, number) = with_current_ctx(token, |context, token| {
+    let (scheme, number, cap_rights, descs_to_send) = {
+        let (scheme, number, cap_rights) = with_current_ctx(token, |context, token| {
             let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+            file_descriptor
+                .cap_rights
+                .require(CapRights::CAP_FD_WRITE)?;
             let desc = file_descriptor.description.read(token.token());
-            Ok((desc.scheme_ref.upgrade()?, desc.number))
+            Ok((
+                desc.scheme_ref.upgrade()?,
+                desc.number,
+                file_descriptor.cap_rights,
+            ))
         })?;
 
         with_current_ctx(token, |context, token| {
             Ok((
                 scheme,
                 number,
+                cap_rights,
                 if flags.contains(CallFlags::FD_CLONE) {
                     context.bulk_get_files(&fds, token)
                 } else {
                     context.bulk_remove_files(&fds, token)
                 }?
                 .into_iter()
-                .map(|f| f.description)
-                .collect(),
+                .map(|f| (f.description, f.cap_rights))
+                .collect::<Vec<_>>(),
             ))
         })?
     };
@@ -339,7 +393,7 @@ fn call_fdwrite(
     //  either in the current file table or in other file tables, regardless of whether EXCLUSIVE is
     //  requested.
     let flags_to_scheme = if flags.contains(CallFlags::FD_EXCLUSIVE) {
-        for desc in &descs_to_send {
+        for (desc, _) in descs_to_send.iter() {
             if Arc::strong_count(desc) > 1 {
                 return Err(Error::new(EBUSY));
             }
@@ -350,7 +404,14 @@ fn call_fdwrite(
         CallFlags::empty()
     };
 
-    scheme.kfdwrite(number, descs_to_send, flags_to_scheme, metadata, token)?;
+    scheme.kfdwrite(
+        number,
+        descs_to_send,
+        flags_to_scheme,
+        metadata,
+        cap_rights,
+        token,
+    )?;
 
     Ok(len)
 }
@@ -362,13 +423,18 @@ fn call_fdread(
     metadata: &[u64],
     token: &mut CleanLockToken,
 ) -> Result<usize> {
-    let (scheme, number) = with_current_ctx(token, |context, token| {
+    let (scheme, number, cap_rights) = with_current_ctx(token, |context, token| {
         let file_descriptor = context.get_file(fd, token).ok_or(Error::new(EBADF))?;
+        file_descriptor.cap_rights.require(CapRights::CAP_FD_READ)?;
         let desc = file_descriptor.description.read(token.token());
-        Ok((desc.scheme_ref.upgrade()?, desc.number))
+        Ok((
+            desc.scheme_ref.upgrade()?,
+            desc.number,
+            file_descriptor.cap_rights,
+        ))
     })?;
 
-    scheme.kfdread(number, payload, flags, metadata, token)
+    scheme.kfdread(number, payload, flags, metadata, cap_rights, token)
 }
 
 /// File descriptor controls
@@ -383,7 +449,11 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
     };
 
     // Communicate fcntl with scheme
-    if cmd != F_GET_SCHEMEID {
+    if cmd != F_GETCAP {
+        file.cap_rights.require(CapRights::CAP_FCNTL)?;
+    }
+
+    if cmd != F_GET_SCHEMEID && cmd != F_GETCAP && cmd != F_SETCAP {
         scheme.fcntl(number, cmd, arg, token)?;
     }
 
@@ -406,6 +476,43 @@ pub fn fcntl(fd: FileHandle, cmd: usize, arg: usize, token: &mut CleanLockToken)
                     .upgrade()?
                     .scheme_id()
                     .get()),
+                F_GETCAP => {
+                    let cap = TypedCapRights {
+                        fd_type: *file.description.read(token.token()).fd_type(),
+                        rights: file.cap_rights,
+                    };
+                    let mut bytes = [0u8; size_of::<TypedCapRights>()];
+
+                    let fd_type_bytes = (cap.fd_type.0).to_ne_bytes();
+                    let rights_bytes = cap.rights.bits().to_ne_bytes();
+
+                    let fd_type_offset = offset_of!(TypedCapRights, fd_type);
+                    let rights_offset = offset_of!(TypedCapRights, rights);
+
+                    bytes[fd_type_offset..fd_type_offset + fd_type_bytes.len()]
+                        .copy_from_slice(&fd_type_bytes);
+
+                    bytes[rights_offset..rights_offset + rights_bytes.len()]
+                        .copy_from_slice(&rights_bytes);
+
+                    UserSlice::wo(arg, bytes.len())?.copy_exactly(&bytes)?;
+
+                    Ok(0)
+                }
+                F_SETCAP => {
+                    let requested = unsafe {
+                        UserSlice::ro(arg, size_of::<TypedCapRights>())?
+                            .read_exact::<TypedCapRights>()?
+                    };
+                    if &requested.fd_type != file.description.read(token.token()).fd_type() {
+                        return Err(Error::new(EINVAL));
+                    }
+                    if !requested.rights.is_subset_of(file.cap_rights) {
+                        return Err(Error::new(EPERM));
+                    }
+                    file.cap_rights = requested.rights;
+                    Ok(0)
+                }
                 _ => Err(Error::new(EINVAL)),
             },
             None => Err(Error::new(EBADF)),
@@ -529,13 +636,18 @@ pub fn mremap(
 }
 
 pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken) -> Result<usize> {
-    let (fsize, desc) = file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
-        Ok(if whence == SEEK_END {
-            (Some(scheme.fsize(desc.number, token)?), desc_arc)
-        } else {
-            (None, desc_arc)
-        })
-    })?;
+    let (fsize, desc) = file_op_generic_ext(
+        fd,
+        CapRights::CAP_SEEK,
+        token,
+        |scheme, desc_arc, desc, token| {
+            Ok(if whence == SEEK_END {
+                (Some(scheme.fsize(desc.number, token)?), desc_arc)
+            } else {
+                (None, desc_arc)
+            })
+        },
+    )?;
 
     let mut guard = desc.write(token.token());
 
@@ -554,8 +666,11 @@ pub fn lseek(fd: FileHandle, pos: i64, whence: usize, token: &mut CleanLockToken
     Ok(guard.offset as usize)
 }
 pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-    let (bytes_read, desc_arc, desc) =
-        file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
+    let (bytes_read, desc_arc, desc) = file_op_generic_ext(
+        fd,
+        CapRights::CAP_READ,
+        token,
+        |scheme, desc_arc, desc, token| {
             let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) {
                 desc.offset
             } else {
@@ -566,7 +681,8 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) ->
                 desc_arc,
                 desc,
             ))
-        })?;
+        },
+    )?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
         let offset = &mut desc_arc.write(token.token()).offset;
         *offset = offset.saturating_add(bytes_read as u64)
@@ -574,8 +690,11 @@ pub fn sys_read(fd: FileHandle, buf: UserSliceWo, token: &mut CleanLockToken) ->
     Ok(bytes_read)
 }
 pub fn sys_write(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -> Result<usize> {
-    let (bytes_written, desc_arc, desc) =
-        file_op_generic_ext(fd, token, |scheme, desc_arc, desc, token| {
+    let (bytes_written, desc_arc, desc) = file_op_generic_ext(
+        fd,
+        CapRights::CAP_WRITE,
+        token,
+        |scheme, desc_arc, desc, token| {
             let offset = if desc.internal_flags.contains(InternalFlags::POSITIONED) {
                 desc.offset
             } else {
@@ -586,7 +705,8 @@ pub fn sys_write(fd: FileHandle, buf: UserSliceRo, token: &mut CleanLockToken) -
                 desc_arc,
                 desc,
             ))
-        })?;
+        },
+    )?;
     if desc.internal_flags.contains(InternalFlags::POSITIONED) {
         let offset = &mut desc_arc.write(token.token()).offset;
         *offset = offset.saturating_add(bytes_written as u64)

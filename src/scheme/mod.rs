@@ -17,9 +17,9 @@ use core::{
 use hashbrown::hash_map::{self, DefaultHashBuilder, HashMap};
 use spin::Once;
 use syscall::{
-    data::{GlobalSchemes, NewFdParams, StdFsCallMeta},
+    data::{FdType, GlobalSchemes, NewFdParams, StdFsCallMeta},
     error::*,
-    CallFlags, EventFlags, MunmapFlags, StdFsCallKind,
+    CallFlags, CapRights, EventFlags, MunmapFlags, StdFsCallKind,
 };
 
 use crate::{
@@ -301,16 +301,18 @@ impl KernelScheme for SchemeList {
                 let scheme_ref = KernelSchemeRef::User(Arc::downgrade(inner));
                 let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
 
-                return Ok(OpenResult::External(Arc::new(RwLock::new(
-                    FileDescription {
+                return Ok(OpenResult::External(
+                    Arc::new(RwLock::new(FileDescription::new(
+                        params.offset,
                         scheme_ref,
-                        number: params.number,
-                        offset: params.offset,
-                        flags: params.flags as u32,
-                        internal_flags: InternalFlags::from_extra0(params.internal_flags)
+                        params.number,
+                        params.flags as u32,
+                        InternalFlags::from_extra0(params.internal_flags)
                             .ok_or(Error::new(EINVAL))?,
-                    },
-                ))));
+                        FdType::default(),
+                    ))),
+                    CapRights::ALL,
+                ));
             }
             Handle::SchemeCreationCapability => (),
             _ => return Err(Error::new(EBADF)),
@@ -333,6 +335,8 @@ impl KernelScheme for SchemeList {
         Ok(OpenResult::SchemeLocal(
             scheme_id.get(),
             InternalFlags::empty(),
+            CapRights::ALL,
+            FdType::default(),
         ))
     }
 
@@ -397,6 +401,7 @@ impl KernelScheme for SchemeList {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let [id]: [usize; 1] = fds.try_into().map_err(|_| Error::new(EINVAL))?;
@@ -420,10 +425,10 @@ impl KernelScheme for SchemeList {
 
         let wrote_all = if flags.contains(CallFlags::WRITE) {
             let write_buf = payload
-                .limit(num_write * size_of::<syscall::schemev2::Cqe>())
+                .limit(num_write * size_of::<syscall::schemev3::Cqe>())
                 .ok_or(Error::new(EINVAL))?;
             let num_wrote = inner.write(write_buf.reinterpret_unchecked(), token)?
-                / size_of::<syscall::schemev2::Cqe>();
+                / size_of::<syscall::schemev3::Cqe>();
             num_processed += num_wrote;
             num_wrote == num_write
         } else {
@@ -431,12 +436,12 @@ impl KernelScheme for SchemeList {
         };
         if wrote_all && flags.contains(CallFlags::READ) {
             let read_buf = payload
-                .limit(num_read * size_of::<syscall::schemev2::Sqe>())
+                .limit(num_read * size_of::<syscall::schemev3::Sqe>())
                 .ok_or(Error::new(EINVAL))?;
             let flags = 0; // TODO: allow specifying nonblock
             match inner.read(read_buf.reinterpret_unchecked(), flags, token) {
                 Ok(bytes_read) => {
-                    let num_read = bytes_read / size_of::<syscall::schemev2::Sqe>();
+                    let num_read = bytes_read / size_of::<syscall::schemev3::Sqe>();
                     num_processed += num_read;
                 }
                 Err(_e) if num_processed > 0 => (),
@@ -450,9 +455,10 @@ impl KernelScheme for SchemeList {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
@@ -467,6 +473,7 @@ impl KernelScheme for SchemeList {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        _cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         match self.get_user_inner(id, token) {
@@ -719,24 +726,6 @@ pub trait KernelScheme: Send + Sync + 'static {
     ) -> Result<EventFlags> {
         Ok(EventFlags::empty())
     }
-    fn flink(
-        &self,
-        id: usize,
-        new_path: &str,
-        caller_ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
-    fn frename(
-        &self,
-        id: usize,
-        new_path: &str,
-        caller_ctx: CallerCtx,
-        token: &mut CleanLockToken,
-    ) -> Result<()> {
-        Err(Error::new(EBADF))
-    }
     fn fcntl(
         &self,
         id: usize,
@@ -758,6 +747,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
@@ -770,6 +760,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: StdFsCallMeta,
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
@@ -777,9 +768,10 @@ pub trait KernelScheme: Send + Sync + 'static {
     fn kfdwrite(
         &self,
         id: usize,
-        descs: Vec<Arc<LockedFileDescription>>,
+        descs: Vec<(Arc<LockedFileDescription>, CapRights)>,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
@@ -790,6 +782,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         Err(Error::new(EOPNOTSUPP))
@@ -802,6 +795,7 @@ pub trait KernelScheme: Send + Sync + 'static {
         payload: UserSliceRw,
         flags: CallFlags,
         metadata: &[u64],
+        cap_rights: CapRights,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let &[kind, arg1, arg2, ..] = metadata else {
@@ -848,8 +842,8 @@ pub trait KernelScheme: Send + Sync + 'static {
 
 #[derive(Debug)]
 pub enum OpenResult {
-    SchemeLocal(usize, InternalFlags),
-    External(Arc<LockedFileDescription>),
+    SchemeLocal(usize, InternalFlags, CapRights, FdType),
+    External(Arc<LockedFileDescription>, CapRights),
 }
 pub struct CallerCtx {
     pub pid: usize,
