@@ -90,17 +90,25 @@ pub fn excp_handler(excp: syscall::Exception) {
     if !excp_handler_inner(excp, &mut context) {
         // TODO: Let procmgr print this?
         info!(
-            "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {:p}",
+            "UNHANDLED EXCEPTION, CPU {}, PID {}, NAME {}, CONTEXT {}",
             crate::cpu_id(),
             context.pid,
             context.name,
-            Arc::as_ptr(&*current),
+            context.debug_id,
         );
         drop(context);
         drop(current);
         // TODO: Allow exceptions to be caught by tracer etc, without necessarily exiting the
         // context (closing files, dropping AddrSpace, etc)
         crate::syscall::process::exit_this_context(Some(excp), &mut token);
+    } else {
+        info!(
+            "EXCEPTION RAISED, CPU {}, PID {}, NAME {}, CONTEXT {}",
+            crate::cpu_id(),
+            context.pid,
+            context.name,
+            context.debug_id,
+        );
     }
 }
 
