@@ -84,6 +84,15 @@ pub fn futex(
     let target_virtaddr = VirtualAddress::new(addr);
     let page = Page::containing_address(target_virtaddr);
 
+    let timeout_opt = if matches!(op, FUTEX_WAIT | FUTEX_WAIT64) {
+        UserSlice::ro(val2, size_of::<TimeSpec>())?
+            .none_if_null()
+            .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
+            .transpose()?
+    } else {
+        None
+    };
+
     let current_addrsp = AddrSpace::current()?;
 
     // Keep the address space locked so we can safely read from the physical address. Unlock it
@@ -113,10 +122,6 @@ pub fn futex(
     match op {
         // TODO: FUTEX_WAIT_MULTIPLE?
         FUTEX_WAIT | FUTEX_WAIT64 => {
-            let timeout_opt = UserSlice::ro(val2, size_of::<TimeSpec>())?
-                .none_if_null()
-                .map(|buf| unsafe { buf.read_exact::<TimeSpec>() })
-                .transpose()?;
             // Must be aligned, otherwise it could cross a page boundary and mess up the
             // (simpler) validation we did in the first place.
             if op == FUTEX_WAIT && !addr.is_multiple_of(4) {

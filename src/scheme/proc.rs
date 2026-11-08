@@ -1500,6 +1500,7 @@ impl ContextHandle {
                     };
                     grants_read += 1;
                 }
+                drop(addr_space);
                 for (src, chunk) in dst
                     .iter()
                     .take(grants_read)
@@ -1513,9 +1514,12 @@ impl ContextHandle {
 
             ContextHandle::Filetable { data, .. } => read_from(buf, data, offset),
             ContextHandle::MmapMinAddr(addrspace) => {
-                let mut token = token.token();
-                let addr = addrspace.acquire_read(token.downgrade());
-                buf.write_usize(addr.mmap_min)?;
+                let mmap_min = {
+                    let mut token = token.token();
+                    let addr = addrspace.acquire_read(token.downgrade());
+                    addr.mmap_min
+                };
+                buf.write_usize(mmap_min)?;
                 Ok(size_of::<usize>())
             }
             ContextHandle::SchedAffinity => {
@@ -1764,13 +1768,15 @@ impl ContextHandle {
                 }
 
                 if flags.contains(CallFlags::WRITE) {
-                    let mut addrspace = addrspace.acquire_write(token.downgrade());
-                    addrspace.table.utable.allocator_mut().0 =
+                    let mem_policy =
                         NumaMemoryPolicy::try_from(unsafe { payload.read_exact::<u64>()? })?;
+                    let mut addrspace = addrspace.acquire_write(token.downgrade());
+                    addrspace.table.utable.allocator_mut().0 = mem_policy;
                 }
                 if flags.contains(CallFlags::READ) {
                     let addrspace = addrspace.acquire_read(token.downgrade());
                     let mem_policy = (addrspace.table.utable.allocator().0 as u32).to_ne_bytes();
+                    drop(addrspace);
                     payload.copy_from_slice(&mem_policy)?;
                 }
                 Ok(0)
