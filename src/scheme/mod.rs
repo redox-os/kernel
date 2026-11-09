@@ -292,29 +292,31 @@ impl KernelScheme for SchemeList {
         token: &mut CleanLockToken,
     ) -> Result<OpenResult> {
         let scheme_id = SchemeId(scheme_id);
-        match handles()
+        let inner_opt = match handles()
             .read(token.token())
             .get(&scheme_id)
             .ok_or(Error::new(EBADF))?
         {
             Handle::Scheme(KernelSchemes::User(UserScheme { inner })) => {
-                let scheme_ref = KernelSchemeRef::User(Arc::downgrade(inner));
-                let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
-
-                return Ok(OpenResult::External(Arc::new(RwLock::new(
-                    FileDescription {
-                        scheme_ref,
-                        number: params.number,
-                        offset: params.offset,
-                        flags: params.flags as u32,
-                        internal_flags: InternalFlags::from_extra0(params.internal_flags)
-                            .ok_or(Error::new(EINVAL))?,
-                    },
-                ))));
+                Some(Arc::downgrade(inner))
             }
-            Handle::SchemeCreationCapability => (),
+            Handle::SchemeCreationCapability => None,
             _ => return Err(Error::new(EBADF)),
         };
+        if let Some(inner) = inner_opt {
+            let params = unsafe { user_buf.read_exact::<NewFdParams>()? };
+
+            return Ok(OpenResult::External(Arc::new(RwLock::new(
+                FileDescription {
+                    scheme_ref: KernelSchemeRef::User(inner),
+                    number: params.number,
+                    offset: params.offset,
+                    flags: params.flags as u32,
+                    internal_flags: InternalFlags::from_extra0(params.internal_flags)
+                        .ok_or(Error::new(EINVAL))?,
+                },
+            ))));
+        }
 
         const EXPECTED: &[u8] = b"create-scheme";
         let mut buf = [0u8; EXPECTED.len()];

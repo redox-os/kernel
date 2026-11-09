@@ -494,10 +494,8 @@ impl KernelScheme for PipeScheme {
             let fds_to_read = core::cmp::min(fds_available, max_fds_read);
             if fds_to_read > 0 {
                 let fds_to_transfer: Vec<_> = vec.drain(..fds_to_read).collect();
+                drop(vec);
 
-                if flags.contains(CallFlags::FD_UPPER) {
-                    bulk_insert_fds(fds_to_transfer, payload, &mut token)?;
-                }
                 event::trigger_locked(
                     GlobalSchemes::Pipe.scheme_id(),
                     key | WRITE_NOT_READ_BIT,
@@ -505,6 +503,10 @@ impl KernelScheme for PipeScheme {
                     token.token(),
                 );
                 pipe.write_condition.notify_locked(token.token());
+
+                if flags.contains(CallFlags::FD_UPPER) {
+                    bulk_insert_fds(fds_to_transfer, payload, &mut token)?;
+                }
 
                 return Ok(fds_to_read);
             }

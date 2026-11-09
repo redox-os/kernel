@@ -226,10 +226,12 @@ impl KernelScheme for SysScheme {
                 *data_guard = Some(new_data);
             }
         }
-        let data_guard = data_lock.read(token.token());
-        let data = data_guard.as_ref().ok_or(Error::new(EIO))?;
-        let avail_buf = data.get(pos..).unwrap_or(&[]);
-        buffer.copy_common_bytes_from_slice(avail_buf)
+        let avail_buf = {
+            let data_guard = data_lock.read(token.token());
+            let data = data_guard.as_ref().ok_or(Error::new(EIO))?;
+            data.get(pos..).unwrap_or(&[]).to_vec()
+        };
+        buffer.copy_common_bytes_from_slice(&avail_buf)
     }
     fn kwriteoff(
         &self,
@@ -240,7 +242,7 @@ impl KernelScheme for SysScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let (handler, intermediate, len) = match HANDLES.read(token.token()).get(id)? {
+        let handler = match *HANDLES.read(token.token()).get(id)? {
             Handle::TopLevel
             | Handle::Resource {
                 kind: Kind::Rd(_), ..
@@ -248,13 +250,11 @@ impl KernelScheme for SysScheme {
             Handle::Resource {
                 kind: Kind::Wr(handler),
                 ..
-            } => {
-                let mut intermediate = [0_u8; 256];
-                let len = buffer.copy_common_bytes_to_slice(&mut intermediate)?;
-                (*handler, intermediate, len)
-            }
+            } => handler,
             Handle::SchemeRoot => return Err(Error::new(EBADF)),
         };
+        let mut intermediate = [0_u8; 256];
+        let len = buffer.copy_common_bytes_to_slice(&mut intermediate)?;
         handler(&intermediate[..len], token)
     }
     fn getdents(
@@ -269,21 +269,20 @@ impl KernelScheme for SysScheme {
             return Ok(0);
         };
         match HANDLES.read(token.token()).get(id)? {
-            Handle::Resource { .. } => Err(Error::new(ENOTDIR)),
-            Handle::TopLevel => {
-                let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
-                for (this_idx, (name, _)) in FILES.iter().enumerate().skip(first_index) {
-                    buf.entry(DirEntry {
-                        inode: this_idx as u64,
-                        next_opaque_id: this_idx as u64 + 1,
-                        kind: DirentKind::Regular,
-                        name,
-                    })?;
-                }
-                Ok(buf.finalize())
-            }
-            Handle::SchemeRoot => Err(Error::new(EBADF)),
+            Handle::Resource { .. } => return Err(Error::new(ENOTDIR)),
+            Handle::SchemeRoot => return Err(Error::new(EBADF)),
+            Handle::TopLevel => {}
         }
+        let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
+        for (this_idx, (name, _)) in FILES.iter().enumerate().skip(first_index) {
+            buf.entry(DirEntry {
+                inode: this_idx as u64,
+                next_opaque_id: this_idx as u64 + 1,
+                kind: DirentKind::Regular,
+                name,
+            })?;
+        }
+        Ok(buf.finalize())
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {

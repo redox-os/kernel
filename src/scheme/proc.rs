@@ -681,15 +681,19 @@ impl KernelScheme for ProcScheme {
     }
 
     fn kfstat(&self, id: usize, buffer: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let handles = HANDLES.read(token.token());
-        let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
+        let stat = {
+            let handles = HANDLES.read(token.token());
+            let handle = handles.get(&id).ok_or(Error::new(EBADF))?;
 
-        buffer.copy_exactly(&Stat {
-            st_mode: MODE_FILE | 0o666,
-            st_size: handle.fsize()?,
+            Stat {
+                st_mode: MODE_FILE | 0o666,
+                st_size: handle.fsize()?,
 
-            ..Stat::default()
-        })?;
+                ..Stat::default()
+            }
+        };
+
+        buffer.copy_exactly(&stat)?;
 
         Ok(())
     }
@@ -1532,11 +1536,12 @@ impl ContextHandle {
             } // TODO: Replace write() with SYS_SENDFD?
             ContextHandle::Status { .. } => {
                 let status = {
-                    let context = context.read(token.token());
-                    match context.status {
-                        Status::Runnable | Status::Dead { excp: None }
-                            if context.being_sigkilled =>
-                        {
+                    let (status, being_sigkilled) = {
+                        let context = context.read(token.token());
+                        (context.status.clone(), context.being_sigkilled)
+                    };
+                    match status {
+                        Status::Runnable | Status::Dead { excp: None } if being_sigkilled => {
                             ContextStatus::ForceKilled
                         }
                         Status::Dead { excp: None } => ContextStatus::Dead,
