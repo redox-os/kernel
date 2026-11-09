@@ -56,6 +56,7 @@ or_fun_call = "allow" # Used to make it nicer to return errors, for example, .ok
 precedence = "deny"
 ptr_cast_constness = "deny"
 too_many_arguments = "allow" # This is needed in some cases, like for syscall
+significant_drop_in_scrutinee = "deny"
 # Avoid panicking in the kernel without information about the panic. Use expect
 # TODO: address occurrences and then deny
 unwrap_used = "warn"

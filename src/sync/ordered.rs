@@ -282,6 +282,7 @@ impl<L: Level, T> Mutex<L, T> {
 ///
 /// The data protected by the mutex can be accessed through this guard via its
 /// `Deref` and `DerefMut` implementations.
+#[clippy::has_significant_drop]
 pub struct MutexGuard<'a, L: Level, T: ?Sized + 'a> {
     inner: spin::MutexGuard<'a, T>,
     lock_token: LockToken<'a, L>,
@@ -572,6 +573,7 @@ impl<L: Level, T> RwLock<L, T> {
 }
 
 /// RAII structure used to release the exclusive write access of a lock when dropped
+#[clippy::has_significant_drop]
 pub struct RwLockWriteGuard<'a, L: Level, T> {
     inner: spin::RwLockWriteGuard<'a, T>,
     lock_token: LockToken<'a, L>,
@@ -614,6 +616,7 @@ impl<L: Level, T> core::ops::DerefMut for RwLockWriteGuard<'_, L, T> {
 }
 
 /// RAII structure used to release the shared read access of a lock when dropped.
+#[clippy::has_significant_drop]
 pub struct RwLockReadGuard<'a, L: Level, T> {
     inner: spin::RwLockReadGuard<'a, T>,
     lock_token: LockToken<'a, L>,
@@ -636,6 +639,7 @@ impl<L: Level, T> core::ops::Deref for RwLockReadGuard<'_, L, T> {
 }
 
 /// RAII structure used to release the shared read access of a lock when dropped. Allows upgrade to RW lock
+#[clippy::has_significant_drop]
 pub struct RwLockUpgradableGuard<'a, L: Level, T> {
     inner: spin::RwLockUpgradableGuard<'a, T>,
     lock_token: LockToken<'a, L>,
@@ -671,6 +675,7 @@ impl<L: Level, T> core::ops::Deref for RwLockUpgradableGuard<'_, L, T> {
     }
 }
 
+#[clippy::has_significant_drop]
 pub struct ArcRwLockReadGuard<L: Level + 'static, T> {
     rwlock: Arc<RwLock<L, T>>,
 }
@@ -706,6 +711,7 @@ impl<L: Level, T> Drop for ArcRwLockReadGuard<L, T> {
     }
 }
 
+#[clippy::has_significant_drop]
 pub struct ArcRwLockWriteGuard<L: Level + 'static, T> {
     rwlock: Arc<RwLock<L, T>>,
 }

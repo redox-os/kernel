@@ -1564,9 +1564,10 @@ impl ContextHandle {
             }
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
-                let c = &context.read(token.token());
-                let (euid, egid, pid, name, prio) =
-                    (c.euid, c.egid, c.pid as u32, c.name, c.prio as u32);
+                let (euid, egid, pid, name, prio) = {
+                    let c = context.read(token.token());
+                    (c.euid, c.egid, c.pid as u32, c.name, c.prio as u32)
+                };
                 let min = name.len().min(debug_name.len());
                 debug_name[..min].copy_from_slice(&name.as_bytes()[..min]);
                 buf.copy_common_bytes_from_slice(&ProcSchemeAttrs {
