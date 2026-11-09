@@ -379,8 +379,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
         let mut buf = DirentBuf::new(buf, header_size).ok_or(Error::new(EIO))?;
         let mut intermediate = String::new();
 
-        match *HANDLES.read(token.token()).get(id)? {
-            Handle::TopLevel => {
+        let cpu_id_opt = match *HANDLES.read(token.token()).get(id)? {
+            Handle::TopLevel => None,
+            Handle::Avail(cpu_id) => Some(cpu_id),
+            _ => return Err(Error::new(ENOTDIR)),
+        };
+
+        match cpu_id_opt {
+            None => {
                 let cpus = CPUS.get().expect("IRQ scheme not initialized");
 
                 if opaque == 0 {
@@ -404,7 +410,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     })?;
                 }
             }
-            Handle::Avail(cpu_id) => {
+            Some(cpu_id) => {
                 for vector in available_irqs_iter(cpu_id).skip(opaque) {
                     let irq = vector_to_irq(vector);
                     if cpu_id == LogicalCpuId::BSP && irq < BASE_IRQ_COUNT {
@@ -420,7 +426,6 @@ impl crate::scheme::KernelScheme for IrqScheme {
                     })?;
                 }
             }
-            _ => return Err(Error::new(ENOTDIR)),
         }
         Ok(buf.finalize())
     }
@@ -477,19 +482,21 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(file)?;
+        if !matches!(HANDLES.read(token.token()).get(file)?, Handle::Irq { .. }) {
+            return Err(Error::new(EBADF));
+        }
 
-        match handle {
+        if buffer.len() < size_of::<usize>() {
+            return Err(Error::new(EINVAL));
+        }
+        let ack = buffer.read_usize()?;
+
+        match HANDLES.read(token.token()).get(file)? {
             &Handle::Irq {
                 irq: handle_irq,
                 ack: ref handle_ack,
                 ..
             } => {
-                if buffer.len() < size_of::<usize>() {
-                    return Err(Error::new(EINVAL));
-                }
-                let ack = buffer.read_usize()?;
                 let current = COUNTS.lock()[handle_irq as usize];
 
                 if ack != current {
@@ -506,10 +513,7 @@ impl crate::scheme::KernelScheme for IrqScheme {
     }
 
     fn kfstat(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(id)?;
-
-        buf.copy_exactly(&match *handle {
+        let stat = match *HANDLES.read(token.token()).get(id)? {
             Handle::Irq {
                 irq: handle_irq, ..
             } => Stat {
@@ -552,15 +556,14 @@ impl crate::scheme::KernelScheme for IrqScheme {
                 ..Default::default()
             },
             _ => return Err(Error::new(EBADF)),
-        })?;
+        };
+
+        buf.copy_exactly(&stat)?;
 
         Ok(())
     }
     fn kfpath(&self, id: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(id)?;
-
-        let scheme_path = match handle {
+        let scheme_path = match *HANDLES.read(token.token()).get(id)? {
             Handle::Irq { irq, .. } => format!("irq:{}", irq),
             Handle::Bsp => "irq:bsp".to_owned(),
             Handle::Avail(cpu_id) => format!("irq:cpu-{:2x}", cpu_id.get()),
@@ -581,36 +584,34 @@ impl crate::scheme::KernelScheme for IrqScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let handles_guard = HANDLES.read(token.token());
-        let handle = handles_guard.get(file)?;
+        let irq_opt = match *HANDLES.read(token.token()).get(file)? {
+            Handle::Irq { irq, ref ack, .. } => Some((irq, ack.load(Ordering::SeqCst))),
+            Handle::Bsp => None,
+            Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) | Handle::SchemeRoot => {
+                return Err(Error::new(EISDIR))
+            }
+        };
 
-        match *handle {
-            // Ensures that the length of the buffer is larger than the size of a usize
-            Handle::Irq {
-                irq: handle_irq,
-                ack: ref handle_ack,
-                ..
-            } => {
+        match irq_opt {
+            Some((handle_irq, handle_ack)) => {
                 if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
                 let current = COUNTS.lock()[handle_irq as usize];
-                if handle_ack.load(Ordering::SeqCst) != current {
+                if handle_ack != current {
                     buffer.write_usize(current)?;
                     Ok(size_of::<usize>())
                 } else {
                     Ok(0)
                 }
             }
-            Handle::Bsp => {
+            None => {
+                // Ensures that the length of the buffer is larger than the size of a usize
                 if buffer.len() < size_of::<usize>() {
                     return Err(Error::new(EINVAL));
                 }
                 buffer.write_u32(LogicalCpuId::BSP.get())?;
                 Ok(size_of::<usize>())
-            }
-            Handle::Avail(_) | Handle::TopLevel | Handle::Phandle(_, _) | Handle::SchemeRoot => {
-                Err(Error::new(EISDIR))
             }
         }
     }
