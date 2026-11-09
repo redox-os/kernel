@@ -12,6 +12,9 @@ use crate::{
 #[cfg(all(cpu_feature_never = "xsave", not(cpu_feature_never = "xsaveopt")))]
 compile_error!("cannot force-disable xsave without force-disabling xsaveopt");
 
+#[cfg(all(cpu_feature_never = "xsave", cpu_feature_always = "avx"))]
+compile_error!("cannot force-disable xsave while force-enabling avx");
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct AltReloc {
@@ -98,7 +101,8 @@ pub unsafe fn early_init(bsp: bool) {
             enable |= KcpuFeatures::XSAVE;
             enable.set(KcpuFeatures::XSAVEOPT, ext_state_info.has_xsaveopt());
 
-            let ymm_upper_offset = feature_info().has_avx().then(|| {
+            let use_avx = cfg!(any(cpu_feature_auto = "avx", cpu_feature_always = "avx"));
+            let ymm_upper_offset = (use_avx && feature_info().has_avx()).then(|| {
                 xcr0 |= Xcr0::XCR0_AVX_STATE;
                 x86::controlregs::xcr0_write(xcr0);
                 info!("Enabling AVX");
@@ -120,6 +124,11 @@ pub unsafe fn early_init(bsp: bool) {
                 state.offset()
             });
 
+            enable.set(KcpuFeatures::AVX, ymm_upper_offset.is_some());
+            if ymm_upper_offset.is_none() {
+                assert!(cfg!(not(cpu_feature_always = "avx")));
+            }
+
             // Need to rerun CPUID since XCR0 will have changed if AVX was enabled.
             let ext_state_info = cpuid()
                 .get_extended_state_info()
@@ -134,6 +143,7 @@ pub unsafe fn early_init(bsp: bool) {
             xsave::XSAVE_INFO.call_once(|| info);
         } else {
             assert!(cfg!(not(cpu_feature_always = "xsave")));
+            assert!(cfg!(not(cpu_feature_always = "avx")));
         }
 
         if !bsp {
@@ -148,6 +158,7 @@ pub unsafe fn early_init(bsp: bool) {
                     && cfg!(not(cpu_feature_auto = "fsgsbase"))
                     && cfg!(not(cpu_feature_auto = "xsave"))
                     && cfg!(not(cpu_feature_auto = "xsaveopt"))
+                    && cfg!(not(cpu_feature_auto = "avx"))
             );
         }
 
@@ -202,6 +213,7 @@ unsafe fn overwrite(relocs: &[AltReloc], enable: KcpuFeatures) {
                 "fsgsbase" => enable.contains(KcpuFeatures::FSGSBASE),
                 "xsave" => enable.contains(KcpuFeatures::XSAVE),
                 "xsaveopt" => enable.contains(KcpuFeatures::XSAVEOPT),
+                "avx" => enable.contains(KcpuFeatures::AVX),
                 //_ => panic!("unknown altcode relocation: {}", name),
                 _ => true,
             };
@@ -279,6 +291,7 @@ bitflags! {
         const FSGSBASE = 2;
         const XSAVE = 4;
         const XSAVEOPT = 8;
+        const AVX = 16;
     }
 }
 
