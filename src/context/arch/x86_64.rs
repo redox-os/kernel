@@ -277,7 +277,7 @@ pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
         if next.inside_syscall {
             core::arch::asm!(concat!(
                 alternative!(
-                    feature: "xsave",
+                    feature: "avx",
                     // AVX is available
                     then: [
                         "vzeroall"

@@ -5,6 +5,7 @@ use toml::Table;
 
 fn parse_kconfig(arch: &str) -> Option<()> {
     println!("cargo:rerun-if-changed=config.toml");
+    println!("cargo:rerun-if-changed=config.toml.example");
 
     assert!(Path::new("config.toml.example").try_exists().unwrap());
     if !Path::new("config.toml").try_exists().unwrap() {
@@ -12,17 +13,30 @@ fn parse_kconfig(arch: &str) -> Option<()> {
     }
     let config_str = std::fs::read_to_string("config.toml").unwrap();
     let root: Table = toml::from_str(&config_str).unwrap();
+    let example_str = std::fs::read_to_string("config.toml.example").unwrap();
+    let example: Table = toml::from_str(&example_str).unwrap();
 
-    let altfeatures = root
-        .get("arch")?
-        .as_table()
-        .unwrap()
-        .get(arch)?
-        .as_table()
-        .unwrap()
-        .get("features")?
-        .as_table()
-        .unwrap();
+    let features = |t: &Table| -> Option<Table> {
+        t.get("arch")?
+            .get(arch)?
+            .get("features")?
+            .as_table()
+            .cloned()
+    };
+    let configured = features(&root).unwrap_or_default();
+    let mut altfeatures = features(&example).unwrap_or_default();
+    for (name, value) in &altfeatures {
+        if !configured.contains_key(name) {
+            println!(
+                "cargo:warning=config.toml is missing arch.{arch}.features.{name}, \
+                 using {value} from config.toml.example"
+            );
+        }
+    }
+    altfeatures.extend(configured);
+    if altfeatures.is_empty() {
+        return None;
+    }
 
     let features_list = altfeatures.keys().fold(String::new(), |mut output, feat| {
         let _ = write!(output, ", {feat:?}");
@@ -34,7 +48,7 @@ fn parse_kconfig(arch: &str) -> Option<()> {
 
     let self_modifying = env::var("CARGO_FEATURE_SELF_MODIFYING").is_ok();
 
-    for (name, value) in altfeatures {
+    for (name, value) in &altfeatures {
         let mut choice = value.as_str().unwrap();
         assert!(matches!(choice, "always" | "never" | "auto"));
 

@@ -3,5 +3,6 @@ smap = "auto"
 fsgsbase = "auto"
 xsave = "auto"
 xsaveopt = "auto"
+avx = "auto"
 
 # vim: ft=toml
