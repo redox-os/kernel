@@ -894,18 +894,18 @@ pub fn bulk_insert_fds(
     if descriptions.is_empty() {
         return Ok(0);
     }
-    let files_iter = descriptions
+    let files = descriptions
         .into_iter()
-        .map(|description| FileDescriptor { description });
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (current, mut token) = current.token_split();
-
+        .map(|description| FileDescriptor { description })
+        .collect::<Vec<_>>();
     let handles: Vec<FileHandle> = payload
         .usizes()
         .map(|res| res.map(FileHandle::from))
         .collect::<Result<_, _>>()?;
-    let files = files_iter.collect::<Vec<_>>();
+
+    let current_lock = context::current();
+    let mut current = current_lock.read(token.token());
+    let (current, mut token) = current.token_split();
     current.bulk_insert_files(files, &handles, &mut token)?;
     Ok(handles.len())
 }
