@@ -14,7 +14,7 @@ use crate::{
     cpu_stats::{CpuState, CpuStatsData},
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
-    percpu::{get_percpu_block, PercpuBlock},
+    percpu::{self, get_percpu_block, PercpuBlock},
     sync::{
         ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
         L1, L2, L3, L4,
@@ -316,7 +316,17 @@ pub fn spawn(
     func: extern "C" fn(),
     token: &mut CleanLockToken,
 ) -> Result<Arc<ContextLock>> {
-    let stack = Kstack::new()?;
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    let cpu_id = percpu::PercpuBlock::current()
+        .misc_arch_info
+        .apic_id_opt
+        .get()
+        .map(|e| e.get());
+
+    #[cfg(all(not(target_arch = "x86"), not(target_arch = "x86_64")))]
+    let cpu_id = None;
+
+    let stack = Kstack::new(cpu_id)?;
 
     let mut context = Context::new(owner_proc_id, stack)?;
 
