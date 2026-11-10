@@ -63,7 +63,7 @@ pub unsafe extern "C" fn arch_copy_to_user(dst: usize, src: usize, len: usize) -
 
 pub const KFX_SIZE: usize = 1024;
 
-// This function exists as the KFX size is dynamic on x86_64.
+// TODO: vary depending on VLEN
 pub fn kfx_size() -> usize {
     KFX_SIZE
 }
