@@ -207,7 +207,6 @@ impl UserInner {
             Sqe {
                 opcode: opcode as u8,
                 sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
                 tag: self.next_id(token)?,
                 caller: ctx.pid as u64,
                 args: {
@@ -215,6 +214,7 @@ impl UserInner {
                     a[5] = uid_gid_hack_merge([ctx.uid, ctx.gid]);
                     a
                 },
+                ..Default::default()
             },
             caller_responsible,
             token,
@@ -773,17 +773,15 @@ impl UserInner {
             Sqe {
                 opcode: Opcode::RequestMmap as u8,
                 sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
                 tag,
-                args: [
-                    id as u64,
-                    flags.bits() as u64,
-                    required_page_count as u64,
-                    0,
-                    0,
-                    uid_gid_hack_merge(current_uid_gid(token)),
-                ],
+                args: {
+                    let mut args =
+                        [id as u64, flags.bits() as u64, required_page_count as u64].args();
+                    args[5] = uid_gid_hack_merge(current_uid_gid(token));
+                    args
+                },
                 caller: { context::current().read(token.token()).pid as u64 },
+                ..Default::default()
             },
             token,
         );
@@ -1410,17 +1408,14 @@ impl UserScheme {
         let mut sqe = Sqe {
             opcode: opcode as u8,
             sqe_flags,
-            _rsvd: 0,
             tag: inner.next_id(token)?,
             caller: ctx.pid as u64,
-            args: [
-                fds[0] as u64,
-                address.base() as u64,
-                address.len() as u64,
-                0,
-                0,
-                last_arg,
-            ],
+            args: {
+                let mut args = [fds[0] as u64, address.base() as u64, address.len() as u64].args();
+                args[5] = last_arg;
+                args
+            },
+            ..Default::default()
         };
 
         if fds.len() == 2 {
@@ -1648,10 +1643,9 @@ impl KernelScheme for UserScheme {
             Sqe {
                 opcode: Opcode::CloseMsg as u8,
                 sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag: 0,
-                args: [id as u64, 0, 0, 0, 0, 0],
+                args: [id as u64].args(),
                 caller: 0, // TODO?
+                ..Default::default()
             },
             token,
         );
@@ -1672,10 +1666,9 @@ impl KernelScheme for UserScheme {
             Sqe {
                 opcode: Opcode::Detach as u8,
                 sqe_flags: SqeFlags::empty(),
-                _rsvd: 0,
-                tag: 0,
-                args: [id as u64, 0, 0, 0, 0, 0],
+                args: [id as u64].args(),
                 caller: ctx.pid as u64,
+                ..Default::default()
             },
             token,
         );
