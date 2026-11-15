@@ -250,9 +250,9 @@ impl UserInner {
                     unblock_context(&current_context, &mut token.token().downgrade());
 
                     return Err(Error::new(EAGAIN));
-                } else {
-                    self.todo.send(sqe, token);
                 }
+            } else {
+                self.todo.send(sqe, token);
             }
 
             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
