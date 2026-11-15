@@ -31,12 +31,25 @@ impl<T, const N: usize> PriorityQueue<T, N> {
         self.default.push_back(value);
     }
 
+    pub fn try_push_priority(&mut self, value: T) -> Result<(), T> {
+        self.priority.try_push(value).map_err(|e| e.element())
+    }
+
     pub fn front(&self) -> &[T] {
-        self.default.as_slices().0
+        if !self.priority.is_empty() {
+            &self.priority
+        } else {
+            &self.default.as_slices().0
+        }
     }
 
     pub fn consume(&mut self, count: usize) {
         assert!(count <= self.front().len(), "Can't consume more than inspected segment.");
-        self.default.drain(..count);
+
+        if !self.priority.is_empty() {
+            self.priority.drain(..count);
+        } else {
+            self.default.drain(..count);
+        }
     }
 }
