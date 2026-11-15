@@ -90,4 +90,16 @@ impl<T, const PRIORITY_CAPACITY: usize> WaitQueue<T, PRIORITY_CAPACITY> {
         self.condition.notify_locked(token);
         len
     }
+
+    pub fn try_send_priority(&self, value: T, token: &mut CleanLockToken) -> Result<usize, T> {
+        let len = {
+            let mut inner = self.inner.lock(token.token());
+            inner.try_push_priority(value)?;
+            inner.len()
+        };
+
+        self.condition.notify(token);
+
+        Ok(len)
+    }
 }
