@@ -1,24 +1,20 @@
-use alloc::collections::VecDeque;
 use syscall::{EAGAIN, EINTR};
-
 use crate::{
-    sync::{CleanLockToken, LockToken, Mutex, WaitCondition, L1, L2},
-    syscall::{
-        error::{Error, Result, EINVAL},
-        usercopy::UserSliceWo,
+    sync::{CleanLockToken, L1, L2, LockToken, Mutex, WaitCondition, priority_queue::PriorityQueue}, syscall::{
+        error::{EINVAL, Error, Result}, usercopy::UserSliceWo,
     },
 };
 
 #[derive(Debug)]
-pub struct WaitQueue<T> {
-    inner: Mutex<L2, VecDeque<T>>,
+pub struct WaitQueue<T, const PRIORITY_CAPACITY: usize = 0> {
+    inner: Mutex<L2, PriorityQueue<T, PRIORITY_CAPACITY>>,
     pub condition: WaitCondition,
 }
 
-impl<T> WaitQueue<T> {
-    pub const fn new() -> WaitQueue<T> {
+impl<T, const PRIORITY_CAPACITY: usize> WaitQueue<T, PRIORITY_CAPACITY> {
+    pub const fn new() -> WaitQueue<T, PRIORITY_CAPACITY> {
         WaitQueue {
-            inner: Mutex::new(VecDeque::new()),
+            inner: Mutex::new(PriorityQueue::new()),
             condition: WaitCondition::new(),
         }
     }
@@ -62,7 +58,7 @@ impl<T> WaitQueue<T> {
             // Borrow only first contiguous FIFO segment for simplicity. The second segment will be handled in
             // the next call. This means we handle less entries then the implementation before.
             // TODO: Check if we want to handle both segments as once like before.
-            let batch = inner.as_slices().0;
+            let batch = inner.front();
 
             // Count how many complete entries fit in batch.
             let count = batch.len().min(buf.len() / size_of::<T>());
@@ -75,7 +71,7 @@ impl<T> WaitQueue<T> {
             // Copy to userspace.
             let bytes_copied = buf.copy_common_bytes_from_slice(bytes)?;
 
-            let _ = inner.drain(..count);
+            let _ = inner.consume(count);
 
             return Ok(bytes_copied);
         }
@@ -88,7 +84,7 @@ impl<T> WaitQueue<T> {
     pub fn send_locked(&self, value: T, mut token: LockToken<'_, L1>) -> usize {
         let len = {
             let mut inner = self.inner.lock(token.token());
-            inner.push_back(value);
+            inner.push_default(value);
             inner.len()
         };
         self.condition.notify_locked(token);
