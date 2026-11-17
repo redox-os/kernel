@@ -874,6 +874,7 @@ fn select_next_context(
 
                     let offset = guard.vtime as i128 - target_queue.v as i128;
                     guard.vtime = (contexts_data.v as i128 + offset).max(0) as u64;
+                    guard.cpu_id = Some(cpu_id);
 
                     let scaled_slice = guard.rem_slice / weight;
                     guard.vd = guard.vtime.saturating_add(scaled_slice);
