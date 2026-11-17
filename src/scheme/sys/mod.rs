@@ -7,7 +7,7 @@ use ::syscall::{
     dirent::{DirEntry, DirentBuf, DirentKind},
     EINVAL, EIO, EISDIR, ENOTDIR, EPERM,
 };
-use alloc::{sync::Arc, vec::Vec};
+use alloc::{string::String, sync::Arc, vec::Vec};
 use core::str;
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
@@ -33,6 +33,7 @@ mod fdstat;
 mod iostat;
 mod irq;
 mod log;
+mod memstat;
 #[cfg(all(feature = "numa", target_arch = "x86_64"))]
 mod numa;
 mod stat;
@@ -78,6 +79,7 @@ const FILES: &[(&str, Kind)] = &[
     ("iostat", Rd(iostat::resource)),
     ("irq", Rd(irq::resource)),
     ("log", Rd(log::resource)),
+    ("memstat", Rd(memstat::resource)),
     #[cfg(all(feature = "numa", target_arch = "x86_64"))]
     ("numa", Rd(numa::resource)),
     ("syscall", Rd(syscall::resource)),
@@ -329,4 +331,33 @@ impl KernelScheme for SysScheme {
 
         Ok(())
     }
+}
+
+fn format_bytes(memory: usize) -> String {
+    const GB: usize = 1024 * 1024 * 1024;
+    const MB: usize = 1024 * 1024;
+    const KB: usize = 1024;
+
+    if memory > GB {
+        format_bytes_inner(memory, GB, "GB")
+    } else if memory > MB {
+        format_bytes_inner(memory, MB, "MB")
+    } else if memory > KB {
+        format_bytes_inner(memory, KB, "KB")
+    } else {
+        format!("{memory} B")
+    }
+}
+
+fn format_bytes_inner(memory: usize, divisor: usize, suffix: &'static str) -> String {
+    use core::fmt::Write;
+    let mut s = format!("{}", memory / divisor);
+    if s.len() == 1 {
+        let _ = write!(s, ".{:02}", (memory % divisor) / (divisor / 100));
+    } else if s.len() == 2 {
+        let _ = write!(s, ".{:01}", (memory % divisor) / (divisor / 10));
+    }
+
+    let _ = write!(s, " {suffix}");
+    s
 }

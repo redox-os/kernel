@@ -136,8 +136,8 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
                 affinity,
                 cpu_time_string,
                 sch_time_string,
-                format_bytes(priv_memory),
-                format_bytes(shared_memory),
+                super::format_bytes(priv_memory),
+                super::format_bytes(shared_memory),
                 name,
             ));
         }
@@ -176,32 +176,4 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     }
 
     Ok(string.into_bytes())
-}
-
-fn format_bytes(memory: usize) -> String {
-    const GB: usize = 1024 * 1024 * 1024;
-    const MB: usize = 1024 * 1024;
-    const KB: usize = 1024;
-
-    if memory > GB {
-        format_bytes_inner(memory, GB, "GB")
-    } else if memory > MB {
-        format_bytes_inner(memory, MB, "MB")
-    } else if memory > KB {
-        format_bytes_inner(memory, KB, "KB")
-    } else {
-        format!("{memory} B")
-    }
-}
-
-fn format_bytes_inner(memory: usize, divisor: usize, suffix: &'static str) -> String {
-    let mut s = format!("{}", memory / divisor);
-    if s.len() == 1 {
-        let _ = write!(s, ".{:02}", (memory % divisor) / (divisor / 100));
-    } else if s.len() == 2 {
-        let _ = write!(s, ".{:01}", (memory % divisor) / (divisor / 10));
-    }
-
-    let _ = write!(s, " {suffix}");
-    s
 }
