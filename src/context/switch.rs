@@ -391,6 +391,12 @@ fn schedule(
                     continue;
                 }
 
+                // Nor if already pushed to any runqueue
+                if guard.queue_key.is_some() {
+                    continue;
+                }
+                guard.cpu_id = Some(percpu.cpu_id);
+
                 let new_vtime = guard.vtime.max(run_queue.v);
                 guard.vtime = new_vtime;
 
@@ -404,14 +410,6 @@ fn schedule(
                         .switch_internals
                         .total_weight
                         .store(run_queue.total_weight, Ordering::Relaxed);
-                }
-
-                if let Some(old_key) = guard.queue_key.take() {
-                    run_queue.queue.remove(&old_key);
-                    percpu
-                        .switch_internals
-                        .queue_len
-                        .store(run_queue.queue.len(), Ordering::Relaxed);
                 }
 
                 guard.vd = new_vtime + scaled_slice as u64;
@@ -876,6 +874,7 @@ fn select_next_context(
 
                     let offset = guard.vtime as i128 - target_queue.v as i128;
                     guard.vtime = (contexts_data.v as i128 + offset).max(0) as u64;
+                    guard.cpu_id = Some(cpu_id);
 
                     let scaled_slice = guard.rem_slice / weight;
                     guard.vd = guard.vtime.saturating_add(scaled_slice);
@@ -944,13 +943,9 @@ fn select_next_context(
                     prev_context_guard.vtime,
                 );
 
-                if let Some(old_key) = prev_context_guard.queue_key.take() {
-                    contexts_data.queue.remove(&old_key);
-                    percpu
-                        .switch_internals
-                        .queue_len
-                        .store(contexts_data.queue.len(), Ordering::Relaxed);
-                }
+                // must be true because prev context was running
+                #[cfg(feature = "drop_panic")]
+                assert!(prev_context_guard.queue_key.is_none());
 
                 prev_context_guard.queue_key = Some(ContextQueueKey {
                     vd,
