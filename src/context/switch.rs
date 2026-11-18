@@ -766,6 +766,8 @@ fn select_next_context(
             let targets = (1..num_cpu).map(|i| (curr_cpu + i) % num_cpu);
 
             for target_cpu in targets {
+                #[cfg(feature = "drop_panic")]
+                assert_ne!(target_cpu, curr_cpu, "must not steal itself");
                 let Some(target_percpu) = get_percpu_block(LogicalCpuId::new(target_cpu)) else {
                     continue;
                 };
@@ -1470,6 +1472,7 @@ mod tests {
         let cpu1 = cpus.pop().unwrap();
         let cpu0 = cpus.pop().unwrap();
 
+        // define 4 tasks (A B C D)
         let tasks = setup_contexts(4);
         let prev_context_0 = new_context();
         // for simplicity this is used for current context and not used in any queue
@@ -1489,18 +1492,23 @@ mod tests {
             vtime: u64,
             queue: &mut spin::mutex::SpinMutexGuard<'_, RunContextData>,
         ) {
+            let key = ContextQueueKey {
+                vd: vtime,
+                rem_slice: Reverse(vtime),
+                ctxt_id: id,
+            };
             queue.queue_insert(
-                ContextQueueKey {
-                    vd: vtime,
-                    rem_slice: Reverse(vtime),
-                    ctxt_id: id,
-                },
+                key,
                 ContextQueueValue {
                     vtime,
                     weight: 1024,
                     context_ref: WeakContextRef(Arc::downgrade(task)),
                 },
             );
+            let mut token = unsafe { CleanLockToken::new() };
+            let mut task = task.write(token.token());
+            assert!(task.queue_key.is_none());
+            task.queue_key = Some(key);
         }
         fn check_and_reset_steal(cpu0: &mut PercpuBlock) {
             assert_eq!(
@@ -1516,7 +1524,7 @@ mod tests {
         // q0 have empty queue
         {
             let mut q1 = cpu1.switch_internals.run_queue.lock();
-            push_queue(&tasks[0], 0, 200, &mut q1);
+            push_queue(&tasks[0], 0, 200, &mut q1); // task A
             cpu1.switch_internals.queue_len.store(1, Ordering::Relaxed);
         }
 
@@ -1537,15 +1545,15 @@ mod tests {
 
         {
             let mut q1 = cpu1.switch_internals.run_queue.lock();
-            push_queue(&tasks[1], 1, 300, &mut q1);
-            push_queue(&tasks[2], 2, 400, &mut q1);
-            push_queue(&tasks[3], 3, 500, &mut q1);
+            push_queue(&tasks[1], 1, 300, &mut q1); // task B
+            push_queue(&tasks[2], 2, 400, &mut q1); // task C
+            push_queue(&tasks[3], 3, 500, &mut q1); // task D
             cpu1.switch_internals.queue_len.store(4, Ordering::Relaxed);
         }
 
         let chosen = select_next_context(cpu0, cpu0.cpu_id, 2000, 100, false, &mut prev_guard_0);
 
-        // CPU 0 should steal 2 tasks, 1 is pushed to its own queue
+        // CPU 0 should steal 2 tasks (task A B), 1 task (task B) is pushed to CPU 0 queue
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu0.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 2);
@@ -1558,13 +1566,13 @@ mod tests {
 
         let chosen = select_next_context(cpu1, cpu1.cpu_id, 2000, 100, false, &mut prev_guard_0);
 
-        // CPU 1 should not steal task yet, but it has something to do
+        // CPU 1 should not steal task yet, but it has task C running and task D in CPU 1 queue
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu0.switch_internals.queue_len.load(Ordering::Relaxed), 1);
-        assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 2);
-        assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 2);
+        assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 1);
+        assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert!(chosen
-            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[1], ArcContextLockWriteGuard::rwlock(&g))));
+            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[2], ArcContextLockWriteGuard::rwlock(&g))));
         check_and_reset_steal(cpu1);
 
         // fourth test ---
@@ -1572,7 +1580,7 @@ mod tests {
         let last_task = {
             cpu1.switch_internals.queue_len.store(0, Ordering::Relaxed);
             let mut q1 = cpu1.switch_internals.run_queue.lock();
-            // move the extra task to cpu0
+            // move the task D to cpu0
             q1.queue.pop_last().unwrap()
         };
         {
@@ -1582,19 +1590,19 @@ mod tests {
         };
         {
             let mut guard = unsafe { tasks[1].write_arc() };
-            // make sure this will be skipped
+            // make sure task B will be skipped
             guard.status = Status::Blocked;
         }
 
         let chosen = select_next_context(cpu1, cpu1.cpu_id, 2000, 100, false, &mut prev_guard_0);
 
-        // CPU 1 should steal 1 task from CPU 0 used as the chosen one
+        // CPU 1 should steal task D from CPU 0 used as the chosen one, leaving task B in CPU 0 queue
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu0.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 0);
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 0);
         assert!(chosen
-            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[2], ArcContextLockWriteGuard::rwlock(&g))));
+            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[3], ArcContextLockWriteGuard::rwlock(&g))));
         check_and_reset_steal(cpu1);
     }
 }
