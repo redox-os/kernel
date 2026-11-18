@@ -623,6 +623,16 @@ impl Kstack {
     }
 }
 
+#[cfg(test)]
+impl Default for Kstack {
+    fn default() -> Self {
+        Self {
+            base: Frame::default(),
+        }
+    }
+}
+
+#[cfg(not(test))]
 impl Drop for Kstack {
     fn drop(&mut self) {
         let range = self.initial_top().wrapping_sub(self.len())..self.initial_top();
