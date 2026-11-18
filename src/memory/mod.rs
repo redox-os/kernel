@@ -450,6 +450,15 @@ impl core::fmt::Debug for P2Frame {
     }
 }
 
+#[cfg(test)]
+impl Default for Frame {
+    fn default() -> Self {
+        Self {
+            physaddr: NonZeroUsize::new(0x1).unwrap(),
+        }
+    }
+}
+
 impl core::fmt::Debug for Frame {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "[frame at {:p}]", self.base().data() as *const u8)

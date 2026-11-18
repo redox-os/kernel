@@ -1420,7 +1420,7 @@ mod tests {
             unsafe {
                 crate::percpu::init_tlb_shootdown(cpu.cpu_id, core::ptr::from_mut(cpu));
 
-                let idle_context = Arc::new(ContextLock::new(Context::new(None).unwrap()));
+                let idle_context = new_context();
                 cpu.switch_internals.set_idle_context(idle_context);
             }
 
@@ -1444,7 +1444,11 @@ mod tests {
 
     #[cfg(test)]
     pub fn new_context() -> Arc<ContextLock> {
-        Arc::new(ContextLock::new(Context::new(None).unwrap()))
+        use crate::context::context::Kstack;
+
+        Arc::new(ContextLock::new(
+            Context::new(None, Kstack::default()).unwrap(),
+        ))
     }
 
     #[cfg(test)]
