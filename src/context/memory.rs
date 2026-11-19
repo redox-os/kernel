@@ -56,13 +56,34 @@ pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
 
 pub struct UnmapResult {
     pub file_desc: Option<GrantFileRef>,
+    pub external_unpin: Option<(Arc<AddrSpaceWrapper>, PageSpan)>,
     pub size: usize,
     pub flags: MunmapFlags,
 }
 pub type UnmapVec = SmallVec<[UnmapResult; 16]>;
 
 impl UnmapResult {
+    pub fn is_empty(&self) -> bool {
+        self.file_desc.is_none() && self.external_unpin.is_none()
+    }
+
     pub fn unmap(mut self, token: &mut CleanLockToken) -> Result<()> {
+        if let Some((address_space, span)) = self.external_unpin.take() {
+            let mut guard = address_space.acquire_write(token.downgrade());
+
+            for (_, grant) in guard.grants.conflicts_mut(span) {
+                if let Provider::FmapBorrowed {
+                    ref mut pin_refcount,
+                    ..
+                } = grant.provider
+                {
+                    *pin_refcount = pin_refcount
+                        .checked_sub(1)
+                        .expect("fmap pinning code is wrong");
+                }
+            }
+        }
+
         let Some(GrantFileRef {
             base_offset,
             description,
@@ -699,12 +720,10 @@ impl AddrSpace {
             }
 
             // Remove irrelevant region
-            // TODO: Lock ordering violation
-            let mut token = unsafe { CleanLockToken::new() };
-            let unmap_result = grant.unmap(this_mapper, this_flusher, &mut token);
+            let unmap_result = grant.unmap(this_mapper, this_flusher);
 
             // Notify scheme that holds grant
-            if unmap_result.file_desc.is_some() {
+            if !unmap_result.is_empty() {
                 notify_files.push(unmap_result);
             }
         }
@@ -805,7 +824,7 @@ impl AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher, token) };
+            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher) };
 
             let _ = res.unmap(token);
         }
@@ -2043,36 +2062,9 @@ impl Grant {
         mut self,
         mapper: &mut PageMapper,
         flusher: &mut impl GenericFlusher,
-        token: &mut CleanLockToken,
     ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());
-
-        if let Provider::External {
-            ref address_space,
-            src_base,
-            ..
-        } = self.info.provider
-        {
-            let mut guard = address_space.acquire_write(token.downgrade());
-
-            for (_, grant) in guard
-                .grants
-                .conflicts_mut(PageSpan::new(src_base, self.info.page_count))
-            {
-                match grant.provider {
-                    Provider::FmapBorrowed {
-                        ref mut pin_refcount,
-                        ..
-                    } => {
-                        *pin_refcount = pin_refcount
-                            .checked_sub(1)
-                            .expect("fmap pinning code is wrong")
-                    }
-                    _ => continue,
-                }
-            }
-        }
 
         let is_phys_contiguous = matches!(
             self.info.provider,
@@ -2149,13 +2141,24 @@ impl Grant {
             is_fmap_shared.unwrap_or(false) && self.info.flags.has_write(),
         );
 
+        let (file_desc, external_unpin) = match provider {
+            Provider::Allocated { cow_file_ref, .. } => (cow_file_ref, None),
+            Provider::FmapBorrowed { file_ref, .. } => (Some(file_ref), None),
+            Provider::External {
+                address_space,
+                src_base,
+                ..
+            } => (
+                None,
+                Some((address_space, PageSpan::new(src_base, self.info.page_count))),
+            ),
+            _ => (None, None),
+        };
+
         UnmapResult {
             size: self.info.page_count * PAGE_SIZE,
-            file_desc: match provider {
-                Provider::Allocated { cow_file_ref, .. } => cow_file_ref,
-                Provider::FmapBorrowed { file_ref, .. } => Some(file_ref),
-                _ => None,
-            },
+            file_desc,
+            external_unpin,
             flags: munmap_flags,
         }
     }
