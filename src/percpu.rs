@@ -6,6 +6,7 @@ use core::{
     cell::{Cell, RefCell},
     sync::atomic::{AtomicBool, AtomicPtr, Ordering},
 };
+use spin::Once;
 
 use rmm::Arch;
 use syscall::PtraceFlags;
@@ -17,7 +18,7 @@ use crate::{
         memory::{AddrSpaceSwitchReadGuard, AddrSpaceWrapper},
         switch::ContextSwitchPercpu,
     },
-    cpu_set::{LogicalCpuId, MAX_CPU_COUNT},
+    cpu_set::{LogicalCpuId, LogicalCpuSet, MAX_CPU_COUNT},
     cpu_stats::{CpuStats, CpuStatsData},
     numa::{NumaNode, NumaNodeID},
     ptrace::Session,
@@ -54,6 +55,8 @@ pub struct PercpuBlock {
     pub stats: CpuStats,
 
     pub numa_node: Cell<Option<(NumaNodeID, &'static NumaNode)>>,
+
+    pub cache_info: CacheInfo,
 }
 
 pub static ALL_PERCPU_BLOCKS: [AtomicPtr<PercpuBlock>; MAX_CPU_COUNT as usize] =
@@ -236,6 +239,33 @@ impl PercpuBlock {
 
             stats: CpuStats::default(),
             numa_node: Cell::new(None),
+            cache_info: CacheInfo::default(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CacheInfo {
+    pub l2_cacheid: Once<u32>,
+    pub l3_cacheid: Once<u32>,
+
+    /// Contains mask for all other CPUs that share the same L2 cache.
+    /// On most systems, an L2 cache is private to a CPU (logical processor), so this is typically a
+    /// singleton set.
+    pub l2_cache_domain: Once<LogicalCpuSet>,
+
+    /// Contains mask for all other CPUs that share the same L3 cache.
+    /// On most systems, a single L3 cache is shared by many CPUs.
+    pub l3_cache_domain: Once<LogicalCpuSet>,
+}
+
+impl CacheInfo {
+    pub const fn default() -> Self {
+        Self {
+            l2_cacheid: Once::new(),
+            l3_cacheid: Once::new(),
+            l2_cache_domain: Once::new(),
+            l3_cache_domain: Once::new(),
         }
     }
 }

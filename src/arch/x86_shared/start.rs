@@ -220,6 +220,9 @@ fn continue_after_kmain_stack(
 
             crate::profiling::init();
 
+            #[cfg(target_arch = "x86_64")]
+            let _ = crate::arch::x86_64::cache_info::init();
+
             // Initialize all of the non-core devices not otherwise needed to complete initialization
             device::init_noncore();
 
