@@ -381,20 +381,91 @@ impl AddrSpaceWrapper {
             unpin,
         )
     }
+    /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
+    /// is intended to be used for user-kernel shared memory.
+    pub fn borrow_frame_enforce_rw_allocated(
+        self: &Arc<Self>,
+        page: Page,
+        token: &mut CleanLockToken,
+    ) -> Result<RaiiFrame> {
+        let mut lock_token = token.token();
+        let guard = self.acquire_write(lock_token.downgrade());
+
+        let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
+
+        if !info.can_have_flags(MapFlags::PROT_READ | MapFlags::PROT_WRITE) {
+            return Err(Error::new(EPERM));
+        }
+        if !matches!(info.provider, Provider::Allocated { .. }) {
+            return Err(Error::new(EPERM));
+        }
+
+        let mut guard_lock = None;
+        let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address())
+            && fl.has_write()
+        {
+            Frame::containing(f)
+        } else {
+            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
+                .map_err(|_| Error::new(ENOMEM))?;
+            flush.flush();
+            guard_lock = Some(new_guard);
+
+            frame
+        };
+
+        let frame = match get_page_info(frame)
+            .expect("missing page info for Allocated grant")
+            .add_ref(RefKind::Shared)
+        {
+            Ok(_) => Ok(unsafe { RaiiFrame::new_unchecked(frame) }),
+            Err(AddRefError::RcOverflow) => Err(Error::new(ENOMEM)),
+            Err(AddRefError::SharedToCow) => unreachable!(),
+            Err(AddRefError::CowToShared) => unreachable!(
+                "if it was CoW, it was read-only, but in that case we already called correct_inner"
+            ),
+        };
+        drop(guard_lock);
+
+        frame
+    }
+}
+impl AddrSpace {
+    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
+        PercpuBlock::current()
+            .current_addrsp
+            .borrow()
+            .clone()
+            .ok_or(Error::new(ESRCH))
+    }
+
+    pub fn new() -> Result<Self> {
+        let utable = unsafe {
+            PageMapper::create(
+                TableKind::User,
+                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+            )
+            .ok_or(Error::new(ENOMEM))?
+        };
+
+        Ok(Self {
+            grants: UserGrants::new(),
+            table: Table { utable },
+            mmap_min: MMAP_MIN_DEFAULT,
+        })
+    }
     pub fn r#move(
-        &self,
+        &mut self,
+        dst_lock: &AddrSpaceWrapper,
         src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
         src_span: PageSpan,
         requested_dst_base: Option<Page>,
         new_page_count: usize,
         new_flags: MapFlags,
         mut notify_files_out: Option<&mut UnmapVec>,
-        token: LockToken<L5>,
     ) -> Result<Page> {
-        let dst_lock = self;
-        // SAFETY: This is moving data between two AddrSpace. Caller ensures the two is a different AddrSpace
-        let mut dst = unsafe { dst_lock.acquire_rewrite(token) };
-        let dst = &mut *dst;
+        assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
+        let dst = self;
 
         let mut src_flusher;
         let mut src_opt = match src_opt {
@@ -569,79 +640,7 @@ impl AddrSpaceWrapper {
 
         Ok(dst_base)
     }
-    /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
-    /// is intended to be used for user-kernel shared memory.
-    pub fn borrow_frame_enforce_rw_allocated(
-        self: &Arc<Self>,
-        page: Page,
-        token: &mut CleanLockToken,
-    ) -> Result<RaiiFrame> {
-        let mut lock_token = token.token();
-        let guard = self.acquire_write(lock_token.downgrade());
 
-        let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
-
-        if !info.can_have_flags(MapFlags::PROT_READ | MapFlags::PROT_WRITE) {
-            return Err(Error::new(EPERM));
-        }
-        if !matches!(info.provider, Provider::Allocated { .. }) {
-            return Err(Error::new(EPERM));
-        }
-
-        let mut guard_lock = None;
-        let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address())
-            && fl.has_write()
-        {
-            Frame::containing(f)
-        } else {
-            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
-                .map_err(|_| Error::new(ENOMEM))?;
-            flush.flush();
-            guard_lock = Some(new_guard);
-
-            frame
-        };
-
-        let frame = match get_page_info(frame)
-            .expect("missing page info for Allocated grant")
-            .add_ref(RefKind::Shared)
-        {
-            Ok(_) => Ok(unsafe { RaiiFrame::new_unchecked(frame) }),
-            Err(AddRefError::RcOverflow) => Err(Error::new(ENOMEM)),
-            Err(AddRefError::SharedToCow) => unreachable!(),
-            Err(AddRefError::CowToShared) => unreachable!(
-                "if it was CoW, it was read-only, but in that case we already called correct_inner"
-            ),
-        };
-        drop(guard_lock);
-
-        frame
-    }
-}
-impl AddrSpace {
-    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
-        PercpuBlock::current()
-            .current_addrsp
-            .borrow()
-            .clone()
-            .ok_or(Error::new(ESRCH))
-    }
-
-    pub fn new() -> Result<Self> {
-        let utable = unsafe {
-            PageMapper::create(
-                TableKind::User,
-                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
-            )
-            .ok_or(Error::new(ENOMEM))?
-        };
-
-        Ok(Self {
-            grants: UserGrants::new(),
-            table: Table { utable },
-            mmap_min: MMAP_MIN_DEFAULT,
-        })
-    }
     fn munmap_inner(
         this_grants: &mut UserGrants,
         this_mapper: &mut PageMapper,

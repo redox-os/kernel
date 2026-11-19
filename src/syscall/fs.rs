@@ -10,6 +10,7 @@ use crate::{
         file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
         memory::{
             handle_notify_files, AddrSpace, GenericFlusher, Grant, PageSpan, TlbShootdownActions,
+            UnmapVec,
         },
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
@@ -514,15 +515,17 @@ pub fn mremap(
 
         Ok(base.start_address().data())
     } else {
-        let base = addr_space.r#move(
+        let mut notify_files = UnmapVec::new();
+        let base = addr_space.acquire_write(token.downgrade()).r#move(
+            &addr_space,
             None,
             src_span,
             requested_dst_base,
             new_page_count,
             map_flags,
-            None,
-            token.downgrade(),
+            Some(&mut notify_files),
         )?;
+        handle_notify_files(notify_files, token);
 
         Ok(base.start_address().data())
     }

@@ -33,6 +33,7 @@ use alloc::{
 use core::{
     mem::size_of,
     num::NonZeroUsize,
+    ops::DerefMut,
     slice, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -525,28 +526,25 @@ impl KernelScheme for ProcScheme {
                     || map.flags.contains(MapFlags::MAP_FIXED_NOREPLACE);
                 let requested_dst_base = (map.address != 0 || fixed).then_some(requested_dst_page);
 
-                let mut src_addr_space_guard = addrspace.acquire_write(token.downgrade());
-                let (src_addr_space, lock_token) = src_addr_space_guard.token_split();
-
                 let src_page_count = NonZeroUsize::new(src_span.count).ok_or(Error::new(EINVAL))?;
+
+                let (mut src_addr_space_guard, mut dst_addrsp_guard) =
+                    addrspace.acquire_two_write(dst_addr_space, token.downgrade());
 
                 let mut notify_files = UnmapVec::new();
 
                 // TODO: Validate flags
                 let result_base = if consume {
-                    dst_addr_space.r#move(
-                        Some((addrspace, &mut *src_addr_space)),
+                    dst_addrsp_guard.r#move(
+                        dst_addr_space,
+                        Some((addrspace, &mut *src_addr_space_guard)),
                         src_span,
                         requested_dst_base,
                         src_page_count.get(),
                         map.flags,
                         Some(&mut notify_files),
-                        lock_token,
                     )?
                 } else {
-                    // SAFETY: We've compared  Arc::ptr_eq(addrspace, dst_addr_space) before
-                    let mut dst_addrsp_guard =
-                        unsafe { dst_addr_space.acquire_rewrite(lock_token) };
                     dst_addrsp_guard.mmap(
                         dst_addr_space,
                         requested_dst_base,
@@ -556,7 +554,7 @@ impl KernelScheme for ProcScheme {
                         |dst_page, _, dst_mapper, flusher| {
                             Grant::borrow(
                                 Arc::clone(addrspace),
-                                src_addr_space,
+                                src_addr_space_guard.deref_mut(),
                                 src_span.base,
                                 dst_page,
                                 src_span.count,
@@ -571,8 +569,8 @@ impl KernelScheme for ProcScheme {
                     )?
                 };
 
+                drop(dst_addrsp_guard);
                 drop(src_addr_space_guard);
-
                 handle_notify_files(notify_files, token);
 
                 Ok(result_base.start_address().data())
