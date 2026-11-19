@@ -1026,9 +1026,7 @@ fn try_direct_switch_back(
         let next_lock = Arc::clone(&sched);
         let prev_lock = Arc::clone(&current);
 
-        (unsafe { prev_lock.write_arc() }, unsafe {
-            next_lock.write_arc()
-        })
+        unsafe { write_two_arcs(&prev_lock, &next_lock) }
     };
 
     // True by definition, as we pick sched_ctxt specifically to switch back to.
@@ -1080,10 +1078,10 @@ pub fn direct_switch_to(
     let schedule_time = crate::time::monotonic(token);
 
     let percpu = PercpuBlock::current();
-    let (prev_context_guard, prev_context_ptr) = {
+    let (prev_context, prev_context_ptr) = {
         let prev_context_ref = context::current();
 
-        // TODO: should this panic?
+        // TODO: this should be removed if possible
         if Arc::ptr_eq(&*prev_context_ref, &next_context) {
             return SwitchResult::Switched;
         }
@@ -1093,18 +1091,19 @@ pub fn direct_switch_to(
             &percpu.switch_internals.idle_context()
         ));
 
-        (
-            unsafe { prev_context_ref.write_arc() },
-            Arc::as_ptr(&*prev_context_ref),
-        )
+        let prev_context_ptr = Arc::as_ptr(&*prev_context_ref);
+        (prev_context_ref, prev_context_ptr)
     };
-    // Always false by the above ptr_eq check.
-    let next_is_current_ctxt = false;
 
     let was_idle = prev_context_ptr
         == Arc::as_ptr(percpu.switch_internals.idle_ctxt.borrow().as_ref().unwrap());
 
-    let mut next_context_guard = unsafe { next_context.write_arc() };
+    let (prev_context_guard, mut next_context_guard) =
+        unsafe { write_two_arcs(&prev_context, &next_context) };
+    drop(prev_context);
+
+    // Always false by write_two_arcs assertion
+    let next_is_current_ctxt = false;
 
     let next_is_current_sched = Arc::ptr_eq(
         percpu
@@ -1275,6 +1274,32 @@ unsafe fn switch_to(
     unsafe {
         percpu.new_addrsp_guard.set(addr_space_guard);
         arch::switch_to(prev_context, next_context);
+    }
+}
+
+unsafe fn write_two_arcs(
+    a: &Arc<ContextLock>,
+    b: &Arc<ContextLock>,
+) -> (ArcContextLockWriteGuard, ArcContextLockWriteGuard) {
+    let a_ptr = Arc::as_ptr(a).addr();
+    let b_ptr = Arc::as_ptr(b).addr();
+
+    #[cfg(feature = "drop_panic")]
+    assert_ne!(
+        a_ptr, b_ptr,
+        "attempted to write-lock the same context twice"
+    );
+
+    unsafe {
+        if a_ptr < b_ptr {
+            let guard_a = a.write_arc();
+            let guard_b = b.write_arc();
+            (guard_a, guard_b)
+        } else {
+            let guard_b = b.write_arc();
+            let guard_a = a.write_arc();
+            (guard_a, guard_b)
+        }
     }
 }
 
