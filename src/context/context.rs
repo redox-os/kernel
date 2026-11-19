@@ -178,8 +178,9 @@ pub struct Context {
     /// Key for the RunQueue.
     ///
     /// This will be set to the corresponding key iff a hw-thread contains this context in its
-    /// `run_queue`.
-    // TODO: what guarantees are there that contexts are not in multiple hw-threads' run_queues?
+    /// `run_queue`. If there's no `run_queue` backing this context, this must be [`None`].
+    /// Assigment to this key must be guaranteed to be `None` beforehand, otherwise assert must be used,
+    /// so there's a guarantee that this context does not get pushed to multiple hw-threads.
     pub queue_key: Option<ContextQueueKey>,
 
     // TODO: id can reappear after wraparound?

@@ -336,11 +336,6 @@ pub fn spawn(
         .setup_initial_call(&context.kstack, func, userspace_allowed);
 
     context.userspace = userspace_allowed;
-    context.queue_key = Some(ContextQueueKey {
-        vd: context.vd,
-        rem_slice: Reverse(context.rem_slice),
-        ctxt_id: context.debug_id,
-    });
 
     let context_lock = Arc::new(ContextLock::new(context));
     let context_ref = ContextRef(Arc::clone(&context_lock));
