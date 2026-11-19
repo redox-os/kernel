@@ -123,6 +123,32 @@ impl AddrSpaceWrapper {
     ) -> RwLockWriteGuard<'a, L5, AddrSpace> {
         self.inner.write(lock_token)
     }
+    pub fn acquire_two_write<'a, 'b>(
+        self: &'a Arc<Self>,
+        other: &'b Arc<Self>,
+        lock_token: LockToken<'a, L4>,
+    ) -> (
+        RwLockWriteGuard<'a, L5, AddrSpace>,
+        RwLockWriteGuard<'b, L5, AddrSpace>,
+    ) {
+        let a = Arc::as_ptr(self) as usize;
+        let b = Arc::as_ptr(other) as usize;
+        assert_ne!(a, b);
+
+        // SAFETY: Zero-sized, and we guarantee this to be deadlock-free
+        //         by checking A != B and orderly unlock A then B
+        let token_other: LockToken<'b, L4> = unsafe { core::mem::transmute_copy(&lock_token) };
+
+        if a < b {
+            let g_self = self.inner.write(lock_token);
+            let g_other = other.inner.write(token_other);
+            (g_self, g_other)
+        } else {
+            let g_other = other.inner.write(token_other);
+            let g_self = self.inner.write(lock_token);
+            (g_self, g_other)
+        }
+    }
     pub unsafe fn acquire_reupgradeable_read<'a>(
         &'a self,
         lock_token: LockToken<'a, L5>,
