@@ -80,6 +80,9 @@ pub mod sys;
 /// `time:` - allows reading time, setting timeouts and getting events when they are met
 pub mod time;
 
+/// `priority:` - module deciding if a call is allowed to enter priority lane
+pub mod priority;
+
 /// A wrapper around userspace schemes, tightly dependent on `root`
 pub mod user;
 
