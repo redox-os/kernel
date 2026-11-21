@@ -56,13 +56,34 @@ pub fn map_flags(page_flags: PageFlags<RmmA>) -> MapFlags {
 
 pub struct UnmapResult {
     pub file_desc: Option<GrantFileRef>,
+    pub external_unpin: Option<(Arc<AddrSpaceWrapper>, PageSpan)>,
     pub size: usize,
     pub flags: MunmapFlags,
 }
 pub type UnmapVec = SmallVec<[UnmapResult; 16]>;
 
 impl UnmapResult {
+    pub fn is_empty(&self) -> bool {
+        self.file_desc.is_none() && self.external_unpin.is_none()
+    }
+
     pub fn unmap(mut self, token: &mut CleanLockToken) -> Result<()> {
+        if let Some((address_space, span)) = self.external_unpin.take() {
+            let mut guard = address_space.acquire_write(token.downgrade());
+
+            for (_, grant) in guard.grants.conflicts_mut(span) {
+                if let Provider::FmapBorrowed {
+                    ref mut pin_refcount,
+                    ..
+                } = grant.provider
+                {
+                    *pin_refcount = pin_refcount
+                        .checked_sub(1)
+                        .expect("fmap pinning code is wrong");
+                }
+            }
+        }
+
         let Some(GrantFileRef {
             base_offset,
             description,
@@ -122,6 +143,32 @@ impl AddrSpaceWrapper {
         lock_token: LockToken<'a, L4>,
     ) -> RwLockWriteGuard<'a, L5, AddrSpace> {
         self.inner.write(lock_token)
+    }
+    pub fn acquire_two_write<'a, 'b>(
+        self: &'a Arc<Self>,
+        other: &'b Arc<Self>,
+        lock_token: LockToken<'a, L4>,
+    ) -> (
+        RwLockWriteGuard<'a, L5, AddrSpace>,
+        RwLockWriteGuard<'b, L5, AddrSpace>,
+    ) {
+        let a = Arc::as_ptr(self) as usize;
+        let b = Arc::as_ptr(other) as usize;
+        assert_ne!(a, b);
+
+        // SAFETY: Zero-sized, and we guarantee this to be deadlock-free
+        //         by checking A != B and orderly unlock A then B
+        let token_other: LockToken<'b, L4> = unsafe { core::mem::transmute_copy(&lock_token) };
+
+        if a < b {
+            let g_self = self.inner.write(lock_token);
+            let g_other = other.inner.write(token_other);
+            (g_self, g_other)
+        } else {
+            let g_other = other.inner.write(token_other);
+            let g_self = self.inner.write(lock_token);
+            (g_self, g_other)
+        }
     }
     pub unsafe fn acquire_reupgradeable_read<'a>(
         &'a self,
@@ -334,20 +381,91 @@ impl AddrSpaceWrapper {
             unpin,
         )
     }
+    /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
+    /// is intended to be used for user-kernel shared memory.
+    pub fn borrow_frame_enforce_rw_allocated(
+        self: &Arc<Self>,
+        page: Page,
+        token: &mut CleanLockToken,
+    ) -> Result<RaiiFrame> {
+        let mut lock_token = token.token();
+        let guard = self.acquire_write(lock_token.downgrade());
+
+        let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
+
+        if !info.can_have_flags(MapFlags::PROT_READ | MapFlags::PROT_WRITE) {
+            return Err(Error::new(EPERM));
+        }
+        if !matches!(info.provider, Provider::Allocated { .. }) {
+            return Err(Error::new(EPERM));
+        }
+
+        let mut guard_lock = None;
+        let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address())
+            && fl.has_write()
+        {
+            Frame::containing(f)
+        } else {
+            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
+                .map_err(|_| Error::new(ENOMEM))?;
+            flush.flush();
+            guard_lock = Some(new_guard);
+
+            frame
+        };
+
+        let frame = match get_page_info(frame)
+            .expect("missing page info for Allocated grant")
+            .add_ref(RefKind::Shared)
+        {
+            Ok(_) => Ok(unsafe { RaiiFrame::new_unchecked(frame) }),
+            Err(AddRefError::RcOverflow) => Err(Error::new(ENOMEM)),
+            Err(AddRefError::SharedToCow) => unreachable!(),
+            Err(AddRefError::CowToShared) => unreachable!(
+                "if it was CoW, it was read-only, but in that case we already called correct_inner"
+            ),
+        };
+        drop(guard_lock);
+
+        frame
+    }
+}
+impl AddrSpace {
+    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
+        PercpuBlock::current()
+            .current_addrsp
+            .borrow()
+            .clone()
+            .ok_or(Error::new(ESRCH))
+    }
+
+    pub fn new() -> Result<Self> {
+        let utable = unsafe {
+            PageMapper::create(
+                TableKind::User,
+                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
+            )
+            .ok_or(Error::new(ENOMEM))?
+        };
+
+        Ok(Self {
+            grants: UserGrants::new(),
+            table: Table { utable },
+            mmap_min: MMAP_MIN_DEFAULT,
+        })
+    }
     pub fn r#move(
-        &self,
+        &mut self,
+        dst_lock: &AddrSpaceWrapper,
         src_opt: Option<(&AddrSpaceWrapper, &mut AddrSpace)>,
         src_span: PageSpan,
         requested_dst_base: Option<Page>,
         new_page_count: usize,
         new_flags: MapFlags,
         mut notify_files_out: Option<&mut UnmapVec>,
-        token: LockToken<L5>,
     ) -> Result<Page> {
-        let dst_lock = self;
-        // SAFETY: This is moving data between two AddrSpace. Caller ensures the two is a different AddrSpace
-        let mut dst = unsafe { dst_lock.acquire_rewrite(token) };
-        let dst = &mut *dst;
+        assert_eq!(dst_lock.inner.as_mut_ptr(), self as *mut Self);
+        let dst = self;
 
         let mut src_flusher;
         let mut src_opt = match src_opt {
@@ -522,79 +640,7 @@ impl AddrSpaceWrapper {
 
         Ok(dst_base)
     }
-    /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
-    /// is intended to be used for user-kernel shared memory.
-    pub fn borrow_frame_enforce_rw_allocated(
-        self: &Arc<Self>,
-        page: Page,
-        token: &mut CleanLockToken,
-    ) -> Result<RaiiFrame> {
-        let mut lock_token = token.token();
-        let guard = self.acquire_write(lock_token.downgrade());
 
-        let (_start_page, info) = guard.grants.contains(page).ok_or(Error::new(EINVAL))?;
-
-        if !info.can_have_flags(MapFlags::PROT_READ | MapFlags::PROT_WRITE) {
-            return Err(Error::new(EPERM));
-        }
-        if !matches!(info.provider, Provider::Allocated { .. }) {
-            return Err(Error::new(EPERM));
-        }
-
-        let mut guard_lock = None;
-        let frame = if let Some((f, fl)) = guard.table.utable.translate(page.start_address())
-            && fl.has_write()
-        {
-            Frame::containing(f)
-        } else {
-            let (frame, flush, new_guard) = correct_inner(self, guard, page, AccessMode::Write, 0)
-                .map_err(|_| Error::new(ENOMEM))?;
-            flush.flush();
-            guard_lock = Some(new_guard);
-
-            frame
-        };
-
-        let frame = match get_page_info(frame)
-            .expect("missing page info for Allocated grant")
-            .add_ref(RefKind::Shared)
-        {
-            Ok(_) => Ok(unsafe { RaiiFrame::new_unchecked(frame) }),
-            Err(AddRefError::RcOverflow) => Err(Error::new(ENOMEM)),
-            Err(AddRefError::SharedToCow) => unreachable!(),
-            Err(AddRefError::CowToShared) => unreachable!(
-                "if it was CoW, it was read-only, but in that case we already called correct_inner"
-            ),
-        };
-        drop(guard_lock);
-
-        frame
-    }
-}
-impl AddrSpace {
-    pub fn current() -> Result<Arc<AddrSpaceWrapper>> {
-        PercpuBlock::current()
-            .current_addrsp
-            .borrow()
-            .clone()
-            .ok_or(Error::new(ESRCH))
-    }
-
-    pub fn new() -> Result<Self> {
-        let utable = unsafe {
-            PageMapper::create(
-                TableKind::User,
-                crate::memory::TheFrameAllocator(NumaMemoryPolicy::NodeLocalLeniant),
-            )
-            .ok_or(Error::new(ENOMEM))?
-        };
-
-        Ok(Self {
-            grants: UserGrants::new(),
-            table: Table { utable },
-            mmap_min: MMAP_MIN_DEFAULT,
-        })
-    }
     fn munmap_inner(
         this_grants: &mut UserGrants,
         this_mapper: &mut PageMapper,
@@ -673,12 +719,10 @@ impl AddrSpace {
             }
 
             // Remove irrelevant region
-            // TODO: Lock ordering violation
-            let mut token = unsafe { CleanLockToken::new() };
-            let unmap_result = grant.unmap(this_mapper, this_flusher, &mut token);
+            let unmap_result = grant.unmap(this_mapper, this_flusher);
 
             // Notify scheme that holds grant
-            if unmap_result.file_desc.is_some() {
+            if !unmap_result.is_empty() {
                 notify_files.push(unmap_result);
             }
         }
@@ -779,7 +823,7 @@ impl AddrSpace {
             // longer arc-rwlock wrapped, it cannot be referenced `External`ly by borrowing grants,
             // so it should suffice to iterate over PageInfos and decrement and maybe deallocate
             // the underlying pages (and send some funmaps).
-            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher, token) };
+            let res = { grant.unmap(&mut self.table.utable, &mut NopFlusher) };
 
             let _ = res.unmap(token);
         }
@@ -2017,36 +2061,9 @@ impl Grant {
         mut self,
         mapper: &mut PageMapper,
         flusher: &mut impl GenericFlusher,
-        token: &mut CleanLockToken,
     ) -> UnmapResult {
         assert!(self.info.mapped);
         assert!(!self.info.is_pinned());
-
-        if let Provider::External {
-            ref address_space,
-            src_base,
-            ..
-        } = self.info.provider
-        {
-            let mut guard = address_space.acquire_write(token.downgrade());
-
-            for (_, grant) in guard
-                .grants
-                .conflicts_mut(PageSpan::new(src_base, self.info.page_count))
-            {
-                match grant.provider {
-                    Provider::FmapBorrowed {
-                        ref mut pin_refcount,
-                        ..
-                    } => {
-                        *pin_refcount = pin_refcount
-                            .checked_sub(1)
-                            .expect("fmap pinning code is wrong")
-                    }
-                    _ => continue,
-                }
-            }
-        }
 
         let is_phys_contiguous = matches!(
             self.info.provider,
@@ -2123,13 +2140,24 @@ impl Grant {
             is_fmap_shared.unwrap_or(false) && self.info.flags.has_write(),
         );
 
+        let (file_desc, external_unpin) = match provider {
+            Provider::Allocated { cow_file_ref, .. } => (cow_file_ref, None),
+            Provider::FmapBorrowed { file_ref, .. } => (Some(file_ref), None),
+            Provider::External {
+                address_space,
+                src_base,
+                ..
+            } => (
+                None,
+                Some((address_space, PageSpan::new(src_base, self.info.page_count))),
+            ),
+            _ => (None, None),
+        };
+
         UnmapResult {
             size: self.info.page_count * PAGE_SIZE,
-            file_desc: match provider {
-                Provider::Allocated { cow_file_ref, .. } => cow_file_ref,
-                Provider::FmapBorrowed { file_ref, .. } => Some(file_ref),
-                _ => None,
-            },
+            file_desc,
+            external_unpin,
             flags: munmap_flags,
         }
     }

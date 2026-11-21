@@ -5,6 +5,7 @@ use alloc::{
 use core::{
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
+    ops::DerefMut,
 };
 use slab::Slab;
 use syscall::{
@@ -594,8 +595,13 @@ impl UserInner {
             None
         };
 
-        let mut dst_space_guard = dst_space_lock.acquire_write(token.downgrade());
-        let (dst_space, _token_split) = dst_space_guard.token_split();
+        let (mut dst_space_guard, mut cur_space_guard_opt) = if middle_page_count > 0 {
+            let (dst, cur) = dst_space_lock.acquire_two_write(&cur_space_lock, token.downgrade());
+            (dst, Some(cur))
+        } else {
+            (dst_space_lock.acquire_write(token.downgrade()), None)
+        };
+        let dst_space = dst_space_guard.deref_mut();
 
         let free_span = dst_space
             .grants
@@ -641,7 +647,7 @@ impl UserInner {
                 middle_page_count,
                 map_flags | MAP_FIXED_NOREPLACE,
                 None,
-                move |dst_page, _, mapper, flusher| {
+                |dst_page, _, mapper, flusher| {
                     let eager = true;
 
                     // It doesn't make sense to allow a context, that has borrowed non-RAM physical
@@ -655,15 +661,9 @@ impl UserInner {
                     // unmap them is to respond to the scheme socket.
                     let is_pinned_userscheme_borrow = true;
 
-                    // TODO: Not a Lock ordering violation
-                    // we've checked Arc::ptr_eq(&dst_space_lock, &cur_space_lock) before,
-                    // but it's difficult to apply cur_space_lock.arquire_rewrite
-                    let mut token = unsafe { CleanLockToken::new() };
-                    let mut cur_space_guard =
-                        unsafe { cur_space_lock.acquire_rewrite(token.downgrade()) };
                     Grant::borrow(
                         Arc::clone(&cur_space_lock),
-                        &mut cur_space_guard,
+                        cur_space_guard_opt.as_deref_mut().unwrap(),
                         first_middle_src_page,
                         dst_page,
                         middle_page_count.get(),
@@ -707,6 +707,7 @@ impl UserInner {
             }
         };
 
+        drop(cur_space_guard_opt);
         drop(dst_space_guard);
 
         let base = free_span.base.start_address().data() + offset;
