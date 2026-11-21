@@ -15,6 +15,8 @@ pub mod interrupt;
 /// Miscellaneous processor features
 pub mod misc;
 
+pub(super) mod cache_info;
+
 // TODO: Maybe support rewriting relocations (using LD's --emit-relocs) when working with entire
 // functions?
 #[unsafe(naked)]
