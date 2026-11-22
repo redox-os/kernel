@@ -170,18 +170,6 @@ impl AddrSpaceWrapper {
             (g_self, g_other)
         }
     }
-    pub unsafe fn acquire_reupgradeable_read<'a>(
-        &'a self,
-        lock_token: LockToken<'a, L5>,
-    ) -> RwLockUpgradableGuard<'a, L5, AddrSpace> {
-        unsafe { self.inner.reupgradeable_read(lock_token) }
-    }
-    pub unsafe fn acquire_rewrite<'a>(
-        &'a self,
-        lock_token: LockToken<'a, L5>,
-    ) -> RwLockWriteGuard<'a, L5, AddrSpace> {
-        unsafe { self.inner.rewrite(lock_token) }
-    }
     pub fn into_drop(self, token: &mut CleanLockToken) {
         self.inner.into_inner().into_drop(token);
     }
