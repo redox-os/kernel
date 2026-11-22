@@ -381,6 +381,43 @@ impl AddrSpaceWrapper {
             unpin,
         )
     }
+    /// Checking if physical address is all present for given span
+    pub fn prefault_read(
+        self: &Arc<Self>,
+        span: PageSpan,
+        token: &mut CleanLockToken,
+    ) -> Result<()> {
+        let mut i = 0;
+        while i < span.count {
+            let unmapped_page = {
+                let addrspace = self.acquire_read(token.downgrade());
+                let mut found = None;
+                while i < span.count {
+                    let page = span.base.next_by(i);
+                    i += 1;
+                    if addrspace
+                        .table
+                        .utable
+                        .translate(page.start_address())
+                        .is_none()
+                    {
+                        found = Some(page);
+                        break;
+                    }
+                }
+                found
+            };
+
+            if let Some(page) = unmapped_page {
+                // TODO: ensure the correct context is hardblocked, if necessary
+                let guard = self.acquire_write(token.downgrade());
+                let (_, flush, _) = correct_inner(self, guard, page, AccessMode::Read, 0)
+                    .map_err(|_| Error::new(EIO))?;
+                flush.flush();
+            }
+        }
+        Ok(())
+    }
     /// Borrows a page from user memory, requiring that the frame be Allocated and read/write. This
     /// is intended to be used for user-kernel shared memory.
     pub fn borrow_frame_enforce_rw_allocated(
@@ -1533,65 +1570,20 @@ impl Grant {
                 let (frame, page_flags, is_cow) = match src.mode {
                     MmapMode::Shared => {
                         // TODO: Error code for "scheme responded with unmapped page"?
-                        let (frame, page_flags) = match src_addrspace
+                        let (frame, page_flags) = src_addrspace
                             .table
                             .utable
                             .translate(src_page.start_address())
-                        {
-                            Some((phys, page_flags)) => (Frame::containing(phys), page_flags),
-                            // TODO: ensure the correct context is hardblocked, if necessary
-                            None => {
-                                let (frame, _, new_guard) = correct_inner(
-                                    src.addr_space_lock,
-                                    guard,
-                                    src_page,
-                                    AccessMode::Read,
-                                    0,
-                                )
-                                .map_err(|_| Error::new(EIO))?;
-                                let page_flags = new_guard
-                                    .table
-                                    .utable
-                                    .translate(src_page.start_address())
-                                    .unwrap()
-                                    .1;
-                                guard = new_guard;
-                                (frame, page_flags)
-                            }
-                        };
-
-                        (frame, page_flags, false)
+                            .ok_or(Error::new(EIO))?;
+                        (Frame::containing(frame), page_flags, false)
                     }
                     MmapMode::Cow => unsafe {
-                        let (frame, page_flags) = match guard
+                        let (page_flags, phys, _) = guard
                             .table
                             .utable
                             .remap_with(src_page.start_address(), |flags| flags.write(false))
-                        {
-                            Some((page_flags, phys, _)) => (Frame::containing(phys), page_flags),
-                            // TODO: ensure the correct context is hardblocked, if necessary
-                            None => {
-                                let (frame, _, new_guard) = correct_inner(
-                                    src.addr_space_lock,
-                                    guard,
-                                    src_page,
-                                    AccessMode::Read,
-                                    0,
-                                )
-                                .map_err(|_| Error::new(EIO))?;
-                                // FIXME correct_inner should read the page flags instead
-                                let page_flags = new_guard
-                                    .table
-                                    .utable
-                                    .translate(src_page.start_address())
-                                    .unwrap()
-                                    .1;
-                                guard = new_guard;
-                                (frame, page_flags)
-                            }
-                        };
-
-                        (frame, page_flags, true)
+                            .ok_or(Error::new(EIO))?;
+                        (Frame::containing(phys), page_flags, true)
                     },
                 };
                 src_addrspace = &mut *guard;
