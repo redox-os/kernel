@@ -205,8 +205,10 @@ impl<L: Level, T: Default> Default for Mutex<L, T> {
     }
 }
 
+/// Count on loops to trigger deadlock panic.
+/// In non-KVM environment the ideal number is 100x lower.
 #[cfg(feature = "busy_panic")]
-pub const DEADLOCK_SPIN_CAP: usize = 5000;
+pub const DEADLOCK_SPIN_CAP: usize = 2_000_000;
 
 impl<L: Level, T> Mutex<L, T> {
     /// Creates a new mutex in an unlocked state ready for use
@@ -556,9 +558,29 @@ impl<L: Level, T> RwLock<L, T> {
 
     // Unsafe due to not using token, currently required by context::switch
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
-        core::mem::forget(self.inner.write());
-        ArcRwLockWriteGuard {
-            rwlock: self.clone(),
+        #[cfg(feature = "busy_panic")]
+        let mut i = DEADLOCK_SPIN_CAP;
+        let my_percpu = PercpuBlock::current();
+        loop {
+            match self.inner.try_write() {
+                Some(guard) => {
+                    core::mem::forget(guard);
+                    return ArcRwLockWriteGuard {
+                        rwlock: self.clone(),
+                    };
+                }
+                None => {
+                    my_percpu.maybe_handle_tlb_shootdown();
+                    core::hint::spin_loop();
+                    #[cfg(feature = "busy_panic")]
+                    {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock at write_arc may have triggered")
+                        }
+                    }
+                }
+            }
         }
     }
 
