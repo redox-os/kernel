@@ -209,6 +209,7 @@ fn switch_inner(
                 schedule_time,
             ),
             // didn't change sched context, so will not change current context
+            ScheduleResult::AlreadyCurrent => return SwitchResult::Switched,
             ScheduleResult::AllContextsIdle => {
                 percpu.stats.set_state(cpu_stats::CpuState::Idle);
 
@@ -216,43 +217,18 @@ fn switch_inner(
             }
         };
 
-    let current_context_lock_ref = percpu.switch_internals.current_context();
-
-    if Arc::ptr_eq(
-        &*current_context_lock_ref,
-        ArcContextLockWriteGuard::rwlock(&next_sched_guard),
-    ) {
-        // We had already switched the current context to the one now picked by the scheduler, so
-        // no switch needs to be done.
-        return SwitchResult::Switched;
-    }
-    let current_context_guard = if Arc::ptr_eq(
-        &*current_context_lock_ref,
-        ArcContextLockWriteGuard::rwlock(&prev_sched_guard),
-    ) {
-        // The previous sched and previous current contexts coincided.
-        // TODO: s/current/real/g
-        prev_sched_guard
-    } else {
-        drop(prev_sched_guard);
-        unsafe { current_context_lock_ref.write_arc() }
-    };
-
     let was_idle = Arc::ptr_eq(
-        &current_context_lock_ref,
+        ArcContextLockWriteGuard::rwlock(&prev_sched_guard),
         percpu.switch_internals.idle_ctxt.borrow().as_ref().unwrap(),
     );
-    drop(current_context_lock_ref);
-
-    let switch_time = schedule_time;
 
     unsafe {
         switch_to(
             percpu,
-            current_context_guard,
+            prev_sched_guard,
             next_sched_guard,
             next_addrsp_guard,
-            switch_time,
+            schedule_time,
             was_idle,
         );
     }
@@ -266,6 +242,7 @@ enum ScheduleResult {
         next_address_space: Option<AddrSpaceSwitchReadGuard>,
         schedule_time: u128,
     },
+    AlreadyCurrent,
     AllContextsIdle,
 }
 
@@ -287,22 +264,29 @@ fn schedule(
     //set PIT Interrupt counter to 0, giving each process same amount of PIT ticks
     percpu.switch_internals.pit_ticks.set(0);
 
-    // Lock the previous (sched) context.
-    let mut prev_context_guard = {
-        let lock_ref = percpu.switch_internals.sched_context();
-        // We are careful not to lock this context twice
-        unsafe { lock_ref.write_arc() }
+    // Lock the previous (sched) and (real) current context.
+    let (mut prev_context_guard, mut cur_context_guard) = {
+        let sched_lock = percpu.switch_internals.sched_context();
+        let cur_lock = percpu.switch_internals.current_context();
+
+        // We are careful not to lock these contexts twice
+        if Arc::ptr_eq(&sched_lock, &cur_lock) {
+            (unsafe { sched_lock.write_arc() }, None)
+        } else {
+            let (a, b) = unsafe { write_two_arcs(&sched_lock, &cur_lock) };
+            (a, Some(b))
+        }
     };
     let prev_context_ptr = Arc::as_ptr(ArcContextLockWriteGuard::rwlock(&prev_context_guard));
-    let cur_context_ptr = Arc::as_ptr(&*percpu.switch_internals.current_context());
-
-    /*
-    if !prev_context_guard.is_preemptable() {
-        // Pretend to have finished switching, so CPU is not idled
-        return ScheduleResult::Switched;
-    }
-    */
-
+    let cur_context_ptr = cur_context_guard
+        .as_ref()
+        .map(|g| Arc::as_ptr(ArcContextLockWriteGuard::rwlock(g)))
+        .unwrap_or(prev_context_ptr);
+    #[cfg(feature = "drop_panic")]
+    assert!(!cur_context_guard.as_ref().is_some_and(|g| Arc::ptr_eq(
+        ArcContextLockWriteGuard::rwlock(g),
+        &percpu.switch_internals.idle_context()
+    )));
     {
         // Alarm (previously in update_runnable)
         let mut wakeups = percpu.switch_internals.tmp_wakeups.borrow_mut();
@@ -351,17 +335,26 @@ fn schedule(
                     continue;
                 };
 
-                let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
-                    if let Some(wake) = wake_opt {
-                        run_queue.timers.insert((wake, context_ref));
-                    } else {
-                        percpu
-                            .switch_internals
-                            .local_wakeup_list
-                            .borrow_mut()
-                            .push(context_ref);
-                    }
-                    continue;
+                let mut temp_guard;
+                let guard: &mut Context = if context_ptr == cur_context_ptr {
+                    // must be true because prev_context_ptr != context_ptr
+                    assert!(cur_context_guard.is_some());
+                    cur_context_guard.as_deref_mut().unwrap()
+                } else {
+                    let Some(g) = (unsafe { context_lock.try_write_arc() }) else {
+                        if let Some(wake) = wake_opt {
+                            run_queue.timers.insert((wake, context_ref));
+                        } else {
+                            percpu
+                                .switch_internals
+                                .local_wakeup_list
+                                .borrow_mut()
+                                .push(context_ref);
+                        }
+                        continue;
+                    };
+                    temp_guard = g;
+                    &mut *temp_guard
                 };
 
                 if let Some(wake) = wake_opt
@@ -420,7 +413,6 @@ fn schedule(
                     ctxt_id: guard.debug_id,
                 };
                 guard.queue_key = Some(key);
-                drop(guard);
 
                 run_queue.queue_insert(
                     key,
@@ -461,15 +453,18 @@ fn schedule(
     let was_idle = percpu.stats.add_time(percpu_ms) == CpuState::Idle as u8;
     percpu.switch_internals.schedule_time.set(schedule_time);
 
-    let Some((mut next_sched_context, next_address_space)) = select_next_context(
+    let (mut next_sched_context, next_address_space, already_current) = match select_next_context(
         percpu,
         percpu.cpu_id,
         schedule_time,
         percpu_nanos,
         was_idle,
         &mut prev_context_guard,
-    ) else {
-        return ScheduleResult::AllContextsIdle;
+        &mut cur_context_guard,
+    ) {
+        NextContextResult::CurrentContext => (cur_context_guard.take().unwrap(), None, true),
+        NextContextResult::Other(guard, addr_space) => (guard, addr_space, false),
+        NextContextResult::None => return ScheduleResult::AllContextsIdle,
     };
 
     *percpu.switch_internals.sched_ctxt.borrow_mut() = Some(Arc::clone(
@@ -485,11 +480,30 @@ fn schedule(
     }
     next_sched_context.schedule_time = schedule_time;
 
-    ScheduleResult::Picked {
-        prev_sched_context: prev_context_guard,
-        next_sched_context,
-        next_address_space,
-        schedule_time,
+    if already_current {
+        ScheduleResult::AlreadyCurrent
+    } else {
+        ScheduleResult::Picked {
+            prev_sched_context: cur_context_guard.unwrap_or(prev_context_guard),
+            next_sched_context,
+            next_address_space,
+            schedule_time,
+        }
+    }
+}
+
+enum NextContextResult {
+    None,
+    CurrentContext,
+    Other(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>),
+}
+
+impl NextContextResult {
+    pub fn is_none(&self) -> bool {
+        matches!(self, NextContextResult::None)
+    }
+    pub fn is_some(&self) -> bool {
+        !matches!(self, NextContextResult::None)
     }
 }
 
@@ -501,7 +515,8 @@ fn select_next_context(
     elapsed_time: u64,
     was_idle: bool,
     prev_context_guard: &mut ArcRwLockWriteGuard<L4, Context>,
-) -> Option<(ArcContextLockWriteGuard, Option<AddrSpaceSwitchReadGuard>)> {
+    cur_context_guard: &mut Option<ArcContextLockWriteGuard>,
+) -> NextContextResult {
     let mut contexts_data = percpu.switch_internals.run_queue.lock();
     let idle_context = percpu.switch_internals.idle_context();
 
@@ -553,10 +568,10 @@ fn select_next_context(
         }
     }
 
-    let mut eligible_best = None;
+    let mut eligible_best = NextContextResult::None;
     let mut prev_is_eligible = false;
 
-    let mut ineligible_best = None;
+    let mut ineligible_best = NextContextResult::None;
     let mut ineligible_min_vtime = u64::MAX;
     let mut ineligible_vd = u64::MAX;
 
@@ -606,13 +621,19 @@ fn select_next_context(
             continue;
         }
 
-        let Some(mut guard) = (unsafe { context_lock.try_write_arc() }) else {
-            continue;
+        let mut owned_guard: Option<ArcContextLockWriteGuard> = None;
+        let guard: &mut Context = if next_is_current_ctxt {
+            cur_context_guard.as_deref_mut().unwrap()
+        } else {
+            let Some(g) = (unsafe { context_lock.try_write_arc() }) else {
+                continue;
+            };
+            owned_guard.insert(g)
         };
 
         // next_is_current_sched is false by the above check
         let sw = update_runnable(
-            &mut guard,
+            guard,
             cpu_id,
             schedule_time,
             next_is_current_sched,
@@ -632,7 +653,6 @@ fn select_next_context(
                 rem_slice: *rem_slice,
                 ctxt_id: *ctxt_id,
             });
-            drop(guard);
             continue;
         }
 
@@ -640,31 +660,30 @@ fn select_next_context(
             continue;
         }
 
-        let mut best_addr_space = None;
-        if let Some(addr_space) = &guard.addr_space {
-            let mut t = unsafe { CleanLockToken::new() };
-            if let Some(addr) = addr_space.inner.try_read(t.token()) {
-                best_addr_space = Some(unsafe { AddrSpaceSwitchReadGuard::new(addr) });
-            } else {
-                continue;
+        let candidate = if let Some(guard) = owned_guard {
+            let mut best_addr_space = None;
+            if let Some(addr_space) = &guard.addr_space {
+                let mut t = unsafe { CleanLockToken::new() };
+                if let Some(addr) = addr_space.inner.try_read(t.token()) {
+                    best_addr_space = Some(unsafe { AddrSpaceSwitchReadGuard::new(addr) });
+                } else {
+                    continue;
+                }
             }
-        }
+            NextContextResult::Other(guard, best_addr_space)
+        } else {
+            NextContextResult::CurrentContext
+        };
 
         if *vtime <= contexts_data.v {
             // Eligible
-            eligible_best = Some((guard, best_addr_space));
+            eligible_best = candidate;
             break;
-        } else {
+        } else if *vtime < ineligible_min_vtime {
             // Ineligible
-            if *vtime < ineligible_min_vtime {
-                ineligible_min_vtime = *vtime;
-                ineligible_vd = *vd;
-                if let Some((old_guard, old_addr_space)) = ineligible_best {
-                    drop(old_guard);
-                    drop(old_addr_space);
-                }
-                ineligible_best = Some((guard, best_addr_space));
-            }
+            ineligible_min_vtime = *vtime;
+            ineligible_vd = *vd;
+            ineligible_best = candidate;
         }
     }
 
@@ -689,37 +708,50 @@ fn select_next_context(
         let prev_is_earliest = prev_runnable && prev_context_guard.vtime <= ineligible_min_vtime;
 
         if prev_is_earliest {
-            eligible_best = None;
+            eligible_best = NextContextResult::None;
         } else if ineligible_best.is_some() {
             let prev_has_slice = prev_runnable && prev_context_guard.rem_slice > 0;
 
             if prev_has_slice && prev_context_guard.vd <= ineligible_vd {
-                eligible_best = None;
+                eligible_best = NextContextResult::None;
             } else {
-                eligible_best = ineligible_best.take();
+                eligible_best = ineligible_best;
             }
         }
-    } else if prev_is_eligible
-        && eligible_best.is_some()
-        && let Some((ref guard, _)) = eligible_best
-        && (prev_context_guard.vd < guard.vd
-            || (prev_context_guard.vd == guard.vd
-                && prev_context_guard.rem_slice > guard.rem_slice))
-    {
-        eligible_best = None;
+    } else if prev_is_eligible && eligible_best.is_some() {
+        let (vd, rem_slice) = match &eligible_best {
+            NextContextResult::CurrentContext => {
+                let g = cur_context_guard.as_ref().unwrap();
+                (g.vd, g.rem_slice)
+            }
+            NextContextResult::Other(g, _) => (g.vd, g.rem_slice),
+            NextContextResult::None => unreachable!(),
+        };
+        if prev_context_guard.vd < vd
+            || (prev_context_guard.vd == vd && prev_context_guard.rem_slice > rem_slice)
+        {
+            eligible_best = NextContextResult::None;
+        }
     }
 
-    let mut final_winner = None;
+    let mut final_winner = NextContextResult::None;
 
-    if let Some((mut chosen_guard, addr_space)) = eligible_best {
-        if let Some(key) = chosen_guard.queue_key.take() {
+    if eligible_best.is_some() {
+        let key_opt = match &mut eligible_best {
+            NextContextResult::CurrentContext => {
+                cur_context_guard.as_mut().unwrap().queue_key.take()
+            }
+            NextContextResult::Other(g, _) => g.queue_key.take(),
+            NextContextResult::None => unreachable!(),
+        };
+        if let Some(key) = key_opt {
             contexts_data.queue.remove(&key);
             percpu
                 .switch_internals
                 .queue_len
                 .store(contexts_data.queue.len(), Ordering::Relaxed);
         }
-        final_winner = Some((chosen_guard, addr_space));
+        final_winner = eligible_best;
     }
 
     // Work Stealing
@@ -881,7 +913,7 @@ fn select_next_context(
                     contexts_data.total_weight = contexts_data.total_weight.saturating_add(weight);
 
                     if final_winner.is_none() && !prev_runnable {
-                        final_winner = Some((guard, addr_space));
+                        final_winner = NextContextResult::Other(guard, addr_space);
                     } else {
                         let new_key = ContextQueueKey {
                             vd: guard.vd,
@@ -934,7 +966,7 @@ fn select_next_context(
             contexts_data.v += v_advance as u64;
         }
 
-        if let Some((chosen_guard, addr_space)) = final_winner {
+        if final_winner.is_some() {
             if prev_runnable {
                 let (vd, rem_slice, ctxt_id, vtime) = (
                     prev_context_guard.vd,
@@ -977,13 +1009,13 @@ fn select_next_context(
                 .stealable
                 .store(contexts_data.is_stealable(), Ordering::Relaxed);
 
-            Some((chosen_guard, addr_space))
+            final_winner
         } else {
             percpu
                 .switch_internals
                 .stealable
                 .store(contexts_data.is_stealable(), Ordering::Relaxed);
-            None
+            NextContextResult::None
         }
     } else {
         let prev_is_dead = !is_idle && !prev_context_guard.status.is_runnable();
@@ -992,14 +1024,15 @@ fn select_next_context(
             .switch_internals
             .stealable
             .store(contexts_data.is_stealable(), Ordering::Relaxed);
+        drop(contexts_data);
 
         if (!was_idle || prev_is_dead) && !is_idle {
             // Since the idle context is per-cpu, then assuming its context Arc will only be
             // accessed by a "leaf" that doesn't acquire the runqueue (such as the sys scheme), it
             // should be safe to use a blocking write acquire here.
-            Some(unsafe { (idle_context.write_arc(), None) })
+            NextContextResult::Other(unsafe { idle_context.write_arc() }, None)
         } else {
-            None
+            NextContextResult::None
         }
     }
 }
@@ -1381,8 +1414,8 @@ impl ContextSwitchPercpu {
         self.current_ctxt.borrow()
     }
 
-    /// Gets a reference to the current context, which will always be populated after the startup
-    /// code (unless there are kernel bugs).
+    /// Gets a reference to the current context (registers, address space, etc.), which will
+    /// always be populated after the startup code (unless there are kernel bugs).
     pub fn current_context(&self) -> Ref<'_, Arc<ContextLock>> {
         Ref::map(self.current_ctxt.borrow(), |c| {
             c.as_ref().expect("no current context present")
@@ -1390,6 +1423,8 @@ impl ContextSwitchPercpu {
     }
 
     /// Gets a reference to the sched context, also always present after the startup code.
+    /// This usually will be equal to [`Self::current_context`] except in direct-switching,
+    /// which then this will be the one that donating the timeslice to [`Self::current_context`].
     pub fn sched_context(&self) -> Ref<'_, Arc<ContextLock>> {
         Ref::map(self.sched_ctxt.borrow(), |c| {
             c.as_ref().expect("no sched context present")
@@ -1548,17 +1583,28 @@ mod tests {
             cpu1.switch_internals.queue_len.store(1, Ordering::Relaxed);
         }
 
-        let chosen = select_next_context(cpu0, cpu0.cpu_id, 1000, 100, false, &mut prev_guard_0);
+        let chosen = select_next_context(
+            cpu0,
+            cpu0.cpu_id,
+            1000,
+            100,
+            false,
+            &mut prev_guard_0,
+            &mut None,
+        );
 
         // CPU 0 should be idling and NOT steal from CPU 1
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 0);
         assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 1);
 
-        assert!(chosen.is_some_and(|(g, _)| Arc::ptr_eq(
-            &cpu0.switch_internals.idle_context(),
-            ArcContextLockWriteGuard::rwlock(&g)
-        )));
+        assert!(matches!(
+            chosen,
+            NextContextResult::Other(g, _) if Arc::ptr_eq(
+                &cpu0.switch_internals.idle_context(),
+                ArcContextLockWriteGuard::rwlock(&g)
+            )
+        ));
         check_and_reset_steal(cpu0);
 
         // second test ---
@@ -1571,28 +1617,48 @@ mod tests {
             cpu1.switch_internals.queue_len.store(4, Ordering::Relaxed);
         }
 
-        let chosen = select_next_context(cpu0, cpu0.cpu_id, 2000, 100, false, &mut prev_guard_0);
+        let chosen = select_next_context(
+            cpu0,
+            cpu0.cpu_id,
+            2000,
+            100,
+            false,
+            &mut prev_guard_0,
+            &mut None,
+        );
 
         // CPU 0 should steal 2 tasks (task A B), 1 task (task B) is pushed to CPU 0 queue
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu0.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 2);
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 2);
-        assert!(chosen
-            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[0], ArcContextLockWriteGuard::rwlock(&g))));
+        assert!(matches!(
+            chosen,
+            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[0], ArcContextLockWriteGuard::rwlock(&g))
+        ));
         check_and_reset_steal(cpu0);
 
         // third test ---
 
-        let chosen = select_next_context(cpu1, cpu1.cpu_id, 2000, 100, false, &mut prev_guard_0);
+        let chosen = select_next_context(
+            cpu1,
+            cpu1.cpu_id,
+            2000,
+            100,
+            false,
+            &mut prev_guard_0,
+            &mut None,
+        );
 
         // CPU 1 should not steal task yet, but it has task C running and task D in CPU 1 queue
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu0.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 1);
-        assert!(chosen
-            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[2], ArcContextLockWriteGuard::rwlock(&g))));
+        assert!(matches!(
+            chosen,
+            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[2], ArcContextLockWriteGuard::rwlock(&g))
+        ));
         check_and_reset_steal(cpu1);
 
         // fourth test ---
@@ -1614,15 +1680,25 @@ mod tests {
             guard.status = Status::Blocked;
         }
 
-        let chosen = select_next_context(cpu1, cpu1.cpu_id, 2000, 100, false, &mut prev_guard_0);
+        let chosen = select_next_context(
+            cpu1,
+            cpu1.cpu_id,
+            2000,
+            100,
+            false,
+            &mut prev_guard_0,
+            &mut None,
+        );
 
         // CPU 1 should steal task D from CPU 0 used as the chosen one, leaving task B in CPU 0 queue
         assert_eq!(cpu0.switch_internals.run_queue.lock().queue.len(), 1);
         assert_eq!(cpu0.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert_eq!(cpu1.switch_internals.run_queue.lock().queue.len(), 0);
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 0);
-        assert!(chosen
-            .is_some_and(|(g, _)| Arc::ptr_eq(&tasks[3], ArcContextLockWriteGuard::rwlock(&g))));
+        assert!(matches!(
+            chosen,
+            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[3], ArcContextLockWriteGuard::rwlock(&g))
+        ));
         check_and_reset_steal(cpu1);
     }
 }
