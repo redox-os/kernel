@@ -1,6 +1,6 @@
 use core::ptr::{addr_of, addr_of_mut};
 
-use crate::syscall::FloatRegisters;
+use crate::{common::aligned_box::AlignedBox, syscall::FloatRegisters};
 
 use crate::{arch::interrupt::InterruptStack, context::context::Kstack, memory::RmmA};
 use core::mem::offset_of;
@@ -16,6 +16,15 @@ pub const KFX_ALIGN: usize = 16;
 
 #[cfg(not(cpu_feature_never = "xsave"))]
 pub const KFX_ALIGN: usize = 64;
+
+pub fn new_kfx() -> Result<AlignedBox<[u8], { KFX_ALIGN }>> {
+    let mut kfx = AlignedBox::try_zeroed_slice(crate::arch::kfx_size())?;
+    /// FCW - x86 FPU exception mask
+    kfx[0..2].copy_from_slice(&0x037F_u16.to_ne_bytes());
+    /// MXCSR - SIMD exception mask
+    kfx[24..28].copy_from_slice(&0x1F80_u32.to_ne_bytes());
+    Ok(kfx)
+}
 
 // TODO: stack guarding?
 

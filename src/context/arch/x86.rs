@@ -8,6 +8,7 @@ use crate::{
         gdt::{pcr, GDT_USER_FS, GDT_USER_GS},
         interrupt::{self, InterruptStack},
     },
+    common::aligned_box::AlignedBox,
     context::context::Kstack,
     memory::RmmA,
     percpu::PercpuBlock,
@@ -17,6 +18,14 @@ use crate::{
 const ST_RESERVED: u128 = 0xFFFF_FFFF_FFFF_0000_0000_0000_0000_0000;
 
 pub const KFX_ALIGN: usize = 16;
+
+pub fn new_kfx() -> Result<AlignedBox<[u8], { KFX_ALIGN }>> {
+    let mut kfx = AlignedBox::try_zeroed_slice(crate::arch::kfx_size())?;
+    /// FCW - x86 FPU exception mask
+    kfx[0..2].copy_from_slice(&0x037F_u16.to_ne_bytes());
+    /// TODO: MXCSR
+    Ok(kfx)
+}
 
 #[derive(Clone, Debug)]
 #[repr(C)]
