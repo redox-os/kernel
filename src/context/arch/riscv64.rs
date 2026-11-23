@@ -1,6 +1,6 @@
 use crate::{
-    arch::interrupt::InterruptStack, context::context::Kstack, memory::RmmA, percpu::PercpuBlock,
-    syscall::FloatRegisters,
+    arch::interrupt::InterruptStack, common::aligned_box::AlignedBox, context::context::Kstack,
+    memory::RmmA, percpu::PercpuBlock, syscall::FloatRegisters,
 };
 use core::{mem::offset_of, sync::atomic::AtomicBool};
 use rmm::{Arch, VirtualAddress};
@@ -8,6 +8,11 @@ use spin::Once;
 use syscall::{error::*, EnvRegisters};
 
 pub const KFX_ALIGN: usize = 16;
+
+pub fn new_kfx() -> Result<AlignedBox<[u8], { KFX_ALIGN }>> {
+    let mut kfx = AlignedBox::try_zeroed_slice(crate::arch::kfx_size())?;
+    Ok(kfx)
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Context {
