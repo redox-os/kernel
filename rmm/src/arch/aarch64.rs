@@ -84,12 +84,13 @@ impl Arch for AArch64Arch {
     #[inline(always)]
     unsafe fn set_table(table_kind: TableKind, address: PhysicalAddress) {
         unsafe {
+            // Synchronize the new TTBR before invalidating translations.
             match table_kind {
                 TableKind::User => {
-                    asm!("msr ttbr0_el1, {0}", in(reg) address.data());
+                    asm!("msr ttbr0_el1, {0}", "isb", in(reg) address.data());
                 }
                 TableKind::Kernel => {
-                    asm!("msr ttbr1_el1, {0}", in(reg) address.data());
+                    asm!("msr ttbr1_el1, {0}", "isb", in(reg) address.data());
                 }
             }
             Self::invalidate_all();
