@@ -230,20 +230,24 @@ pub fn futex(
 
             // The scheduler clears `wake` on timeout. Hence if a timeout was
             // set and `wake` is now `None`, we timed out.
-            if timeout_opt.is_some() && context::current().read(token.token()).wake.is_none() {
-                return Err(Error::new(ETIMEDOUT));
-            }
+            let timed_out = timeout_opt.is_some() && {
+                let current_context_ref = context::current();
+                let mut context = current_context_ref.write(token.token());
+                context.wake.take().is_none()
+            };
 
             // TODO: this doing a second search is not efficient. It probably best to have another
             // hashtable mapping context and whether it was woken up AND where to remove index from FUTEXES
-            let mut futexes_lock = FUTEXES.lock(token.token());
-            let (futexes_map, _) = futexes_lock.token_split();
-
-            let Entry::Occupied(futexes) = futexes_map.entry(target_physaddr) else {
-                return Ok(0);
+            let awaken_by_futex_wake = {
+                let mut futexes_lock = FUTEXES.lock(token.token());
+                let (futexes_map, _) = futexes_lock.token_split();
+                match futexes_map.entry(target_physaddr) {
+                    Entry::Occupied(futexes) => remove_futex_entry(futexes).is_none(),
+                    Entry::Vacant(_) => true,
+                }
             };
-            if remove_futex_entry(futexes).is_none() {
-                drop(futexes_lock);
+
+            let signaled = if awaken_by_futex_wake {
                 // Signal can still arrive even if already woken up, in that case we want to assume EINTR happened
                 let current_context_ref = context::current();
                 let context = current_context_ref.read(token.token());
@@ -252,11 +256,19 @@ pub fn futex(
                     .is_none_or(|(control, pctl, _)| control.currently_pending_unblocked(pctl) == 0)
                 {
                     return Ok(0);
+                } else {
+                    true
                 }
-            }
+            } else {
+                // must be woken by timer or signal
+                !timed_out
+            };
 
-            // Not woken up by FUTEX_WAKE, likely by signal
-            Err(Error::new(EINTR))
+            if timed_out && !signaled {
+                Err(Error::new(ETIMEDOUT))
+            } else {
+                Err(Error::new(EINTR))
+            }
         }
         FUTEX_WAKE => {
             let mut woken = 0;
@@ -268,14 +280,14 @@ pub fn futex(
 
                 if let Entry::Occupied(mut futexes_entry) = futexes_map.entry(target_physaddr) {
                     let futexes = futexes_entry.get_mut();
-                    let mut i = 0;
                     // TODO: Use something like retain, once it is possible to tell it when to stop iterating...
-                    while i < futexes.len() && woken < val {
-                        if let Some(ctx) = futexes[i].context_lock.upgrade() {
-                            unblock_context(&ctx, &mut token.token().downgrade());
+                    while !futexes.is_empty() && woken < val {
+                        if let Some(ctx) = futexes[0].context_lock.upgrade() {
+                            if unblock_context(&ctx, &mut token.token().downgrade()) {
+                                woken += 1;
+                            }
                         }
-                        futexes.swap_remove(i);
-                        woken += 1;
+                        futexes.swap_remove(0);
                     }
 
                     if futexes.is_empty() {
