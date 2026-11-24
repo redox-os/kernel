@@ -73,11 +73,13 @@ impl Context {
 
 impl super::Context {
     pub fn get_fx_regs(&self) -> FloatRegisters {
-        unimplemented!()
+        unsafe { ptr::read(self.kfx.as_ptr() as *const FloatRegisters) }
     }
 
-    pub fn set_fx_regs(&mut self, mut _new: FloatRegisters) {
-        unimplemented!()
+    pub fn set_fx_regs(&mut self, mut new: FloatRegisters) {
+        unsafe {
+            ptr::write(self.kfx.as_mut_ptr() as *mut FloatRegisters, new);
+        }
     }
 
     pub fn current_syscall(&self) -> Option<[usize; 7]> {
@@ -134,10 +136,103 @@ pub unsafe fn empty_cr3() -> rmm::PhysicalAddress {
     }
 }
 
+unsafe extern "C" fn fp_save(float_regs: &mut FloatRegisters) {
+    unsafe {
+        core::arch::asm!(
+            "fsd f0, {float_regs}({fregs} + 0 * 8)",
+            "fsd f1, {float_regs}({fregs} + 1 * 8)",
+            "fsd f2, {float_regs}({fregs} + 2 * 8)",
+            "fsd f3, {float_regs}({fregs} + 3 * 8)",
+            "fsd f4, {float_regs}({fregs} + 4 * 8)",
+            "fsd f5, {float_regs}({fregs} + 5 * 8)",
+            "fsd f6, {float_regs}({fregs} + 6 * 8)",
+            "fsd f7, {float_regs}({fregs} + 7 * 8)",
+            "fsd f8, {float_regs}({fregs} + 8 * 8)",
+            "fsd f9, {float_regs}({fregs} + 9 * 8)",
+            "fsd f10, {float_regs}({fregs} + 10 * 8)",
+            "fsd f11, {float_regs}({fregs} + 11 * 8)",
+            "fsd f12, {float_regs}({fregs} + 12 * 8)",
+            "fsd f13, {float_regs}({fregs} + 13 * 8)",
+            "fsd f14, {float_regs}({fregs} + 14 * 8)",
+            "fsd f15, {float_regs}({fregs} + 15 * 8)",
+            "fsd f16, {float_regs}({fregs} + 16 * 8)",
+            "fsd f17, {float_regs}({fregs} + 17 * 8)",
+            "fsd f18, {float_regs}({fregs} + 18 * 8)",
+            "fsd f19, {float_regs}({fregs} + 19 * 8)",
+            "fsd f10, {float_regs}({fregs} + 10 * 8)",
+            "fsd f21, {float_regs}({fregs} + 21 * 8)",
+            "fsd f22, {float_regs}({fregs} + 22 * 8)",
+            "fsd f23, {float_regs}({fregs} + 23 * 8)",
+            "fsd f24, {float_regs}({fregs} + 24 * 8)",
+            "fsd f25, {float_regs}({fregs} + 25 * 8)",
+            "fsd f26, {float_regs}({fregs} + 26 * 8)",
+            "fsd f27, {float_regs}({fregs} + 27 * 8)",
+            "fsd f28, {float_regs}({fregs} + 28 * 8)",
+            "fsd f29, {float_regs}({fregs} + 29 * 8)",
+            "fsd f30, {float_regs}({fregs} + 30 * 8)",
+            "fsd f31, {float_regs}({fregs} + 31 * 8)",
+            "frcsr {tmp}",
+            "sw {tmp}, {float_regs}({fcsr})",
+            float_regs = inout(reg) float_regs => _,
+            fregs = const offset_of!(FloatRegisters, fregs),
+            fcsr = const offset_of!(FloatRegisters, fcsr),
+            tmp = out(reg) _,
+        );
+    }
+}
+
+unsafe extern "C" fn fp_load(float_regs: &mut FloatRegisters) {
+    unsafe {
+        core::arch::asm!(
+            "fld f0, {float_regs}({fregs} + 0 * 8)",
+            "fld f1, {float_regs}({fregs} + 1 * 8)",
+            "fld f2, {float_regs}({fregs} + 2 * 8)",
+            "fld f3, {float_regs}({fregs} + 3 * 8)",
+            "fld f4, {float_regs}({fregs} + 4 * 8)",
+            "fld f5, {float_regs}({fregs} + 5 * 8)",
+            "fld f6, {float_regs}({fregs} + 6 * 8)",
+            "fld f7, {float_regs}({fregs} + 7 * 8)",
+            "fld f8, {float_regs}({fregs} + 8 * 8)",
+            "fld f9, {float_regs}({fregs} + 9 * 8)",
+            "fld f10, {float_regs}({fregs} + 10 * 8)",
+            "fld f11, {float_regs}({fregs} + 11 * 8)",
+            "fld f12, {float_regs}({fregs} + 12 * 8)",
+            "fld f13, {float_regs}({fregs} + 13 * 8)",
+            "fld f14, {float_regs}({fregs} + 14 * 8)",
+            "fld f15, {float_regs}({fregs} + 15 * 8)",
+            "fld f16, {float_regs}({fregs} + 16 * 8)",
+            "fld f17, {float_regs}({fregs} + 17 * 8)",
+            "fld f18, {float_regs}({fregs} + 18 * 8)",
+            "fld f19, {float_regs}({fregs} + 19 * 8)",
+            "fld f10, {float_regs}({fregs} + 10 * 8)",
+            "fld f21, {float_regs}({fregs} + 21 * 8)",
+            "fld f22, {float_regs}({fregs} + 22 * 8)",
+            "fld f23, {float_regs}({fregs} + 23 * 8)",
+            "fld f24, {float_regs}({fregs} + 24 * 8)",
+            "fld f25, {float_regs}({fregs} + 25 * 8)",
+            "fld f26, {float_regs}({fregs} + 26 * 8)",
+            "fld f27, {float_regs}({fregs} + 27 * 8)",
+            "fld f28, {float_regs}({fregs} + 28 * 8)",
+            "fld f29, {float_regs}({fregs} + 29 * 8)",
+            "fld f30, {float_regs}({fregs} + 30 * 8)",
+            "fld f31, {float_regs}({fregs} + 31 * 8)",
+            "lw {tmp}, {float_regs}({fcsr})",
+            "fscsr {tmp}",
+            float_regs = inout(reg) float_regs => _,
+            fregs = const offset_of!(FloatRegisters, fregs),
+            fcsr = const offset_of!(FloatRegisters, fcsr),
+            tmp = out(reg) _,
+        );
+    }
+}
+
 /// Switch to the next context by restoring its stack and registers
 pub unsafe fn switch_to(prev: &mut super::Context, next: &mut super::Context) {
     unsafe {
-        // FIXME floating point
+        // TODO: check sstatus.FS
+        fp_save(&mut *(prev.kfx.as_mut_ptr() as *mut FloatRegisters));
+        fp_load(&mut *(next.kfx.as_mut_ptr() as *mut FloatRegisters));
+
         PercpuBlock::current()
             .new_addrsp_tmp
             .set(next.addr_space.clone());
