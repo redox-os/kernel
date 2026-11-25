@@ -22,7 +22,7 @@ use self::{
 };
 
 use crate::{
-    context::memory::AddrSpace,
+    context::{file::FileDescription, memory::AddrSpace},
     percpu::PercpuBlock,
     scheme::{
         memory::{MemoryScheme, MemoryType},
@@ -76,26 +76,31 @@ pub fn syscall(
         let fd = FileHandle::from(b);
         //SYS_* is declared in kernel/syscall/src/number.rs
         match a {
-            SYS_WRITE2 => file_op_generic_ext(fd, token, |scheme, _, desc, token| {
-                let flags = if f == usize::MAX {
-                    None
-                } else {
-                    Some(
-                        u32::try_from(f)
-                            .ok()
-                            .and_then(RwFlags::from_bits)
-                            .ok_or(Error::new(EINVAL))?,
+            SYS_WRITE2 => file_op_generic_ext(
+                fd,
+                token,
+                |_, desc| (desc.number, desc.flags),
+                |scheme, (desc_number, desc_flags), token| {
+                    let flags = if f == usize::MAX {
+                        None
+                    } else {
+                        Some(
+                            u32::try_from(f)
+                                .ok()
+                                .and_then(RwFlags::from_bits)
+                                .ok_or(Error::new(EINVAL))?,
+                        )
+                    };
+                    scheme.kwriteoff(
+                        desc_number,
+                        UserSlice::ro(c, d)?,
+                        e as u64,
+                        flags.map_or(desc_flags, |f| FileDescription::rw_flags(desc_flags, f)),
+                        desc_flags,
+                        token,
                     )
-                };
-                scheme.kwriteoff(
-                    desc.number,
-                    UserSlice::ro(c, d)?,
-                    e as u64,
-                    flags.map_or(desc.flags, |f| desc.rw_flags(f)),
-                    desc.flags,
-                    token,
-                )
-            }),
+                },
+            ),
             SYS_WRITE => sys_write(fd, UserSlice::ro(c, d)?, token),
             SYS_FMAP => {
                 let addrspace = AddrSpace::current()?;
@@ -114,26 +119,31 @@ pub fn syscall(
                     })
                 }
             }
-            SYS_READ2 => file_op_generic_ext(fd, token, |scheme, _, desc, token| {
-                let flags = if f == usize::MAX {
-                    None
-                } else {
-                    Some(
-                        u32::try_from(f)
-                            .ok()
-                            .and_then(RwFlags::from_bits)
-                            .ok_or(Error::new(EINVAL))?,
+            SYS_READ2 => file_op_generic_ext(
+                fd,
+                token,
+                |_, desc| (desc.number, desc.flags),
+                |scheme, (desc_number, desc_flags), token| {
+                    let flags = if f == usize::MAX {
+                        None
+                    } else {
+                        Some(
+                            u32::try_from(f)
+                                .ok()
+                                .and_then(RwFlags::from_bits)
+                                .ok_or(Error::new(EINVAL))?,
+                        )
+                    };
+                    scheme.kreadoff(
+                        desc_number,
+                        UserSlice::wo(c, d)?,
+                        e as u64,
+                        flags.map_or(desc_flags, |f| FileDescription::rw_flags(desc_flags, f)),
+                        desc_flags,
+                        token,
                     )
-                };
-                scheme.kreadoff(
-                    desc.number,
-                    UserSlice::wo(c, d)?,
-                    e as u64,
-                    flags.map_or(desc.flags, |f| desc.rw_flags(f)),
-                    desc.flags,
-                    token,
-                )
-            }),
+                },
+            ),
             SYS_READ => sys_read(fd, UserSlice::wo(c, d)?, token),
             SYS_FPATH => file_op_generic(fd, token, |scheme, number, token| {
                 scheme.kfpath(number, UserSlice::wo(c, d)?, token)

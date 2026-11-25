@@ -77,8 +77,8 @@ bitflags! {
     }
 }
 impl FileDescription {
-    pub fn rw_flags(&self, rw: RwFlags) -> u32 {
-        let mut ret = self.flags & !(O_NONBLOCK | O_APPEND) as u32;
+    pub fn rw_flags(flags: u32, rw: RwFlags) -> u32 {
+        let mut ret = flags & !(O_NONBLOCK | O_APPEND) as u32;
         if rw.contains(RwFlags::APPEND) {
             ret |= O_APPEND as u32;
         }
