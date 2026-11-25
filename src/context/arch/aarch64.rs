@@ -1,5 +1,6 @@
 use crate::{
     arch::{device::cpu::registers::control_regs, interrupt::InterruptStack},
+    common::aligned_box::AlignedBox,
     context::context::Kstack,
     percpu::PercpuBlock,
     syscall::FloatRegisters,
@@ -10,6 +11,11 @@ use syscall::{EnvRegisters, Result};
 
 // 512 bytes for registers, extra bytes for fpcr and fpsr
 pub const KFX_ALIGN: usize = 16;
+
+pub fn new_kfx() -> Result<AlignedBox<[u8], { KFX_ALIGN }>> {
+    let mut kfx = AlignedBox::try_zeroed_slice(crate::arch::kfx_size())?;
+    Ok(kfx)
+}
 
 #[derive(Clone, Debug)]
 pub struct Context {
