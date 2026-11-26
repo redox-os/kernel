@@ -18,6 +18,7 @@ pub struct LogicalCpuId(u32);
 
 impl LogicalCpuId {
     pub const BSP: Self = Self::new(0);
+    pub const NONE: Self = Self::new(u32::MAX);
 
     pub fn next() -> Self {
         let id = CPU_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -30,6 +31,18 @@ impl LogicalCpuId {
     }
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+impl Into<u32> for LogicalCpuId {
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u32> for LogicalCpuId {
+    fn from(value: u32) -> Self {
+        Self(value)
     }
 }
 

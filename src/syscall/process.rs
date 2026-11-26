@@ -9,7 +9,7 @@ use crate::{
         context::SyscallFrame,
         file::{FileDescription, FileDescriptor, InternalFlags, KernelSchemeRef},
         memory::{AddrSpace, Grant, PageSpan},
-        write_context, ContextRef,
+        write_context, ContextLock, ContextRef,
     },
     event,
     sync::{CleanLockToken, RwLock},
@@ -43,7 +43,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
 pub fn exit_context(
     excp: Option<syscall::Exception>,
     token: &mut CleanLockToken,
-    context_lock: Arc<RwLock<crate::sync::L4, context::Context>>,
+    context_lock: Arc<ContextLock>,
 ) {
     let (addrspace_opt, mut close_files) = {
         let mut context = write_context(&context_lock, token.downgrade());

@@ -23,7 +23,8 @@ use crate::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
             GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
-        unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuardL1, Status,
+        unblock_context, wakeup_context, write_context, BorrowedHtBuf, ContextLock, PreemptGuardL1,
+        Status,
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
@@ -892,7 +893,7 @@ impl UserInner {
                     .ok_or(Error::new(EFAULT))?;
 
                 {
-                    let mut context = context_lock.write(token.token());
+                    let mut context = write_context(&context_lock, token.downgrade());
                     if let Status::HardBlocked {
                         reason: HardBlockedReason::AwaitingMmap { .. },
                     } = context.status

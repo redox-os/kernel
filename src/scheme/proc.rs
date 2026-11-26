@@ -70,7 +70,7 @@ fn try_stop_context<T>(
                     reason: HardBlockedReason::NotYetStarted,
                 },
             ),
-            context.running,
+            context_ref.cpu_id().is_some(),
         )
     };
 
@@ -78,14 +78,10 @@ fn try_stop_context<T>(
     while running {
         context::switch(token);
 
-        running = context_ref.read(token.token()).running;
+        running = context_ref.cpu_id().is_some();
     }
 
     let mut guard = context_ref.write(token.token());
-    assert!(
-        !guard.running,
-        "process can't have been restarted, we stopped it!"
-    );
 
     let (context, l4_token) = guard.token_split();
     let ret = callback(context, l4_token);
@@ -1294,7 +1290,7 @@ impl ContextHandle {
                     }
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
-                            //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            //trace!("FORCEKILL SELF {} {}", context.debug_id, context.pid);
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
@@ -1377,7 +1373,7 @@ impl ContextHandle {
                 match context_verb {
                     ContextVerb::ForceKill => {
                         if context::is_current(&context) {
-                            //trace!("FORCEKILL SELF {} {}", context.read().debug_id, context.read().pid);
+                            //trace!("FORCEKILL SELF {} {}", context.debug_id, context.pid);
                             // The following functionality simplifies the cleanup step when detached threads
                             // terminate.
                             if let Some(post_unmap) = args.next() {
@@ -1441,7 +1437,6 @@ impl ContextHandle {
                     RegsKind::Int => {
                         try_stop_context(context, token, |context, _| match context.regs() {
                             None => {
-                                assert!(!context.running, "try_stop_context is broken, clearly");
                                 println!(
                                     "{}:{}: Couldn't read registers from stopped process",
                                     file!(),

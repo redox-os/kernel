@@ -21,21 +21,15 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::{self, get_percpu_block, PercpuBlock},
-    sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        L1, L2, L3, L4,
-    },
+    sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L1, L2, L3, L4},
     syscall::error::Result,
 };
 
 use self::context::Kstack;
 pub use self::{
-    context::{BorrowedHtBuf, Context, Status},
+    context::{ArcContextLockWriteGuard, BorrowedHtBuf, Context, ContextLock, Status},
     switch::switch,
 };
-
-pub type ContextLock = RwLock<L4, Context>;
-pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L4, Context>;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
@@ -149,24 +143,28 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
 }
 
 pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
-    let cpu_id = {
-        let mut guard = context_lock.write(token.token());
-        if !guard.unblock_no_ipi() {
-            let guard_runnable = guard.status.is_runnable();
-            let guard_cpu_id = guard.cpu_id;
-            if guard_runnable {
-                // already set to runnable externally
-                drop(guard);
-                wakeup_context(context_lock, guard_cpu_id, token);
+    if crate::context::is_current(context_lock) {
+        return crate::context::current_mut().unblock_no_ipi();
+    }
+
+    let res = context_lock
+        .write_unless_running(token, |guard| {
+            if guard.unblock_no_ipi() {
+                Some((true, guard.cpu_id))
+            } else if guard.status.is_runnable() {
+                Some((false, guard.cpu_id))
+            } else {
+                None
             }
-            return false;
-        }
-        guard.cpu_id
-    };
+        })
+        .flatten();
 
-    wakeup_context(context_lock, cpu_id, token);
-
-    true
+    if let Some((unblocked, cpu_id)) = res {
+        wakeup_context(context_lock, cpu_id, token);
+        unblocked
+    } else {
+        false
+    }
 }
 
 pub fn wakeup_context(
@@ -203,10 +201,11 @@ pub fn wakeup_context(
 pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
     let owner = None; // kmain not owned by any fd
     let mut context = Context::new(owner, kstack).expect("failed to create kmain context");
+    let cpu_id = crate::cpu_id();
     (0..MAX_CPU_COUNT)
         .map(|e| LogicalCpuId::new(e))
         .for_each(|e| context.sched_affinity.atomic_clear(e));
-    context.sched_affinity.atomic_set(crate::cpu_id());
+    context.sched_affinity.atomic_set(cpu_id);
 
     context.name.clear();
     context.name.push_str("[kmain]");
@@ -221,10 +220,10 @@ pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
     self::arch::EMPTY_CR3.call_once(|| RmmA::table(TableKind::User));
 
     context.status = Status::Runnable;
-    context.running = true;
-    context.cpu_id = Some(crate::cpu_id());
+    context.cpu_id = Some(cpu_id);
 
     let context_lock = Arc::new(ContextLock::new(context));
+    context_lock.set_cpu_id(cpu_id);
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
     contexts_mut(token.token().downgrade()).insert(context_ref.clone());
@@ -240,20 +239,59 @@ pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
         percpu.switch_internals.set_idle_context(context_lock);
     }
 }
-
 #[cfg_attr(feature = "drop_panic", track_caller)]
 pub fn current() -> Ref<'static, ArcContextLockWriteGuard> {
-    PercpuBlock::current().switch_internals.current_context()
+    let percpu = PercpuBlock::current();
+    #[cfg(feature = "drop_panic")]
+    {
+        let caller = core::panic::Location::caller();
+        match percpu.switch_internals.current_context() {
+            Ok(guard) => {
+                percpu.switch_internals.last_borrow.set(Some(caller));
+                guard
+            }
+            Err(_) => panic!(
+                "current() borrow failed at {caller}; already borrowed at {:?}",
+                percpu.switch_internals.last_borrow.get()
+            ),
+        }
+    }
+    #[cfg(not(feature = "drop_panic"))]
+    {
+        percpu
+            .switch_internals
+            .current_context()
+            .expect("current() already borrowed")
+    }
 }
 
 #[cfg_attr(feature = "drop_panic", track_caller)]
 pub fn current_mut() -> RefMut<'static, ArcContextLockWriteGuard> {
-    PercpuBlock::current()
-        .switch_internals
-        .current_context_mut()
+    let percpu = PercpuBlock::current();
+    #[cfg(feature = "drop_panic")]
+    {
+        let caller = core::panic::Location::caller();
+        match percpu.switch_internals.current_context_mut() {
+            Ok(guard) => {
+                percpu.switch_internals.last_borrow.set(Some(caller));
+                guard
+            }
+            Err(_) => panic!(
+                "current_mut() borrow failed at {caller}; already borrowed at {:?}",
+                percpu.switch_internals.last_borrow.get()
+            ),
+        }
+    }
+    #[cfg(not(feature = "drop_panic"))]
+    {
+        percpu
+            .switch_internals
+            .current_context_mut()
+            .expect("current_mut() already borrowed")
+    }
 }
 
-pub fn try_current() -> Ref<'static, Option<ArcContextLockWriteGuard>> {
+pub fn try_current() -> Option<Ref<'static, ArcContextLockWriteGuard>> {
     PercpuBlock::current()
         .switch_internals
         .current_context_raw()
@@ -291,6 +329,7 @@ impl Deref for ContextReadGuard<'_> {
     }
 }
 
+#[cfg_attr(feature = "busy_panic", track_caller)]
 pub fn read_context<'a>(
     context: &'a Arc<ContextLock>,
     mut token: LockToken<'a, L3>,
@@ -301,6 +340,21 @@ pub fn read_context<'a>(
         ContextReadGuard::Locked(context.read(token))
     }
 }
+
+#[cfg_attr(feature = "drop_panic", track_caller)]
+pub fn try_read_context<'a>(
+    context: &'a Arc<ContextLock>,
+    token: LockToken<'a, L3>,
+) -> Option<ContextReadGuard<'a>> {
+    if crate::context::is_current(context) {
+        Some(ContextReadGuard::Current(crate::context::current(), token))
+    } else if context.cpu_id().is_some() {
+        None
+    } else {
+        context.try_read(token).map(ContextReadGuard::Locked)
+    }
+}
+
 pub enum ContextWriteGuard<'a> {
     Current(RefMut<'static, ArcContextLockWriteGuard>, LockToken<'a, L3>),
     Locked(RwLockWriteGuard<'a, L4, Context>),
@@ -338,7 +392,7 @@ impl DerefMut for ContextWriteGuard<'_> {
     }
 }
 
-#[inline]
+#[cfg_attr(feature = "busy_panic", track_caller)]
 pub fn write_context<'a>(
     context: &'a Arc<ContextLock>,
     token: LockToken<'a, L3>,

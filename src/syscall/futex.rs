@@ -131,12 +131,12 @@ pub fn futex(
             }
 
             {
-                let mut context = context::current_mut();
+                let context_lock = {
+                    let mut context = context::current_mut();
 
-                // Drop and block this context
-                drop(addr_space_guard);
+                    // Drop and block this context
+                    drop(addr_space_guard);
 
-                {
                     context.wake = timeout_opt.map(|time| time.to_nanos());
                     if let Some((tctl, pctl, _)) = context.sigcontrol()
                         && tctl.currently_pending_unblocked(pctl) != 0
@@ -145,7 +145,8 @@ pub fn futex(
                     }
                     context.block("futex");
                     // Do not return early until rollback handled
-                }
+                    Arc::downgrade(context.rwlock())
+                };
 
                 // Target target_physaddr
                 let futexes = FUTEXES.lock(token.token());
@@ -153,9 +154,7 @@ pub fn futex(
                 futexes
                     .entry(target_physaddr)
                     .or_insert_with(Vec::new)
-                    .push(FutexEntry {
-                        context_lock: Arc::downgrade(context.rwlock()),
-                    });
+                    .push(FutexEntry { context_lock });
 
                 // Now rearcquire again to read
                 let addr_space_guard = current_addrsp.acquire_read(lock_token.downgrade());

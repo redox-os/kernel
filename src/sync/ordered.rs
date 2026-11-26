@@ -500,17 +500,14 @@ impl<L: Level, T> RwLock<L, T> {
 
     // Unsafe due to not using token, currently required by context::switch
     #[cfg_attr(feature = "busy_panic", track_caller)]
-    pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
+    pub unsafe fn write_arc<'a>(&'a self) -> spin::RwLockWriteGuard<'a, T> {
         #[cfg(feature = "busy_panic")]
         let mut i = DEADLOCK_SPIN_CAP;
         let my_percpu = PercpuBlock::current();
         loop {
             match self.inner.try_write() {
                 Some(guard) => {
-                    core::mem::forget(guard);
-                    return ArcRwLockWriteGuard {
-                        rwlock: self.clone(),
-                    };
+                    return guard;
                 }
                 None => {
                     my_percpu.maybe_handle_tlb_shootdown();
@@ -528,12 +525,8 @@ impl<L: Level, T> RwLock<L, T> {
     }
 
     // Unsafe due to not using token, currently required by context::switch
-    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
-        let guard = self.inner.try_write()?;
-        core::mem::forget(guard);
-        Some(ArcRwLockWriteGuard {
-            rwlock: self.clone(),
-        })
+    pub unsafe fn try_write_arc<'a>(&'a self) -> Option<spin::RwLockWriteGuard<'a, T>> {
+        self.inner.try_write()
     }
 }
 
@@ -672,42 +665,6 @@ impl<L: Level, T> Drop for ArcRwLockReadGuard<L, T> {
     fn drop(&mut self) {
         unsafe {
             self.rwlock.inner.force_read_decrement();
-        }
-    }
-}
-
-#[clippy::has_significant_drop]
-pub struct ArcRwLockWriteGuard<L: Level + 'static, T> {
-    rwlock: Arc<RwLock<L, T>>,
-}
-
-impl<L: Level, T> ArcRwLockWriteGuard<L, T> {
-    pub fn rwlock(&self) -> &Arc<RwLock<L, T>> {
-        &self.rwlock
-    }
-}
-
-impl<L: Level, T> core::ops::Deref for ArcRwLockWriteGuard<L, T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.rwlock.inner.as_mut_ptr() }
-    }
-}
-
-impl<L: Level, T> core::ops::DerefMut for ArcRwLockWriteGuard<L, T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.rwlock.inner.as_mut_ptr() }
-    }
-}
-
-impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
-    #[inline]
-    fn drop(&mut self) {
-        unsafe {
-            self.rwlock.inner.force_write_unlock();
         }
     }
 }

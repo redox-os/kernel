@@ -41,7 +41,7 @@ fn panic_handler_inner(info: &PanicInfo) -> ! {
     }
 
     let current_ref = context::try_current();
-    let Some(context) = &*current_ref else {
+    let Some(context) = current_ref else {
         println!("CPU {}, CID <none>", cpu_id());
 
         println!("HALT");
@@ -52,10 +52,13 @@ fn panic_handler_inner(info: &PanicInfo) -> ! {
         }
     };
 
-    println!("CPU {}, CID {:p}", cpu_id(), context);
-
     {
-        println!("NAME: {}, DEBUG ID: {}", context.name, context.debug_id);
+        println!(
+            "CPU: {}, NAME: {}, DEBUG ID: {}",
+            cpu_id(),
+            context.name,
+            context.debug_id
+        );
 
         if let Some([a, b, c, d, e, f, g]) = context.current_syscall() {
             println!(
