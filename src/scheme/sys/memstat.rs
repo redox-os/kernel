@@ -8,6 +8,7 @@ use crate::{
     context::{
         self,
         memory::{AddrSpace, Grant, GrantFileRef, PageSpan, Provider},
+        read_context, try_read_context,
     },
     memory::{Page, PAGE_SIZE},
     scheme::SchemeId,
@@ -43,7 +44,9 @@ fn inner_maps(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec
         let (contexts, mut token) = contexts.token_split();
 
         for context_ref in contexts.iter() {
-            let context = context_ref.read(token.token());
+            let Some(context) = try_read_context(context_ref, token.downgrade()) else {
+                continue;
+            };
             let pid: usize = context.pid.into();
             let addr_space = context.addr_space().cloned();
             drop(context);

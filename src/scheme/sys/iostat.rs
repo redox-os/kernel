@@ -2,6 +2,7 @@ use crate::{
     context::{
         self,
         memory::{handle_notify_files, AddrSpace, Grant, PageSpan},
+        try_read_context,
     },
     memory::PAGE_SIZE,
     scheme::SchemeId,
@@ -25,7 +26,9 @@ fn inner(fpath_user: UserSliceRw, token: &mut CleanLockToken) -> Result<Vec<u8>>
             let mut contexts = context::contexts(token.downgrade());
             let (contexts, mut token) = contexts.token_split();
             for context_ref in contexts.iter() {
-                let mut current = context_ref.read(token.token());
+                let Some(mut current) = try_read_context(context_ref, token.downgrade()) else {
+                    continue;
+                };
                 let (context, mut token) = current.token_split();
                 rows.push((
                     context.pid,

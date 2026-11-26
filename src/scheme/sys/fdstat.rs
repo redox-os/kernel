@@ -1,6 +1,6 @@
 use crate::{
     alloc::string::ToString,
-    context::{contexts, file::LockedFileDescription, memory::AddrSpaceWrapper},
+    context::{contexts, file::LockedFileDescription, memory::AddrSpaceWrapper, read_context},
     scheme::{self, handles, KernelSchemes, SchemeId},
     sync::CleanLockToken,
     syscall::error::Result,
@@ -39,7 +39,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut contexts = contexts(token.token());
     let (contexts, mut token) = contexts.token_split();
     'contexts: for context in contexts.iter() {
-        let mut context_guard = context.read(token.token());
+        let mut context_guard = read_context(context, token.downgrade());
         let (context, token) = context_guard.token_split();
         let mut files_guard = context.files.read(token);
         let (files, mut token) = files_guard.token_split();
