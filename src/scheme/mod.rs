@@ -329,7 +329,7 @@ impl KernelScheme for SchemeList {
             return Err(Error::new(EACCES));
         };
 
-        let context = Arc::downgrade(&context::current());
+        let context = Arc::downgrade(context::current().rwlock());
 
         let scheme_id = self.insert(context, token)?;
         Ok(OpenResult::SchemeLocal(

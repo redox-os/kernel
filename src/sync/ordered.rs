@@ -371,6 +371,7 @@ impl<L: Level, T> RwLock<L, T> {
     /// Locks this RwLock with exclusive write access, blocking the current thread until it can be acquired.
     /// This function will not return while other writers or other readers currently have access to the lock.
     /// Returns an RAII guard which will drop the write access of this RwLock when dropped.
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub fn write<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -411,6 +412,7 @@ impl<L: Level, T> RwLock<L, T> {
     /// already holds one may result in a deadlock.
     ///
     /// Returns an RAII guard which will release this thread’s shared access once it is dropped.
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub fn read<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -442,6 +444,7 @@ impl<L: Level, T> RwLock<L, T> {
         }
     }
 
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub fn upgradeable_read<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -496,6 +499,7 @@ impl<L: Level, T> RwLock<L, T> {
     }
 
     // Unsafe due to not using token, currently required by context::switch
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
         #[cfg(feature = "busy_panic")]
         let mut i = DEADLOCK_SPIN_CAP;
@@ -678,8 +682,8 @@ pub struct ArcRwLockWriteGuard<L: Level + 'static, T> {
 }
 
 impl<L: Level, T> ArcRwLockWriteGuard<L, T> {
-    pub fn rwlock(s: &Self) -> &Arc<RwLock<L, T>> {
-        &s.rwlock
+    pub fn rwlock(&self) -> &Arc<RwLock<L, T>> {
+        &self.rwlock
     }
 }
 

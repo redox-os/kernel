@@ -37,15 +37,13 @@ pub fn nanosleep(
     let end = start + req.to_nanos();
 
     {
-        let context_lock = context::current();
-        let context = context_lock.upgradeable_read(token.token());
+        let mut context = context::current_mut();
 
         if let Some((tctl, pctl, _)) = context.sigcontrol()
             && tctl.currently_pending_unblocked(pctl) != 0
         {
             return Err(Error::new(EINTR));
         }
-        let mut context = context.upgrade();
         context.wake = Some(end);
         context.block("nanosleep");
     }
@@ -54,11 +52,7 @@ pub fn nanosleep(
     // reason?
     context::switch(token);
 
-    let was_interrupted = context::current()
-        .write(token.token())
-        .wake
-        .take()
-        .is_some();
+    let was_interrupted = context::current_mut().wake.take().is_some();
 
     if let Some(rem_buf) = rem_buf_opt {
         let current = time::monotonic(token);

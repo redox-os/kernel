@@ -71,7 +71,7 @@ impl WaitCondition {
         token: &'a mut LockToken<'a, L2>,
     ) -> bool {
         let current_context_ptr = {
-            let current_context_ref = context::current();
+            let mut context = context::current_mut();
             // Avoid a context switch between blocking ourselves and adding
             // ourselves to the wait list as otherwise we might miss a wakeup.
             // We cannot add ourselves to the wait list first as that would lead
@@ -79,23 +79,22 @@ impl WaitCondition {
 
             let mut token = token.token();
             {
-                let context = current_context_ref.upgradeable_read(token.token());
                 if let Some((control, pctl, _)) = context.sigcontrol()
                     && control.currently_pending_unblocked(pctl) != 0
                 {
                     return false;
                 }
-                context.upgrade().block(reason);
+                context.block(reason);
             }
 
             self.contexts
                 .lock(token.token())
-                .push(Arc::downgrade(&current_context_ref));
+                .push(Arc::downgrade(context.rwlock()));
 
             drop(guard);
 
             // It's perfectly valid to use raw pointers in Safe Rust for comparing...
-            Arc::as_ptr(&*current_context_ref)
+            Arc::as_ptr(context.rwlock())
         };
 
         {
@@ -120,11 +119,12 @@ impl WaitCondition {
             } else {
                 drop(contexts);
                 // Signal can still arrive even if already woken up, in that case we want to assume EINTR happened
-                let current_context_ref = context::current();
-                let context = current_context_ref.read(token.token());
-                if context.sigcontrol().is_some_and(|(control, pctl, _)| {
-                    control.currently_pending_unblocked(pctl) != 0
-                }) {
+                if context::current()
+                    .sigcontrol()
+                    .is_some_and(|(control, pctl, _)| {
+                        control.currently_pending_unblocked(pctl) != 0
+                    })
+                {
                     waited = false;
                 }
             }

@@ -497,8 +497,7 @@ pub struct BorrowedHtBuf {
 }
 impl BorrowedHtBuf {
     pub fn head_locked(token: LockToken<L3>) -> Result<Self> {
-        let current = context::current();
-        let frame = &mut current.write(token).syscall_head;
+        let frame = &mut context::current_mut().syscall_head;
         match mem::replace(frame, SyscallFrame::Dummy) {
             SyscallFrame::Free(free_frame) => {
                 *frame = SyscallFrame::Used {
@@ -513,8 +512,7 @@ impl BorrowedHtBuf {
         }
     }
     pub fn tail_locked(token: LockToken<L3>) -> Result<Self> {
-        let current = context::current();
-        let frame = &mut current.write(token).syscall_tail;
+        let frame = &mut context::current_mut().syscall_tail;
         match mem::replace(frame, SyscallFrame::Dummy) {
             SyscallFrame::Free(free_frame) => {
                 *frame = SyscallFrame::Used {
@@ -574,8 +572,7 @@ impl BorrowedHtBuf {
         let Some(inner) = self.inner.take() else {
             return;
         };
-        let context = context::current();
-        let mut context = context.write(token.token());
+        let mut context = context::current_mut();
         {
             *(if self.head_and_not_tail {
                 &mut context.syscall_head
@@ -921,10 +918,8 @@ pub fn bulk_insert_fds(
         .map(|res| res.map(FileHandle::from))
         .collect::<Result<_, _>>()?;
 
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (current, mut token) = current.token_split();
-    current.bulk_insert_files(files, &handles, &mut token)?;
+    let mut current = context::current();
+    current.bulk_insert_files(files, &handles, &mut token.downgrade())?;
     Ok(handles.len())
 }
 

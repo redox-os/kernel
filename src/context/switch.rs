@@ -19,7 +19,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    cell::{Cell, Ref, RefCell},
+    cell::{Cell, Ref, RefCell, RefMut},
     cmp::Reverse,
     matches, mem,
     option::Option::{None, Some},
@@ -134,10 +134,16 @@ pub fn tick(token: &mut CleanLockToken) {
 /// # Safety
 /// This function involves unsafe operations such as resetting state and releasing locks.
 pub unsafe extern "C" fn switch_finish_hook() {
+    let percpu = PercpuBlock::current();
     unsafe {
-        match PercpuBlock::current().switch_internals.switch_result.take() {
+        match percpu.switch_internals.switch_result.take() {
             Some(switch_result) => {
-                drop(switch_result);
+                unsafe {
+                    percpu
+                        .switch_internals
+                        .set_current_context(switch_result._next_guard);
+                }
+                drop(switch_result._prev_guard);
             }
             _ => {
                 // TODO: unreachable_unchecked()?
@@ -218,7 +224,7 @@ fn switch_inner(
         };
 
     let was_idle = Arc::ptr_eq(
-        ArcContextLockWriteGuard::rwlock(&prev_sched_guard),
+        prev_sched_guard.rwlock(),
         percpu.switch_internals.idle_ctxt.borrow().as_ref().unwrap(),
     );
 
@@ -267,7 +273,7 @@ fn schedule(
     // Lock the previous (sched) and (real) current context.
     let (mut prev_context_guard, mut cur_context_guard) = {
         let sched_lock = percpu.switch_internals.sched_context();
-        let cur_lock = percpu.switch_internals.current_context();
+        let cur_lock = unsafe { percpu.switch_internals.take_current_context() };
 
         // We are careful not to lock these contexts twice
         if Arc::ptr_eq(&sched_lock, &cur_lock) {
@@ -277,7 +283,7 @@ fn schedule(
             (a, Some(b))
         }
     };
-    let prev_context_ptr = Arc::as_ptr(ArcContextLockWriteGuard::rwlock(&prev_context_guard));
+    let prev_context_ptr = Arc::as_ptr(prev_context_guard.rwlock());
     let cur_context_ptr = cur_context_guard
         .as_ref()
         .map(|g| Arc::as_ptr(ArcContextLockWriteGuard::rwlock(g)))
@@ -464,12 +470,18 @@ fn schedule(
     ) {
         NextContextResult::CurrentContext => (cur_context_guard.take().unwrap(), None, true),
         NextContextResult::Other(guard, addr_space) => (guard, addr_space, false),
-        NextContextResult::None => return ScheduleResult::AllContextsIdle,
+        NextContextResult::None => {
+            unsafe {
+                percpu
+                    .switch_internals
+                    .set_current_context(prev_context_guard)
+            };
+            return ScheduleResult::AllContextsIdle;
+        }
     };
 
-    *percpu.switch_internals.sched_ctxt.borrow_mut() = Some(Arc::clone(
-        ArcContextLockWriteGuard::rwlock(&next_sched_context),
-    ));
+    *percpu.switch_internals.sched_ctxt.borrow_mut() =
+        Some(Arc::clone(next_sched_context.rwlock()));
 
     prev_context_guard.currently_scheduled = false;
     next_sched_context.currently_scheduled = true;
@@ -481,6 +493,11 @@ fn schedule(
     next_sched_context.schedule_time = schedule_time;
 
     if already_current {
+        unsafe {
+            percpu
+                .switch_internals
+                .set_current_context(prev_context_guard)
+        };
         ScheduleResult::AlreadyCurrent
     } else {
         ScheduleResult::Picked {
@@ -1044,20 +1061,23 @@ fn try_direct_switch_back(
     token: &mut CleanLockToken,
 ) -> bool {
     let (prev_guard, mut next_guard) = {
-        let current = Ref::map(percpu.switch_internals.current_ctxt.borrow(), |c| {
-            c.as_ref().expect("no current context")
-        });
+        let current = unsafe { percpu.switch_internals.take_current_context() };
         let sched = Ref::map(percpu.switch_internals.sched_ctxt.borrow(), |c| {
             c.as_ref().expect("no sched context")
         });
 
         // Not meaningful to switch back to itself.
         if Arc::ptr_eq(&current, &sched) {
+            unsafe {
+                percpu
+                    .switch_internals
+                    .set_current_context(current.write_arc())
+            };
             return false;
         }
 
         let next_lock = Arc::clone(&sched);
-        let prev_lock = Arc::clone(&current);
+        let prev_lock = current;
 
         unsafe { write_two_arcs(&prev_lock, &next_lock) }
     };
@@ -1077,6 +1097,7 @@ fn try_direct_switch_back(
         ),
         UpdateResult::CanSwitch
     ) {
+        unsafe { percpu.switch_internals.set_current_context(prev_guard) };
         return false;
     }
 
@@ -1086,7 +1107,7 @@ fn try_direct_switch_back(
         .map(|addrsp| unsafe { AddrSpaceSwitchReadGuard::new(addrsp.inner.read(token.token())) });
 
     let was_idle = Arc::ptr_eq(
-        ArcContextLockWriteGuard::rwlock(&prev_guard),
+        prev_guard.rwlock(),
         percpu.switch_internals.idle_ctxt.borrow().as_ref().unwrap(),
     );
 
@@ -1115,17 +1136,19 @@ pub fn direct_switch_to(
         let prev_context_ref = context::current();
 
         // TODO: this should be removed if possible
-        if Arc::ptr_eq(&*prev_context_ref, &next_context) {
+        if Arc::ptr_eq(prev_context_ref.rwlock(), &next_context) {
             return SwitchResult::Switched;
         }
 
         assert!(!Arc::ptr_eq(
-            &*prev_context_ref,
+            prev_context_ref.rwlock(),
             &percpu.switch_internals.idle_context()
         ));
 
-        let prev_context_ptr = Arc::as_ptr(&*prev_context_ref);
-        (prev_context_ref, prev_context_ptr)
+        drop(prev_context_ref);
+        let prev_context = unsafe { percpu.switch_internals.take_current_context() };
+        let prev_context_ptr = Arc::as_ptr(&prev_context);
+        (prev_context, prev_context_ptr)
     };
 
     let was_idle = prev_context_ptr
@@ -1158,8 +1181,12 @@ pub fn direct_switch_to(
         ),
         UpdateResult::CanSwitch
     ) {
-        drop(prev_context_guard);
         drop(next_context_guard);
+        unsafe {
+            percpu
+                .switch_internals
+                .set_current_context(prev_context_guard);
+        }
         return switch_inner(percpu, schedule_time, token);
     }
 
@@ -1243,13 +1270,6 @@ unsafe fn switch_to(
         percpu.stats.set_state(cpu_stats::CpuState::User);
     } else {
         percpu.stats.set_state(cpu_stats::CpuState::Kernel);
-    }
-    unsafe {
-        percpu
-            .switch_internals
-            .set_current_context(Arc::clone(ArcContextLockWriteGuard::rwlock(
-                &next_context_guard,
-            )));
     }
 
     // FIXME set the switch result in arch::switch_to instead
@@ -1353,7 +1373,7 @@ pub struct ContextSwitchPercpu {
     schedule_time: Cell<u128>,
     pit_ticks: Cell<usize>,
 
-    current_ctxt: RefCell<Option<Arc<ContextLock>>>,
+    current_ctxt: RefCell<Option<ArcContextLockWriteGuard>>,
     sched_ctxt: RefCell<Option<Arc<ContextLock>>>,
 
     // TODO: just access current_ctxt directly?
@@ -1410,21 +1430,29 @@ impl ContextSwitchPercpu {
     }
 
     /// Gets a reference to the raw current context slot.
-    pub fn current_context_raw(&self) -> Ref<'_, Option<Arc<ContextLock>>> {
+    pub fn current_context_raw(&self) -> Ref<'_, Option<ArcContextLockWriteGuard>> {
         self.current_ctxt.borrow()
     }
 
     /// Gets a reference to the current context (registers, address space, etc.), which will
     /// always be populated after the startup code (unless there are kernel bugs).
-    pub fn current_context(&self) -> Ref<'_, Arc<ContextLock>> {
+    #[cfg_attr(feature = "drop_panic", track_caller)]
+    pub fn current_context(&self) -> Ref<'_, ArcContextLockWriteGuard> {
         Ref::map(self.current_ctxt.borrow(), |c| {
             c.as_ref().expect("no current context present")
+        })
+    }
+    #[cfg_attr(feature = "drop_panic", track_caller)]
+    pub fn current_context_mut(&self) -> RefMut<'_, ArcContextLockWriteGuard> {
+        RefMut::map(self.current_ctxt.borrow_mut(), |c| {
+            c.as_mut().expect("no current context present")
         })
     }
 
     /// Gets a reference to the sched context, also always present after the startup code.
     /// This usually will be equal to [`Self::current_context`] except in direct-switching,
     /// which then this will be the one that donating the timeslice to [`Self::current_context`].
+    #[cfg_attr(feature = "drop_panic", track_caller)]
     pub fn sched_context(&self) -> Ref<'_, Arc<ContextLock>> {
         Ref::map(self.sched_ctxt.borrow(), |c| {
             c.as_ref().expect("no sched context present")
@@ -1435,8 +1463,24 @@ impl ContextSwitchPercpu {
     ///
     /// # Safety
     /// This function is unsafe as it modifies the context state directly.
-    pub unsafe fn set_current_context(&self, new: Arc<ContextLock>) {
+    #[cfg_attr(feature = "drop_panic", track_caller)]
+    pub unsafe fn set_current_context(&self, new: ArcContextLockWriteGuard) {
         *self.current_ctxt.borrow_mut() = Some(new);
+    }
+
+    /// Take the current context.
+    ///
+    /// # Safety
+    /// This function is unsafe as it modifies the context state directly.
+    #[cfg_attr(feature = "drop_panic", track_caller)]
+    pub unsafe fn take_current_context(&self) -> Arc<ContextLock> {
+        let guard = self
+            .current_ctxt
+            .take()
+            .expect("no current context present");
+        let arc = Arc::clone(guard.rwlock());
+        drop(guard);
+        arc
     }
 
     pub unsafe fn set_sched_context(&self, new: Arc<ContextLock>) {
@@ -1602,7 +1646,7 @@ mod tests {
             chosen,
             NextContextResult::Other(g, _) if Arc::ptr_eq(
                 &cpu0.switch_internals.idle_context(),
-                ArcContextLockWriteGuard::rwlock(&g)
+                g.rwlock()
             )
         ));
         check_and_reset_steal(cpu0);
@@ -1634,7 +1678,7 @@ mod tests {
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 2);
         assert!(matches!(
             chosen,
-            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[0], ArcContextLockWriteGuard::rwlock(&g))
+            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[0], g.rwlock())
         ));
         check_and_reset_steal(cpu0);
 
@@ -1657,7 +1701,7 @@ mod tests {
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 1);
         assert!(matches!(
             chosen,
-            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[2], ArcContextLockWriteGuard::rwlock(&g))
+            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[2], g.rwlock())
         ));
         check_and_reset_steal(cpu1);
 
@@ -1697,7 +1741,7 @@ mod tests {
         assert_eq!(cpu1.switch_internals.queue_len.load(Ordering::Relaxed), 0);
         assert!(matches!(
             chosen,
-            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[3], ArcContextLockWriteGuard::rwlock(&g))
+            NextContextResult::Other(g, _) if Arc::ptr_eq(&tasks[3], g.rwlock())
         ));
         check_and_reset_steal(cpu1);
     }

@@ -4,7 +4,7 @@ use crate::{
         context::{HardBlockedReason, LockedFdTbl, SignalState},
         file::InternalFlags,
         memory::{handle_notify_files, AddrSpace, AddrSpaceWrapper, Grant, PageSpan, UnmapVec},
-        unblock_context, wakeup_context, Context, ContextLock, Status,
+        read_context, unblock_context, wakeup_context, write_context, Context, ContextLock, Status,
     },
     memory::{Page, VirtualAddress, PAGE_SIZE},
     numa, ptrace,
@@ -33,7 +33,7 @@ use alloc::{
 use core::{
     mem::size_of,
     num::NonZeroUsize,
-    ops::DerefMut,
+    ops::{Deref, DerefMut},
     slice, str,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -57,9 +57,7 @@ fn try_stop_context<T>(
     callback: impl FnOnce(&mut Context, LockToken<'_, L4>) -> Result<T>,
 ) -> Result<T> {
     if context::is_current(&context_ref) {
-        let context = &mut context_ref.write(token.token());
-        let (context, token) = context.token_split();
-        return callback(context, token);
+        return callback(&mut context::current_mut(), token.downgrade());
     }
     // Stop process
     let (prev_status, mut running) = {
@@ -215,21 +213,17 @@ impl ProcScheme {
         context: &Arc<ContextLock>,
         token: &mut CleanLockToken,
     ) -> Result<Option<(ContextHandle, bool)>> {
+        let ctx = read_context(context, token.downgrade());
         Ok(Some(match path {
             "addrspace" => (
                 ContextHandle::AddrSpace {
-                    addrspace: Arc::clone(
-                        context
-                            .read(token.token())
-                            .addr_space()
-                            .map_err(|_| Error::new(ENOENT))?,
-                    ),
+                    addrspace: Arc::clone(ctx.addr_space().map_err(|_| Error::new(ENOENT))?),
                 },
                 true,
             ),
             "filetable" => (
                 ContextHandle::Filetable {
-                    filetable: Arc::downgrade(&context.read(token.token()).files),
+                    filetable: Arc::downgrade(&ctx.files),
                     binary_format: false,
                     data: Box::new([]),
                 },
@@ -237,7 +231,7 @@ impl ProcScheme {
             ),
             "filetable-binary" => (
                 ContextHandle::Filetable {
-                    filetable: Arc::downgrade(&context.read(token.token()).files),
+                    filetable: Arc::downgrade(&ctx.files),
                     binary_format: true,
                     data: Box::new([]),
                 },
@@ -253,16 +247,14 @@ impl ProcScheme {
             "open_via_dup" => (ContextHandle::OpenViaDup, false),
             "mmap-min-addr" => (
                 ContextHandle::MmapMinAddr(Arc::clone(
-                    context
-                        .read(token.token())
-                        .addr_space()
-                        .map_err(|_| Error::new(ENOENT))?,
+                    ctx.addr_space().map_err(|_| Error::new(ENOENT))?,
                 )),
                 false,
             ),
             "sched-affinity" => (ContextHandle::SchedAffinity, true),
             "status" => (ContextHandle::Status { privileged: false }, false),
             _ if path.starts_with("auth-") => {
+                drop(ctx);
                 let nonprefix = &path["auth-".len()..];
                 let next_dash = nonprefix.find('-').ok_or(Error::new(ENOENT))?;
                 let auth_fd = nonprefix[..next_dash]
@@ -325,7 +317,7 @@ impl ProcScheme {
                         );
                         return Ok((id.get(), InternalFlags::empty()));
                     }
-                    "cur-context" => Arc::clone(&*context::current()),
+                    "cur-context" => Arc::clone(context::current().rwlock()),
                     _ => return Err(Error::new(ENOENT)),
                 };
 
@@ -415,7 +407,7 @@ impl KernelScheme for ProcScheme {
             id,
             Handle {
                 // TODO: placeholder
-                context: Arc::clone(&*context::current()),
+                context: Arc::clone(context::current().rwlock()),
                 kind: ContextHandle::Authority,
             },
         );
@@ -487,7 +479,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },
                 context,
             } => {
-                context.write(token.token()).files = new_ft;
+                write_context(&context, token.downgrade()).files = new_ft;
             }
             _ => (),
         }
@@ -576,7 +568,7 @@ impl KernelScheme for ProcScheme {
                 Ok(result_base.start_address().data())
             }
             ContextHandle::Sighandler => {
-                let context = context.read(token.token());
+                let context = read_context(&context, token.downgrade());
                 // let (context, token) = context.token_split();
                 let sig = context.sig.as_ref().ok_or(Error::new(EBADF))?;
                 let frame = match map.offset {
@@ -907,7 +899,7 @@ impl KernelScheme for ProcScheme {
         let target_fd = metadata.first().ok_or(Error::new(EINVAL))?;
 
         if let Some(file) = {
-            let mut context = context.read(token.token());
+            let mut context = read_context(&context, token.downgrade());
             let (context, mut token) = context.token_split();
             context.remove_file(FileHandle(*target_fd as usize), &mut token.token())
         } {
@@ -915,7 +907,7 @@ impl KernelScheme for ProcScheme {
         }
 
         let file = descs.first().unwrap();
-        let mut context = context.write(token.token());
+        let mut context = write_context(&context, token.downgrade());
         let (context, mut token) = context.token_split();
         context
             .insert_file(
@@ -931,11 +923,8 @@ impl KernelScheme for ProcScheme {
     }
 }
 fn extract_scheme_number(fd: usize, token: &mut CleanLockToken) -> Result<(KernelSchemes, usize)> {
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut token) = current.token_split();
-    let file_descriptor = context
-        .get_file(FileHandle::from(fd), &mut token)
+    let file_descriptor = context::current()
+        .get_file(FileHandle::from(fd), &mut token.downgrade())
         .ok_or(Error::new(EBADF))?;
 
     let desc = file_descriptor.description.read(token.token());
@@ -1097,7 +1086,8 @@ impl ContextHandle {
                         }
                     };
 
-                    let addrsp = Arc::clone(context.read(token.token()).addr_space()?);
+                    let addrsp =
+                        Arc::clone(read_context(&context, token.downgrade()).addr_space()?);
 
                     Some(SignalState {
                         threadctl_off: validate_off(
@@ -1124,13 +1114,13 @@ impl ContextHandle {
                     None
                 };
 
-                context.write(token.token()).sig = state;
+                write_context(&context, token.downgrade()).sig = state;
 
                 Ok(size_of::<SetSighandlerData>())
             }
             ContextHandle::Start => {
                 let cpu_id = {
-                    let mut guard = context.write(token.token());
+                    let mut guard = write_context(&context, token.downgrade());
                     match guard.status {
                         ref mut status @ Status::HardBlocked {
                             reason: HardBlockedReason::NotYetStarted,
@@ -1269,7 +1259,7 @@ impl ContextHandle {
                         Err(Error::new(EPERM))
                     }
                     ContextVerb::Stop => {
-                        let mut guard = context.write(token.token());
+                        let mut guard = write_context(&context, token.downgrade());
 
                         match guard.status {
                             Status::Dead { .. } => return Err(Error::new(EOWNERDEAD)),
@@ -1285,7 +1275,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Unstop => {
-                        let mut guard = context.write(token.token());
+                        let mut guard = write_context(&context, token.downgrade());
 
                         if let Status::HardBlocked {
                             reason: HardBlockedReason::Stopped,
@@ -1329,7 +1319,7 @@ impl ContextHandle {
                             crate::syscall::exit_this_context(None, token);
                         } else {
                             let cpu_id = {
-                                let mut ctxt = context.write(token.token());
+                                let mut ctxt = write_context(&context, token.downgrade());
                                 //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
                                 if ctxt.status.is_dead() {
                                     return Ok(size_of::<usize>());
@@ -1354,7 +1344,7 @@ impl ContextHandle {
                     .unwrap_or(info.debug_name.len())
                     .min(crate::context::context::CONTEXT_NAME_CAPAC);
 
-                let mut guard = context.write(token.token());
+                let mut guard = write_context(&context, token.downgrade());
                 let debug_name = core::str::from_utf8(&info.debug_name[..len])
                     .map_err(|_| Error::new(EINVAL))?;
                 guard.name.clear();
@@ -1438,7 +1428,7 @@ impl ContextHandle {
 
                 let (output, size) = match kind {
                     RegsKind::Float => {
-                        let context = context.read(token.token());
+                        let context = read_context(&context, token.downgrade());
                         // NOTE: The kernel will never touch floats
 
                         (
@@ -1531,7 +1521,9 @@ impl ContextHandle {
             }
             ContextHandle::SchedAffinity => {
                 let mask = syscall::CpuSet::from_raw_mask(
-                    context.read(token.token()).sched_affinity.to_raw(),
+                    read_context(&context, token.downgrade())
+                        .sched_affinity
+                        .to_raw(),
                 );
 
                 buf.copy_exactly(mask.as_bytes())?;
@@ -1540,7 +1532,7 @@ impl ContextHandle {
             ContextHandle::Status { .. } => {
                 let status = {
                     let (status, being_sigkilled) = {
-                        let context = context.read(token.token());
+                        let context = read_context(&context, token.downgrade());
                         (context.status.clone(), context.being_sigkilled)
                     };
                     match status {
@@ -1573,7 +1565,7 @@ impl ContextHandle {
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
                 let (euid, egid, pid, name, prio) = {
-                    let c = context.read(token.token());
+                    let c = read_context(&context, token.downgrade());
                     (c.euid, c.egid, c.pid as u32, c.name, c.prio as u32)
                 };
                 let min = name.len().min(debug_name.len());
@@ -1587,7 +1579,7 @@ impl ContextHandle {
                 })
             }
             ContextHandle::Sighandler => {
-                let data = match context.read(token.token()).sig {
+                let data = match read_context(&context, token.downgrade()).sig {
                     Some(ref sig) => SetSighandlerData {
                         excp_handler: sig.excp_handler.map_or(0, NonZeroUsize::get),
                         user_handler: sig.user_handler.get(),
@@ -1622,9 +1614,7 @@ impl ContextHandle {
                 let verb = ProcSchemeVerb::try_from_raw(verb).ok_or(Error::new(EINVAL))?;
 
                 match verb {
-                    ProcSchemeVerb::Iopl => context::current()
-                        .write(token.token())
-                        .set_userspace_io_allowed(true),
+                    ProcSchemeVerb::Iopl => context::current_mut().set_userspace_io_allowed(true),
                     _ => return Err(Error::new(EINVAL)),
                 }
                 Ok(0)
@@ -1669,7 +1659,7 @@ impl ContextHandle {
                             return Ok(0);
                         }
                         let file = {
-                            let mut context = context.read(token.token());
+                            let mut context = read_context(context, token.downgrade());
                             let (context, mut token) = context.token_split();
                             context.remove_file(new, &mut token)
                         };
@@ -1677,7 +1667,7 @@ impl ContextHandle {
                             file.close(token)?;
                         }
 
-                        let mut context = context.read(token.token());
+                        let mut context = read_context(context, token.downgrade());
                         let (context, mut token) = context.token_split();
                         let file = match op {
                             FileTableVerb::Move => context.remove_file(old, &mut token),
@@ -1745,7 +1735,7 @@ impl ContextHandle {
                         if fd1 == fd2 {
                             return Ok(0);
                         }
-                        let mut context = context.read(token.token());
+                        let mut context = read_context(&context, token.downgrade());
                         let (context, mut token) = context.token_split();
                         let file1_opt = context.remove_file(fd1, &mut token);
                         let file2_opt = context.remove_file(fd2, &mut token);
@@ -1801,9 +1791,7 @@ fn write_env_regs(
     token: &mut CleanLockToken,
 ) -> Result<()> {
     if context::is_current(&context) {
-        context::current()
-            .write(token.token())
-            .write_current_env_regs(regs)
+        context::current_mut().write_current_env_regs(regs)
     } else {
         try_stop_context(context, token, |context, _| context.write_env_regs(regs))
     }
@@ -1811,9 +1799,7 @@ fn write_env_regs(
 
 fn read_env_regs(context: Arc<ContextLock>, token: &mut CleanLockToken) -> Result<EnvRegisters> {
     if context::is_current(&context) {
-        context::current()
-            .read(token.token())
-            .read_current_env_regs()
+        context::current().read_current_env_regs()
     } else {
         try_stop_context(context, token, |context, _| context.read_env_regs())
     }

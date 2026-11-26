@@ -67,7 +67,7 @@ impl EventQueue {
         if block {
             let mut time = crate::time::monotonic(token);
             time += timeout as u128 * 1_000_000;
-            context::current().write(token.token()).wake = Some(time);
+            context::current_mut().wake = Some(time);
         }
         let r = self
             .queue
@@ -75,12 +75,12 @@ impl EventQueue {
         match (r, block) {
             (Ok(r), _) => {
                 if block {
-                    context::current().write(token.token()).wake = None;
+                    context::current_mut().wake = None;
                 }
                 return Ok(r);
             }
             (err @ Err(Error { errno: EINTR }), true) => {
-                let old_wake = context::current().write(token.token()).wake.take();
+                let old_wake = context::current_mut().wake.take();
                 // The scheduler clears `wake` on timeout
                 if !old_wake.is_none() {
                     return err;
@@ -117,11 +117,9 @@ impl EventQueue {
                 continue;
             }
             let file = {
-                let context_ref = context::current();
-                let mut context = context_ref.read(token.token());
-                let (context, mut token) = context.token_split();
+                let context = context::current();
                 context
-                    .get_file(FileHandle::new(event.id), &mut token)
+                    .get_file(FileHandle::new(event.id), &mut token.downgrade())
                     .ok_or(Error::new(EBADF))?
             };
 

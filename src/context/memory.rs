@@ -2896,15 +2896,11 @@ impl<'a> PageFaultCtx<'a> {
                 .request_fmap(scheme_number, offset, 1, flags, token)
                 .unwrap();
 
-            let context_lock = Arc::clone(&*crate::context::current());
-            context_lock
-                .write(token.token())
-                .hard_block(HardBlockedReason::AwaitingMmap { file_ref });
+            crate::context::current_mut().hard_block(HardBlockedReason::AwaitingMmap { file_ref });
 
             super::switch(token);
 
-            let frame = context_lock
-                .write(token.token())
+            let frame = crate::context::current_mut()
                 .fmap_ret
                 .take()
                 .ok_or(PfError::NonfatalInternalError)?;
