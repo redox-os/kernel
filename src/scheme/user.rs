@@ -16,24 +16,11 @@ use syscall::{
 
 use crate::{
     context::{
-        self,
-        context::{bulk_insert_fds, HardBlockedReason},
-        file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription},
-        memory::{
-            handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
-            GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
-        },
-        unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuardL1, Status,
-    },
-    event,
-    memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
-    scheme::SchemeId,
-    sync::{CleanLockToken, LockToken, Mutex, RwLock, WaitQueue, L1},
-    syscall::{
-        data::{Map, StdFsCallMeta},
-        error::*,
-        flag::{EventFlags, MapFlags, EVENT_READ, O_NONBLOCK, PROT_READ},
-        usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
+        self, BorrowedHtBuf, ContextLock, PreemptGuardL1, Status, context::{HardBlockedReason, bulk_insert_fds}, file::{FileDescription, FileDescriptor, InternalFlags, LockedFileDescription}, memory::{
+            AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, DANGLING, Grant, GrantFileRef, MmapMode, PageSpan, UnmapVec, handle_notify_files,
+        }, unblock_context, wakeup_context,
+    }, event, memory::{Frame, PAGE_SIZE, Page, VirtualAddress}, scheme::{SchemeId, priority}, sync::{CleanLockToken, L1, LockToken, Mutex, RwLock, WaitQueue}, syscall::{
+        data::{Map, StdFsCallMeta}, error::*, flag::{EVENT_READ, EventFlags, MapFlags, O_NONBLOCK, PROT_READ}, usercopy::{UserSlice, UserSliceRo, UserSliceRw, UserSliceWo},
     },
 };
 
@@ -43,7 +30,7 @@ pub struct UserInner {
     root_id: SchemeId,
     pub scheme_id: SchemeId,
     context: Weak<ContextLock>,
-    todo: WaitQueue<Sqe>,
+    todo: WaitQueue<Sqe, 16>,
 
     // TODO: custom packed radix tree data structure
     states: Mutex<L1, Slab<State>>,
@@ -220,6 +207,7 @@ impl UserInner {
             caller_responsible,
             token,
             allow_direct_switch,
+            false,
         )
     }
 
@@ -230,6 +218,7 @@ impl UserInner {
         caller_responsible: &mut PageSpan,
         token: &mut CleanLockToken,
         allow_direct_switch: bool,
+        priority: bool,
     ) -> Result<Response> {
         {
             let current_context = context::current();
@@ -249,7 +238,23 @@ impl UserInner {
                     callee_responsible: PageSpan::empty(),
                 };
             }
-            self.todo.send(sqe, token);
+
+            if priority {
+                if let Err(rejected) = self.todo.try_send_priority(sqe, token) {
+                    let pending = self
+                        .states
+                        .lock(token.token())
+                        .remove(rejected.tag as usize);
+
+                    drop(pending);
+
+                    unblock_context(&current_context, &mut token.token().downgrade());
+
+                    return Err(Error::new(EAGAIN));
+                }
+            } else {
+                self.todo.send(sqe, token);
+            }
 
             event::trigger(self.root_id, self.scheme_id.get(), EVENT_READ, token);
         }
@@ -1389,13 +1394,16 @@ impl UserScheme {
         slice: UserSlice<READ, WRITE>,
         metadata: &[u64],
         mut on_response: impl FnMut(bool, &mut CleanLockToken),
-        allow_direct_switch: bool,
+        flags: CallFlags,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
         let inner = self.inner.clone();
 
         let mut address = inner.capture_user(slice, token)?;
         let ctx = { context::current().read(token.token()).caller_ctx() };
+
+        let priority = priority::priority_allowed(opcode, flags, ctx.uid);
+        let allow_direct_switch = flags.contains(CallFlags::ALLOW_DIRECT_SWITCH) || DEF_ALLOW_DIRECT_SWITCH;
 
         let mut sqe_flags = SqeFlags::empty();
         let mut last_arg = 0;
@@ -1429,7 +1437,7 @@ impl UserScheme {
             dst[..len].copy_from_slice(&metadata[..len]);
         }
 
-        match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch) {
+        match inner.call_inner(Vec::new(), sqe, address.span(), token, allow_direct_switch, priority) {
             Ok(Response::Regular(res, _, notify_on_detach)) => {
                 address.release(token)?;
                 on_response(notify_on_detach, token);
@@ -1888,9 +1896,6 @@ impl KernelScheme for UserScheme {
         metadata: &[u64],
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let allow_direct_switch =
-            flags.contains(CallFlags::ALLOW_DIRECT_SWITCH) || DEF_ALLOW_DIRECT_SWITCH;
-
         if flags.contains(CallFlags::READ) {
             self.call_generic(
                 Opcode::Call,
@@ -1898,7 +1903,7 @@ impl KernelScheme for UserScheme {
                 payload,
                 metadata,
                 |_, _| {},
-                allow_direct_switch,
+                flags,
                 token,
             )
         } else {
@@ -1909,7 +1914,7 @@ impl KernelScheme for UserScheme {
                 ro_slice,
                 metadata,
                 |_, _| {},
-                allow_direct_switch,
+                flags,
                 token,
             )
         }
@@ -1924,9 +1929,6 @@ impl KernelScheme for UserScheme {
         metadata: StdFsCallMeta,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let allow_direct_switch =
-            flags.contains(CallFlags::ALLOW_DIRECT_SWITCH) || DEF_ALLOW_DIRECT_SWITCH;
-
         let on_response = |notify_on_detach: bool, token: &mut CleanLockToken| {
             desc.write(token.token())
                 .internal_flags
@@ -1940,7 +1942,7 @@ impl KernelScheme for UserScheme {
                 payload,
                 &metadata,
                 on_response,
-                allow_direct_switch,
+                flags,
                 token,
             )
         } else {
@@ -1951,7 +1953,7 @@ impl KernelScheme for UserScheme {
                 ro_slice,
                 &metadata,
                 on_response,
-                allow_direct_switch,
+                flags,
                 token,
             )
         }

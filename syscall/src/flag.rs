@@ -507,6 +507,9 @@ bitflags! {
 
         /// Call is taking multiple fds, syscall5 variant.
         const MULTIPLE_FDS2 = 1 << 19;
+
+        /// Request priority on the IPC queue.
+        const PRIORITY = 1 << 20;
     }
 }
 
