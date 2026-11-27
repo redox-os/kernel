@@ -10,6 +10,7 @@ use x86::{
 use crate::{
     arch::{
         device::local_apic::{the_local_apic, ApicId},
+        gdt::ProcessorControlRegion,
         interrupt::{
             irq::{__generic_interrupts_end, __generic_interrupts_start},
             *,
@@ -148,11 +149,19 @@ pub unsafe fn init_bsp_after_mem() {
     core::mem::forget(kstack);
 
     unsafe {
-        install_backup_stack(&mut *INIT_BSP_IDT.get(), stack_end as usize);
+        install_backup_stack(
+            &mut *INIT_BSP_IDT.get(),
+            crate::arch::gdt::pcr(),
+            stack_end as usize,
+        );
     }
 }
 
-pub fn allocate_and_init_idt(cpu_id: LogicalCpuId, apic_id: ApicId) -> *mut Idt {
+pub fn allocate_and_init_idt(
+    cpu_id: LogicalCpuId,
+    pcr_ptr: *mut ProcessorControlRegion,
+    apic_id: ApicId,
+) -> *mut Idt {
     let idt = Box::leak(Box::new(Idt::new()));
 
     let backup_stack =
@@ -162,7 +171,7 @@ pub fn allocate_and_init_idt(cpu_id: LogicalCpuId, apic_id: ApicId) -> *mut Idt 
 
     init_generic(cpu_id, idt);
     unsafe {
-        install_backup_stack(idt, backup_stack_end);
+        install_backup_stack(idt, pcr_ptr, backup_stack_end);
     }
 
     idt
@@ -273,7 +282,11 @@ pub unsafe fn install_idt(idt_ptr: *mut Idt, cpu_id: LogicalCpuId) {
     }
 }
 #[cold]
-pub unsafe fn install_backup_stack(idt: &mut Idt, backup_stack_end: usize) {
+pub unsafe fn install_backup_stack(
+    idt: &mut Idt,
+    pcr_ptr: *mut ProcessorControlRegion,
+    backup_stack_end: usize,
+) {
     // We give Non-Maskable Interrupts, Double Fault, and Machine Check exceptions separate
     // stacks, since these (unless we are going to set up NMI watchdogs like Linux does) are
     // considered the most fatal, especially Double Faults which are caused by errors __when
@@ -287,8 +300,7 @@ pub unsafe fn install_backup_stack(idt: &mut Idt, backup_stack_end: usize) {
         idt.entries[8].set_ist(BACKUP_IST);
         idt.entries[18].set_ist(BACKUP_IST);
         unsafe {
-            (*crate::arch::gdt::pcr()).tss.ist[usize::from(BACKUP_IST - 1)] =
-                backup_stack_end as u64;
+            (*pcr_ptr).tss.ist[usize::from(BACKUP_IST - 1)] = backup_stack_end as u64;
         }
     }
 }
