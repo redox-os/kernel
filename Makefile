@@ -78,7 +78,6 @@ clean:
 
 install: all
 	@mkdir -pv "$(DESTDIR)/usr/lib/boot/"
-	cp -v $(BUILD)/kernel.all "$(DESTDIR)/usr/lib/boot/"
 	cp -v $(BUILD)/kernel.sym "$(DESTDIR)/usr/lib/boot/"
 	cp -v $(BUILD)/kernel "$(DESTDIR)/usr/lib/boot/"
 
