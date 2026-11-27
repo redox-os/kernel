@@ -84,6 +84,7 @@ pub(super) fn init(madt: Madt) {
 
                 let idt_ptr = crate::arch::idt::allocate_and_init_idt(
                     cpu_id,
+                    pcr_ptr,
                     ApicId::new(ap_local_apic.id as u32),
                 );
 
