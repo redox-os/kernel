@@ -15,14 +15,19 @@ toml = "1.2"
 arrayvec = { version = "0.7.4", default-features = false }
 bitfield = "0.13.2"
 bitflags = "2"
-fdt = { git = "https://github.com/repnop/fdt.git", rev = "8fa4388e056e48826e8898557a1c8600f9ee5d6a", features = ["pretty-printing"] }
-hashbrown = { version = "0.14.3", default-features = false, features = ["ahash", "inline-more"] }
+fdt = { git = "https://github.com/repnop/fdt.git", rev = "8fa4388e056e48826e8898557a1c8600f9ee5d6a", features = [
+    "pretty-printing",
+] }
+hashbrown = { version = "0.14.3", default-features = false, features = [
+    "ahash",
+    "inline-more",
+] }
 linked_list_allocator = "0.9.0"
 redox_syscall = { path = "syscall" }
 rmm = { path = "rmm", default-features = false }
 slab = { version = "0.4", default-features = false }
 smallvec = { version = "1.15.1", default-features = false }
-spin = { version = "0.9.8" }
+spin = { version = "0.9.8", features = ["lazy"] }
 
 [dependencies.object]
 version = "0.37.1"
@@ -38,24 +43,24 @@ default-features = false
 # userspace applications, and it is only checked in debug builds
 # TODO: address occurrences and then deny
 arithmetic_side_effects = "warn"
-cast_ptr_alignment = "warn" # TODO: address occurrences and then deny
-identity_op = "allow" # Used to allow stuff like 1 << 0 and 1 * 1024 * 1024
-if_same_then_else = "allow" # Useful for adding comments about different branches
+cast_ptr_alignment = "warn"      # TODO: address occurrences and then deny
+identity_op = "allow"            # Used to allow stuff like 1 << 0 and 1 * 1024 * 1024
+if_same_then_else = "allow"      # Useful for adding comments about different branches
 # Indexing a slice can cause panics and that is something we always want to avoid
 # in kernel code. Use .get and return an error instead
 # TODO: address occurrences and then deny
 indexing_slicing = "warn"
 many_single_char_names = "allow" # Useful in the syscall function
-module_inception = "allow" # Used for context::context
+module_inception = "allow"       # Used for context::context
 # Not implementing default is sometimes useful in the case something has significant cost
 # to allocate. If you implement default, it can be allocated without evidence using the
 # ..Default::default() syntax. Not fun in kernel space
 new_without_default = "allow"
 not_unsafe_ptr_arg_deref = "deny"
-or_fun_call = "allow" # Used to make it nicer to return errors, for example, .ok_or(Error::new(ESRCH))
+or_fun_call = "allow"                  # Used to make it nicer to return errors, for example, .ok_or(Error::new(ESRCH))
 precedence = "deny"
 ptr_cast_constness = "deny"
-too_many_arguments = "allow" # This is needed in some cases, like for syscall
+too_many_arguments = "allow"           # This is needed in some cases, like for syscall
 significant_drop_in_scrutinee = "deny"
 # Avoid panicking in the kernel without information about the panic. Use expect
 # TODO: address occurrences and then deny
@@ -66,7 +71,7 @@ static_mut_refs = "warn" # FIXME deny once all occurrences are fixed
 # This is usually a serious issue - a missing import of a define where it is interpreted
 # as a catch-all variable in a match, for example
 unreachable_patterns = "deny"
-unused_must_use = "deny" # Ensure that all must_use results are used
+unused_must_use = "deny"      # Ensure that all must_use results are used
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
 raw-cpuid = "10.2.0"
@@ -77,16 +82,16 @@ sbi-rt = "0.0.3"
 
 [features]
 default = [
-  "acpi",
-  #"debugger",
-  "multi_core",
-  "numa",
-  "serial_debug",
-  "self_modifying",
-  "x86_kvm_pv",
-  #"busy_panic",
-  #"drop_panic",
-  #"syscall_debug",
+    "acpi",
+    #"debugger",
+    "multi_core",
+    "numa",
+    "serial_debug",
+    "self_modifying",
+    "x86_kvm_pv",
+    #"busy_panic",
+    #"drop_panic",
+    #"syscall_debug",
 ]
 
 # Activates some limited code-overwriting optimizations, based on CPU features.
