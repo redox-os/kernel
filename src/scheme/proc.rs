@@ -1243,10 +1243,15 @@ impl ContextHandle {
             Self::SchedAffinity => {
                 let cpuset = unsafe { buf.read_exact::<CpuSet>()? };
 
-                context
-                    .write(token.token())
-                    .sched_affinity
-                    .override_from(cpuset.raw());
+                unsafe {
+                    context
+                        .write(token.token())
+                        .sched_affinity
+                        .as_mut_ptr()
+                        .as_mut()
+                        .unwrap()
+                        .override_from(cpuset.raw())
+                };
 
                 Ok(size_of_val(&cpuset))
             }

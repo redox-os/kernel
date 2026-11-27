@@ -7,6 +7,7 @@ use alloc::{
     sync::{Arc, Weak},
 };
 use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
+use syscall::MAX_CPU_COUNT;
 
 use crate::{
     context::memory::AddrSpaceWrapper,
@@ -197,7 +198,9 @@ pub fn wakeup_context(
 pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
     let owner = None; // kmain not owned by any fd
     let mut context = Context::new(owner, kstack).expect("failed to create kmain context");
-    context.sched_affinity = LogicalCpuSet::empty();
+    (0..MAX_CPU_COUNT)
+        .map(|e| LogicalCpuId::new(e))
+        .for_each(|e| context.sched_affinity.atomic_clear(e));
     context.sched_affinity.atomic_set(crate::cpu_id());
 
     context.name.clear();

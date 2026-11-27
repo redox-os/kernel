@@ -5,6 +5,7 @@ use core::{
     num::NonZeroUsize,
     sync::atomic::{AtomicU32, Ordering},
 };
+use spin::Lazy;
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
@@ -128,7 +129,7 @@ pub struct Context {
     pub sched_cpu_time: u128,
     /// Scheduler CPU affinity. If set, [`cpu_id`] can except [`None`] never be anything outside
     /// this set, and hence, this context can never run on CPUs outside it.
-    pub sched_affinity: LogicalCpuSet,
+    pub sched_affinity: Lazy<LogicalCpuSet>,
     /// Keeps track of whether this context is currently handling a syscall. Only up-to-date when
     /// not running, otherwise the status must be read from the percpu (which can not be accessed
     /// by other hw-threads, unless frozen).
@@ -232,7 +233,7 @@ impl Context {
             switch_time: 0,
             active_cpu_time: 0,
             sched_cpu_time: 0,
-            sched_affinity: LogicalCpuSet::all(),
+            sched_affinity: Lazy::new(|| LogicalCpuSet::all()),
             inside_syscall: false,
             syscall_head: SyscallFrame::Free(RaiiFrame::allocate()?),
             syscall_tail: SyscallFrame::Free(RaiiFrame::allocate()?),

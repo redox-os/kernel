@@ -6,7 +6,7 @@ use core::{
 
 use syscall::CpuSet;
 
-use crate::CPU_COUNT;
+use crate::{percpu, CPU_COUNT};
 
 /// A unique number used internally by the kernel to identify CPUs.
 ///
@@ -62,8 +62,12 @@ impl LogicalCpuSet {
         Self([const { AtomicUsize::new(0) }; CPU_SET_WORDS])
     }
 
-    pub const fn all() -> Self {
-        Self([const { AtomicUsize::new(!0) }; CPU_SET_WORDS])
+    pub fn all() -> Self {
+        let cpuset = LogicalCpuSet::empty();
+        percpu::all_percpu_blocks()
+            .map(|e| e.cpu_id)
+            .for_each(|e| cpuset.atomic_set(e));
+        cpuset
     }
 
     pub fn contains(&self, id: LogicalCpuId) -> bool {
