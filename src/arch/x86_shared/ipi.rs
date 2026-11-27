@@ -13,8 +13,11 @@ pub enum IpiKind {
 #[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum IpiTarget {
+    /// Self
     Current = 1,
+    /// All including self
     All = 2,
+    /// All excluding self
     Other = 3,
 }
 
@@ -28,7 +31,7 @@ pub fn ipi(kind: IpiKind, target: IpiTarget) {
 
     #[cfg(feature = "profiling")]
     if matches!(kind, IpiKind::Profile) {
-        let icr = ((target as u64) << 18) | (1 << 14) | (0b100 << 8);
+        let icr = ((target as u64) << 18) /* Destination Shorthand */ | (1 << 14) /* Level: no meaning on newer processors and must be always set */ | (0b100 << 8) /* Delivery Mode: NMI */ ;
         unsafe { the_local_apic().set_icr(icr) };
         return;
     }
