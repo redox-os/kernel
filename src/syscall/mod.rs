@@ -286,7 +286,7 @@ pub fn syscall(
     let percpu = PercpuBlock::current();
     percpu.inside_syscall.set(false);
 
-    if percpu.switch_internals.being_sigkilled.get() {
+    if crate::context::current().being_sigkilled {
         exit_this_context(None, token);
     }
 

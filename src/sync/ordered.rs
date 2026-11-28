@@ -371,6 +371,7 @@ impl<L: Level, T> RwLock<L, T> {
     /// Locks this RwLock with exclusive write access, blocking the current thread until it can be acquired.
     /// This function will not return while other writers or other readers currently have access to the lock.
     /// Returns an RAII guard which will drop the write access of this RwLock when dropped.
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub fn write<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -411,6 +412,7 @@ impl<L: Level, T> RwLock<L, T> {
     /// already holds one may result in a deadlock.
     ///
     /// Returns an RAII guard which will release this thread’s shared access once it is dropped.
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub fn read<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -442,6 +444,7 @@ impl<L: Level, T> RwLock<L, T> {
         }
     }
 
+    #[cfg_attr(feature = "busy_panic", track_caller)]
     pub fn upgradeable_read<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
@@ -477,36 +480,52 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<RwLockReadGuard<'a, L, T>> {
-        let inner = self.inner.try_read()?;
-        Some(RwLockReadGuard {
-            inner,
-            lock_token: LockToken::downgraded(lock_token),
-        })
+        self.try_read_err(lock_token).ok()
+    }
+
+    pub fn try_read_err<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Result<RwLockReadGuard<'a, L, T>, LockToken<'a, LP>> {
+        match self.inner.try_read() {
+            Some(inner) => Ok(RwLockReadGuard {
+                inner,
+                lock_token: LockToken::downgraded(lock_token),
+            }),
+            None => Err(lock_token),
+        }
     }
 
     pub fn try_write<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<RwLockWriteGuard<'a, L, T>> {
-        let inner = self.inner.try_write()?;
-        Some(RwLockWriteGuard {
-            inner,
-            lock_token: LockToken::downgraded(lock_token),
-        })
+        self.try_write_err(lock_token).ok()
+    }
+
+    pub fn try_write_err<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Result<RwLockWriteGuard<'a, L, T>, LockToken<'a, LP>> {
+        match self.inner.try_write() {
+            Some(inner) => Ok(RwLockWriteGuard {
+                inner,
+                lock_token: LockToken::downgraded(lock_token),
+            }),
+            None => Err(lock_token),
+        }
     }
 
     // Unsafe due to not using token, currently required by context::switch
-    pub unsafe fn write_arc(self: &Arc<Self>) -> ArcRwLockWriteGuard<L, T> {
+    #[cfg_attr(feature = "busy_panic", track_caller)]
+    pub unsafe fn write_arc<'a>(&'a self) -> spin::RwLockWriteGuard<'a, T> {
         #[cfg(feature = "busy_panic")]
         let mut i = DEADLOCK_SPIN_CAP;
         let my_percpu = PercpuBlock::current();
         loop {
             match self.inner.try_write() {
                 Some(guard) => {
-                    core::mem::forget(guard);
-                    return ArcRwLockWriteGuard {
-                        rwlock: self.clone(),
-                    };
+                    return guard;
                 }
                 None => {
                     my_percpu.maybe_handle_tlb_shootdown();
@@ -524,12 +543,8 @@ impl<L: Level, T> RwLock<L, T> {
     }
 
     // Unsafe due to not using token, currently required by context::switch
-    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcRwLockWriteGuard<L, T>> {
-        let guard = self.inner.try_write()?;
-        core::mem::forget(guard);
-        Some(ArcRwLockWriteGuard {
-            rwlock: self.clone(),
-        })
+    pub unsafe fn try_write_arc<'a>(&'a self) -> Option<spin::RwLockWriteGuard<'a, T>> {
+        self.inner.try_write()
     }
 }
 
@@ -668,42 +683,6 @@ impl<L: Level, T> Drop for ArcRwLockReadGuard<L, T> {
     fn drop(&mut self) {
         unsafe {
             self.rwlock.inner.force_read_decrement();
-        }
-    }
-}
-
-#[clippy::has_significant_drop]
-pub struct ArcRwLockWriteGuard<L: Level + 'static, T> {
-    rwlock: Arc<RwLock<L, T>>,
-}
-
-impl<L: Level, T> ArcRwLockWriteGuard<L, T> {
-    pub fn rwlock(s: &Self) -> &Arc<RwLock<L, T>> {
-        &s.rwlock
-    }
-}
-
-impl<L: Level, T> core::ops::Deref for ArcRwLockWriteGuard<L, T> {
-    type Target = T;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.rwlock.inner.as_mut_ptr() }
-    }
-}
-
-impl<L: Level, T> core::ops::DerefMut for ArcRwLockWriteGuard<L, T> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.rwlock.inner.as_mut_ptr() }
-    }
-}
-
-impl<L: Level, T> Drop for ArcRwLockWriteGuard<L, T> {
-    #[inline]
-    fn drop(&mut self) {
-        unsafe {
-            self.rwlock.inner.force_write_unlock();
         }
     }
 }

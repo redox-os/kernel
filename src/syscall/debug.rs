@@ -215,8 +215,7 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
     #[expect(clippy::needless_bool)]
     let do_debug = if false && {
         let ctx = crate::context::current();
-        let guard = ctx.read(token.token());
-        guard.name.contains("init") || guard.name.contains("bootstrap")
+        ctx.name.contains("init") || ctx.name.contains("bootstrap")
     } {
         if a == SYS_CLOCK_GETTIME || a == SYS_YIELD || a == SYS_FUTEX {
             false
@@ -230,9 +229,8 @@ pub fn debug_start([a, b, c, d, e, f, g]: [usize; 7], token: &mut CleanLockToken
     };
 
     let debug_start = if do_debug {
-        let context_lock = crate::context::current();
+        let context = crate::context::current();
         {
-            let context = context_lock.read(token.token());
             print!("{} (*{}*): ", context.name, context.pid,);
         }
 
@@ -275,9 +273,8 @@ pub fn debug_end(
     let debug_duration =
         debug_info.accumulated_time + (crate::time::monotonic(token) - debug_info.this_switch_time);
 
-    let context_lock = crate::context::current();
+    let context = crate::context::current();
     {
-        let context = context_lock.read(token.token());
         print!("{} (*{}*): ", context.name, context.pid,);
     }
 

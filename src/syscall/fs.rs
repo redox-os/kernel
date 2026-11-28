@@ -25,10 +25,7 @@ fn with_current_ctx<T>(
     token: &mut CleanLockToken,
     f: impl FnOnce(&crate::context::Context, &mut LockToken<L4>) -> Result<T>,
 ) -> Result<T> {
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut split_token) = current.token_split();
-    f(context, &mut split_token)
+    f(&context::current(), &mut token.downgrade())
 }
 
 pub fn file_op_generic<T>(

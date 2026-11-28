@@ -20,7 +20,7 @@ use crate::{
     context::{
         self,
         memory::{AccessMode, PfError},
-        ContextLock,
+        read_context, ContextLock,
     },
     kernel_executable_offsets::{__usercopy_end, __usercopy_start},
     numa::{self, FreeListMask},
@@ -1466,7 +1466,7 @@ fn find_newest_killable_context(token: &mut CleanLockToken) -> Option<Arc<Contex
         let mut contexts_guard = context::contexts(token.downgrade());
         let (contexts_guard, mut token_lock) = contexts_guard.token_split();
         for ctx_lock in contexts_guard.iter() {
-            let ctx_guard = ctx_lock.read(token_lock.token());
+            let ctx_guard = read_context(ctx_lock, token_lock.downgrade());
             if ctx_guard.being_sigkilled || ctx_guard.euid == 0 {
                 continue;
             }

@@ -3,17 +3,22 @@ use arrayvec::ArrayString;
 use core::{
     mem::{self, size_of, ManuallyDrop},
     num::NonZeroUsize,
-    sync::atomic::{AtomicU32, Ordering},
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 use spin::Lazy;
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
-    arch::interrupt::InterruptStack,
+    arch::{
+        interrupt::InterruptStack,
+        ipi::{IpiKind, IpiTarget},
+    },
     common::aligned_box::AlignedBox,
     context::{
         self, arch,
         file::{FileDescriptor, LockedFileDescription},
+        ContextReadGuard, ContextWriteGuard,
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
@@ -23,7 +28,7 @@ use crate::{
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
+    sync::{CleanLockToken, LockToken, Lower, RwLock, L1, L3, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -101,20 +106,15 @@ pub struct Context {
     /// Status of context
     pub status: Status,
     pub status_reason: &'static str,
-    /// Whether the context is running, i.e. some hw-thread is using its stack, registers, address
-    /// space, etc.
-    ///
-    /// Formally, true iff there exists a hw-thread such that its percpu.current_ctxt is this context
-    pub running: bool,
     /// Whether the context is currently-scheduled, i.e. has been assigned the current timeslice by
     /// the scheduler of some hw-thread. This can differ from `running` if direct switching has
     /// occurred.
     ///
     /// Same formal condition as `running` except for percpu.sched_ctxt
     pub currently_scheduled: bool,
-    /// Current CPU ID.
-    // TODO: Define more rigorously the role of this field. Its meaning is obvious when `running`
-    // at least.
+    /// Last CPU ID.
+    /// This is different with [`crate::context::ContextLock::cpu_id`], this value contains
+    /// the last CPU its running, probably contain the queue based of [`Self::queue_key`].
     pub cpu_id: Option<LogicalCpuId>,
     /// Time this context was scheduler-switched to (see `currently_scheduled`)
     pub schedule_time: u128,
@@ -226,7 +226,6 @@ impl Context {
                 reason: HardBlockedReason::NotYetStarted,
             },
             status_reason: "",
-            running: false,
             currently_scheduled: false,
             cpu_id: None,
             schedule_time: 0,
@@ -272,7 +271,8 @@ impl Context {
         self.preempt_locks == 0
     }
 
-    /// Block the context, and return true if it was runnable before being blocked
+    /// Block the context, and return true if it was runnable before being blocked.
+    /// TODO: this is unsound to call if not called via [`crate::context::ArcContextLockWriteGuard::block`]
     pub fn block(&mut self, reason: &'static str) -> bool {
         if self.status.is_runnable() {
             self.status = Status::Blocked;
@@ -371,7 +371,12 @@ impl Context {
     }
 
     pub fn is_current_context(&self) -> bool {
-        self.running && self.cpu_id == Some(crate::cpu_id())
+        core::ptr::eq(
+            self,
+            PercpuBlock::current()
+                .switch_internals
+                .current_context_ptr(),
+        )
     }
 
     pub fn addr_space(&self) -> Result<&Arc<AddrSpaceWrapper>> {
@@ -422,8 +427,6 @@ impl Context {
                     crate::memory::RmmA::set_table(rmm::TableKind::User, empty_cr3());
                 },
             }
-        } else {
-            assert!(!self.running);
         }
 
         core::mem::replace(&mut self.addr_space, addr_space)
@@ -489,6 +492,248 @@ impl Context {
     }
 }
 
+#[derive(Debug)]
+pub struct ContextLock {
+    inner: RwLock<L4, Context>,
+    running_cpu: AtomicU32,
+    wakeup_pending: AtomicBool,
+}
+
+impl ContextLock {
+    pub fn new(context: Context) -> Self {
+        Self {
+            inner: RwLock::new(context),
+            running_cpu: AtomicU32::new(LogicalCpuId::NONE.into()),
+            wakeup_pending: AtomicBool::new(false),
+        }
+    }
+
+    /// Which CPU this context is currently running, or [`None`].
+    /// If [`None`] returned, locks can be acquired.
+    pub fn cpu_id(&self) -> Option<LogicalCpuId> {
+        let cpu = self.running_cpu.load(Ordering::SeqCst);
+        (cpu != LogicalCpuId::NONE.into()).then(|| cpu.into())
+    }
+
+    pub fn set_cpu_id(&self, cpu_id: LogicalCpuId) {
+        self.running_cpu.store(cpu_id.into(), Ordering::Release);
+    }
+
+    pub fn take_cpu_id(&self) -> Option<LogicalCpuId> {
+        let cpu = self
+            .running_cpu
+            .swap(LogicalCpuId::NONE.into(), Ordering::SeqCst);
+        (cpu != LogicalCpuId::NONE.into()).then(|| cpu.into())
+    }
+
+    /// Set if this context need to be waken up later.
+    /// This is set to true if unblock is requested until caller able to
+    /// acquire lock and set the status, or get catched up by scheduler.
+    pub fn set_wakeup_pending(&self, val: bool) -> bool {
+        self.wakeup_pending.swap(val, Ordering::SeqCst)
+    }
+
+    // Unsafe due to not using token, currently required by context::switch
+    #[cfg_attr(feature = "busy_panic", track_caller)]
+    pub unsafe fn write_arc(self: &Arc<Self>) -> ArcContextLockWriteGuard {
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
+        let my_percpu = PercpuBlock::current();
+        loop {
+            match unsafe { self.try_write_arc() } {
+                Some(guard) => return guard,
+                None => {
+                    my_percpu.maybe_handle_tlb_shootdown();
+                    core::hint::spin_loop();
+                    #[cfg(feature = "busy_panic")]
+                    {
+                        i -= 1;
+                        if i == 0 {
+                            panic!("Deadlock at write_arc may have triggered")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Unsafe due to not using token, currently required by context::switch
+    pub unsafe fn try_write_arc(self: &Arc<Self>) -> Option<ArcContextLockWriteGuard> {
+        let arc = Arc::clone(self);
+        let guard = unsafe { (*Arc::as_ptr(&arc)).inner.try_write_arc()? };
+        Some(ArcContextLockWriteGuard { guard, arc })
+    }
+
+    /// Call f() if write granted or keep retrying until the context running
+    #[cfg_attr(feature = "busy_panic", track_caller)]
+    pub fn write_unless_running<R>(
+        &self,
+        token: &mut LockToken<'_, L3>,
+        f: impl FnOnce(&mut Context) -> R,
+    ) -> Option<R> {
+        let my_percpu = PercpuBlock::current();
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::DEADLOCK_SPIN_CAP;
+
+        loop {
+            self.set_wakeup_pending(true);
+            if self.cpu_id().is_some() {
+                return None;
+            }
+            if let Some(mut guard) = self.try_write(token.token()) {
+                self.set_wakeup_pending(false);
+                return Some(f(&mut guard));
+            }
+
+            my_percpu.maybe_handle_tlb_shootdown();
+            core::hint::spin_loop();
+            #[cfg(feature = "busy_panic")]
+            {
+                i -= 1;
+                if i == 0 {
+                    panic!("Deadlock at write_unless_running may have triggered");
+                }
+            }
+        }
+    }
+
+    pub fn read<'a, LP: Lower<L4> + 'a>(
+        self: &'a Arc<Self>,
+        mut token: LockToken<'a, LP>,
+    ) -> ContextReadGuard<'a> {
+        if crate::context::is_current(self) {
+            return ContextReadGuard::Current(
+                crate::context::current(),
+                LockToken::downgraded(token),
+            );
+        }
+
+        let my_percpu = crate::percpu::PercpuBlock::current();
+        let mut ipi_sent = false;
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::ordered::DEADLOCK_SPIN_CAP;
+
+        loop {
+            match self.inner.try_read_err(token) {
+                Ok(guard) => return ContextReadGuard::Locked(guard),
+                Err(t) => token = t,
+            }
+
+            my_percpu.maybe_handle_tlb_shootdown();
+
+            if !ipi_sent {
+                if let Some(target_cpu) = self.cpu_id() {
+                    if target_cpu != my_percpu.cpu_id {
+                        crate::arch::ipi::ipi(IpiKind::Wakeup, IpiTarget::Other);
+                        ipi_sent = true;
+                    }
+                }
+            }
+
+            core::hint::spin_loop();
+
+            #[cfg(feature = "busy_panic")]
+            {
+                i -= 1;
+                if i == 0 {
+                    panic!("Deadlock at write_context may have triggered");
+                }
+            }
+        }
+    }
+
+    pub fn write<'a, LP: Lower<L4> + 'a>(
+        self: &'a Arc<Self>,
+        mut token: LockToken<'a, LP>,
+    ) -> ContextWriteGuard<'a> {
+        if crate::context::is_current(self) {
+            return ContextWriteGuard::Current(
+                crate::context::current_mut(),
+                LockToken::downgraded(token),
+            );
+        }
+
+        let my_percpu = crate::percpu::PercpuBlock::current();
+        let mut ipi_sent = false;
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::ordered::DEADLOCK_SPIN_CAP;
+
+        loop {
+            match self.inner.try_write_err(token) {
+                Ok(guard) => return ContextWriteGuard::Locked(guard),
+                Err(t) => token = t,
+            }
+
+            my_percpu.maybe_handle_tlb_shootdown();
+
+            if !ipi_sent {
+                if let Some(target_cpu) = self.cpu_id() {
+                    if target_cpu != my_percpu.cpu_id {
+                        crate::arch::ipi::ipi(IpiKind::Wakeup, IpiTarget::Other);
+                        ipi_sent = true;
+                    }
+                }
+            }
+
+            core::hint::spin_loop();
+
+            #[cfg(feature = "busy_panic")]
+            {
+                i -= 1;
+                if i == 0 {
+                    panic!("Deadlock at write_context may have triggered");
+                }
+            }
+        }
+    }
+}
+
+impl Deref for ContextLock {
+    type Target = RwLock<L4, Context>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+pub struct ArcContextLockWriteGuard {
+    guard: spin::RwLockWriteGuard<'static, Context>,
+    arc: Arc<ContextLock>,
+}
+
+impl ArcContextLockWriteGuard {
+    pub fn rwlock(&self) -> &Arc<ContextLock> {
+        &self.arc
+    }
+
+    pub fn into_rwlock(self) -> Arc<ContextLock> {
+        self.arc
+    }
+
+    /// Block the current context
+    pub fn block(&mut self, reason: &'static str) -> bool {
+        self.rwlock().set_wakeup_pending(false);
+        self.guard.block(reason)
+    }
+}
+
+impl Deref for ArcContextLockWriteGuard {
+    type Target = Context;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl DerefMut for ArcContextLockWriteGuard {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
 /// Wrapper struct for borrowing the syscall head or tail buf.
 #[derive(Debug)]
 pub struct BorrowedHtBuf {
@@ -497,8 +742,7 @@ pub struct BorrowedHtBuf {
 }
 impl BorrowedHtBuf {
     pub fn head_locked(token: LockToken<L3>) -> Result<Self> {
-        let current = context::current();
-        let frame = &mut current.write(token).syscall_head;
+        let frame = &mut context::current_mut().syscall_head;
         match mem::replace(frame, SyscallFrame::Dummy) {
             SyscallFrame::Free(free_frame) => {
                 *frame = SyscallFrame::Used {
@@ -513,8 +757,7 @@ impl BorrowedHtBuf {
         }
     }
     pub fn tail_locked(token: LockToken<L3>) -> Result<Self> {
-        let current = context::current();
-        let frame = &mut current.write(token).syscall_tail;
+        let frame = &mut context::current_mut().syscall_tail;
         match mem::replace(frame, SyscallFrame::Dummy) {
             SyscallFrame::Free(free_frame) => {
                 *frame = SyscallFrame::Used {
@@ -574,8 +817,7 @@ impl BorrowedHtBuf {
         let Some(inner) = self.inner.take() else {
             return;
         };
-        let context = context::current();
-        let mut context = context.write(token.token());
+        let mut context = context::current_mut();
         {
             *(if self.head_and_not_tail {
                 &mut context.syscall_head
@@ -921,10 +1163,8 @@ pub fn bulk_insert_fds(
         .map(|res| res.map(FileHandle::from))
         .collect::<Result<_, _>>()?;
 
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (current, mut token) = current.token_split();
-    current.bulk_insert_files(files, &handles, &mut token)?;
+    let mut current = context::current();
+    current.bulk_insert_files(files, &handles, &mut token.downgrade())?;
     Ok(handles.len())
 }
 

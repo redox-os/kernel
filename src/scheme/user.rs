@@ -23,7 +23,8 @@ use crate::{
             handle_notify_files, AddrSpace, AddrSpaceWrapper, BorrowedFmapSource, Grant,
             GrantFileRef, MmapMode, PageSpan, UnmapVec, DANGLING,
         },
-        unblock_context, wakeup_context, BorrowedHtBuf, ContextLock, PreemptGuardL1, Status,
+        unblock_context, wakeup_context, write_context, BorrowedHtBuf, ContextLock, PreemptGuardL1,
+        Status,
     },
     event,
     memory::{Frame, Page, VirtualAddress, PAGE_SIZE},
@@ -232,14 +233,15 @@ impl UserInner {
         allow_direct_switch: bool,
     ) -> Result<Response> {
         {
-            let current_context = context::current();
-            current_context
-                .write(token.token())
-                .block("UserInner::call");
+            let context = {
+                let mut current_context = context::current_mut();
+                current_context.block("UserInner::call");
+                Arc::downgrade(current_context.rwlock())
+            };
             {
                 let mut states = self.states.lock(token.token());
                 states[sqe.tag as usize] = State::Waiting {
-                    context: Arc::downgrade(&current_context),
+                    context,
                     fds,
                     canceling: false,
 
@@ -268,7 +270,7 @@ impl UserInner {
                     |callee_responsible: &mut PageSpan, token: &mut LockToken<L1>| {
                         // If SIGKILL was found without waiting for scheme, EINTR directly. In that
                         // case, data loss doesn't matter.
-                        if context::current().read(token.token()).being_sigkilled {
+                        if context::current().being_sigkilled {
                             // Callee must deallocate memory, rather than the caller. This is less optimal
                             // for TLB, but we don't really have any other choice. The scheme must be able
                             // to access the borrowed memory until it has responded to the request.
@@ -305,8 +307,7 @@ impl UserInner {
 
                             maybe_eintr?;
 
-                            context::current()
-                                .write(token.token())
+                            context::current_mut()
                                 .block("UserInner::call (woken up after cancelation request)");
 
                             // We do not want to drop the lock before blocking
@@ -322,7 +323,6 @@ impl UserInner {
                             mut callee_responsible,
                         } => {
                             let maybe_eintr = eintr_if_sigkill(&mut callee_responsible, &mut token);
-                            let current_context = context::current();
 
                             *o = State::Waiting {
                                 // Currently we treat all spurious wakeups to have the same behavior
@@ -342,8 +342,7 @@ impl UserInner {
                             // We do not want to preempt between sending the
                             // cancellation and blocking again where we might
                             // miss a wakeup.
-                            let mut preempt = PreemptGuardL1::new(&current_context, &mut token);
-                            let token = preempt.token();
+                            let mut preempt = PreemptGuardL1::new();
 
                             self.todo.send_locked(
                                 Sqe {
@@ -371,9 +370,7 @@ impl UserInner {
                             // already processed the request, we will receive
                             // the actual response next and woken up again.
                             // State will be State::Responded then.
-                            context::current()
-                                .write(token.token())
-                                .block("UserInner::call (spurious wakeup)");
+                            context::current_mut().block("UserInner::call (spurious wakeup)");
                             drop(states);
                         }
 
@@ -767,7 +764,7 @@ impl UserInner {
         let tag = self.next_id(token)?;
         {
             let mut states = self.states.lock(token.token());
-            states[tag as usize] = State::Fmap(Arc::downgrade(&context::current()));
+            states[tag as usize] = State::Fmap(Arc::downgrade(context::current().rwlock()));
         }
 
         self.todo.send(
@@ -781,7 +778,7 @@ impl UserInner {
                     args[5] = uid_gid_hack_merge(current_uid_gid(token));
                     args
                 },
-                caller: { context::current().read(token.token()).pid as u64 },
+                caller: { context::current().pid as u64 },
                 ..Default::default()
             },
             token,
@@ -801,14 +798,9 @@ impl UserInner {
             ParsedCqe::ResponseWithFd { tag, fd } => self.respond(
                 tag,
                 Response::Fd({
-                    {
-                        let current_lock = context::current();
-                        let mut current = current_lock.read(token.token());
-                        let (context, mut token) = current.token_split();
-                        context.remove_file(FileHandle::from(fd), &mut token)
-                    }
-                    .ok_or(Error::new(EINVAL))?
-                    .description
+                    { context::current().remove_file(FileHandle::from(fd), &mut token.downgrade()) }
+                        .ok_or(Error::new(EINVAL))?
+                        .description
                 }),
                 token,
             )?,
@@ -838,13 +830,10 @@ impl UserInner {
                 };
 
                 // FIXME: Description can leak if there is no additional file table space.
-                let current_lock = context::current();
-                let mut current = current_lock.read(token.token());
-                let (context, mut token) = current.token_split();
-                context.insert_file(
+                context::current().insert_file(
                     FileHandle::from(dst_fd_or_ptr),
                     FileDescriptor { description },
-                    &mut token,
+                    &mut token.downgrade(),
                 );
             }
             ParsedCqe::ProvideMmap {
@@ -1060,9 +1049,7 @@ impl UserInner {
         }
 
         let (ctx, desc) = {
-            let current_lock = context::current();
-            let mut current = current_lock.read(token.token());
-            let (context, mut token) = current.token_split();
+            let mut context = context::current_mut();
             let mut files = context.files.read(token.token());
             let (files, mut token) = files.token_split();
             let desc = files.find_by_scheme(self.scheme_id, file, &mut token)?;
@@ -1395,7 +1382,7 @@ impl UserScheme {
         let inner = self.inner.clone();
 
         let mut address = inner.capture_user(slice, token)?;
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
 
         let mut sqe_flags = SqeFlags::empty();
         let mut last_arg = 0;
@@ -1484,7 +1471,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn fsize(&self, file: usize, token: &mut CleanLockToken) -> Result<u64> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         self.inner
             .call(
                 ctx,
@@ -1501,14 +1488,13 @@ impl KernelScheme for UserScheme {
 
     fn fchown(&self, file: usize, uid: u32, gid: u32, token: &mut CleanLockToken) -> Result<()> {
         {
-            let ctx = context::current();
-            let cx = &ctx.read(token.token());
+            let cx = context::current();
             if cx.euid != 0 && (uid != cx.euid || gid != cx.egid) {
                 return Err(Error::new(EPERM));
             }
         }
 
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         self.inner
             .call(
                 ctx,
@@ -1530,7 +1516,7 @@ impl KernelScheme for UserScheme {
         arg: usize,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         self.inner
             .call(
                 ctx,
@@ -1550,7 +1536,7 @@ impl KernelScheme for UserScheme {
         flags: EventFlags,
         token: &mut CleanLockToken,
     ) -> Result<EventFlags> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         self.inner
             .call(
                 ctx,
@@ -1624,7 +1610,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn fsync(&self, file: usize, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         self.inner
             .call(
                 ctx,
@@ -1662,7 +1648,7 @@ impl KernelScheme for UserScheme {
     }
 
     fn detach(&self, id: usize, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         self.inner.todo.send(
             Sqe {
                 opcode: Opcode::Detach as u8,
@@ -1716,7 +1702,7 @@ impl KernelScheme for UserScheme {
         }
     }
     fn kfpath(&self, file: usize, buf: UserSliceWo, token: &mut CleanLockToken) -> Result<usize> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         let mut address = self.inner.capture_user(buf, token)?;
         let result = self
             .inner
@@ -1743,7 +1729,7 @@ impl KernelScheme for UserScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
 
         let mut address = self.inner.capture_user(buf, token)?;
         let result = self
@@ -1778,7 +1764,7 @@ impl KernelScheme for UserScheme {
         _stored_flags: u32,
         token: &mut CleanLockToken,
     ) -> Result<usize> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
 
         let mut address = self.inner.capture_user(buf, token)?;
         let result = self
@@ -1817,7 +1803,7 @@ impl KernelScheme for UserScheme {
         Err(Error::new(EBADFD))
     }
     fn kfstat(&self, file: usize, stat: UserSliceWo, token: &mut CleanLockToken) -> Result<()> {
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         let mut address = self.inner.capture_user(stat, token)?;
         let result = self
             .inner
@@ -1866,7 +1852,7 @@ impl KernelScheme for UserScheme {
     ) -> Result<()> {
         let inner = self.inner.clone();
 
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         let res = inner.call(
             ctx,
             Vec::new(),
@@ -1971,7 +1957,7 @@ impl KernelScheme for UserScheme {
             sendfd_flags |= SendFdFlags::EXCLUSIVE;
         }
 
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         let len = descs.len();
         inner
             .call(
@@ -2007,7 +1993,7 @@ impl KernelScheme for UserScheme {
         if flags.contains(CallFlags::FD_UPPER) {
             recvfd_flags |= RecvFdFlags::UPPER_TBL;
         }
-        let ctx = { context::current().read(token.token()).caller_ctx() };
+        let ctx = { context::current().caller_ctx() };
         let len = payload.len() / size_of::<usize>();
         let res = inner.call(
             ctx,
@@ -2088,7 +2074,6 @@ fn uid_gid_hack_merge([uid, gid]: [u32; 2]) -> u64 {
     u64::from(uid) | (u64::from(gid) << 32)
 }
 fn current_uid_gid(token: &mut CleanLockToken) -> [u32; 2] {
-    let ctx = context::current();
-    let p = &ctx.read(token.token());
+    let p = context::current();
     [p.euid, p.egid]
 }

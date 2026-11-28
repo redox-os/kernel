@@ -131,13 +131,11 @@ pub fn futex(
             }
 
             {
-                let context_lock = context::current();
+                let context_lock = {
+                    let mut context = context::current_mut();
 
-                // Drop and block this context
-                drop(addr_space_guard);
-
-                {
-                    let mut context = context_lock.write(token.token());
+                    // Drop and block this context
+                    drop(addr_space_guard);
 
                     context.wake = timeout_opt.map(|time| time.to_nanos());
                     if let Some((tctl, pctl, _)) = context.sigcontrol()
@@ -147,7 +145,8 @@ pub fn futex(
                     }
                     context.block("futex");
                     // Do not return early until rollback handled
-                }
+                    Arc::downgrade(context.rwlock())
+                };
 
                 // Target target_physaddr
                 let futexes = FUTEXES.lock(token.token());
@@ -155,9 +154,7 @@ pub fn futex(
                 futexes
                     .entry(target_physaddr)
                     .or_insert_with(Vec::new)
-                    .push(FutexEntry {
-                        context_lock: Arc::downgrade(&context_lock),
-                    });
+                    .push(FutexEntry { context_lock });
 
                 // Now rearcquire again to read
                 let addr_space_guard = current_addrsp.acquire_read(lock_token.downgrade());
@@ -230,11 +227,8 @@ pub fn futex(
 
             // The scheduler clears `wake` on timeout. Hence if a timeout was
             // set and `wake` is now `None`, we timed out.
-            let timed_out = timeout_opt.is_some() && {
-                let current_context_ref = context::current();
-                let mut context = current_context_ref.write(token.token());
-                context.wake.take().is_none()
-            };
+            let timed_out =
+                timeout_opt.is_some() && { context::current_mut().wake.take().is_none() };
 
             // TODO: this doing a second search is not efficient. It probably best to have another
             // hashtable mapping context and whether it was woken up AND where to remove index from FUTEXES
@@ -249,8 +243,7 @@ pub fn futex(
 
             let signaled = if awaken_by_futex_wake {
                 // Signal can still arrive even if already woken up, in that case we want to assume EINTR happened
-                let current_context_ref = context::current();
-                let context = current_context_ref.read(token.token());
+                let context = context::current();
                 if context
                     .sigcontrol()
                     .is_none_or(|(control, pctl, _)| control.currently_pending_unblocked(pctl) == 0)
@@ -310,7 +303,7 @@ fn remove_futex_entry(
     let mut i = 0;
     while i < futexes.len() {
         if let Some(ctx) = futexes[i].context_lock.upgrade() {
-            if Arc::ptr_eq(&ctx, &current_lock) {
+            if Arc::ptr_eq(&ctx, current_lock.rwlock()) {
                 // Not woken up by FUTEX_WAKE, remove our entry
                 return Some(futexes.swap_remove(i));
             }

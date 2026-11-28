@@ -41,7 +41,7 @@ fn panic_handler_inner(info: &PanicInfo) -> ! {
     }
 
     let current_ref = context::try_current();
-    let Some(context_lock) = &*current_ref else {
+    let Some(context) = current_ref else {
         println!("CPU {}, CID <none>", cpu_id());
 
         println!("HALT");
@@ -52,13 +52,13 @@ fn panic_handler_inner(info: &PanicInfo) -> ! {
         }
     };
 
-    println!("CPU {}, CID {:p}", cpu_id(), context_lock);
-
     {
-        // This could deadlock, but at this point we are going to halt anyways
-        let mut token = unsafe { CleanLockToken::new() };
-        let context = context_lock.read(token.token());
-        println!("NAME: {}, DEBUG ID: {}", context.name, context.debug_id);
+        println!(
+            "CPU: {}, NAME: {}, DEBUG ID: {}",
+            cpu_id(),
+            context.name,
+            context.debug_id
+        );
 
         if let Some([a, b, c, d, e, f, g]) = context.current_syscall() {
             println!(

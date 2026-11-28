@@ -5,7 +5,7 @@ use alloc::{
 };
 use core::fmt::Write;
 
-use crate::{context, context::contexts, sync::CleanLockToken, syscall::error::Result};
+use crate::{context, sync::CleanLockToken, syscall::error::Result};
 
 pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
     let mut string = format!(
@@ -25,10 +25,12 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
 
     let mut rows = Vec::new();
     {
-        let mut contexts = contexts(token.downgrade());
+        let mut contexts = context::contexts(token.downgrade());
         let (contexts, mut token) = contexts.token_split();
         for context_ref in contexts.iter() {
-            let context = context_ref.read(token.token());
+            let Some(context) = context::try_read_context(context_ref, token.downgrade()) else {
+                continue;
+            };
             let addr_space = context.addr_space().cloned();
 
             let affinity = context.sched_affinity.to_string();
@@ -41,7 +43,7 @@ pub fn resource(token: &mut CleanLockToken) -> Result<Vec<u8>> {
             memory += context.kstack.len();
             let (status, cpuid) = (context.status.clone(), context.cpu_id);
             let (pid, euid, egid) = (context.pid, context.euid, context.egid);
-            let (running, is_awake) = (context.running, context.wake.is_some());
+            let (running, is_awake) = (context_ref.cpu_id().is_some(), context.wake.is_some());
             let name = context.name;
             drop(context);
 

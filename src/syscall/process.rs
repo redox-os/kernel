@@ -9,7 +9,7 @@ use crate::{
         context::SyscallFrame,
         file::{FileDescription, FileDescriptor, InternalFlags, KernelSchemeRef},
         memory::{AddrSpace, Grant, PageSpan},
-        ContextRef,
+        write_context, ContextLock, ContextRef,
     },
     event,
     sync::{CleanLockToken, RwLock},
@@ -34,7 +34,7 @@ use super::usercopy::UserSliceWo;
 /// SAFETY: Returns Never type, all things that implement `Drop` must be dropped manually before calling this to prevent memory leak.
 ///
 pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLockToken) -> ! {
-    let context_lock = Arc::clone(&*context::current());
+    let context_lock = Arc::clone(context::current().rwlock());
     exit_context(excp, token, context_lock);
     context::switch(token);
     unreachable!();
@@ -43,7 +43,7 @@ pub fn exit_this_context(excp: Option<syscall::Exception>, token: &mut CleanLock
 pub fn exit_context(
     excp: Option<syscall::Exception>,
     token: &mut CleanLockToken,
-    context_lock: Arc<RwLock<crate::sync::L4, context::Context>>,
+    context_lock: Arc<ContextLock>,
 ) {
     let (addrspace_opt, mut close_files) = {
         let mut context = context_lock.write(token.token());
@@ -252,9 +252,8 @@ pub unsafe fn usermode_bootstrap(bootstrap: &Bootstrap, token: &mut CleanLockTok
 
     // Start in a minimal environment without any stack.
 
-    let ctx = context::current();
-    let mut lock = ctx.write(token.token());
-    let regs = &mut lock
+    let mut lock = context::current_mut();
+    let regs = lock
         .regs_mut()
         .expect("bootstrap needs registers to be available");
     {
@@ -273,9 +272,7 @@ unsafe fn bootstrap_mem(bootstrap: &crate::startup::Bootstrap) -> &'static [u8] 
 }
 
 fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockToken) -> usize {
-    let current_lock = context::current();
-    let mut current = current_lock.read(token.token());
-    let (context, mut token) = current.token_split();
+    let context = context::current();
     context
         .files
         .write(token.token())
@@ -299,7 +296,7 @@ fn insert_fd(scheme_ref: KernelSchemeRef, number: usize, token: &mut CleanLockTo
                     internal_flags: InternalFlags::empty(),
                 })),
             },
-            &mut token,
+            &mut token.downgrade(),
         )
         .expect("failed to insert fd to current context")
         .get()

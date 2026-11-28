@@ -6,7 +6,12 @@ use alloc::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Weak},
 };
-use core::{cell::Ref, cmp::Reverse, num::NonZeroUsize, ops::Deref};
+use core::{
+    cell::{Ref, RefMut},
+    cmp::Reverse,
+    num::NonZeroUsize,
+    ops::{Deref, DerefMut},
+};
 use syscall::MAX_CPU_COUNT;
 
 use crate::{
@@ -16,21 +21,15 @@ use crate::{
     ipi::{ipi, IpiKind, IpiTarget},
     memory::{RmmA, RmmArch, TableKind},
     percpu::{self, get_percpu_block, PercpuBlock},
-    sync::{
-        ArcRwLockWriteGuard, CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard,
-        L1, L2, L3, L4,
-    },
+    sync::{CleanLockToken, LockToken, RwLock, RwLockReadGuard, RwLockWriteGuard, L1, L2, L3, L4},
     syscall::error::Result,
 };
 
 use self::context::Kstack;
 pub use self::{
-    context::{BorrowedHtBuf, Context, Status},
+    context::{ArcContextLockWriteGuard, BorrowedHtBuf, Context, ContextLock, Status},
     switch::switch,
 };
-
-pub type ContextLock = RwLock<L4, Context>;
-pub type ArcContextLockWriteGuard = ArcRwLockWriteGuard<L4, Context>;
 
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/aarch64.rs"]
@@ -144,24 +143,28 @@ pub fn contexts_mut(token: LockToken<'_, L1>) -> RwLockWriteGuard<'_, L2, BTreeS
 }
 
 pub fn unblock_context(context_lock: &Arc<ContextLock>, token: &mut LockToken<'_, L3>) -> bool {
-    let cpu_id = {
-        let mut guard = context_lock.write(token.token());
-        if !guard.unblock_no_ipi() {
-            let guard_runnable = guard.status.is_runnable();
-            let guard_cpu_id = guard.cpu_id;
-            if guard_runnable {
-                // already set to runnable externally
-                drop(guard);
-                wakeup_context(context_lock, guard_cpu_id, token);
+    if crate::context::is_current(context_lock) {
+        return crate::context::current_mut().unblock_no_ipi();
+    }
+
+    let res = context_lock
+        .write_unless_running(token, |guard| {
+            if guard.unblock_no_ipi() {
+                Some((true, guard.cpu_id))
+            } else if guard.status.is_runnable() {
+                Some((false, guard.cpu_id))
+            } else {
+                None
             }
-            return false;
-        }
-        guard.cpu_id
-    };
+        })
+        .flatten();
 
-    wakeup_context(context_lock, cpu_id, token);
-
-    true
+    if let Some((unblocked, cpu_id)) = res {
+        wakeup_context(context_lock, cpu_id, token);
+        unblocked
+    } else {
+        false
+    }
 }
 
 pub fn wakeup_context(
@@ -198,10 +201,11 @@ pub fn wakeup_context(
 pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
     let owner = None; // kmain not owned by any fd
     let mut context = Context::new(owner, kstack).expect("failed to create kmain context");
+    let cpu_id = crate::cpu_id();
     (0..MAX_CPU_COUNT)
         .map(|e| LogicalCpuId::new(e))
         .for_each(|e| context.sched_affinity.atomic_clear(e));
-    context.sched_affinity.atomic_set(crate::cpu_id());
+    context.sched_affinity.atomic_set(cpu_id);
 
     context.name.clear();
     context.name.push_str("[kmain]");
@@ -216,10 +220,10 @@ pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
     self::arch::EMPTY_CR3.call_once(|| RmmA::table(TableKind::User));
 
     context.status = Status::Runnable;
-    context.running = true;
-    context.cpu_id = Some(crate::cpu_id());
+    context.cpu_id = Some(cpu_id);
 
     let context_lock = Arc::new(ContextLock::new(context));
+    context_lock.set_cpu_id(cpu_id);
 
     let context_ref = ContextRef(Arc::clone(&context_lock));
     contexts_mut(token.token().downgrade()).insert(context_ref.clone());
@@ -228,22 +232,66 @@ pub fn init(token: &mut CleanLockToken, kstack: Kstack) {
         let percpu = PercpuBlock::current();
         percpu
             .switch_internals
-            .set_current_context(Arc::clone(&context_lock));
+            .set_current_context(context_lock.write_arc());
         percpu
             .switch_internals
             .set_sched_context(Arc::clone(&context_lock));
         percpu.switch_internals.set_idle_context(context_lock);
     }
 }
-
-// TODO: Maybe use lock tokens to forbid holding this reference across context::switch (where the
-// RefCell's borrow_mut will fail if the reference is kept?)? If so, maybe even avoid `RefCell`
-// entirely, if it can be done sufficiently rigorously and without breaking soundness?
-pub fn current() -> Ref<'static, Arc<ContextLock>> {
-    PercpuBlock::current().switch_internals.current_context()
+#[cfg_attr(feature = "drop_panic", track_caller)]
+pub fn current() -> Ref<'static, ArcContextLockWriteGuard> {
+    let percpu = PercpuBlock::current();
+    #[cfg(feature = "drop_panic")]
+    {
+        let caller = core::panic::Location::caller();
+        match percpu.switch_internals.current_context() {
+            Ok(guard) => {
+                percpu.switch_internals.last_borrow.set(Some(caller));
+                guard
+            }
+            Err(_) => panic!(
+                "current() borrow failed at {caller}; already borrowed at {:?}",
+                percpu.switch_internals.last_borrow.get()
+            ),
+        }
+    }
+    #[cfg(not(feature = "drop_panic"))]
+    {
+        percpu
+            .switch_internals
+            .current_context()
+            .expect("current() already borrowed")
+    }
 }
 
-pub fn try_current() -> Ref<'static, Option<Arc<ContextLock>>> {
+#[cfg_attr(feature = "drop_panic", track_caller)]
+pub fn current_mut() -> RefMut<'static, ArcContextLockWriteGuard> {
+    let percpu = PercpuBlock::current();
+    #[cfg(feature = "drop_panic")]
+    {
+        let caller = core::panic::Location::caller();
+        match percpu.switch_internals.current_context_mut() {
+            Ok(guard) => {
+                percpu.switch_internals.last_borrow.set(Some(caller));
+                guard
+            }
+            Err(_) => panic!(
+                "current_mut() borrow failed at {caller}; already borrowed at {:?}",
+                percpu.switch_internals.last_borrow.get()
+            ),
+        }
+    }
+    #[cfg(not(feature = "drop_panic"))]
+    {
+        percpu
+            .switch_internals
+            .current_context_mut()
+            .expect("current_mut() already borrowed")
+    }
+}
+
+pub fn try_current() -> Option<Ref<'static, ArcContextLockWriteGuard>> {
     PercpuBlock::current()
         .switch_internals
         .current_context_raw()
@@ -253,7 +301,116 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
         .switch_internals
         .current_context_raw()
         .as_ref()
-        .is_some_and(|current| Arc::ptr_eq(current, context))
+        .is_some_and(|current| Arc::ptr_eq(current.rwlock(), context))
+}
+
+pub enum ContextReadGuard<'a> {
+    Current(Ref<'static, ArcContextLockWriteGuard>, LockToken<'a, L4>),
+    Locked(RwLockReadGuard<'a, L4, Context>),
+}
+
+impl<'a> ContextReadGuard<'a> {
+    pub fn token_split(&mut self) -> (&Context, LockToken<'_, L4>) {
+        match self {
+            ContextReadGuard::Current(cur, lock_token) => (cur, lock_token.token()),
+            ContextReadGuard::Locked(rw_lock_read_guard) => rw_lock_read_guard.token_split(),
+        }
+    }
+}
+
+impl Deref for ContextReadGuard<'_> {
+    type Target = Context;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Current(g, _) => g,
+            Self::Locked(g) => g,
+        }
+    }
+}
+
+#[cfg_attr(feature = "busy_panic", track_caller)]
+pub fn read_context<'a>(
+    context: &'a Arc<ContextLock>,
+    mut token: LockToken<'a, L3>,
+) -> ContextReadGuard<'a> {
+    context.read(token)
+}
+
+#[cfg_attr(feature = "drop_panic", track_caller)]
+pub fn try_read_context<'a>(
+    context: &'a Arc<ContextLock>,
+    mut token: LockToken<'a, L3>,
+) -> Option<ContextReadGuard<'a>> {
+    if crate::context::is_current(context) {
+        Some(ContextReadGuard::Current(
+            crate::context::current(),
+            LockToken::downgraded(token),
+        ))
+    } else if context.cpu_id().is_some() {
+        None
+    } else {
+        context.try_read(token).map(ContextReadGuard::Locked)
+    }
+}
+
+pub enum ContextWriteGuard<'a> {
+    Current(RefMut<'static, ArcContextLockWriteGuard>, LockToken<'a, L4>),
+    Locked(RwLockWriteGuard<'a, L4, Context>),
+}
+
+impl<'a> ContextWriteGuard<'a> {
+    #[inline]
+    pub fn token_split(&mut self) -> (&mut Context, LockToken<'_, L4>) {
+        match self {
+            ContextWriteGuard::Current(cur, lock_token) => (cur, lock_token.token()),
+            ContextWriteGuard::Locked(rw_lock_write_guard) => rw_lock_write_guard.token_split(),
+        }
+    }
+}
+
+impl Deref for ContextWriteGuard<'_> {
+    type Target = Context;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Current(g, _) => g,
+            Self::Locked(g) => g,
+        }
+    }
+}
+
+impl DerefMut for ContextWriteGuard<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Current(g, _) => g,
+            Self::Locked(g) => g,
+        }
+    }
+}
+
+#[cfg_attr(feature = "busy_panic", track_caller)]
+pub fn write_context<'a>(
+    context: &'a Arc<ContextLock>,
+    mut token: LockToken<'a, L3>,
+) -> ContextWriteGuard<'a> {
+    context.write(token)
+}
+
+pub fn try_write_context<'a>(
+    context: &'a Arc<ContextLock>,
+    mut token: LockToken<'a, L3>,
+) -> Option<ContextWriteGuard<'a>> {
+    if crate::context::is_current(context) {
+        Some(ContextWriteGuard::Current(
+            crate::context::current_mut(),
+            LockToken::downgraded(token),
+        ))
+    } else {
+        context.try_write(token).map(ContextWriteGuard::Locked)
+    }
 }
 
 #[derive(Clone)]
@@ -355,26 +512,18 @@ pub fn spawn(
 /// Because the guard must hold a mutable reference to the `CleanLockToken` to re-enable preemption
 /// in `Drop`, it consumes the token. The `token()` method allows re-borrowing the token for use
 /// within the guard's scope.
-pub struct PreemptGuardL1<'a> {
-    context: &'a ContextLock,
-    token: &'a mut LockToken<'a, L1>,
-}
+pub struct PreemptGuardL1 {}
 
-impl<'a> PreemptGuardL1<'a> {
-    pub fn new(context: &'a ContextLock, token: &'a mut LockToken<'a, L1>) -> PreemptGuardL1<'a> {
-        context.write(token.token()).preempt_locks += 1;
-        PreemptGuardL1 { context, token }
-    }
-
-    /// Get a mutable reference to the underlying `LockToken<L1>`.
-    pub fn token(&mut self) -> &mut LockToken<'a, L1> {
-        self.token
+impl PreemptGuardL1 {
+    pub fn new() -> PreemptGuardL1 {
+        current_mut().preempt_locks += 1;
+        PreemptGuardL1 {}
     }
 }
 
-impl Drop for PreemptGuardL1<'_> {
+impl Drop for PreemptGuardL1 {
     fn drop(&mut self) {
-        self.context.write(self.token.token()).preempt_locks -= 1;
+        current_mut().preempt_locks -= 1;
     }
 }
 
