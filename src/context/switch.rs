@@ -481,10 +481,11 @@ fn schedule(
         NextContextResult::CurrentContext => (cur_context_guard.take().unwrap(), None, true),
         NextContextResult::Other(guard, addr_space) => (guard, addr_space, false),
         NextContextResult::None => {
+            let ctx = cur_context_guard.unwrap_or(prev_context_guard);
             unsafe {
                 percpu
                     .switch_internals
-                    .set_current_context(cur_context_guard.unwrap_or(prev_context_guard))
+                    .set_current_context(ctx.into_rwlock().write_arc())
             };
             return ScheduleResult::AllContextsIdle;
         }
@@ -506,7 +507,7 @@ fn schedule(
         unsafe {
             percpu
                 .switch_internals
-                .set_current_context(next_sched_context)
+                .set_current_context(next_sched_context.into_rwlock().write_arc())
         };
         ScheduleResult::AlreadyCurrent
     } else {
@@ -1328,11 +1329,6 @@ unsafe fn switch_to(
         next_context.syscall_debug_info.on_switch_to(token);
     }
 
-    percpu
-        .switch_internals
-        .being_sigkilled
-        .set(next_context.being_sigkilled);
-
     unsafe {
         percpu.new_addrsp_guard.set(addr_space_guard);
         arch::switch_to(prev_context, next_context);
@@ -1394,7 +1390,6 @@ pub struct ContextSwitchPercpu {
 
     /// The idle process.
     idle_ctxt: RefCell<Option<Arc<ContextLock>>>,
-    pub(crate) being_sigkilled: Cell<bool>,
 
     // wakeups
     pub(crate) ipi_context_wakeup_list: Mutex<L4, Vec<WeakContextRef>>,
@@ -1425,7 +1420,6 @@ impl ContextSwitchPercpu {
             current_ctxt_ptr: Cell::new(core::ptr::null()),
             sched_ctxt: RefCell::new(None),
             idle_ctxt: RefCell::new(None),
-            being_sigkilled: Cell::new(false),
             ipi_context_wakeup_list: Mutex::new(Vec::new()),
             local_wakeup_list: RefCell::new(Vec::new()),
             tmp_wakeups: RefCell::new(Vec::new()),

@@ -480,22 +480,40 @@ impl<L: Level, T> RwLock<L, T> {
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<RwLockReadGuard<'a, L, T>> {
-        let inner = self.inner.try_read()?;
-        Some(RwLockReadGuard {
-            inner,
-            lock_token: LockToken::downgraded(lock_token),
-        })
+        self.try_read_err(lock_token).ok()
+    }
+
+    pub fn try_read_err<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Result<RwLockReadGuard<'a, L, T>, LockToken<'a, LP>> {
+        match self.inner.try_read() {
+            Some(inner) => Ok(RwLockReadGuard {
+                inner,
+                lock_token: LockToken::downgraded(lock_token),
+            }),
+            None => Err(lock_token),
+        }
     }
 
     pub fn try_write<'a, LP: Lower<L> + 'a>(
         &'a self,
         lock_token: LockToken<'a, LP>,
     ) -> Option<RwLockWriteGuard<'a, L, T>> {
-        let inner = self.inner.try_write()?;
-        Some(RwLockWriteGuard {
-            inner,
-            lock_token: LockToken::downgraded(lock_token),
-        })
+        self.try_write_err(lock_token).ok()
+    }
+
+    pub fn try_write_err<'a, LP: Lower<L> + 'a>(
+        &'a self,
+        lock_token: LockToken<'a, LP>,
+    ) -> Result<RwLockWriteGuard<'a, L, T>, LockToken<'a, LP>> {
+        match self.inner.try_write() {
+            Some(inner) => Ok(RwLockWriteGuard {
+                inner,
+                lock_token: LockToken::downgraded(lock_token),
+            }),
+            None => Err(lock_token),
+        }
     }
 
     // Unsafe due to not using token, currently required by context::switch

@@ -305,14 +305,14 @@ pub fn is_current(context: &Arc<ContextLock>) -> bool {
 }
 
 pub enum ContextReadGuard<'a> {
-    Current(Ref<'static, ArcContextLockWriteGuard>, LockToken<'a, L3>),
+    Current(Ref<'static, ArcContextLockWriteGuard>, LockToken<'a, L4>),
     Locked(RwLockReadGuard<'a, L4, Context>),
 }
 
 impl<'a> ContextReadGuard<'a> {
     pub fn token_split(&mut self) -> (&Context, LockToken<'_, L4>) {
         match self {
-            ContextReadGuard::Current(cur, lock_token) => (cur, lock_token.downgrade()),
+            ContextReadGuard::Current(cur, lock_token) => (cur, lock_token.token()),
             ContextReadGuard::Locked(rw_lock_read_guard) => rw_lock_read_guard.token_split(),
         }
     }
@@ -334,20 +334,19 @@ pub fn read_context<'a>(
     context: &'a Arc<ContextLock>,
     mut token: LockToken<'a, L3>,
 ) -> ContextReadGuard<'a> {
-    if crate::context::is_current(context) {
-        ContextReadGuard::Current(crate::context::current(), token)
-    } else {
-        ContextReadGuard::Locked(context.read(token))
-    }
+    context.read(token)
 }
 
 #[cfg_attr(feature = "drop_panic", track_caller)]
 pub fn try_read_context<'a>(
     context: &'a Arc<ContextLock>,
-    token: LockToken<'a, L3>,
+    mut token: LockToken<'a, L3>,
 ) -> Option<ContextReadGuard<'a>> {
     if crate::context::is_current(context) {
-        Some(ContextReadGuard::Current(crate::context::current(), token))
+        Some(ContextReadGuard::Current(
+            crate::context::current(),
+            LockToken::downgraded(token),
+        ))
     } else if context.cpu_id().is_some() {
         None
     } else {
@@ -356,7 +355,7 @@ pub fn try_read_context<'a>(
 }
 
 pub enum ContextWriteGuard<'a> {
-    Current(RefMut<'static, ArcContextLockWriteGuard>, LockToken<'a, L3>),
+    Current(RefMut<'static, ArcContextLockWriteGuard>, LockToken<'a, L4>),
     Locked(RwLockWriteGuard<'a, L4, Context>),
 }
 
@@ -364,7 +363,7 @@ impl<'a> ContextWriteGuard<'a> {
     #[inline]
     pub fn token_split(&mut self) -> (&mut Context, LockToken<'_, L4>) {
         match self {
-            ContextWriteGuard::Current(cur, lock_token) => (cur, lock_token.downgrade()),
+            ContextWriteGuard::Current(cur, lock_token) => (cur, lock_token.token()),
             ContextWriteGuard::Locked(rw_lock_write_guard) => rw_lock_write_guard.token_split(),
         }
     }
@@ -395,12 +394,22 @@ impl DerefMut for ContextWriteGuard<'_> {
 #[cfg_attr(feature = "busy_panic", track_caller)]
 pub fn write_context<'a>(
     context: &'a Arc<ContextLock>,
-    token: LockToken<'a, L3>,
+    mut token: LockToken<'a, L3>,
 ) -> ContextWriteGuard<'a> {
+    context.write(token)
+}
+
+pub fn try_write_context<'a>(
+    context: &'a Arc<ContextLock>,
+    mut token: LockToken<'a, L3>,
+) -> Option<ContextWriteGuard<'a>> {
     if crate::context::is_current(context) {
-        ContextWriteGuard::Current(crate::context::current_mut(), token)
+        Some(ContextWriteGuard::Current(
+            crate::context::current_mut(),
+            LockToken::downgraded(token),
+        ))
     } else {
-        ContextWriteGuard::Locked(context.write(token))
+        context.try_write(token).map(ContextWriteGuard::Locked)
     }
 }
 

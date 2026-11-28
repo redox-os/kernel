@@ -475,7 +475,7 @@ impl KernelScheme for ProcScheme {
                 kind: ContextHandle::AwaitingFiletableChange { new_ft },
                 context,
             } => {
-                write_context(&context, token.downgrade()).files = new_ft;
+                context.write(token.token()).files = new_ft;
             }
             _ => (),
         }
@@ -564,7 +564,7 @@ impl KernelScheme for ProcScheme {
                 Ok(result_base.start_address().data())
             }
             ContextHandle::Sighandler => {
-                let context = read_context(&context, token.downgrade());
+                let context = context.read(token.token());
                 // let (context, token) = context.token_split();
                 let sig = context.sig.as_ref().ok_or(Error::new(EBADF))?;
                 let frame = match map.offset {
@@ -895,7 +895,7 @@ impl KernelScheme for ProcScheme {
         let target_fd = metadata.first().ok_or(Error::new(EINVAL))?;
 
         if let Some(file) = {
-            let mut context = read_context(&context, token.downgrade());
+            let mut context = context.read(token.token());
             let (context, mut token) = context.token_split();
             context.remove_file(FileHandle(*target_fd as usize), &mut token.token())
         } {
@@ -903,7 +903,7 @@ impl KernelScheme for ProcScheme {
         }
 
         let file = descs.first().unwrap();
-        let mut context = write_context(&context, token.downgrade());
+        let mut context = context.write(token.token());
         let (context, mut token) = context.token_split();
         context
             .insert_file(
@@ -1082,8 +1082,7 @@ impl ContextHandle {
                         }
                     };
 
-                    let addrsp =
-                        Arc::clone(read_context(&context, token.downgrade()).addr_space()?);
+                    let addrsp = Arc::clone(context.read(token.token()).addr_space()?);
 
                     Some(SignalState {
                         threadctl_off: validate_off(
@@ -1110,13 +1109,13 @@ impl ContextHandle {
                     None
                 };
 
-                write_context(&context, token.downgrade()).sig = state;
+                context.write(token.token()).sig = state;
 
                 Ok(size_of::<SetSighandlerData>())
             }
             ContextHandle::Start => {
                 let cpu_id = {
-                    let mut guard = write_context(&context, token.downgrade());
+                    let mut guard = context.write(token.token());
                     match guard.status {
                         ref mut status @ Status::HardBlocked {
                             reason: HardBlockedReason::NotYetStarted,
@@ -1255,7 +1254,7 @@ impl ContextHandle {
                         Err(Error::new(EPERM))
                     }
                     ContextVerb::Stop => {
-                        let mut guard = write_context(&context, token.downgrade());
+                        let mut guard = context.write(token.token());
 
                         match guard.status {
                             Status::Dead { .. } => return Err(Error::new(EOWNERDEAD)),
@@ -1271,7 +1270,7 @@ impl ContextHandle {
                         Ok(size_of::<usize>())
                     }
                     ContextVerb::Unstop => {
-                        let mut guard = write_context(&context, token.downgrade());
+                        let mut guard = context.write(token.token());
 
                         if let Status::HardBlocked {
                             reason: HardBlockedReason::Stopped,
@@ -1315,7 +1314,7 @@ impl ContextHandle {
                             crate::syscall::exit_this_context(None, token);
                         } else {
                             let cpu_id = {
-                                let mut ctxt = write_context(&context, token.downgrade());
+                                let mut ctxt = context.write(token.token());
                                 //trace!("FORCEKILL NONSELF={} {}, SELF={}", ctxt.debug_id, ctxt.pid, context::current().read().debug_id);
                                 if ctxt.status.is_dead() {
                                     return Ok(size_of::<usize>());
@@ -1340,7 +1339,7 @@ impl ContextHandle {
                     .unwrap_or(info.debug_name.len())
                     .min(crate::context::context::CONTEXT_NAME_CAPAC);
 
-                let mut guard = write_context(&context, token.downgrade());
+                let mut guard = context.write(token.token());
                 let debug_name = core::str::from_utf8(&info.debug_name[..len])
                     .map_err(|_| Error::new(EINVAL))?;
                 guard.name.clear();
@@ -1424,7 +1423,7 @@ impl ContextHandle {
 
                 let (output, size) = match kind {
                     RegsKind::Float => {
-                        let context = read_context(&context, token.downgrade());
+                        let context = context.read(token.token());
                         // NOTE: The kernel will never touch floats
 
                         (
@@ -1516,9 +1515,7 @@ impl ContextHandle {
             }
             ContextHandle::SchedAffinity => {
                 let mask = syscall::CpuSet::from_raw_mask(
-                    read_context(&context, token.downgrade())
-                        .sched_affinity
-                        .to_raw(),
+                    context.read(token.token()).sched_affinity.to_raw(),
                 );
 
                 buf.copy_exactly(mask.as_bytes())?;
@@ -1527,7 +1524,7 @@ impl ContextHandle {
             ContextHandle::Status { .. } => {
                 let status = {
                     let (status, being_sigkilled) = {
-                        let context = read_context(&context, token.downgrade());
+                        let context = context.read(token.token());
                         (context.status.clone(), context.being_sigkilled)
                     };
                     match status {
@@ -1560,7 +1557,7 @@ impl ContextHandle {
             ContextHandle::Attr => {
                 let mut debug_name = [0; 32];
                 let (euid, egid, pid, name, prio) = {
-                    let c = read_context(&context, token.downgrade());
+                    let c = context.read(token.token());
                     (c.euid, c.egid, c.pid as u32, c.name, c.prio as u32)
                 };
                 let min = name.len().min(debug_name.len());
@@ -1574,7 +1571,7 @@ impl ContextHandle {
                 })
             }
             ContextHandle::Sighandler => {
-                let data = match read_context(&context, token.downgrade()).sig {
+                let data = match context.read(token.token()).sig {
                     Some(ref sig) => SetSighandlerData {
                         excp_handler: sig.excp_handler.map_or(0, NonZeroUsize::get),
                         user_handler: sig.user_handler.get(),
@@ -1730,7 +1727,7 @@ impl ContextHandle {
                         if fd1 == fd2 {
                             return Ok(0);
                         }
-                        let mut context = read_context(&context, token.downgrade());
+                        let mut context = context.read(token.token());
                         let (context, mut token) = context.token_split();
                         let file1_opt = context.remove_file(fd1, &mut token);
                         let file2_opt = context.remove_file(fd2, &mut token);

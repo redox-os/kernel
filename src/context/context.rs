@@ -10,11 +10,15 @@ use spin::Lazy;
 use syscall::{SigProcControl, Sigcontrol, UPPER_FDTBL_TAG};
 
 use crate::{
-    arch::interrupt::InterruptStack,
+    arch::{
+        interrupt::InterruptStack,
+        ipi::{IpiKind, IpiTarget},
+    },
     common::aligned_box::AlignedBox,
     context::{
         self, arch,
         file::{FileDescriptor, LockedFileDescription},
+        ContextReadGuard, ContextWriteGuard,
     },
     cpu_set::{LogicalCpuId, LogicalCpuSet},
     cpu_stats,
@@ -24,7 +28,7 @@ use crate::{
     },
     percpu::PercpuBlock,
     scheme::{CallerCtx, FileHandle, SchemeId},
-    sync::{CleanLockToken, LockToken, RwLock, L1, L3, L4, L5},
+    sync::{CleanLockToken, LockToken, Lower, RwLock, L1, L3, L4, L5},
     syscall::usercopy::UserSliceRw,
 };
 
@@ -592,6 +596,96 @@ impl ContextLock {
             }
         }
     }
+
+    pub fn read<'a, LP: Lower<L4> + 'a>(
+        self: &'a Arc<Self>,
+        mut token: LockToken<'a, LP>,
+    ) -> ContextReadGuard<'a> {
+        if crate::context::is_current(self) {
+            return ContextReadGuard::Current(
+                crate::context::current(),
+                LockToken::downgraded(token),
+            );
+        }
+
+        let my_percpu = crate::percpu::PercpuBlock::current();
+        let mut ipi_sent = false;
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::ordered::DEADLOCK_SPIN_CAP;
+
+        loop {
+            match self.inner.try_read_err(token) {
+                Ok(guard) => return ContextReadGuard::Locked(guard),
+                Err(t) => token = t,
+            }
+
+            my_percpu.maybe_handle_tlb_shootdown();
+
+            if !ipi_sent {
+                if let Some(target_cpu) = self.cpu_id() {
+                    if target_cpu != my_percpu.cpu_id {
+                        crate::arch::ipi::ipi(IpiKind::Wakeup, IpiTarget::Other);
+                        ipi_sent = true;
+                    }
+                }
+            }
+
+            core::hint::spin_loop();
+
+            #[cfg(feature = "busy_panic")]
+            {
+                i -= 1;
+                if i == 0 {
+                    panic!("Deadlock at write_context may have triggered");
+                }
+            }
+        }
+    }
+
+    pub fn write<'a, LP: Lower<L4> + 'a>(
+        self: &'a Arc<Self>,
+        mut token: LockToken<'a, LP>,
+    ) -> ContextWriteGuard<'a> {
+        if crate::context::is_current(self) {
+            return ContextWriteGuard::Current(
+                crate::context::current_mut(),
+                LockToken::downgraded(token),
+            );
+        }
+
+        let my_percpu = crate::percpu::PercpuBlock::current();
+        let mut ipi_sent = false;
+        #[cfg(feature = "busy_panic")]
+        let mut i = crate::sync::ordered::DEADLOCK_SPIN_CAP;
+
+        loop {
+            match self.inner.try_write_err(token) {
+                Ok(guard) => return ContextWriteGuard::Locked(guard),
+                Err(t) => token = t,
+            }
+
+            my_percpu.maybe_handle_tlb_shootdown();
+
+            if !ipi_sent {
+                if let Some(target_cpu) = self.cpu_id() {
+                    if target_cpu != my_percpu.cpu_id {
+                        crate::arch::ipi::ipi(IpiKind::Wakeup, IpiTarget::Other);
+                        ipi_sent = true;
+                    }
+                }
+            }
+
+            core::hint::spin_loop();
+
+            #[cfg(feature = "busy_panic")]
+            {
+                i -= 1;
+                if i == 0 {
+                    panic!("Deadlock at write_context may have triggered");
+                }
+            }
+        }
+    }
 }
 
 impl Deref for ContextLock {
@@ -611,6 +705,10 @@ pub struct ArcContextLockWriteGuard {
 impl ArcContextLockWriteGuard {
     pub fn rwlock(&self) -> &Arc<ContextLock> {
         &self.arc
+    }
+
+    pub fn into_rwlock(self) -> Arc<ContextLock> {
+        self.arc
     }
 
     /// Block the current context

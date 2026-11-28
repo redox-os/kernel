@@ -893,7 +893,7 @@ impl UserInner {
                     .ok_or(Error::new(EFAULT))?;
 
                 {
-                    let mut context = write_context(&context_lock, token.downgrade());
+                    let mut context = context_lock.write(token.token());
                     if let Status::HardBlocked {
                         reason: HardBlockedReason::AwaitingMmap { .. },
                     } = context.status

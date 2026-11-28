@@ -46,7 +46,7 @@ pub fn exit_context(
     context_lock: Arc<ContextLock>,
 ) {
     let (addrspace_opt, mut close_files) = {
-        let mut context = write_context(&context_lock, token.downgrade());
+        let mut context = context_lock.write(token.token());
         let (context, token) = context.token_split();
         let close_files = Arc::try_unwrap(mem::take(&mut context.files))
             .map_or_else(|_| FdTbl::new(), RwLock::into_inner);
@@ -65,7 +65,7 @@ pub fn exit_context(
     }
     // TODO: Should status == Status::HardBlocked be handled differently?
     let owner = {
-        let mut guard = write_context(&context_lock, token.downgrade());
+        let mut guard = context_lock.write(token.token());
         guard.status = context::Status::Dead { excp };
 
         guard.owner_proc_id
